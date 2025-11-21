@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>丛雨live2d</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- 预加载 Cubism4 Core (需要你在 public 根目录或 /model 下放置该文件) -->
+    <script>
+      (function preloadCubism() {
+        var candidates = [
+          '/live2dcubismcore.min.js',
+        ];
+        function tryLoad(i){
+          if (window.Live2DCubismCore || i >= candidates.length) return;
+          fetch(candidates[i], { method: 'HEAD' }).then(function(r){
+            if (r.ok) {
+              var s = document.createElement('script');
+              s.src = candidates[i];
+              s.onload = function(){ console.log('[CubismCore] loaded', candidates[i]); };
+              s.onerror = function(){ console.warn('[CubismCore] failed', candidates[i]); tryLoad(i+1); };
+              document.head.appendChild(s);
+            } else {
+              tryLoad(i+1);
+            }
+          }).catch(function(){ tryLoad(i+1); });
+        }
+        tryLoad(0);
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

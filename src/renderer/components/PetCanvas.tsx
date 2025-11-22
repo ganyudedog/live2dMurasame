@@ -79,6 +79,10 @@ const PetCanvas: React.FC = () => {
   const modelBaseUrlRef = useRef<string | null>(null);
   const surrogateAudioRef = useRef<HTMLAudioElement | null>(null);
   const [bubblePosition, setBubblePosition] = useState<{ left: number; top: number } | null>(null);
+  const dragHandlePositionRef = useRef<{ left: number; top: number; width: number } | null>(null);
+  const lastDragHandleUpdateRef = useRef(0);
+  const [dragHandlePosition, setDragHandlePosition] = useState<{ left: number; top: number; width: number } | null>(null);
+  const dragHandleRef = useRef<HTMLDivElement | null>(null);
 
   const clearBubbleTimer = useCallback(() => {
     if (!bubbleTimerRef.current) return;
@@ -184,6 +188,60 @@ const PetCanvas: React.FC = () => {
     }
   }, [setBubblePosition]);
 
+  const updateDragHandlePosition = useCallback((force = false) => {
+    if (typeof window === 'undefined') return;
+
+    const container = canvasRef.current;
+    const app = appRef.current;
+    const model = modelRef.current;
+    const canvas = (app?.view as HTMLCanvasElement | undefined) ?? undefined;
+    if (!container || !app || !model || !canvas) return;
+
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    if (!force && now - lastDragHandleUpdateRef.current < 32) return;
+    lastDragHandleUpdateRef.current = now;
+
+    const bounds = model.getBounds?.();
+    if (!bounds) return;
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const screen = app.renderer?.screen;
+    if (!screen?.width || !screen?.height || canvasRect.width === 0 || canvasRect.height === 0) return;
+
+    const centerRatio = screen.width ? ((bounds.x + bounds.width / 2) - screen.x) / screen.width : 0.5;
+    const topRatio = screen.height ? (bounds.y - screen.y) / screen.height : 0;
+    const widthRatio = screen.width ? bounds.width / screen.width : 0.3;
+
+    const clampedCenter = Math.max(0, Math.min(1, Number.isFinite(centerRatio) ? centerRatio : 0.5));
+    const clampedTop = Math.max(0, Math.min(1, Number.isFinite(topRatio) ? topRatio : 0));
+    const safeWidthRatio = Math.max(0.05, Math.min(1, Number.isFinite(widthRatio) ? widthRatio : 0.3));
+
+    const centerDomX = canvasRect.left + clampedCenter * canvasRect.width;
+    const topDomY = canvasRect.top + clampedTop * canvasRect.height;
+    const approxWidth = Math.max(140, Math.min(canvasRect.width * safeWidthRatio * 0.65, canvasRect.width - 48));
+
+    const offsetConfig = (window as any)?.LIVE2D_DRAG_HANDLE_OFFSET;
+    const offsetY = typeof offsetConfig?.y === 'number' ? offsetConfig.y : -36;
+    const relativeLeft = centerDomX - containerRect.left - approxWidth / 2;
+    const relativeTop = topDomY - containerRect.top + offsetY;
+
+    const maxLeft = Math.max(16, containerRect.width - approxWidth - 16);
+    const nextPosition = {
+      left: Math.max(16, Math.min(maxLeft, Number.isFinite(relativeLeft) ? relativeLeft : 16)),
+      top: Math.max(12, Math.min(containerRect.height - 64, Number.isFinite(relativeTop) ? relativeTop : 12)),
+      width: approxWidth,
+    };
+
+    const prev = dragHandlePositionRef.current;
+    if (!prev || Math.abs(prev.left - nextPosition.left) > 0.5 || Math.abs(prev.top - nextPosition.top) > 0.5 || Math.abs(prev.width - nextPosition.width) > 0.5) {
+      dragHandlePositionRef.current = nextPosition;
+      setDragHandlePosition(nextPosition);
+    }
+  }, [setDragHandlePosition]);
+
   const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
     const settings = (modelInstance as any).internalModel?.settings;
     const raw: Array<{ Name?: string; Id?: string; Motion?: string }> = settings?.hitAreas ?? [];
@@ -242,7 +300,8 @@ const PetCanvas: React.FC = () => {
     const marginBottom = 40;
     m.position.set(winW - scaledW / 2 - marginRight, winH - scaledH / 2 - marginBottom);
     updateBubblePosition(true);
-  }, [scale, updateBubblePosition]);
+    updateDragHandlePosition(true);
+  }, [scale, updateBubblePosition, updateDragHandlePosition]);
 
   // Load persisted settings
   useEffect(() => { loadSettings(); }, [loadSettings]);
@@ -328,6 +387,7 @@ const PetCanvas: React.FC = () => {
         }
 
         updateBubblePosition();
+        updateDragHandlePosition();
       };
 
       app.ticker.add(onTick);
@@ -666,7 +726,9 @@ const PetCanvas: React.FC = () => {
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
       if (event.button !== 0) return;
+      if (target?.closest('[data-live2d-drag-handle="true"]')) return;
       handlePointerTap(event.clientX, event.clientY);
     };
     window.addEventListener('pointerdown', onPointerDown);
@@ -698,6 +760,7 @@ const PetCanvas: React.FC = () => {
     }
 
     updateBubblePosition(true);
+    updateDragHandlePosition(true);
     releaseSurrogateAudio();
 
     const model = modelRef.current as (Live2DModelType & { internalModel?: any }) | null;
@@ -770,27 +833,52 @@ const PetCanvas: React.FC = () => {
       releaseSurrogateAudio();
       clearBubbleTimer();
     };
-  }, [motionText, motionSound, clearBubbleTimer, scheduleBubbleDismiss, setMotionText, updateBubblePosition, setBubblePosition, resolveSoundUrl]);
+  }, [motionText, motionSound, clearBubbleTimer, scheduleBubbleDismiss, setMotionText, updateBubblePosition, setBubblePosition, resolveSoundUrl, updateDragHandlePosition]);
 
   return (
-    <div
-      ref={canvasRef}
-      className="absolute inset-0 z-0 pointer-events-none perspective-normal"
-      style={{ WebkitAppRegion: 'drag' }}
-    >
-      {motionText && (
+    <>
+      {dragHandlePosition && (
         <div
-          className={`absolute pointer-events-none select-none z-20 ${bubblePosition ? '' : 'right-100 top-26'}`}
-          style={bubblePosition ? { left: `${bubblePosition.left}px`, top: `${bubblePosition.top}px` } : undefined}
+          data-live2d-drag-handle="true"
+          ref={dragHandleRef}
+          className="absolute z-40 flex justify-center pointer-events-auto select-none cursor-grab active:cursor-grabbing"
+          style={{
+            left: dragHandlePosition.left,
+            top: dragHandlePosition.top,
+            width: dragHandlePosition.width,
+            WebkitAppRegion: 'drag',
+            WebkitUserSelect: 'none',
+          }}
         >
-          <div className="chat chat-start max-w-xs sm:max-w-md">
-            <div className="chat-bubble whitespace-pre-line text-sm sm:text-base leading-relaxed">
-              {motionText}
-            </div>
+          <div
+            data-live2d-drag-handle="true"
+            className="flex h-8 w-full items-center justify-center rounded-full bg-slate-800/75 px-4 text-xs text-slate-100 shadow-md backdrop-blur-sm"
+            style={{ WebkitAppRegion: 'drag', WebkitUserSelect: 'none' }}
+          >
+            拖动此区域移动窗口
           </div>
         </div>
       )}
-    </div>
+
+      {/* 主要内容区域 - 设置为 no-drag */}
+      <div
+        ref={canvasRef}
+        className="absolute inset-0 z-0 pointer-events-auto perspective-normal"
+      >
+        {motionText && (
+          <div
+            className={`absolute pointer-events-none select-none z-20 ${bubblePosition ? '' : 'right-100 top-26'}`}
+            style={bubblePosition ? { left: `${bubblePosition.left}px`, top: `${bubblePosition.top}px` } : undefined}
+          >
+            <div className="chat chat-start max-w-xs sm:max-w-md">
+              <div className="chat-bubble whitespace-pre-line text-sm sm:text-base leading-relaxed">
+                {motionText}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 };
 

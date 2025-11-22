@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @plugin "daisyui";
 
-body {
+body,html {
   background-color: transparent;
 }
+

@@ -106,7 +106,7 @@ const ControlPanel: React.FC = () => {
 	};
 
 	return (
-		<div className="absolute top-4 left-4 z-10 w-80 pointer-events-auto">
+		<div className="hidden absolute top-4 left-4 z-10 w-80 pointer-events-auto">
 			<div className="bg-base-200/80 backdrop-blur-md rounded-xl shadow-lg border border-base-300 p-4 space-y-4">
 				<div className="flex items-center justify-between">
 					<div>

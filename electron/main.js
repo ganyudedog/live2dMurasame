@@ -1,28 +1,28 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-// import Store from 'electron-store';
 
-// __dirname for ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// const store = new Store({
-//     defaults: {
-//         scale: 1,
-//         allowMouse: true,
-//         ignoreMouse: false,
-//         autoLaunch: false
-//     }
-// });
 
 let win;
 const createWindow = () => {
     win = new BrowserWindow({
         width: 600,
-        height: 600,
+        height: 900,
+        hasShadow: false,
+        transparent: true,
+        resizable: true,
+        frame: false,
         webPreferences: {
             devTools: true,
+            offscreen: false,
+            nodeIntegration: false,
+            contextIsolation: true,
+            webSecurity: true,
+            sandbox: true,
+            enableRemoteModule: true,
+            backgroundThrottling: false
         }
     });
 
@@ -31,12 +31,12 @@ const createWindow = () => {
 
     if (devServerUrl) {
         win.loadURL(devServerUrl);
+        win.webContents.openDevTools();
     } else {
         win.loadFile(rootIndex);
     }
 };
 
-    
 app.whenReady().then(() => {
     createWindow();
     app.on('activate', () => {

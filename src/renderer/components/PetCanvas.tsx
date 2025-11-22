@@ -62,6 +62,7 @@ const PetCanvas: React.FC = () => {
   const motionText = usePetStore(s => s.playingMotionText);
   const motionSound = usePetStore(s => s.playingMotionSound);
   const setMotionText = usePetStore(s => s.setMotionText);
+  const showDragHandleOnHover = usePetStore(s => s.showDragHandleOnHover);
 
   const modelRef = useRef<Live2DModelType | null>(null);
   const appRef = useRef<Application | null>(null);
@@ -83,6 +84,46 @@ const PetCanvas: React.FC = () => {
   const lastDragHandleUpdateRef = useRef(0);
   const [dragHandlePosition, setDragHandlePosition] = useState<{ left: number; top: number; width: number } | null>(null);
   const dragHandleRef = useRef<HTMLDivElement | null>(null);
+  const [dragHandleVisible, setDragHandleVisible] = useState(false);
+  const dragHandleVisibleRef = useRef(false);
+  const dragHandleHoverRef = useRef(false);
+  const pointerInsideModelRef = useRef(false);
+  const dragHandleHideTimerRef = useRef<number | null>(null);
+
+  const setDragHandleVisibility = useCallback((visible: boolean) => {
+    if (dragHandleVisibleRef.current === visible) return;
+    dragHandleVisibleRef.current = visible;
+    setDragHandleVisible(visible);
+  }, []);
+
+  const cancelDragHandleHide = useCallback(() => {
+    if (dragHandleHideTimerRef.current !== null) {
+      window.clearTimeout(dragHandleHideTimerRef.current);
+      dragHandleHideTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleDragHandleHide = useCallback((delay = 3000) => {
+    if (!showDragHandleOnHover) return;
+    cancelDragHandleHide();
+    dragHandleHideTimerRef.current = window.setTimeout(() => {
+      dragHandleHideTimerRef.current = null;
+      if (!dragHandleHoverRef.current) {
+        setDragHandleVisibility(false);
+      }
+    }, delay);
+  }, [showDragHandleOnHover, cancelDragHandleHide, setDragHandleVisibility]);
+
+  const triggerDragHandleReveal = useCallback(() => {
+    if (!showDragHandleOnHover) return;
+    setDragHandleVisibility(true);
+    scheduleDragHandleHide();
+  }, [showDragHandleOnHover, scheduleDragHandleHide, setDragHandleVisibility]);
+
+  const hideDragHandleImmediately = useCallback(() => {
+    cancelDragHandleHide();
+    setDragHandleVisibility(false);
+  }, [cancelDragHandleHide, setDragHandleVisibility]);
 
   const clearBubbleTimer = useCallback(() => {
     if (!bubbleTimerRef.current) return;
@@ -168,8 +209,8 @@ const PetCanvas: React.FC = () => {
     const domY = canvasRect.top + clampedY * canvasRect.height;
 
     const offsetConfig = win?.LIVE2D_TEXT_OFFSET;
-    const offsetX = typeof offsetConfig?.x === 'number' ? offsetConfig.x : 24;
-    const offsetY = typeof offsetConfig?.y === 'number' ? offsetConfig.y : -72;
+    const offsetX = typeof offsetConfig?.x === 'number' ? offsetConfig.x : -220;
+    const offsetY = typeof offsetConfig?.y === 'number' ? offsetConfig.y : -60;
 
     const relativeLeft = domX - containerRect.left + offsetX;
     const relativeTop = domY - containerRect.top + offsetY;
@@ -224,14 +265,15 @@ const PetCanvas: React.FC = () => {
     const approxWidth = Math.max(140, Math.min(canvasRect.width * safeWidthRatio * 0.65, canvasRect.width - 48));
 
     const offsetConfig = (window as any)?.LIVE2D_DRAG_HANDLE_OFFSET;
-    const offsetY = typeof offsetConfig?.y === 'number' ? offsetConfig.y : -36;
-    const relativeLeft = centerDomX - containerRect.left - approxWidth / 2;
+    const offsetX = typeof offsetConfig?.x === 'number' ? offsetConfig.x : -48;
+    const offsetY = typeof offsetConfig?.y === 'number' ? offsetConfig.y : -96;
+    const relativeLeft = centerDomX - containerRect.left - approxWidth / 2 + offsetX;
     const relativeTop = topDomY - containerRect.top + offsetY;
 
     const maxLeft = Math.max(16, containerRect.width - approxWidth - 16);
     const nextPosition = {
-      left: Math.max(16, Math.min(maxLeft, Number.isFinite(relativeLeft) ? relativeLeft : 16)),
-      top: Math.max(12, Math.min(containerRect.height - 64, Number.isFinite(relativeTop) ? relativeTop : 12)),
+      left: Math.max(10, Math.min(maxLeft, Number.isFinite(relativeLeft) ? relativeLeft : 10)),
+      top: Math.max(9, Math.min(containerRect.height - 64, Number.isFinite(relativeTop) ? relativeTop : 9)),
       width: approxWidth,
     };
 
@@ -240,7 +282,25 @@ const PetCanvas: React.FC = () => {
       dragHandlePositionRef.current = nextPosition;
       setDragHandlePosition(nextPosition);
     }
-  }, [setDragHandlePosition]);
+    let pointerInsideModel = false;
+    if (showDragHandleOnHover && canvasRect.width > 0 && canvasRect.height > 0) {
+      const pointerWithinCanvas = pointerX.current >= canvasRect.left && pointerX.current <= canvasRect.right && pointerY.current >= canvasRect.top && pointerY.current <= canvasRect.bottom;
+      if (pointerWithinCanvas) {
+        const pointerCanvasX = ((pointerX.current - canvasRect.left) / canvasRect.width) * app.renderer.screen.width;
+        const pointerCanvasY = ((pointerY.current - canvasRect.top) / canvasRect.height) * app.renderer.screen.height;
+        pointerInsideModel = pointerCanvasX >= bounds.x && pointerCanvasX <= bounds.x + bounds.width && pointerCanvasY >= bounds.y && pointerCanvasY <= bounds.y + bounds.height;
+      }
+    }
+
+    if (pointerInsideModelRef.current !== pointerInsideModel) {
+      pointerInsideModelRef.current = pointerInsideModel;
+      if (pointerInsideModel && !dragHandleHoverRef.current) {
+        triggerDragHandleReveal();
+      } else if (!pointerInsideModel && !dragHandleHoverRef.current) {
+        scheduleDragHandleHide();
+      }
+    }
+  }, [setDragHandlePosition, showDragHandleOnHover, scheduleDragHandleHide, triggerDragHandleReveal]);
 
   const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
     const settings = (modelInstance as any).internalModel?.settings;
@@ -662,6 +722,12 @@ const PetCanvas: React.FC = () => {
     ignoreMouseRef.current = ignoreMouse;
   }, [ignoreMouse]);
 
+  useEffect(() => {
+    if (!showDragHandleOnHover) {
+      hideDragHandleImmediately();
+    }
+  }, [showDragHandleOnHover, hideDragHandleImmediately]);
+
   const handlePointerTap = useCallback((clientX: number, clientY: number) => {
     const model = modelRef.current;
     const app = appRef.current;
@@ -736,6 +802,44 @@ const PetCanvas: React.FC = () => {
       window.removeEventListener('pointerdown', onPointerDown);
     };
   }, [handlePointerTap]);
+
+  useEffect(() => {
+    const handle = dragHandleRef.current;
+    if (!handle) return;
+
+    const onEnter = () => {
+      dragHandleHoverRef.current = true;
+      cancelDragHandleHide();
+      if (showDragHandleOnHover) {
+        setDragHandleVisibility(true);
+      }
+    };
+    const onLeave = () => {
+      dragHandleHoverRef.current = false;
+      scheduleDragHandleHide();
+    };
+    const onPointerDown = () => {
+      dragHandleHoverRef.current = true;
+      cancelDragHandleHide();
+      setDragHandleVisibility(true);
+    };
+    const onPointerUp = () => {
+      dragHandleHoverRef.current = false;
+      scheduleDragHandleHide();
+    };
+
+    handle.addEventListener('pointerenter', onEnter);
+    handle.addEventListener('pointerleave', onLeave);
+    handle.addEventListener('pointerdown', onPointerDown);
+    handle.addEventListener('pointerup', onPointerUp);
+
+    return () => {
+      handle.removeEventListener('pointerenter', onEnter);
+      handle.removeEventListener('pointerleave', onLeave);
+      handle.removeEventListener('pointerdown', onPointerDown);
+      handle.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [dragHandlePosition, cancelDragHandleHide, scheduleDragHandleHide, setDragHandleVisibility, showDragHandleOnHover]);
 
   useEffect(() => {
     motionTextRef.current = motionText;
@@ -841,13 +945,17 @@ const PetCanvas: React.FC = () => {
         <div
           data-live2d-drag-handle="true"
           ref={dragHandleRef}
-          className="absolute z-40 flex justify-center pointer-events-auto select-none cursor-grab active:cursor-grabbing"
+          className="absolute z-40 flex justify-center select-none cursor-grab active:cursor-grabbing"
           style={{
             left: dragHandlePosition.left,
             top: dragHandlePosition.top,
             width: dragHandlePosition.width,
             WebkitAppRegion: 'drag',
             WebkitUserSelect: 'none',
+            visibility: dragHandleVisible ? 'visible' : 'hidden',
+            opacity: dragHandleVisible ? 1 : 0,
+            pointerEvents: dragHandleVisible ? 'auto' : 'none',
+            transition: 'opacity 150ms ease, visibility 150ms ease',
           }}
         >
           <div
@@ -867,10 +975,10 @@ const PetCanvas: React.FC = () => {
       >
         {motionText && (
           <div
-            className={`absolute pointer-events-none select-none z-20 ${bubblePosition ? '' : 'right-100 top-26'}`}
-            style={bubblePosition ? { left: `${bubblePosition.left}px`, top: `${bubblePosition.top}px` } : undefined}
+            className={`absolute pointer-events-none select-none z-20 ${bubblePosition ? '' : 'left-6 top-26'}`}
+            style={bubblePosition ? { left: `${bubblePosition.left}px`, top: `${bubblePosition.top}px`, transform: 'translate(-100%, -10%)' } : undefined}
           >
-            <div className="chat chat-start max-w-xs sm:max-w-md">
+            <div className="chat chat-end max-w-xs sm:max-w-md">
               <div className="chat-bubble whitespace-pre-line text-sm sm:text-base leading-relaxed">
                 {motionText}
               </div>

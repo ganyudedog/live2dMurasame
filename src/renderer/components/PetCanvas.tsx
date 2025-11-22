@@ -1,14 +1,33 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Application, Ticker } from 'pixi.js';
 import { usePetStore } from '../state/usePetStore';
 import { loadModel } from '../live2d/loader';
 import { Live2DModel } from '../live2d/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2d/runtime';
 
-const MODEL_PATH = '/model/murasame/Murasame.model3.json';
-const DEFAULT_EYE_MAX_UP = 0.5;
-const DEFAULT_ANGLE_MAX_UP = 20;
+// 环境变量读取助手 (兼容 Vite import.meta.env 与 process.env)
+const env = (key: string): string | undefined => {
+  try {
+
+    if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key] !== undefined) {
+      return (import.meta as any).env[key];
+    }
+  } catch { /* swallow */ }
+
+  const globalEnv = typeof globalThis !== 'undefined' ? (globalThis as any)?.process?.env : undefined;
+  if (globalEnv && globalEnv[key] !== undefined) {
+    return globalEnv[key];
+  }
+
+  return undefined;
+};
+
+const MODEL_PATH = env('VITE_MODEL_PATH') || '/model/murasame/Murasame.model3.json';
+const DEFAULT_EYE_MAX_UP = parseFloat(env('VITE_EYE_MAX_UP') || '0.5');
+const DEFAULT_ANGLE_MAX_UP = parseFloat(env('VITE_ANGLE_MAX_UP') || '20');
+const DEFAULT_TOUCH_MAP_RAW = env('VITE_TOUCH_MAP');
+const DEFAULT_TOUCH_PRIORITY_RAW = env('VITE_TOUCH_PRIORITY');
 
 const clampEyeBallY = (value: number): number => {
   const limit = typeof window !== 'undefined' && typeof (window as any).LIVE2D_EYE_MAX_UP === 'number'
@@ -24,6 +43,14 @@ const clampAngleY = (value: number): number => {
   return Math.max(-40, Math.min(limit, value));
 };
 
+const TOUCH_PRIORITY = ((): string[] => {
+  if (DEFAULT_TOUCH_PRIORITY_RAW) {
+    const arr = DEFAULT_TOUCH_PRIORITY_RAW.split(',').map(s => s.trim()).filter(Boolean);
+    if (arr.length) return arr;
+  }
+  return ['hair', 'face', 'xiongbu', 'qunzi', 'leg'];
+})();
+
 const PetCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const scale = usePetStore(s => s.scale);
@@ -31,6 +58,10 @@ const PetCanvas: React.FC = () => {
   const ignoreMouse = usePetStore(s => s.ignoreMouse);
   const setModel = usePetStore(s => s.setModel);
   const setModelLoadStatus = usePetStore(s => s.setModelLoadStatus);
+  const interruptMotion = usePetStore(s => s.interruptMotion);
+  const motionText = usePetStore(s => s.playingMotionText);
+  const motionSound = usePetStore(s => s.playingMotionSound);
+  const setMotionText = usePetStore(s => s.setMotionText);
 
   const modelRef = useRef<Live2DModelType | null>(null);
   const appRef = useRef<Application | null>(null);
@@ -40,6 +71,138 @@ const PetCanvas: React.FC = () => {
   const pointerY = useRef(0);
   const ignoreMouseRef = useRef(ignoreMouse);
   const detachEyeHandlerRef = useRef<(() => void) | null>(null);
+  const hitAreasRef = useRef<Array<{ id: string; motion: string; name: string }>>([]);
+  const bubbleTimerRef = useRef<number | null>(null);
+  const motionTextRef = useRef(motionText);
+  const bubblePositionRef = useRef<{ left: number; top: number } | null>(null);
+  const lastBubbleUpdateRef = useRef(0);
+  const modelBaseUrlRef = useRef<string | null>(null);
+  const surrogateAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [bubblePosition, setBubblePosition] = useState<{ left: number; top: number } | null>(null);
+
+  const clearBubbleTimer = useCallback(() => {
+    if (!bubbleTimerRef.current) return;
+    window.clearTimeout(bubbleTimerRef.current);
+    bubbleTimerRef.current = null;
+  }, []);
+
+  const scheduleBubbleDismiss = useCallback((requestedMs?: number | null, fallbackMs = 9000) => {
+    clearBubbleTimer();
+    const duration = typeof requestedMs === 'number' && Number.isFinite(requestedMs) && requestedMs > 0
+      ? requestedMs
+      : fallbackMs;
+    bubbleTimerRef.current = window.setTimeout(() => {
+      setMotionText(null);
+      bubbleTimerRef.current = null;
+    }, duration);
+  }, [clearBubbleTimer, setMotionText]);
+
+  const resolveSoundUrl = useCallback((soundPath: string | null | undefined): string | null => {
+    if (!soundPath) return null;
+    try {
+      if (/^(?:https?:)?\/\//i.test(soundPath) || soundPath.startsWith('data:')) {
+        return soundPath;
+      }
+      const base = modelBaseUrlRef.current;
+      if (base) {
+        return new URL(soundPath, base).toString();
+      }
+      if (typeof window !== 'undefined') {
+        const resolvedModelUrl = new URL(MODEL_PATH, window.location.href);
+        const fallbackBase = new URL('.', resolvedModelUrl);
+        return new URL(soundPath, fallbackBase).toString();
+      }
+    } catch { /* swallow resolve errors */ }
+    return soundPath;
+  }, []);
+
+  const updateBubblePosition = useCallback((force = false) => {
+    if (typeof window === 'undefined') return;
+
+    if (!motionTextRef.current) {
+      if (force) {
+        bubblePositionRef.current = null;
+        setBubblePosition(null);
+      }
+      return;
+    }
+
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    if (!force && now - lastBubbleUpdateRef.current < 32) return;
+    lastBubbleUpdateRef.current = now;
+
+    const model = modelRef.current;
+    const app = appRef.current;
+    const container = canvasRef.current;
+    const canvas = (app?.view as HTMLCanvasElement | undefined) ?? undefined;
+    if (!model || !app || !container || !canvas) return;
+
+    const bounds = model.getBounds?.();
+    if (!bounds) return;
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const screen = app.renderer?.screen;
+    if (!screen?.width || !screen?.height || canvasRect.width === 0 || canvasRect.height === 0) return;
+
+    const win = window as any;
+    const anchorConfig = win?.LIVE2D_TEXT_ANCHOR;
+    const anchorXRatio = typeof anchorConfig?.x === 'number' ? anchorConfig.x : 0.6;
+    const anchorYRatio = typeof anchorConfig?.y === 'number' ? anchorConfig.y : 0.1;
+
+    const anchorX = bounds.x + bounds.width * anchorXRatio;
+    const anchorY = bounds.y + bounds.height * anchorYRatio;
+
+    const normalizedX = screen.width ? (anchorX - screen.x) / screen.width : 0.5;
+    const normalizedY = screen.height ? (anchorY - screen.y) / screen.height : 0.5;
+    const clampedX = Math.max(0, Math.min(1, Number.isFinite(normalizedX) ? normalizedX : 0.5));
+    const clampedY = Math.max(0, Math.min(1, Number.isFinite(normalizedY) ? normalizedY : 0.5));
+
+    const domX = canvasRect.left + clampedX * canvasRect.width;
+    const domY = canvasRect.top + clampedY * canvasRect.height;
+
+    const offsetConfig = win?.LIVE2D_TEXT_OFFSET;
+    const offsetX = typeof offsetConfig?.x === 'number' ? offsetConfig.x : 24;
+    const offsetY = typeof offsetConfig?.y === 'number' ? offsetConfig.y : -72;
+
+    const relativeLeft = domX - containerRect.left + offsetX;
+    const relativeTop = domY - containerRect.top + offsetY;
+
+    if (!Number.isFinite(relativeLeft) || !Number.isFinite(relativeTop)) return;
+
+    const nextPosition = {
+      left: relativeLeft,
+      top: relativeTop,
+    };
+
+    const prev = bubblePositionRef.current;
+    if (!prev || Math.abs(prev.left - nextPosition.left) > 0.5 || Math.abs(prev.top - nextPosition.top) > 0.5) {
+      bubblePositionRef.current = nextPosition;
+      setBubblePosition(nextPosition);
+    }
+  }, [setBubblePosition]);
+
+  const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
+    const settings = (modelInstance as any).internalModel?.settings;
+    const raw: Array<{ Name?: string; Id?: string; Motion?: string }> = settings?.hitAreas ?? [];
+    const mapped = raw
+      .map(entry => ({
+        id: entry.Id ?? '',
+        motion: entry.Motion ?? '',
+        name: (entry.Name ?? '').toLowerCase(),
+      }))
+      .filter(area => area.id && area.motion);
+    mapped.sort((a, b) => {
+      const ai = TOUCH_PRIORITY.indexOf(a.name);
+      const bi = TOUCH_PRIORITY.indexOf(b.name);
+      const safeA = ai === -1 ? TOUCH_PRIORITY.length : ai;
+      const safeB = bi === -1 ? TOUCH_PRIORITY.length : bi;
+      return safeA - safeB;
+    });
+    hitAreasRef.current = mapped;
+  }, []);
 
   // 检测是否为idle状态
   const isIdleState = useCallback((motionManager: any): boolean => {
@@ -78,7 +241,8 @@ const PetCanvas: React.FC = () => {
     const marginRight = 40;
     const marginBottom = 40;
     m.position.set(winW - scaledW / 2 - marginRight, winH - scaledH / 2 - marginBottom);
-  }, [scale]);
+    updateBubblePosition(true);
+  }, [scale, updateBubblePosition]);
 
   // Load persisted settings
   useEffect(() => { loadSettings(); }, [loadSettings]);
@@ -162,6 +326,8 @@ const PetCanvas: React.FC = () => {
         if (debugMotion && frameCountRef.current % 60 === 0) {
           console.log('[MotionDebug][blendTick]', { isIdle, blend, target: { x: targetX, y: targetY }, result: { newEyeX, newEyeY: clampedEyeY, newAngleX, newAngleY: clampedAngleY } });
         }
+
+        updateBubblePosition();
       };
 
       app.ticker.add(onTick);
@@ -297,12 +463,22 @@ const PetCanvas: React.FC = () => {
       try {
         const model = await loadModel(MODEL_PATH);
         if (disposed) return;
+        if (typeof window !== 'undefined') {
+          try {
+            const resolvedModelUrl = new URL(MODEL_PATH, window.location.href);
+            const base = new URL('.', resolvedModelUrl);
+            modelBaseUrlRef.current = base.toString();
+          } catch {
+            modelBaseUrlRef.current = null;
+          }
+        }
         modelRef.current = model;
         (model as any).eventMode = 'none';
         app.stage.addChild(model as any);
         applyLayout();
         setModel(model);
         setModelLoadStatus('loaded');
+        updateHitAreas(model);
         attachEyeFollow(model);
         // 安装护眼补丁（拦截 motion 更新后恢复眼睛参数）
         installMotionEyeGuard(model);
@@ -426,12 +602,195 @@ const PetCanvas: React.FC = () => {
     ignoreMouseRef.current = ignoreMouse;
   }, [ignoreMouse]);
 
+  const handlePointerTap = useCallback((clientX: number, clientY: number) => {
+    const model = modelRef.current;
+    const app = appRef.current;
+    if (!model || !app) return;
+    const canvas = app.view as HTMLCanvasElement | undefined;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const withinX = clientX >= rect.left && clientX <= rect.right;
+    const withinY = clientY >= rect.top && clientY <= rect.bottom;
+    if (!withinX || !withinY) return;
+    const x = ((clientX - rect.left) / rect.width) * app.renderer.screen.width;
+    const y = ((clientY - rect.top) / rect.height) * app.renderer.screen.height;
+    // 直接基于模型整体包围盒做矩形区域判断
+    const bounds = model.getBounds?.();
+    if (!bounds) return;
+    const nx = (x - bounds.x) / (bounds.width || 1); // 0..1
+    const ny = (y - bounds.y) / (bounds.height || 1); // 0..1  顶部=0 底部=1
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
+
+    // 默认分层百分比，可通过 window.LIVE2D_TOUCH_MAP 覆盖 (数组: [hairEnd, faceEnd, xiongbuEnd, qunziEnd, legEnd])
+    const DEFAULT_MAP = ((): number[] => {
+      if (DEFAULT_TOUCH_MAP_RAW) {
+        const parsed = DEFAULT_TOUCH_MAP_RAW.split(',').map(v => parseFloat(v.trim())).filter(v => Number.isFinite(v));
+        if (parsed.length === 5) return parsed;
+      }
+      return [0.1, 0.19, 0.39, 0.53, 1];
+    })();
+    const customMap = Array.isArray((window as any).LIVE2D_TOUCH_MAP) && (window as any).LIVE2D_TOUCH_MAP.length === 5
+      ? (window as any).LIVE2D_TOUCH_MAP
+      : DEFAULT_MAP;
+    const [hairEnd, faceEnd, xiongbuEnd, qunziEnd, legEnd] = customMap.map((v: number) => Math.max(0, Math.min(1, v)));
+
+    let group: string | null = null;
+    if (ny <= hairEnd) group = 'Taphair';
+    else if (ny <= faceEnd) group = 'Tapface';
+    else if (ny <= xiongbuEnd) group = 'Tapxiongbu';
+    else if (ny <= qunziEnd) group = 'Tapqunzi';
+    else if (ny <= legEnd) group = 'Tapleg';
+
+    if (!group) return;
+
+    // 先尝试精确 hitTest 对应 id ，若失败仍执行基于矩形的动作
+    const areaObj = hitAreasRef.current.find(a => a.motion.toLowerCase() === group.toLowerCase());
+    let dispatched = false;
+    if (areaObj) {
+      try {
+        const precise = (model as any).hitTest?.(areaObj.id, x, y);
+        if (precise) {
+          interruptMotion(group);
+          dispatched = true;
+        }
+      } catch { /* swallow */ }
+    }
+    if (!dispatched) {
+      interruptMotion(group);
+      dispatched = true;
+    }
+    if ((window as any).LIVE2D_MOTION_DEBUG === true) {
+      console.log('[TouchDispatch]', { nx: Number(nx.toFixed(3)), ny: Number(ny.toFixed(3)), group, preciseTried: !!areaObj, map: customMap });
+    }
+  }, [interruptMotion]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      handlePointerTap(event.clientX, event.clientY);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [handlePointerTap]);
+
+  useEffect(() => {
+    motionTextRef.current = motionText;
+
+    const releaseSurrogateAudio = () => {
+      const existing = surrogateAudioRef.current;
+      if (!existing) return;
+      try { existing.pause?.(); } catch { /* swallow */ }
+      try {
+        existing.src = '';
+        existing.load?.();
+      } catch { /* swallow */ }
+      surrogateAudioRef.current = null;
+    };
+
+    if (!motionText) {
+      bubblePositionRef.current = null;
+      setBubblePosition(null);
+      releaseSurrogateAudio();
+      clearBubbleTimer();
+      return undefined;
+    }
+
+    updateBubblePosition(true);
+    releaseSurrogateAudio();
+
+    const model = modelRef.current as (Live2DModelType & { internalModel?: any }) | null;
+    const internal = model?.internalModel;
+    const motionMgr = internal?.motionManager || internal?._motionManager || internal?.animator || internal?._animator;
+    const runtimeAudio: HTMLAudioElement | undefined = motionMgr?._currentAudio;
+    const cleanupFns: Array<() => void> = [];
+    const bufferMs = 400;
+
+    const applyDuration = (seconds: number | null | undefined) => {
+      const requested = typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+        ? seconds * 1000 + bufferMs
+        : null;
+      scheduleBubbleDismiss(requested, 7000);
+    };
+
+    const handleEnded = () => {
+      clearBubbleTimer();
+      setMotionText(null);
+    };
+
+    if (runtimeAudio) {
+      runtimeAudio.addEventListener('ended', handleEnded);
+      cleanupFns.push(() => runtimeAudio.removeEventListener('ended', handleEnded));
+
+      if (Number.isFinite(runtimeAudio.duration) && runtimeAudio.duration > 0) {
+        applyDuration(runtimeAudio.duration);
+      } else {
+        const handleLoaded = () => {
+          applyDuration(runtimeAudio.duration);
+        };
+        runtimeAudio.addEventListener('loadedmetadata', handleLoaded);
+        cleanupFns.push(() => runtimeAudio.removeEventListener('loadedmetadata', handleLoaded));
+        applyDuration(null);
+      }
+    } else {
+      const resolvedSound = resolveSoundUrl(motionSound);
+      if (resolvedSound && typeof Audio !== 'undefined') {
+        const surrogate = new Audio();
+        surrogate.preload = 'metadata';
+        surrogate.crossOrigin = 'anonymous';
+        surrogate.src = resolvedSound;
+        surrogateAudioRef.current = surrogate;
+
+        const handleMetadata = () => {
+          applyDuration(surrogate.duration);
+        };
+        const handleSurrogateError = () => {
+          applyDuration(null);
+        };
+        surrogate.addEventListener('loadedmetadata', handleMetadata);
+        surrogate.addEventListener('error', handleSurrogateError);
+        cleanupFns.push(() => {
+          surrogate.removeEventListener('loadedmetadata', handleMetadata);
+          surrogate.removeEventListener('error', handleSurrogateError);
+        });
+        try {
+          surrogate.load();
+        } catch { /* swallow */ }
+        applyDuration(null);
+      } else {
+        applyDuration(null);
+      }
+    }
+
+    return () => {
+      cleanupFns.forEach(fn => {
+        try { fn(); } catch { /* swallow */ }
+      });
+      releaseSurrogateAudio();
+      clearBubbleTimer();
+    };
+  }, [motionText, motionSound, clearBubbleTimer, scheduleBubbleDismiss, setMotionText, updateBubblePosition, setBubblePosition, resolveSoundUrl]);
+
   return (
     <div
       ref={canvasRef}
-      className="absolute inset-0 z-0 pointer-events-none"
+      className="absolute inset-0 z-0 pointer-events-none perspective-normal"
       style={{ WebkitAppRegion: 'drag' }}
-    />
+    >
+      {motionText && (
+        <div
+          className={`absolute pointer-events-none select-none z-20 ${bubblePosition ? '' : 'right-100 top-26'}`}
+          style={bubblePosition ? { left: `${bubblePosition.left}px`, top: `${bubblePosition.top}px` } : undefined}
+        >
+          <div className="chat chat-start max-w-xs sm:max-w-md">
+            <div className="chat-bubble whitespace-pre-line text-sm sm:text-base leading-relaxed">
+              {motionText}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 

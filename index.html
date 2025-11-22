@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>丛雨live2d</title>
   </head>
-  <body>
-    <div id="root"></div>
+  <body style="background-color: transparent;">
+    <div id="root" style="background-color: transparent;"></div>
     <!-- 预加载 Cubism4 Core (需要你在 public 根目录或 /model 下放置该文件) -->
     <script>
       (function preloadCubism() {
@@ -31,6 +31,6 @@
         tryLoad(0);
       })();
     </script>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>

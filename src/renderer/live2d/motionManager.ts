@@ -61,8 +61,8 @@ export class MotionManager {
   }
 
   play(group: string, index?: number) {
-    if (!this.model) return;
-    if (!this.allGroups.includes(group)) return;
+    if (!this.model) return null;
+    if (!this.allGroups.includes(group)) return null;
     const resolvedIndex = typeof index === 'number' ? index : this.pickRandomIndex(group);
     this.log('play()', { group, index: resolvedIndex });
     try {
@@ -72,6 +72,7 @@ export class MotionManager {
     }
     this.resetIdle();
     this.lastGroup = group;
+    return this.getMotionMeta(group, resolvedIndex);
   }
 
   randomIdle() {
@@ -103,8 +104,8 @@ export class MotionManager {
    * 若当前未播放或与目标相同则直接播放目标动作
    */
   interruptAndPlay(targetGroup: string) {
-    if (!this.model) return;
-    if (!this.allGroups.includes(targetGroup)) return;
+    if (!this.model) return null;
+    if (!this.allGroups.includes(targetGroup)) return null;
     const targetIndex = this.pickRandomIndex(targetGroup);
     const internal = (this.model as any).internalModel;
     const mm = internal?.motionManager;
@@ -112,8 +113,7 @@ export class MotionManager {
     const playing = !!(mm && (typeof mm.isFinished === 'function' ? !mm.isFinished() : (mm._currentAudio != null)));
     this.log('interruptAndPlay()', { targetGroup, playing, lastGroup: this.lastGroup, currentPriority: mm?._currentPriority, hasIsFinished: typeof mm?.isFinished === 'function' });
     if (!playing || this.lastGroup === targetGroup) {
-      this.play(targetGroup, targetIndex);
-      return;
+      return this.play(targetGroup, targetIndex);
     }
     // 先彻底停止 -> idle(可选) -> 目标（多形态调用，尽量兼容不同版本）
     const FORCE_PRIORITY = 3 as const;
@@ -146,6 +146,7 @@ export class MotionManager {
     }, 60);
     this.resetIdle();
     this.lastGroup = targetGroup;
+    return this.getMotionMeta(targetGroup, targetIndex);
   }
 
   dump() {
@@ -168,5 +169,20 @@ export class MotionManager {
     if (this.debug) {
       console.log('[MotionManager]', ...args);
     }
+  }
+
+  getMotionMeta(group: string, index: number) {
+    if (!this.model) return null;
+    const settings = (this.model as any).internalModel?.settings;
+    const entries = settings?.motions?.[group];
+    if (!Array.isArray(entries)) return { group, index, text: null, sound: null };
+    const entry = entries[index];
+    if (!entry) return { group, index, text: null, sound: null };
+    return {
+      group,
+      index,
+      text: entry.Text ?? null,
+      sound: entry.Sound ?? null,
+    };
   }
 }

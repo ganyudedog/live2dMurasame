@@ -17,6 +17,8 @@ interface PetStoreState {
 	modelLoadError?: string;
 	availableMotions: string[];
 	playingMotion: string | null;
+	playingMotionText: string | null;
+	playingMotionSound: string | null;
 	settingsLoaded: boolean;
 	motionManager: MotionManager;
 	loadSettings: () => void;
@@ -32,6 +34,7 @@ interface PetStoreState {
 	playMotion: (group: string) => void;
 	interruptMotion: (group: string) => void;
 	dumpMotionManager: () => void;
+	setMotionText: (text: string | null) => void;
 }
 
 const SETTINGS_KEY = 'pet-settings';
@@ -89,6 +92,8 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 		modelLoadError: undefined,
 		availableMotions: [],
 		playingMotion: null,
+		playingMotionText: null,
+		playingMotionSound: null,
 		settingsLoaded: false,
 		motionManager,
 
@@ -133,12 +138,12 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 
 		setModel: (model) => {
 			const groups = attachModelToManager(model);
-			set({ model, availableMotions: groups, playingMotion: null });
+			set({ model, availableMotions: groups, playingMotion: null, playingMotionText: null, playingMotionSound: null });
 		},
 
 		clearModel: () => {
 			attachModelToManager(null);
-			set({ model: null, availableMotions: [], playingMotion: null });
+			set({ model: null, availableMotions: [], playingMotion: null, playingMotionText: null, playingMotionSound: null });
 		},
 
 		setModelLoadStatus: (status, error) => {
@@ -153,18 +158,26 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 
 		playMotion: (group) => {
 			if (!group) return;
-			motionManager.play(group);
-			set({ playingMotion: group });
+			const meta = motionManager.play(group);
+			set({ playingMotion: group, playingMotionText: meta?.text ?? null, playingMotionSound: meta?.sound ?? null });
 		},
 
 		interruptMotion: (group) => {
 			if (!group) return;
-			motionManager.interruptAndPlay(group);
-			set({ playingMotion: group });
+			const meta = motionManager.interruptAndPlay(group);
+			set({ playingMotion: group, playingMotionText: meta?.text ?? null, playingMotionSound: meta?.sound ?? null });
 		},
 
 		dumpMotionManager: () => {
 			motionManager.dump();
+		},
+
+		setMotionText: (text) => {
+			if (text === null) {
+				set({ playingMotionText: null, playingMotionSound: null });
+				return;
+			}
+			set({ playingMotionText: text });
 		},
 	};
 });

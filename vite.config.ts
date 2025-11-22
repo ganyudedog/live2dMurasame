@@ -17,7 +17,7 @@ export default defineConfig({
     })
   ],
   server: {
-    port:5177,
+    port:5180,
   },
   optimizeDeps: {
     include: ['pixi-live2d-display', 'eventemitter3'],

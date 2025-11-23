@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useControlPanelStore } from '../state/useControlPanelStore';
+import { usePetStore } from '../state/usePetStore';
 
 const formatScale = (value: number) => value.toFixed(2);
 
@@ -29,33 +29,24 @@ const setWindowNumber = (key: string, value: number) => {
 };
 
 const ControlPanel: React.FC = () => {
-	const scale = useControlPanelStore(s => s.scale);
-	const setScale = useControlPanelStore(s => s.setScale);
-	const nudgeScale = useControlPanelStore(s => s.nudgeScale);
-	const resetScale = useControlPanelStore(s => s.resetScale);
-	const ignoreMouse = useControlPanelStore(s => s.ignoreMouse);
-	const toggleIgnoreMouse = useControlPanelStore(s => s.toggleIgnoreMouse);
-	const showDragHandleOnHover = useControlPanelStore(s => s.showDragHandleOnHover);
-	const setShowDragHandleOnHover = useControlPanelStore(s => s.setShowDragHandleOnHover);
-	const autoLaunchEnabled = useControlPanelStore(s => s.autoLaunchEnabled);
-	const setAutoLaunchEnabled = useControlPanelStore(s => s.setAutoLaunchEnabled);
-	const hydrate = useControlPanelStore(s => s.hydrate);
-	const modelLoadStatus = useControlPanelStore(s => s.modelLoadStatus);
-	const modelLoadError = useControlPanelStore(s => s.modelLoadError);
-	const availableMotions = useControlPanelStore(s => s.availableMotions);
-	const playingMotion = useControlPanelStore(s => s.playingMotion);
-	const refreshMotions = useControlPanelStore(s => s.refreshMotions);
-	const interruptMotion = useControlPanelStore(s => s.interruptMotion);
+	const scale = usePetStore(s => s.scale);
+	const setScale = usePetStore(s => s.setScale);
+	const nudgeScale = usePetStore(s => s.nudgeScale);
+	const resetScale = usePetStore(s => s.resetScale);
+	const ignoreMouse = usePetStore(s => s.ignoreMouse);
+	const toggleIgnoreMouse = usePetStore(s => s.toggleIgnoreMouse);
+	const modelLoadStatus = usePetStore(s => s.modelLoadStatus);
+	const modelLoadError = usePetStore(s => s.modelLoadError);
+	const availableMotions = usePetStore(s => s.availableMotions);
+	const playingMotion = usePetStore(s => s.playingMotion);
+	const refreshMotions = usePetStore(s => s.refreshMotions);
+	const interruptMotion = usePetStore(s => s.interruptMotion);
 
 	const [motionDebug, setMotionDebug] = useState<boolean>(() => getWindowFlag('LIVE2D_MOTION_DEBUG'));
 	const [eyeDebug, setEyeDebug] = useState<boolean>(() => getWindowFlag('LIVE2D_EYE_DEBUG'));
 	const [forceFollow, setForceFollow] = useState<boolean>(() => getWindowFlag('LIVE2D_EYE_FORCE_ALWAYS'));
 	const [blendValue, setBlendValue] = useState<number>(() => readWindowNumber('LIVE2D_EYE_BLEND', 0.3));
 	const [forceBlendValue, setForceBlendValue] = useState<number>(() => readWindowNumber('LIVE2D_EYE_FORCE_BLEND', 0.5));
-
-	useEffect(() => {
-		hydrate();
-	}, [hydrate]);
 
 	useEffect(() => {
 		if (modelLoadStatus === 'loaded') {
@@ -110,14 +101,6 @@ const ControlPanel: React.FC = () => {
 		setForceBlendValue(clamped);
 	};
 
-	const handleToggleDragHandleHover = (event: React.ChangeEvent<HTMLInputElement>) => {
-		setShowDragHandleOnHover(event.target.checked);
-	};
-
-	const handleToggleAutoLaunch = (event: React.ChangeEvent<HTMLInputElement>) => {
-		setAutoLaunchEnabled(event.target.checked);
-	};
-
 	const handleMotionClick = (group: string) => {
 		interruptMotion(group);
 	};
@@ -164,14 +147,6 @@ const ControlPanel: React.FC = () => {
 					<label className="label cursor-pointer justify-between p-0">
 						<span className="label-text text-sm">忽略鼠标</span>
 						<input type="checkbox" className="toggle toggle-sm" checked={ignoreMouse} onChange={toggleIgnoreMouse} />
-					</label>
-					<label className="label cursor-pointer justify-between p-0">
-						<span className="label-text text-sm">悬浮时显示拖动条</span>
-						<input type="checkbox" className="toggle toggle-sm" checked={showDragHandleOnHover} onChange={handleToggleDragHandleHover} />
-					</label>
-					<label className="label cursor-pointer justify-between p-0">
-						<span className="label-text text-sm">开机自启动</span>
-						<input type="checkbox" className="toggle toggle-sm" checked={autoLaunchEnabled} onChange={handleToggleAutoLaunch} />
 					</label>
 				</section>
 

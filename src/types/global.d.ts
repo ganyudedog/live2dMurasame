@@ -8,7 +8,6 @@ declare global {
 
   interface PetStateSnapshot {
     scale: number;
-    ignoreMouse: boolean;
     showDragHandleOnHover: boolean;
     autoLaunchEnabled: boolean;
     modelLoadStatus: PetModelLoadStatus;
@@ -32,9 +31,7 @@ declare global {
   interface PetAPI {
     getSettings?: () => Promise<PetSettingsPayload | undefined>;
     updateSettings?: (patch: PetSettingsPayload) => Promise<PetSettingsPayload | undefined>;
-    setIgnoreMouse?: (ignore: boolean) => Promise<void>;
     moveWindow?: (position: { x: number; y: number }) => Promise<void>;
-    launchControlPanel?: (open?: boolean) => Promise<boolean>;
     onSettingsUpdated?: (callback: (settings: PetSettingsPayload) => void) => () => void;
     reportState?: (state: PetStateSnapshot) => void;
     requestState?: () => Promise<PetStateSnapshot | undefined>;

@@ -3,8 +3,6 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('petAPI', {
   getSettings: () => ipcRenderer.invoke('pet:getSettings'),
   updateSettings: (patch) => ipcRenderer.invoke('pet:updateSettings', patch),
-  setIgnoreMouse: (ignore) => ipcRenderer.invoke('pet:setIgnoreMouse', ignore),
-  moveWindow: (pos) => ipcRenderer.invoke('pet:moveWindow', pos),
   launchControlPanel: (open) => ipcRenderer.invoke('pet:launchControlPanel',open),
   onSettingsUpdated: (callback) => {
     if (typeof callback !== 'function') return () => undefined;

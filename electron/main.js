@@ -35,7 +35,6 @@ const getSettingsFilePath = () => {
     }
     return path.join(app.getPath('userData'), 'pet-settings.json');
 };
-
 const readSettingsFromDisk = () => {
     try {
         const filePath = getSettingsFilePath();
@@ -50,6 +49,7 @@ const readSettingsFromDisk = () => {
             return { ...DEFAULT_SETTINGS };
         }
         const parsed = JSON.parse(raw);
+
         return { ...DEFAULT_SETTINGS, ...parsed };
     } catch (error) {
         console.warn('[pet] load settings failed', error);
@@ -73,10 +73,13 @@ const ensureSettingsLoaded = () => {
     if (!settingsLoaded && app.isReady()) {
         settingsCache = readSettingsFromDisk();
         const systemAutoLaunch = readSystemAutoLaunchState();
-        if (typeof systemAutoLaunch === 'boolean' && settingsCache.autoLaunch !== systemAutoLaunch) {
+        if (typeof systemAutoLaunch === 'boolean' &&
+            settingsCache.autoLaunch === DEFAULT_SETTINGS.autoLaunch) {
+            // 只有默认设置时才同步系统状态
             settingsCache = { ...settingsCache, autoLaunch: systemAutoLaunch };
             writeSettingsToDisk(settingsCache);
         }
+
         settingsLoaded = true;
     }
     return settingsCache;

@@ -20,6 +20,7 @@ declare global {
     | { type: 'interruptMotion'; group: string };
 
   interface PetAPI {
+    setSize?: (width: number,height:number) => Promise<void>;
     getSettings?: () => Promise<PetSettingsPayload | undefined>;
     updateSettings?: (patch: PetSettingsPayload) => Promise<PetSettingsPayload | undefined>;
     onSettingsUpdated?: (callback: (settings: PetSettingsPayload) => void) => void;

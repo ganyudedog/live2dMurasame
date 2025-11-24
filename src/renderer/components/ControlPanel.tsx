@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePetStore } from '../state/usePetStore';
 
 const formatScale = (value: number) => value.toFixed(2);
@@ -9,6 +9,12 @@ const getWindowFlag = (key: string) => {
 	return win[key] === true;
 };
 
+const readWindowNumber = (key: string, fallback: number) => {
+	if (typeof window === 'undefined') return fallback;
+	const win = window as unknown as Record<string, unknown>;
+	const raw = win[key];
+	return typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
+};
 
 const setWindowFlag = (key: string, value: boolean) => {
 	if (typeof window === 'undefined') return;
@@ -16,13 +22,23 @@ const setWindowFlag = (key: string, value: boolean) => {
 	win[key] = value;
 };
 
+const setWindowNumber = (key: string, value: number) => {
+	if (typeof window === 'undefined') return;
+	const win = window as unknown as Record<string, unknown>;
+	win[key] = value;
+};
+
 const ControlPanel: React.FC = () => {
+	// 模型大小
 	const scale = usePetStore(s => s.scale);
 	const setScale = usePetStore(s => s.setScale);
 	const nudgeScale = usePetStore(s => s.nudgeScale);
 	const resetScale = usePetStore(s => s.resetScale);
+	// 是否忽视鼠标
 	const ignoreMouse = usePetStore(s => s.ignoreMouse);
 	const setIgnoreMouse = usePetStore(s => s.setIgnoreMouse);
+
+	// 模型的加载
 	const modelLoadStatus = usePetStore(s => s.modelLoadStatus);
 	const modelLoadError = usePetStore(s => s.modelLoadError);
 	const availableMotions = usePetStore(s => s.availableMotions);
@@ -30,27 +46,64 @@ const ControlPanel: React.FC = () => {
 	const refreshMotions = usePetStore(s => s.refreshMotions);
 	const interruptMotion = usePetStore(s => s.interruptMotion);
 
+	// 展示拖动条
 	const showDragHandleOnHover = usePetStore(s => s.showDragHandleOnHover);
 	const setShowDragHandleOnHover = usePetStore(s => s.setShowDragHandleOnHover);
 
+	// 开机自启动
 	const autoLaunchEnabled = usePetStore(s => s.autoLaunchEnabled);
 	const setAutoLaunchEnabled = usePetStore(s => s.setAutoLaunchEnabled);
 
+	// 初始化
 	const loadSettings = usePetStore(s => s.loadSettings);
 
-	const [motionDebug, setMotionDebug] = useState<boolean>(() => getWindowFlag('LIVE2D_MOTION_DEBUG'));
-	const [eyeDebug, setEyeDebug] = useState<boolean>(() => getWindowFlag('LIVE2D_EYE_DEBUG'));
 	const [forceFollow, setForceFollow] = useState<boolean>(() => getWindowFlag('LIVE2D_EYE_FORCE_ALWAYS'));
+	const [blendValue, setBlendValue] = useState<number>(() => readWindowNumber('LIVE2D_EYE_BLEND', 0.3));
+	const [forceBlendValue, setForceBlendValue] = useState<number>(() => readWindowNumber('LIVE2D_EYE_FORCE_BLEND', 0.5));
+
+	// 拖动条编辑锁，防止外部回流写入
+	const [tempScale, setTempScale] = useState(scale);
+	const editRef = useRef<boolean>(false);
+	const debounceRef = useRef<number | null>(null);
 	
-	// 控制面板初始化，因为electron中两边的状态是隔离的
+	// 控制面板初始化，因为electron两边的状态是隔离的
 	useLayoutEffect(() => {
-		const off = loadSettings();
+		loadSettings();
+	},[loadSettings]);
+
+	useLayoutEffect(() => {
+		if (!editRef.current) return;
+		setScale(scale);
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [scale])
+	
+	const commitScale = (finalValue: number) => {
+		setScale(finalValue); // 触发真正的 IPC
+	};
+
+	const scheduleCommit = (value: number) => {
+		if (debounceRef.current) {
+			clearTimeout(debounceRef.current);
+		}
+		debounceRef.current = window.setTimeout(() => {
+			editRef.current = false;
+			commitScale(value);
+		}, 120);
+	};
+
+	const handleScaleSlider = (e: React.ChangeEvent<HTMLInputElement>) => {
+		const v = parseFloat(e.target.value);
+		editRef.current = true;
+		setTempScale(v);         // 仅本地更新，UI 丝滑
+		scheduleCommit(v);       // 停止拖动 120ms 后再提交
+	};
+
+	//清除副作用
+	useEffect(() => {
 		return () => {
-		  try {
-			if(off !== undefined && typeof off === 'function') off();
-		  } catch { /* empty */ }
+			if (debounceRef.current) clearTimeout(debounceRef.current);
 		};
-	  }, [loadSettings]);
+	}, []);
 
 	useEffect(() => {
 		if (modelLoadStatus === 'loaded') {
@@ -71,26 +124,23 @@ const ControlPanel: React.FC = () => {
 		}
 	}, [modelLoadStatus]);
 
-	const handleScaleSlider = (event: React.ChangeEvent<HTMLInputElement>) => {
-		setScale(parseFloat(event.target.value));
-	};
-
-	const handleToggleMotionDebug = () => {
-		const next = !motionDebug;
-		setWindowFlag('LIVE2D_MOTION_DEBUG', next);
-		setMotionDebug(next);
-	};
-
-	const handleToggleEyeDebug = () => {
-		const next = !eyeDebug;
-		setWindowFlag('LIVE2D_EYE_DEBUG', next);
-		setEyeDebug(next);
-	};
 
 	const handleToggleForceFollow = () => {
 		const next = !forceFollow;
 		setWindowFlag('LIVE2D_EYE_FORCE_ALWAYS', next);
 		setForceFollow(next);
+	};
+
+	const handleBlendChange = (value: number) => {
+		const clamped = Math.max(0, Math.min(1, value));
+		setWindowNumber('LIVE2D_EYE_BLEND', clamped);
+		setBlendValue(clamped);
+	};
+
+	const handleForceBlendChange = (value: number) => {
+		const clamped = Math.max(0, Math.min(1, value));
+		setWindowNumber('LIVE2D_EYE_FORCE_BLEND', clamped);
+		setForceBlendValue(clamped);
 	};
 
 	const handleMotionClick = (group: string) => {
@@ -121,7 +171,7 @@ const ControlPanel: React.FC = () => {
 						min="0.3"
 						max="2"
 						step="0.01"
-						value={scale}
+						value={tempScale}
 						onChange={handleScaleSlider}
 						className="range range-xs"
 					/>
@@ -176,11 +226,36 @@ const ControlPanel: React.FC = () => {
 				</section>
 
 				<section className="space-y-3">
-					<header className="font-medium text-sm">调试</header>
 					<div className="flex flex-wrap gap-2">
-						<button type="button" className={`btn btn-xs ${motionDebug ? 'btn-accent' : 'btn-outline'}`} onClick={handleToggleMotionDebug}>Motion Debug</button>
-						<button type="button" className={`btn btn-xs ${eyeDebug ? 'btn-accent' : 'btn-outline'}`} onClick={handleToggleEyeDebug}>Eye Debug</button>
 						<button type="button" className={`btn btn-xs ${forceFollow ? 'btn-accent' : 'btn-outline'}`} onClick={handleToggleForceFollow}>强制最终跟随</button>
+					</div>
+					<div className="space-y-2">
+						<label className="flex items-center justify-between text-xs gap-2">
+							<span>非 idle 混合强度</span>
+							<span className="tabular-nums">{blendValue.toFixed(2)}</span>
+						</label>
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.05"
+							value={blendValue}
+							onChange={event => handleBlendChange(parseFloat(event.target.value))}
+							className="range range-xs"
+						/>
+						<label className="flex items-center justify-between text-xs gap-2">
+							<span>强制跟随混合</span>
+							<span className="tabular-nums">{forceBlendValue.toFixed(2)}</span>
+						</label>
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.05"
+							value={forceBlendValue}
+							onChange={event => handleForceBlendChange(parseFloat(event.target.value))}
+							className="range range-xs"
+						/>
 					</div>
 				</section>
 			</div>

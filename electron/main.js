@@ -229,12 +229,13 @@ const broadcastSettings = () => {
 };
 const createMainWindow = () => {
     mainWindow = new BrowserWindow({
-        width: 800,
+        width: 500,
         height: 900,
         hasShadow: false,
         transparent: true,
         resizable: true,
         frame: false,
+        alwaysOnTop: true,
         webPreferences: {
             devTools: true,
             offscreen: false,
@@ -271,6 +272,13 @@ const createMainWindow = () => {
 ipcMain.handle('pet:getSettings', () => {
     return { ...ensureSettingsLoaded() };
 });
+
+ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setSize(Math.max(200, Math.floor(width)), Math.max(800, Math.floor(height)));
+    }
+    }
+);
 
 ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
     const safePatch = {};

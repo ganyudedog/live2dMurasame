@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('petAPI', {
+  setSize: (width, height) => ipcRenderer.invoke('pet:resizeMainWindow', width, height),
   getSettings: () => ipcRenderer.invoke('pet:getSettings'),
   updateSettings: (patch) => ipcRenderer.invoke('pet:updateSettings', patch),
   onSettingsUpdated: (callback) => {

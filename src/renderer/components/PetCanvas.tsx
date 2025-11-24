@@ -29,6 +29,19 @@ const DEFAULT_EYE_MAX_UP = parseFloat(env('VITE_EYE_MAX_UP') || '0.5');
 const DEFAULT_ANGLE_MAX_UP = parseFloat(env('VITE_ANGLE_MAX_UP') || '20');
 const DEFAULT_TOUCH_MAP_RAW = env('VITE_TOUCH_MAP');
 const DEFAULT_TOUCH_PRIORITY_RAW = env('VITE_TOUCH_PRIORITY');
+const BUBBLE_MAX_WIDTH = 260;
+const BUBBLE_GAP = 16; // gap between model and bubble
+const BUBBLE_PADDING = 12; // padding inside window edges
+const RESIZE_THROTTLE_MS = 120;
+const MIN_BASE_WIDTH = 300; // fallback minimal width (beyond Electron min)
+const MIN_BASE_HEIGHT = 800; // keep consistent with main.js min height
+
+const clamp = (value: number, min: number, max: number) => {
+  if (!Number.isFinite(value)) return min;
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+};
 
 const clampEyeBallY = (value: number): number => {
   const limit = typeof window !== 'undefined' && typeof (window as any).LIVE2D_EYE_MAX_UP === 'number'
@@ -83,6 +96,9 @@ const PetCanvas: React.FC = () => {
   const modelBaseUrlRef = useRef<string | null>(null);
   const surrogateAudioRef = useRef<HTMLAudioElement | null>(null);
   const [bubblePosition, setBubblePosition] = useState<{ left: number; top: number } | null>(null);
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const lastResizeAtRef = useRef(0);
+  const lastRequestedSizeRef = useRef<{ w: number; h: number } | null>(null);
   const dragHandlePositionRef = useRef<{ left: number; top: number; width: number } | null>(null);
   const lastDragHandleUpdateRef = useRef(0);
   const [dragHandlePosition, setDragHandlePosition] = useState<{ left: number; top: number; width: number } | null>(null);
@@ -165,6 +181,24 @@ const PetCanvas: React.FC = () => {
     return soundPath;
   }, []);
 
+  const requestResize = useCallback((width: number, height: number) => {
+    if (typeof window === 'undefined') return;
+    const now = performance?.now ? performance.now() : Date.now();
+    const prev = lastRequestedSizeRef.current;
+    if (prev && Math.abs(prev.w - width) < 2 && Math.abs(prev.h - height) < 2) return; // ignore tiny diff
+    if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) return;
+    lastResizeAtRef.current = now;
+    lastRequestedSizeRef.current = { w: width, h: height };
+    try {
+      const api = (window as any).petAPI;
+      if (typeof api?.setSize === 'function') {
+        api.setSize(width, height);
+      } else {
+        api?.invoke?.('pet:resizeMainWindow', width, height);
+      }
+    } catch { /* swallow */ }
+  }, []);
+
   const updateBubblePosition = useCallback((force = false) => {
     if (typeof window === 'undefined') return;
 
@@ -172,6 +206,26 @@ const PetCanvas: React.FC = () => {
       if (force) {
         bubblePositionRef.current = null;
         setBubblePosition(null);
+        // Bubble dismissed -> resize back to model-only width
+        const model = modelRef.current;
+        const app = appRef.current;
+        const container = canvasRef.current;
+        const canvas = (app?.view as HTMLCanvasElement | undefined) ?? undefined;
+        if (model && app && container && canvas) {
+          const bounds = model.getBounds?.();
+          const canvasRect = canvas.getBoundingClientRect();
+          if (bounds && canvasRect.width > 0) {
+            // model projected width in DOM
+            const screen = app.renderer?.screen;
+            if (screen?.width) {
+              const modelWidthRatio = bounds.width / screen.width;
+              const modelDomWidth = modelWidthRatio * canvasRect.width;
+              const baseWidth = Math.ceil(Math.max(MIN_BASE_WIDTH, modelDomWidth + BUBBLE_PADDING * 2));
+              const baseHeight = Math.max(MIN_BASE_HEIGHT, window.innerHeight); // keep height stable
+              requestResize(baseWidth, baseHeight);
+            }
+          }
+        }
       }
       return;
     }
@@ -186,7 +240,8 @@ const PetCanvas: React.FC = () => {
     const app = appRef.current;
     const container = canvasRef.current;
     const canvas = (app?.view as HTMLCanvasElement | undefined) ?? undefined;
-    if (!model || !app || !container || !canvas) return;
+    const bubbleEl = bubbleRef.current;
+    if (!model || !app || !container || !canvas || !bubbleEl) return;
 
     const bounds = model.getBounds?.();
     if (!bounds) return;
@@ -196,42 +251,60 @@ const PetCanvas: React.FC = () => {
     const screen = app.renderer?.screen;
     if (!screen?.width || !screen?.height || canvasRect.width === 0 || canvasRect.height === 0) return;
 
-    const win = window as any;
-    const anchorConfig = win?.LIVE2D_TEXT_ANCHOR;
-    const anchorXRatio = typeof anchorConfig?.x === 'number' ? anchorConfig.x : 0.6;
-    const anchorYRatio = typeof anchorConfig?.y === 'number' ? anchorConfig.y : 0.1;
+    // Head region heuristic: top 18% vertically of bounds
+    const headHeightRatio = 0.18;
+    const headCenterY = bounds.y + bounds.height * headHeightRatio * 0.5; // near top
+    const anchorX = bounds.x; // left edge of model
+    const anchorY = headCenterY;
 
-    const anchorX = bounds.x + bounds.width * anchorXRatio;
-    const anchorY = bounds.y + bounds.height * anchorYRatio;
+    const normalizedX = screen.width ? (anchorX - screen.x) / screen.width : 1;
+    const normalizedY = screen.height ? (anchorY - screen.y) / screen.height : headHeightRatio * 0.5;
+    const clampedNormX = clamp(normalizedX, 0, 1);
+    const clampedNormY = clamp(normalizedY, 0, 1);
 
-    const normalizedX = screen.width ? (anchorX - screen.x) / screen.width : 0.5;
-    const normalizedY = screen.height ? (anchorY - screen.y) / screen.height : 0.5;
-    const clampedX = Math.max(0, Math.min(1, Number.isFinite(normalizedX) ? normalizedX : 0.5));
-    const clampedY = Math.max(0, Math.min(1, Number.isFinite(normalizedY) ? normalizedY : 0.5));
+    const anchorDomX = canvasRect.left + clampedNormX * canvasRect.width;
+    const anchorDomY = canvasRect.top + clampedNormY * canvasRect.height;
 
-    const domX = canvasRect.left + clampedX * canvasRect.width;
-    const domY = canvasRect.top + clampedY * canvasRect.height;
+    // Measure bubble natural size
+    bubbleEl.style.visibility = 'hidden';
+    bubbleEl.style.maxWidth = `${BUBBLE_MAX_WIDTH}px`;
+    bubbleEl.style.width = 'auto';
+    bubbleEl.style.display = 'block';
+    const bubbleRect = bubbleEl.getBoundingClientRect();
+    const bubbleWidth = bubbleRect.width || BUBBLE_MAX_WIDTH;
+    const bubbleHeight = bubbleRect.height || 40;
 
-    const offsetConfig = win?.LIVE2D_TEXT_OFFSET;
-    const offsetX = typeof offsetConfig?.x === 'number' ? offsetConfig.x : -220;
-    const offsetY = typeof offsetConfig?.y === 'number' ? offsetConfig.y : -60;
+    let targetX = anchorDomX - containerRect.left - bubbleWidth - BUBBLE_GAP; // to the left of head
+    let targetY = anchorDomY - containerRect.top - bubbleHeight * 0.5; // vertically centered with head region
 
-    const relativeLeft = domX - containerRect.left + offsetX;
-    const relativeTop = domY - containerRect.top + offsetY;
+    // Clamp inside container
+    const maxLeft = containerRect.width - bubbleWidth - BUBBLE_PADDING;
+    targetX = clamp(targetX, BUBBLE_PADDING, maxLeft);
+    const maxTop = containerRect.height - bubbleHeight - BUBBLE_PADDING;
+    targetY = clamp(targetY, BUBBLE_PADDING, maxTop);
 
-    if (!Number.isFinite(relativeLeft) || !Number.isFinite(relativeTop)) return;
+    bubbleEl.style.visibility = 'visible';
 
-    const nextPosition = {
-      left: relativeLeft,
-      top: relativeTop,
-    };
+    const nextPosition = { left: targetX, top: targetY };
+
+    // Calculate desired window size to fit bubble (model right + gap + bubble width + padding)
+    const modelLeftDom = anchorDomX - canvasRect.left;
+    const modelDomWidth = (bounds.width / screen.width) * canvasRect.width;
+    const bubbleLeftSpaceNeeded = bubbleWidth + BUBBLE_GAP + BUBBLE_PADDING;
+    const leftSpaceDeficit = Math.max(0, bubbleLeftSpaceNeeded - modelLeftDom);
+    const baseWidth = Math.ceil(Math.max(MIN_BASE_WIDTH, modelDomWidth + BUBBLE_PADDING * 2));
+    const requiredWidth = Math.ceil(containerRect.width + leftSpaceDeficit);
+    const requiredHeight = Math.ceil(Math.max(containerRect.height, targetY + bubbleHeight + BUBBLE_PADDING));
+    const desiredWidth = Math.max(baseWidth, requiredWidth);
+    const desiredHeight = Math.max(MIN_BASE_HEIGHT, requiredHeight);
+    requestResize(desiredWidth, desiredHeight);
 
     const prev = bubblePositionRef.current;
     if (!prev || Math.abs(prev.left - nextPosition.left) > 0.5 || Math.abs(prev.top - nextPosition.top) > 0.5) {
       bubblePositionRef.current = nextPosition;
       setBubblePosition(nextPosition);
     }
-  }, [setBubblePosition]);
+  }, [setBubblePosition, requestResize]);
 
   const updateDragHandlePosition = useCallback((force = false) => {
     if (typeof window === 'undefined') return;
@@ -379,15 +452,17 @@ const PetCanvas: React.FC = () => {
   }, [loadSettings]);
   // Initialize Pixi (v7) & load model once
   useEffect(() => {
-    if(!settingsLoaded) return;
+    if (!settingsLoaded) return;
     if (!canvasRef.current) return;
     (Live2DModel as unknown as { registerTicker: (t: unknown) => void }).registerTicker(Ticker as unknown as object);
 
     const container = canvasRef.current;
-    const app = new Application({ backgroundAlpha: 0, resizeTo: window, autoStart: true, antialias: true });
+    const app = new Application({ backgroundAlpha: 0, resizeTo: container, autoStart: true, antialias: true });
     appRef.current = app;
     let disposed = false;
     container.appendChild(app.view as HTMLCanvasElement);
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
 
     const attachEyeFollow = (modelInstance: Live2DModelType) => {
       if (detachEyeHandlerRef.current) {
@@ -707,7 +782,7 @@ const PetCanvas: React.FC = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       app.destroy(true);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded]);
 
   // React to scale changes
@@ -987,10 +1062,17 @@ const PetCanvas: React.FC = () => {
       >
         {motionText && (
           <div
-            className={`absolute pointer-events-none select-none z-20 ${bubblePosition ? '' : 'left-6 top-26'}`}
-            style={bubblePosition ? { left: `${bubblePosition.left}px`, top: `${bubblePosition.top}px`, transform: 'translate(-100%, -10%)' } : undefined}
+            ref={bubbleRef}
+            className="absolute pointer-events-none select-none z-20"
+            style={{
+              left: bubblePosition ? bubblePosition.left : 24,
+              top: bubblePosition ? bubblePosition.top : 24,
+              maxWidth: BUBBLE_MAX_WIDTH,
+              // ensure bubble re-measures correctly on content change
+              position: 'absolute'
+            }}
           >
-            <div className="chat chat-end max-w-xs sm:max-w-md">
+            <div className="chat chat-end">
               <div className="chat-bubble whitespace-pre-line text-sm sm:text-base leading-relaxed">
                 {motionText}
               </div>

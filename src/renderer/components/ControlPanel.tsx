@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { usePetStore } from '../state/usePetStore';
 
 const formatScale = (value: number) => value.toFixed(2);
@@ -9,20 +9,8 @@ const getWindowFlag = (key: string) => {
 	return win[key] === true;
 };
 
-const readWindowNumber = (key: string, fallback: number) => {
-	if (typeof window === 'undefined') return fallback;
-	const win = window as unknown as Record<string, unknown>;
-	const raw = win[key];
-	return typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
-};
 
 const setWindowFlag = (key: string, value: boolean) => {
-	if (typeof window === 'undefined') return;
-	const win = window as unknown as Record<string, unknown>;
-	win[key] = value;
-};
-
-const setWindowNumber = (key: string, value: number) => {
 	if (typeof window === 'undefined') return;
 	const win = window as unknown as Record<string, unknown>;
 	win[key] = value;
@@ -34,7 +22,7 @@ const ControlPanel: React.FC = () => {
 	const nudgeScale = usePetStore(s => s.nudgeScale);
 	const resetScale = usePetStore(s => s.resetScale);
 	const ignoreMouse = usePetStore(s => s.ignoreMouse);
-	const toggleIgnoreMouse = usePetStore(s => s.toggleIgnoreMouse);
+	const setIgnoreMouse = usePetStore(s => s.setIgnoreMouse);
 	const modelLoadStatus = usePetStore(s => s.modelLoadStatus);
 	const modelLoadError = usePetStore(s => s.modelLoadError);
 	const availableMotions = usePetStore(s => s.availableMotions);
@@ -42,11 +30,27 @@ const ControlPanel: React.FC = () => {
 	const refreshMotions = usePetStore(s => s.refreshMotions);
 	const interruptMotion = usePetStore(s => s.interruptMotion);
 
+	const showDragHandleOnHover = usePetStore(s => s.showDragHandleOnHover);
+	const setShowDragHandleOnHover = usePetStore(s => s.setShowDragHandleOnHover);
+
+	const autoLaunchEnabled = usePetStore(s => s.autoLaunchEnabled);
+	const setAutoLaunchEnabled = usePetStore(s => s.setAutoLaunchEnabled);
+
+	const loadSettings = usePetStore(s => s.loadSettings);
+
 	const [motionDebug, setMotionDebug] = useState<boolean>(() => getWindowFlag('LIVE2D_MOTION_DEBUG'));
 	const [eyeDebug, setEyeDebug] = useState<boolean>(() => getWindowFlag('LIVE2D_EYE_DEBUG'));
 	const [forceFollow, setForceFollow] = useState<boolean>(() => getWindowFlag('LIVE2D_EYE_FORCE_ALWAYS'));
-	const [blendValue, setBlendValue] = useState<number>(() => readWindowNumber('LIVE2D_EYE_BLEND', 0.3));
-	const [forceBlendValue, setForceBlendValue] = useState<number>(() => readWindowNumber('LIVE2D_EYE_FORCE_BLEND', 0.5));
+	
+	// 控制面板初始化，因为electron中两边的状态是隔离的
+	useLayoutEffect(() => {
+		const off = loadSettings();
+		return () => {
+		  try {
+			if(off !== undefined && typeof off === 'function') off();
+		  } catch { /* empty */ }
+		};
+	  }, [loadSettings]);
 
 	useEffect(() => {
 		if (modelLoadStatus === 'loaded') {
@@ -87,18 +91,6 @@ const ControlPanel: React.FC = () => {
 		const next = !forceFollow;
 		setWindowFlag('LIVE2D_EYE_FORCE_ALWAYS', next);
 		setForceFollow(next);
-	};
-
-	const handleBlendChange = (value: number) => {
-		const clamped = Math.max(0, Math.min(1, value));
-		setWindowNumber('LIVE2D_EYE_BLEND', clamped);
-		setBlendValue(clamped);
-	};
-
-	const handleForceBlendChange = (value: number) => {
-		const clamped = Math.max(0, Math.min(1, value));
-		setWindowNumber('LIVE2D_EYE_FORCE_BLEND', clamped);
-		setForceBlendValue(clamped);
 	};
 
 	const handleMotionClick = (group: string) => {
@@ -146,7 +138,15 @@ const ControlPanel: React.FC = () => {
 					<header className="font-medium text-sm">交互</header>
 					<label className="label cursor-pointer justify-between p-0">
 						<span className="label-text text-sm">忽略鼠标</span>
-						<input type="checkbox" className="toggle toggle-sm" checked={ignoreMouse} onChange={toggleIgnoreMouse} />
+						<input type="checkbox" className="toggle toggle-sm" checked={ignoreMouse} onChange={e => setIgnoreMouse(e.target.checked)} />
+					</label>
+					<label className="label cursor-pointer justify-between p-0">
+						<span className="label-text text-sm">悬浮显示拖动</span>
+						<input type="checkbox" className="toggle toggle-sm" checked={showDragHandleOnHover} onChange={e => setShowDragHandleOnHover(e.target.checked)} />
+					</label>
+					<label className="label cursor-pointer justify-between p-0">
+						<span className="label-text text-sm">开机自启动</span>
+						<input type="checkbox" className="toggle toggle-sm" checked={autoLaunchEnabled} onChange={e => setAutoLaunchEnabled(e.target.checked)} />
 					</label>
 				</section>
 
@@ -181,34 +181,6 @@ const ControlPanel: React.FC = () => {
 						<button type="button" className={`btn btn-xs ${motionDebug ? 'btn-accent' : 'btn-outline'}`} onClick={handleToggleMotionDebug}>Motion Debug</button>
 						<button type="button" className={`btn btn-xs ${eyeDebug ? 'btn-accent' : 'btn-outline'}`} onClick={handleToggleEyeDebug}>Eye Debug</button>
 						<button type="button" className={`btn btn-xs ${forceFollow ? 'btn-accent' : 'btn-outline'}`} onClick={handleToggleForceFollow}>强制最终跟随</button>
-					</div>
-					<div className="space-y-2">
-						<label className="flex items-center justify-between text-xs gap-2">
-							<span>非 idle 混合强度</span>
-							<span className="tabular-nums">{blendValue.toFixed(2)}</span>
-						</label>
-						<input
-							type="range"
-							min="0"
-							max="1"
-							step="0.05"
-							value={blendValue}
-							onChange={event => handleBlendChange(parseFloat(event.target.value))}
-							className="range range-xs"
-						/>
-						<label className="flex items-center justify-between text-xs gap-2">
-							<span>强制跟随混合</span>
-							<span className="tabular-nums">{forceBlendValue.toFixed(2)}</span>
-						</label>
-						<input
-							type="range"
-							min="0"
-							max="1"
-							step="0.05"
-							value={forceBlendValue}
-							onChange={event => handleForceBlendChange(parseFloat(event.target.value))}
-							className="range range-xs"
-						/>
 					</div>
 				</section>
 			</div>

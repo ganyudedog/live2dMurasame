@@ -2,20 +2,11 @@ declare global {
   type PetModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
   interface PetSettingsPayload {
+    scale?: number;
+    ignoreMouse?: boolean;
     showDragHandleOnHover?: boolean;
     autoLaunch?: boolean;
-  }
-
-  interface PetStateSnapshot {
-    scale: number;
-    showDragHandleOnHover: boolean;
-    autoLaunchEnabled: boolean;
-    modelLoadStatus: PetModelLoadStatus;
-    modelLoadError?: string;
-    availableMotions: string[];
-    playingMotion: string | null;
-    playingMotionText: string | null;
-    playingMotionSound: string | null;
+    forcedFollow?: boolean;
   }
 
   type PetControlAction =
@@ -31,13 +22,7 @@ declare global {
   interface PetAPI {
     getSettings?: () => Promise<PetSettingsPayload | undefined>;
     updateSettings?: (patch: PetSettingsPayload) => Promise<PetSettingsPayload | undefined>;
-    moveWindow?: (position: { x: number; y: number }) => Promise<void>;
-    onSettingsUpdated?: (callback: (settings: PetSettingsPayload) => void) => () => void;
-    reportState?: (state: PetStateSnapshot) => void;
-    requestState?: () => Promise<PetStateSnapshot | undefined>;
-    onStateUpdate?: (callback: (state: PetStateSnapshot) => void) => () => void;
-    dispatchAction?: (action: PetControlAction) => Promise<boolean>;
-    onAction?: (callback: (action: PetControlAction) => void) => () => void;
+    onSettingsUpdated?: (callback: (settings: PetSettingsPayload) => void) => void;
   }
 
   interface Window {

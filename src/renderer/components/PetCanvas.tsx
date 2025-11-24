@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useEffect, useRef, useCallback, useState } from 'react';
+
+import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from 'react';
 import { Application, Ticker } from 'pixi.js';
 import { usePetStore } from '../state/usePetStore';
 import { loadModel } from '../live2d/loader';
@@ -364,7 +365,14 @@ const PetCanvas: React.FC = () => {
   }, [scale, updateBubblePosition, updateDragHandlePosition]);
 
   // Load persisted settings
-  useEffect(() => { loadSettings(); }, [loadSettings]);
+  useLayoutEffect(() => {
+    const off = loadSettings();
+    return () => {
+      try {
+        if(off !== undefined && typeof off === 'function') off();
+      } catch { /* empty */ }
+    };
+  }, [loadSettings]);
 
   // Initialize Pixi (v7) & load model once
   useEffect(() => {

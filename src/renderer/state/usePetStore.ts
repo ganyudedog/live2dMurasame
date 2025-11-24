@@ -25,7 +25,7 @@ interface PetStoreState {
 	playingMotion: string | null;
 	playingMotionText: string | null;
 	playingMotionSound: string | null;
-	// settingsLoaded: boolean; 移除初始化标识，因为js环境隔离的问题，需要多次调用
+	settingsLoaded: boolean;  // 延迟模型加载，先加载设置
 	motionManager: MotionManager;
 	loadSettings: () => (()=>void) | undefined;
 	setScale: (value: number) => void;
@@ -77,6 +77,7 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 		showDragHandleOnHover: DEFAULT_SHOW_DRAG_HANDLE_ON_HOVER,
 		autoLaunchEnabled: DEFAULT_AUTO_LAUNCH,
 		forcedFollow: false,
+		settingsLoaded: false,  // 延迟模型加载，先加载设置
 		model: null,
 		modelLoadStatus: 'idle',
 		modelLoadError: undefined,
@@ -123,6 +124,9 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 					}
 				}).catch(error => {
 					console.warn('[PetStore] load remote settings failed', error);
+				})
+				.finally(() => {
+					set({ settingsLoaded: true });
 				});
 			}
 			let off: (()=>void) | undefined;

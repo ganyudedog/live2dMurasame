@@ -53,9 +53,11 @@ const TOUCH_PRIORITY = ((): string[] => {
 })();
 
 const PetCanvas: React.FC = () => {
+  // 延迟加载模型
+  const settingsLoaded = usePetStore(s => s.settingsLoaded);
+  const loadSettings = usePetStore(s => s.loadSettings);
   const canvasRef = useRef<HTMLDivElement>(null);
   const scale = usePetStore(s => s.scale);
-  const loadSettings = usePetStore(s => s.loadSettings);
   const ignoreMouse = usePetStore(s => s.ignoreMouse);
   const setModel = usePetStore(s => s.setModel);
   const setModelLoadStatus = usePetStore(s => s.setModelLoadStatus);
@@ -90,6 +92,7 @@ const PetCanvas: React.FC = () => {
   const dragHandleHoverRef = useRef(false);
   const pointerInsideModelRef = useRef(false);
   const dragHandleHideTimerRef = useRef<number | null>(null);
+
 
   const setDragHandleVisibility = useCallback((visible: boolean) => {
     if (dragHandleVisibleRef.current === visible) return;
@@ -364,18 +367,19 @@ const PetCanvas: React.FC = () => {
     updateDragHandlePosition(true);
   }, [scale, updateBubblePosition, updateDragHandlePosition]);
 
+
   // Load persisted settings
   useLayoutEffect(() => {
     const off = loadSettings();
     return () => {
       try {
-        if(off !== undefined && typeof off === 'function') off();
+        if (off !== undefined && typeof off === 'function') off();
       } catch { /* empty */ }
     };
   }, [loadSettings]);
-
   // Initialize Pixi (v7) & load model once
   useEffect(() => {
+    if(!settingsLoaded) return;
     if (!canvasRef.current) return;
     (Live2DModel as unknown as { registerTicker: (t: unknown) => void }).registerTicker(Ticker as unknown as object);
 
@@ -703,8 +707,8 @@ const PetCanvas: React.FC = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       app.destroy(true);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsLoaded]);
 
   // React to scale changes
   useEffect(() => {

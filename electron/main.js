@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -229,8 +229,8 @@ const broadcastSettings = () => {
 };
 const createMainWindow = () => {
     mainWindow = new BrowserWindow({
-        width: 500,
-        height: 900,
+        width: 600,
+        height: 1000,
         hasShadow: false,
         transparent: true,
         resizable: true,
@@ -275,10 +275,43 @@ ipcMain.handle('pet:getSettings', () => {
 
 ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.setSize(Math.max(200, Math.floor(width)), Math.max(800, Math.floor(height)));
+        mainWindow.setSize(Math.max(75, Math.floor(width)), Math.max(250, Math.floor(height)));
     }
     }
 );
+
+ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
+    try {
+        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+        if (!target || target.isDestroyed()) return;
+        const enabled = Boolean(passthrough);
+        target.setIgnoreMouseEvents(enabled, { forward: true });
+        return enabled;
+    } catch (error) {
+        console.warn('[pet] setMousePassthrough failed', error);
+        throw error;
+    }
+});
+
+ipcMain.handle('pet:getCursorScreenPoint', () => {
+    try {
+        return screen.getCursorScreenPoint();
+    } catch (error) {
+        console.warn('[pet] getCursorScreenPoint failed', error);
+        return null;
+    }
+});
+
+ipcMain.handle('pet:getWindowBounds', (event) => {
+    try {
+        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+        if (!target || target.isDestroyed()) return null;
+        return target.getBounds();
+    } catch (error) {
+        console.warn('[pet] getWindowBounds failed', error);
+        return null;
+    }
+});
 
 ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
     const safePatch = {};

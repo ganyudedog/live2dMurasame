@@ -35,6 +35,7 @@ const BUBBLE_PADDING = 12; // padding inside window edges
 const RESIZE_THROTTLE_MS = 120;
 const MIN_BASE_WIDTH = 300; // fallback minimal width (beyond Electron min)
 const MIN_BASE_HEIGHT = 800; // keep consistent with main.js min height
+const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
 
 const clamp = (value: number, min: number, max: number) => {
   if (!Number.isFinite(value)) return min;
@@ -96,6 +97,7 @@ const PetCanvas: React.FC = () => {
   const modelBaseUrlRef = useRef<string | null>(null);
   const surrogateAudioRef = useRef<HTMLAudioElement | null>(null);
   const [bubblePosition, setBubblePosition] = useState<{ left: number; top: number } | null>(null);
+  const [bubbleAlignment, setBubbleAlignment] = useState<'left' | 'right'>('left');
   const bubbleRef = useRef<HTMLDivElement | null>(null);
   const lastResizeAtRef = useRef(0);
   const lastRequestedSizeRef = useRef<{ w: number; h: number } | null>(null);
@@ -107,9 +109,42 @@ const PetCanvas: React.FC = () => {
   const dragHandleVisibleRef = useRef(false);
   const dragHandleHoverRef = useRef(false);
   const pointerInsideModelRef = useRef(false);
+  const pointerInsideHandleRef = useRef(false);
+  const pointerInsideBubbleRef = useRef(false);
+  const contextZoneStyleRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [contextZoneStyle, setContextZoneStyle] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [contextZoneAlignment, setContextZoneAlignment] = useState<'left' | 'right'>('right');
+  const contextZoneAlignmentRef = useRef<'left' | 'right'>('right');
   const dragHandleHideTimerRef = useRef<number | null>(null);
+  const mousePassthroughRef = useRef<boolean | null>(null);
+  const bubbleAlignmentRef = useRef<'left' | 'right'>('left');
+  const pointerInsideContextZoneRef = useRef(false);
+  const contextZoneActiveUntilRef = useRef(0);
+  const contextZoneReleaseTimerRef = useRef<number | null>(null);
+  const recomputeWindowPassthroughRef = useRef<() => void>(() => {});
+  const updateDragHandlePositionRef = useRef<(force?: boolean) => void>(() => {});
+  const cursorPollRafRef = useRef<number | null>(null);
+  const clearContextZoneLatchTimer = useCallback(() => {
+    if (contextZoneReleaseTimerRef.current !== null) {
+      if (typeof window !== 'undefined') {
+        window.clearTimeout(contextZoneReleaseTimerRef.current);
+      }
+      contextZoneReleaseTimerRef.current = null;
+    }
+  }, []);
 
-
+  const scheduleContextZoneLatchCheck = useCallback((targetTimestamp: number) => {
+    if (typeof window === 'undefined') return;
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    const delay = Math.max(24, targetTimestamp - now);
+    clearContextZoneLatchTimer();
+    contextZoneReleaseTimerRef.current = window.setTimeout(() => {
+      contextZoneReleaseTimerRef.current = null;
+      recomputeWindowPassthroughRef.current();
+    }, delay);
+  }, [clearContextZoneLatchTimer]);
   const setDragHandleVisibility = useCallback((visible: boolean) => {
     if (dragHandleVisibleRef.current === visible) return;
     dragHandleVisibleRef.current = visible;
@@ -189,6 +224,7 @@ const PetCanvas: React.FC = () => {
     if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) return;
     lastResizeAtRef.current = now;
     lastRequestedSizeRef.current = { w: width, h: height };
+    console.log('[PetCanvas] requestResize', { width, height });
     try {
       const api = (window as any).petAPI;
       if (typeof api?.setSize === 'function') {
@@ -274,7 +310,47 @@ const PetCanvas: React.FC = () => {
     const bubbleWidth = bubbleRect.width || BUBBLE_MAX_WIDTH;
     const bubbleHeight = bubbleRect.height || 40;
 
-    let targetX = anchorDomX - containerRect.left - bubbleWidth - BUBBLE_GAP; // to the left of head
+    const modelLeftDom = anchorDomX - containerRect.left;
+    const modelDomWidth = (bounds.width / screen.width) * canvasRect.width;
+    const modelRightDom = modelLeftDom + modelDomWidth;
+
+    const internalLeftSpace = modelLeftDom - BUBBLE_PADDING;
+    const internalRightSpace = containerRect.width - modelRightDom - BUBBLE_PADDING;
+    const bubbleHorizontalSpaceNeeded = bubbleWidth + BUBBLE_GAP;
+    const leftFits = internalLeftSpace >= bubbleHorizontalSpaceNeeded;
+    const rightFits = internalRightSpace >= bubbleHorizontalSpaceNeeded;
+
+    const screenObj = window.screen as unknown as { availLeft?: number; availWidth?: number; width?: number };
+    const screenAvailLeft = typeof screenObj?.availLeft === 'number' ? screenObj.availLeft : 0;
+    const screenAvailWidth = typeof screenObj?.availWidth === 'number'
+      ? screenObj.availWidth
+      : (typeof screenObj?.width === 'number' ? screenObj.width : window.innerWidth);
+    const windowGlobalLeft = window.screenX ?? window.screenLeft ?? 0;
+    const windowGlobalWidth = window.outerWidth || containerRect.width;
+    const rawSpaceLeftScreen = windowGlobalLeft - screenAvailLeft;
+    const rawSpaceRightScreen = (screenAvailLeft + screenAvailWidth) - (windowGlobalLeft + windowGlobalWidth);
+    const spaceLeftScreen = Number.isFinite(rawSpaceLeftScreen) ? rawSpaceLeftScreen : 0;
+    const spaceRightScreen = Number.isFinite(rawSpaceRightScreen) ? rawSpaceRightScreen : 0;
+    const preferLeftByScreen = spaceLeftScreen >= spaceRightScreen;
+    const preferLeftByInternal = internalLeftSpace >= internalRightSpace;
+
+    let nextBubbleSide: 'left' | 'right';
+    if (!leftFits && !rightFits) {
+      nextBubbleSide = preferLeftByScreen ? 'left' : 'right';
+    } else if (!leftFits) {
+      nextBubbleSide = 'right';
+    } else if (!rightFits) {
+      nextBubbleSide = 'left';
+    } else {
+      nextBubbleSide = preferLeftByScreen ? 'left' : 'right';
+      if (spaceLeftScreen === spaceRightScreen && internalLeftSpace !== internalRightSpace) {
+        nextBubbleSide = preferLeftByInternal ? 'left' : 'right';
+      }
+    }
+
+    let targetX = nextBubbleSide === 'left'
+      ? modelLeftDom - bubbleWidth - BUBBLE_GAP
+      : modelRightDom + BUBBLE_GAP;
     let targetY = anchorDomY - containerRect.top - bubbleHeight * 0.5; // vertically centered with head region
 
     // Clamp inside container
@@ -287,24 +363,39 @@ const PetCanvas: React.FC = () => {
 
     const nextPosition = { left: targetX, top: targetY };
 
-    // Calculate desired window size to fit bubble (model right + gap + bubble width + padding)
-    const modelLeftDom = anchorDomX - canvasRect.left;
-    const modelDomWidth = (bounds.width / screen.width) * canvasRect.width;
-    const bubbleLeftSpaceNeeded = bubbleWidth + BUBBLE_GAP + BUBBLE_PADDING;
-    const leftSpaceDeficit = Math.max(0, bubbleLeftSpaceNeeded - modelLeftDom);
-    const baseWidth = Math.ceil(Math.max(MIN_BASE_WIDTH, modelDomWidth + BUBBLE_PADDING * 2));
-    const requiredWidth = Math.ceil(containerRect.width + leftSpaceDeficit);
-    const requiredHeight = Math.ceil(Math.max(containerRect.height, targetY + bubbleHeight + BUBBLE_PADDING));
-    const desiredWidth = Math.max(baseWidth, requiredWidth);
-    const desiredHeight = Math.max(MIN_BASE_HEIGHT, requiredHeight);
-    requestResize(desiredWidth, desiredHeight);
+    if (bubbleAlignmentRef.current !== nextBubbleSide) {
+      bubbleAlignmentRef.current = nextBubbleSide;
+      setBubbleAlignment(nextBubbleSide);
+      console.log('[PetCanvas] bubble alignment changed', {
+        nextBubbleSide,
+        spaceLeftScreen,
+        spaceRightScreen,
+        internalLeftSpace,
+        internalRightSpace,
+        leftFits,
+        rightFits,
+      });
+    }
+
+    if (!leftFits && !rightFits) {
+      const bestSpace = Math.max(internalLeftSpace, internalRightSpace);
+      const widthDeficit = bubbleHorizontalSpaceNeeded - bestSpace;
+      if (widthDeficit > 0.5) {
+        const baseWidth = Math.ceil(Math.max(MIN_BASE_WIDTH, modelDomWidth + BUBBLE_PADDING * 2));
+        const requiredWidth = Math.ceil(containerRect.width + widthDeficit);
+        const desiredWidth = Math.max(baseWidth, requiredWidth);
+        const requiredHeight = Math.ceil(Math.max(containerRect.height, targetY + bubbleHeight + BUBBLE_PADDING));
+        const desiredHeight = Math.max(MIN_BASE_HEIGHT, requiredHeight);
+        requestResize(desiredWidth, desiredHeight);
+      }
+    }
 
     const prev = bubblePositionRef.current;
     if (!prev || Math.abs(prev.left - nextPosition.left) > 0.5 || Math.abs(prev.top - nextPosition.top) > 0.5) {
       bubblePositionRef.current = nextPosition;
       setBubblePosition(nextPosition);
     }
-  }, [setBubblePosition, requestResize]);
+  }, [setBubblePosition, requestResize, setBubbleAlignment]);
 
   const updateDragHandlePosition = useCallback((force = false) => {
     if (typeof window === 'undefined') return;
@@ -360,8 +451,9 @@ const PetCanvas: React.FC = () => {
       setDragHandlePosition(nextPosition);
     }
     let pointerInsideModel = false;
-    if (showDragHandleOnHover && canvasRect.width > 0 && canvasRect.height > 0) {
-      const pointerWithinCanvas = pointerX.current >= canvasRect.left && pointerX.current <= canvasRect.right && pointerY.current >= canvasRect.top && pointerY.current <= canvasRect.bottom;
+    let pointerWithinCanvas = false;
+    if (canvasRect.width > 0 && canvasRect.height > 0) {
+      pointerWithinCanvas = pointerX.current >= canvasRect.left && pointerX.current <= canvasRect.right && pointerY.current >= canvasRect.top && pointerY.current <= canvasRect.bottom;
       if (pointerWithinCanvas) {
         const pointerCanvasX = ((pointerX.current - canvasRect.left) / canvasRect.width) * app.renderer.screen.width;
         const pointerCanvasY = ((pointerY.current - canvasRect.top) / canvasRect.height) * app.renderer.screen.height;
@@ -369,15 +461,281 @@ const PetCanvas: React.FC = () => {
       }
     }
 
+    const contextZoneWidth = Math.max(48, Math.min(96, containerRect.width * 0.28));
+    const contextZoneHeight = Math.max(48, Math.min(120, containerRect.height * 0.18));
+    const screenObj = window.screen as unknown as { availLeft?: number; availWidth?: number; width?: number };
+    const screenAvailLeft = typeof screenObj?.availLeft === 'number' ? screenObj.availLeft : 0;
+    const screenAvailWidth = typeof screenObj?.availWidth === 'number'
+      ? screenObj.availWidth
+      : (typeof screenObj?.width === 'number' ? screenObj.width : window.innerWidth);
+    const windowGlobalLeft = window.screenX ?? window.screenLeft ?? 0;
+    const windowGlobalWidth = window.outerWidth || containerRect.width;
+    const rawLeftSpace = windowGlobalLeft - screenAvailLeft;
+    const rawRightSpace = (screenAvailLeft + screenAvailWidth) - (windowGlobalLeft + windowGlobalWidth);
+    const safeLeftSpace = Number.isFinite(rawLeftSpace) ? rawLeftSpace : 0;
+    const safeRightSpace = Number.isFinite(rawRightSpace) ? rawRightSpace : 0;
+    const leftMargin = 20;
+    const rightMargin = 20;
+    const internalLeftRoom = containerRect.width - contextZoneWidth - leftMargin;
+    const internalRightRoom = containerRect.width - contextZoneWidth - rightMargin;
+    const EDGE_THRESHOLD = 48;
+    let nextContextAlignment: 'left' | 'right';
+    if (internalRightRoom < 12 && internalLeftRoom >= internalRightRoom) {
+      nextContextAlignment = 'left';
+    } else if (internalLeftRoom < 12 && internalRightRoom >= internalLeftRoom) {
+      nextContextAlignment = 'right';
+    } else if (safeRightSpace < EDGE_THRESHOLD && safeLeftSpace > safeRightSpace) {
+      nextContextAlignment = 'left';
+    } else if (safeLeftSpace < EDGE_THRESHOLD && safeRightSpace >= safeLeftSpace) {
+      nextContextAlignment = 'right';
+    } else {
+      nextContextAlignment = safeRightSpace >= safeLeftSpace ? 'right' : 'left';
+    }
+
+    if (contextZoneAlignmentRef.current !== nextContextAlignment) {
+      contextZoneAlignmentRef.current = nextContextAlignment;
+      setContextZoneAlignment(nextContextAlignment);
+      console.log('[PetCanvas] context zone alignment changed', {
+        nextContextAlignment,
+        safeLeftSpace,
+        safeRightSpace,
+        internalLeftRoom,
+        internalRightRoom,
+      });
+    }
+
+    let contextZoneLeft = nextContextAlignment === 'right'
+      ? containerRect.width - contextZoneWidth - rightMargin
+      : leftMargin;
+    contextZoneLeft = clamp(contextZoneLeft, 12, Math.max(12, containerRect.width - contextZoneWidth - 12));
+    const contextZoneTop = clamp(Math.max(12, Math.min(containerRect.height - contextZoneHeight - 12, 24)), 12, Math.max(12, containerRect.height - contextZoneHeight - 12));
+
+    const contextZoneLeftAbs = containerRect.left + contextZoneLeft;
+    const contextZoneTopAbs = containerRect.top + contextZoneTop;
+    const contextZoneRightAbs = contextZoneLeftAbs + contextZoneWidth;
+    const contextZoneBottomAbs = contextZoneTopAbs + contextZoneHeight;
+    const nextContextZoneStyle = {
+      left: contextZoneLeft,
+      top: contextZoneTop,
+      width: contextZoneWidth,
+      height: contextZoneHeight,
+    };
+    const prevContextZoneStyle = contextZoneStyleRef.current;
+    if (!prevContextZoneStyle
+      || Math.abs(prevContextZoneStyle.left - nextContextZoneStyle.left) > 0.5
+      || Math.abs(prevContextZoneStyle.top - nextContextZoneStyle.top) > 0.5
+      || Math.abs(prevContextZoneStyle.width - nextContextZoneStyle.width) > 0.5
+      || Math.abs(prevContextZoneStyle.height - nextContextZoneStyle.height) > 0.5) {
+      contextZoneStyleRef.current = nextContextZoneStyle;
+      setContextZoneStyle(nextContextZoneStyle);
+    }
+    let pointerInsideContextZone = false;
+    if (Number.isFinite(pointerX.current) && Number.isFinite(pointerY.current)) {
+      pointerInsideContextZone = pointerX.current >= contextZoneLeftAbs
+        && pointerX.current <= contextZoneRightAbs
+        && pointerY.current >= contextZoneTopAbs
+        && pointerY.current <= contextZoneBottomAbs;
+    }
+    const nowForZone = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    if (pointerInsideContextZone) {
+      const candidateExpiry = nowForZone + CONTEXT_ZONE_LATCH_MS;
+      const nextExpiry = candidateExpiry > contextZoneActiveUntilRef.current
+        ? candidateExpiry
+        : contextZoneActiveUntilRef.current;
+      const shouldReschedule = nextExpiry !== contextZoneActiveUntilRef.current || contextZoneReleaseTimerRef.current === null;
+      contextZoneActiveUntilRef.current = nextExpiry;
+      if (shouldReschedule) {
+        scheduleContextZoneLatchCheck(contextZoneActiveUntilRef.current);
+      }
+    } else if (contextZoneActiveUntilRef.current > nowForZone) {
+      if (contextZoneReleaseTimerRef.current === null) {
+        scheduleContextZoneLatchCheck(contextZoneActiveUntilRef.current);
+      }
+    } else if (contextZoneActiveUntilRef.current !== 0) {
+      contextZoneActiveUntilRef.current = 0;
+      clearContextZoneLatchTimer();
+    }
+    if (pointerInsideContextZoneRef.current !== pointerInsideContextZone) {
+      pointerInsideContextZoneRef.current = pointerInsideContextZone;
+      console.log('[PetCanvas] pointerInsideContextZone changed', {
+        pointerInsideContextZone,
+        contextZone: {
+          left: contextZoneLeft,
+          top: contextZoneTop,
+          width: contextZoneWidth,
+          height: contextZoneHeight,
+        },
+      });
+      recomputeWindowPassthroughRef.current();
+    }
+
     if (pointerInsideModelRef.current !== pointerInsideModel) {
       pointerInsideModelRef.current = pointerInsideModel;
-      if (pointerInsideModel && !dragHandleHoverRef.current) {
+      console.log('[PetCanvas] pointerInsideModel changed', { pointerInsideModel, pointerWithinCanvas });
+      if (pointerInsideModel && !dragHandleHoverRef.current && showDragHandleOnHover) {
         triggerDragHandleReveal();
-      } else if (!pointerInsideModel && !dragHandleHoverRef.current) {
+      } else if (!pointerInsideModel && !dragHandleHoverRef.current && showDragHandleOnHover) {
         scheduleDragHandleHide();
       }
+      recomputeWindowPassthroughRef.current();
     }
-  }, [setDragHandlePosition, showDragHandleOnHover, scheduleDragHandleHide, triggerDragHandleReveal]);
+
+    let pointerInsideBubble = false;
+    const bubbleEl = bubbleRef.current;
+    if (bubbleEl) {
+      const bubbleRect = bubbleEl.getBoundingClientRect();
+      pointerInsideBubble = pointerX.current >= bubbleRect.left
+        && pointerX.current <= bubbleRect.right
+        && pointerY.current >= bubbleRect.top
+        && pointerY.current <= bubbleRect.bottom;
+    }
+
+    if (pointerInsideBubbleRef.current !== pointerInsideBubble) {
+      pointerInsideBubbleRef.current = pointerInsideBubble;
+      console.log('[PetCanvas] pointerInsideBubble changed', { pointerInsideBubble });
+      recomputeWindowPassthroughRef.current();
+    }
+
+    let pointerInsideHandle = false;
+    if (dragHandleRef.current && (dragHandleVisibleRef.current || !showDragHandleOnHover)) {
+      const handleRect = dragHandleRef.current.getBoundingClientRect();
+      pointerInsideHandle = pointerX.current >= handleRect.left
+        && pointerX.current <= handleRect.right
+        && pointerY.current >= handleRect.top
+        && pointerY.current <= handleRect.bottom;
+    }
+    if (pointerInsideHandleRef.current !== pointerInsideHandle) {
+      pointerInsideHandleRef.current = pointerInsideHandle;
+      console.log('[PetCanvas] pointerInsideHandle changed', { pointerInsideHandle });
+      if (pointerInsideHandle) {
+        dragHandleHoverRef.current = true;
+        if (showDragHandleOnHover) {
+          cancelDragHandleHide();
+          setDragHandleVisibility(true);
+        }
+      } else {
+        dragHandleHoverRef.current = false;
+        if (showDragHandleOnHover && !pointerInsideModelRef.current) {
+          scheduleDragHandleHide();
+        }
+      }
+      recomputeWindowPassthroughRef.current();
+    }
+  }, [setDragHandlePosition, showDragHandleOnHover, scheduleDragHandleHide, triggerDragHandleReveal, cancelDragHandleHide, setDragHandleVisibility, scheduleContextZoneLatchCheck, clearContextZoneLatchTimer, setContextZoneStyle, setContextZoneAlignment]);
+
+  updateDragHandlePositionRef.current = updateDragHandlePosition;
+
+  const pollCursorPosition = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (!mousePassthroughRef.current) {
+      cursorPollRafRef.current = null;
+      return;
+    }
+    if (cursorPollRafRef.current === null) {
+      cursorPollRafRef.current = -1; // sentinel: poll in-flight
+    }
+    const api = (window as any).petAPI;
+    if (!api?.getCursorScreenPoint) {
+      cursorPollRafRef.current = null;
+      return;
+    }
+    const boundsPromise = typeof api.getWindowBounds === 'function'
+      ? api.getWindowBounds()
+      : Promise.resolve(null);
+    Promise.all([api.getCursorScreenPoint(), boundsPromise])
+      .then(([point, bounds]: [{ x: number; y: number } | null, { x: number; y: number; width: number; height: number } | null]) => {
+        if (!point || !mousePassthroughRef.current) return;
+        const originX = bounds?.x ?? (window.screenX ?? window.screenLeft ?? 0);
+        const originY = bounds?.y ?? (window.screenY ?? window.screenTop ?? 0);
+        const localX = point.x - originX;
+        const localY = point.y - originY;
+        pointerX.current = localX;
+        pointerY.current = localY;
+        console.log('[PetCanvas] cursor poll', { point, bounds, originX, originY, localX, localY, devicePixelRatio: window.devicePixelRatio });
+        updateDragHandlePositionRef.current?.(true);
+        recomputeWindowPassthroughRef.current();
+      })
+      .catch(error => {
+        console.log('[PetCanvas] cursor poll failed', error);
+      })
+      .finally(() => {
+        if (!mousePassthroughRef.current || typeof window === 'undefined') {
+          cursorPollRafRef.current = null;
+          return;
+        }
+        cursorPollRafRef.current = window.requestAnimationFrame(pollCursorPosition);
+      });
+  }, []);
+
+  const startCursorPoll = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (cursorPollRafRef.current !== null) return;
+    console.log('[PetCanvas] start cursor poll');
+    cursorPollRafRef.current = -1;
+    pollCursorPosition();
+  }, [pollCursorPosition]);
+
+  const stopCursorPoll = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (cursorPollRafRef.current !== null && cursorPollRafRef.current >= 0) {
+      window.cancelAnimationFrame(cursorPollRafRef.current);
+    }
+    cursorPollRafRef.current = null;
+    console.log('[PetCanvas] stop cursor poll');
+  }, []);
+
+  const setWindowMousePassthrough = useCallback((passthrough: boolean) => {
+    if (typeof window === 'undefined') return;
+    if (mousePassthroughRef.current === passthrough) return;
+    mousePassthroughRef.current = passthrough;
+    console.log('[PetCanvas] setWindowMousePassthrough', { passthrough });
+    const bridge = (window as any).petAPI?.setMousePassthrough?.(passthrough);
+    if (bridge && typeof bridge.then === 'function') {
+      bridge.then(() => {
+        console.log('[PetCanvas] setMousePassthrough resolved', { passthrough });
+      }).catch((error: unknown) => {
+        console.warn('[PetCanvas] setMousePassthrough rejected', error);
+      });
+    }
+    if (passthrough) {
+      startCursorPoll();
+    } else {
+      stopCursorPoll();
+    }
+  }, [startCursorPoll, stopCursorPoll]);
+
+  const recomputeWindowPassthrough = useCallback(() => {
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    const contextZoneActive = pointerInsideContextZoneRef.current || contextZoneActiveUntilRef.current > now;
+    if (!contextZoneActive && contextZoneActiveUntilRef.current !== 0) {
+      contextZoneActiveUntilRef.current = 0;
+      clearContextZoneLatchTimer();
+    }
+    const shouldCapture = contextZoneActive || (!ignoreMouseRef.current && (
+      pointerInsideModelRef.current ||
+      pointerInsideBubbleRef.current ||
+      pointerInsideHandleRef.current ||
+      dragHandleHoverRef.current
+    ));
+    console.log('[PetCanvas] recomputeWindowPassthrough', {
+      ignoreMouse: ignoreMouseRef.current,
+      pointerInsideModel: pointerInsideModelRef.current,
+      pointerInsideBubble: pointerInsideBubbleRef.current,
+      pointerInsideHandle: pointerInsideHandleRef.current,
+      dragHandleHover: dragHandleHoverRef.current,
+      pointerInsideContextZone: pointerInsideContextZoneRef.current,
+      contextZoneActive,
+      contextZoneActiveUntil: contextZoneActiveUntilRef.current,
+      shouldCapture,
+    });
+    setWindowMousePassthrough(!shouldCapture);
+  }, [setWindowMousePassthrough, clearContextZoneLatchTimer]);
+
+  recomputeWindowPassthroughRef.current = recomputeWindowPassthrough;
 
   const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
     const settings = (modelInstance as any).internalModel?.settings;
@@ -762,6 +1120,7 @@ const PetCanvas: React.FC = () => {
     const handleMouseMove = (e: MouseEvent) => {
       pointerX.current = e.clientX;
       pointerY.current = e.clientY;
+      updateDragHandlePosition(true);
     };
     pointerX.current = window.innerWidth / 2;
     pointerY.current = window.innerHeight / 2;
@@ -807,7 +1166,18 @@ const PetCanvas: React.FC = () => {
 
   useEffect(() => {
     ignoreMouseRef.current = ignoreMouse;
-  }, [ignoreMouse]);
+    recomputeWindowPassthrough();
+  }, [ignoreMouse, recomputeWindowPassthrough]);
+
+  useEffect(() => {
+    recomputeWindowPassthrough();
+  }, [recomputeWindowPassthrough]);
+
+  useEffect(() => () => {
+    stopCursorPoll();
+    setWindowMousePassthrough(false);
+    clearContextZoneLatchTimer();
+  }, [setWindowMousePassthrough, stopCursorPoll, clearContextZoneLatchTimer]);
 
   useEffect(() => {
     if (!showDragHandleOnHover) {
@@ -853,6 +1223,15 @@ const PetCanvas: React.FC = () => {
     else if (ny <= xiongbuEnd) group = 'Tapxiongbu';
     else if (ny <= qunziEnd) group = 'Tapqunzi';
     else if (ny <= legEnd) group = 'Tapleg';
+
+    console.log('[PetCanvas] handlePointerTap', {
+      clientX,
+      clientY,
+      withinCanvas: withinX && withinY,
+      mappedGroup: group,
+      nx,
+      ny,
+    });
 
     if (!group) return;
 
@@ -900,19 +1279,29 @@ const PetCanvas: React.FC = () => {
       if (showDragHandleOnHover) {
         setDragHandleVisibility(true);
       }
+      console.log('[PetCanvas] drag handle enter');
+      recomputeWindowPassthrough();
     };
     const onLeave = () => {
       dragHandleHoverRef.current = false;
       scheduleDragHandleHide();
+      console.log('[PetCanvas] drag handle leave');
+      recomputeWindowPassthrough();
     };
     const onPointerDown = () => {
       dragHandleHoverRef.current = true;
       cancelDragHandleHide();
       setDragHandleVisibility(true);
+      console.log('[PetCanvas] drag handle pointerdown');
+      recomputeWindowPassthrough();
+      updateBubblePosition(true);
     };
     const onPointerUp = () => {
       dragHandleHoverRef.current = false;
       scheduleDragHandleHide();
+      console.log('[PetCanvas] drag handle pointerup');
+      recomputeWindowPassthrough();
+      updateBubblePosition(true);
     };
 
     handle.addEventListener('pointerenter', onEnter);
@@ -926,7 +1315,7 @@ const PetCanvas: React.FC = () => {
       handle.removeEventListener('pointerdown', onPointerDown);
       handle.removeEventListener('pointerup', onPointerUp);
     };
-  }, [dragHandlePosition, cancelDragHandleHide, scheduleDragHandleHide, setDragHandleVisibility, showDragHandleOnHover]);
+  }, [dragHandlePosition, cancelDragHandleHide, scheduleDragHandleHide, setDragHandleVisibility, showDragHandleOnHover, recomputeWindowPassthrough, updateBubblePosition]);
 
   useEffect(() => {
     motionTextRef.current = motionText;
@@ -1072,11 +1461,38 @@ const PetCanvas: React.FC = () => {
               position: 'absolute'
             }}
           >
-            <div className="chat chat-end">
+            <div className={`chat ${bubbleAlignment === 'left' ? 'chat-end' : 'chat-start'}`}>
               <div className="chat-bubble whitespace-pre-line text-sm sm:text-base leading-relaxed">
                 {motionText}
               </div>
             </div>
+          </div>
+        )}
+
+        {ignoreMouse && contextZoneStyle && (
+          <div
+            className="absolute z-30 font-medium tracking-tight"
+            style={{
+              left: contextZoneStyle.left,
+              top: contextZoneStyle.top,
+              width: contextZoneStyle.width,
+              height: contextZoneStyle.height,
+              border: '1px dashed rgba(148, 163, 184, 0.6)',
+              borderRadius: '12px',
+              color: 'rgba(226, 232, 240, 0.9)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: contextZoneAlignment === 'left' ? 'flex-start' : 'flex-end',
+              fontSize: '0.75rem',
+              letterSpacing: '0.02em',
+              background: 'rgba(15, 23, 42, 0.18)',
+              backdropFilter: 'blur(6px)',
+              pointerEvents: 'none',
+              padding: '0 10px',
+              textAlign: contextZoneAlignment === 'left' ? 'left' : 'right',
+            }}
+          >
+            右键菜单
           </div>
         )}
       </div>

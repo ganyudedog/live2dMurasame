@@ -125,7 +125,7 @@ const ensureControlPanelWindow = () => {
             nodeIntegration: false,
             contextIsolation: true,
             webSecurity: true,
-            sandbox:false,
+            sandbox: false,
             enableRemoteModule: false,
             preload: path.join(__dirname, 'preload.js'),
         },
@@ -274,11 +274,31 @@ ipcMain.handle('pet:getSettings', () => {
 });
 
 ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.setSize(Math.max(75, Math.floor(width)), Math.max(250, Math.floor(height)));
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+
+    const currentBounds = mainWindow.getBounds();
+    const safeWidth = Math.max(75, Math.floor(width));
+    const safeHeight = Math.max(250, Math.floor(height));
+
+    const widthDiff = safeWidth - currentBounds.width;
+    const heightDiff = safeHeight - currentBounds.height;
+
+    if (widthDiff === 0 && heightDiff === 0) {
+        return;
     }
-    }
-);
+
+    mainWindow.setSize(safeWidth, safeHeight);
+
+    const nextX = Math.round(currentBounds.x - widthDiff);
+    const nextY = Math.round(currentBounds.y - heightDiff);
+
+    const display = screen.getDisplayNearestPoint({ x: currentBounds.x, y: currentBounds.y });
+    const workArea = display?.workArea;
+    const clampX = workArea ? Math.min(Math.max(nextX, workArea.x), workArea.x + workArea.width - safeWidth) : nextX;
+    const clampY = workArea ? Math.min(Math.max(nextY, workArea.y), workArea.y + workArea.height - safeHeight) : nextY;
+
+    mainWindow.setPosition(clampX, clampY);
+});
 
 ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
     try {
@@ -313,7 +333,7 @@ ipcMain.handle('pet:getWindowBounds', (event) => {
     }
 });
 
-ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
+ipcMain.handle('pet:updateSettings', (_event, patch = {}) => {
     const safePatch = {};
     if (patch && typeof patch === 'object') {
         if (typeof patch.showDragHandleOnHover === 'boolean') {
@@ -329,7 +349,7 @@ ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
             safePatch.scale = patch.scale;
         }
 
-        if( typeof patch.forcedFollow === 'boolean') {
+        if (typeof patch.forcedFollow === 'boolean') {
             safePatch.forcedFollow = patch.forcedFollow;
         }
     }
@@ -342,7 +362,7 @@ ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
     const next = { ...current, ...safePatch };
     settingsCache = next;
     writeSettingsToDisk(next);
-    settingsLoaded =false;
+    settingsLoaded = false;
     broadcastSettings();
 
     if (Object.prototype.hasOwnProperty.call(safePatch, 'autoLaunch')) {

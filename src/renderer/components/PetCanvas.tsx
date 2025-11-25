@@ -37,6 +37,10 @@ const MIN_BASE_WIDTH = 300; // fallback minimal width (beyond Electron min)
 const MIN_BASE_HEIGHT = 800; // keep consistent with main.js min height
 const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
 
+const debugLog = (...args: Parameters<typeof console.log>): void => {
+  console.log(...args);
+};
+
 const clamp = (value: number, min: number, max: number) => {
   if (!Number.isFinite(value)) return min;
   if (value < min) return min;
@@ -56,6 +60,15 @@ const clampAngleY = (value: number): number => {
     ? (window as any).LIVE2D_ANGLE_MAX_UP
     : DEFAULT_ANGLE_MAX_UP;
   return Math.max(-40, Math.min(limit, value));
+};
+
+const getWindowRightEdge = () => {
+  if (typeof window === 'undefined') return 0;
+  const left = window.screenX ?? window.screenLeft ?? 0;
+  const width = window.outerWidth || window.innerWidth;
+  const safeLeft = Number.isFinite(left) ? left : 0;
+  const safeWidth = Number.isFinite(width) ? width : window.innerWidth;
+  return safeLeft + safeWidth;
 };
 
 const TOUCH_PRIORITY = ((): string[] => {
@@ -83,6 +96,7 @@ const PetCanvas: React.FC = () => {
 
   const modelRef = useRef<Live2DModelType | null>(null);
   const appRef = useRef<Application | null>(null);
+  const baseWindowSizeRef = useRef<{ width: number; height: number } | null>(null);
   const frameCountRef = useRef(0);
   const paramCacheRef = useRef<string[] | null>(null);
   const pointerX = useRef(0);
@@ -99,8 +113,16 @@ const PetCanvas: React.FC = () => {
   const [bubblePosition, setBubblePosition] = useState<{ left: number; top: number } | null>(null);
   const [bubbleAlignment, setBubbleAlignment] = useState<'left' | 'right'>('left');
   const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const [bubbleReady, setBubbleReady] = useState(false); // keep bubble hidden until layout settles
+  const bubbleReadyRef = useRef(false);
+  const commitBubbleReady = useCallback((next: boolean) => {
+    if (bubbleReadyRef.current === next) return;
+    bubbleReadyRef.current = next;
+    setBubbleReady(next);
+  }, [setBubbleReady]);
   const lastResizeAtRef = useRef(0);
   const lastRequestedSizeRef = useRef<{ w: number; h: number } | null>(null);
+  const autoResizeBackupRef = useRef<{ width: number; height: number } | null>(null);
   const dragHandlePositionRef = useRef<{ left: number; top: number; width: number } | null>(null);
   const lastDragHandleUpdateRef = useRef(0);
   const [dragHandlePosition, setDragHandlePosition] = useState<{ left: number; top: number; width: number } | null>(null);
@@ -108,6 +130,7 @@ const PetCanvas: React.FC = () => {
   const [dragHandleVisible, setDragHandleVisible] = useState(false);
   const dragHandleVisibleRef = useRef(false);
   const dragHandleHoverRef = useRef(false);
+  const dragHandleActiveRef = useRef(false);
   const pointerInsideModelRef = useRef(false);
   const pointerInsideHandleRef = useRef(false);
   const pointerInsideBubbleRef = useRef(false);
@@ -117,12 +140,16 @@ const PetCanvas: React.FC = () => {
   const contextZoneAlignmentRef = useRef<'left' | 'right'>('right');
   const dragHandleHideTimerRef = useRef<number | null>(null);
   const mousePassthroughRef = useRef<boolean | null>(null);
-  const bubbleAlignmentRef = useRef<'left' | 'right'>('left');
+  const bubbleAlignmentRef = useRef<'left' | 'right' | null>(null);
+  const rightEdgeBaselineRef = useRef<number | null>(null);
+  const pendingResizeRef = useRef<{ width: number; height: number } | null>(null);
+  const pendingResizeIssuedAtRef = useRef<number | null>(null);
+  const suppressResizeForBubbleRef = useRef(false);
   const pointerInsideContextZoneRef = useRef(false);
   const contextZoneActiveUntilRef = useRef(0);
   const contextZoneReleaseTimerRef = useRef<number | null>(null);
-  const recomputeWindowPassthroughRef = useRef<() => void>(() => {});
-  const updateDragHandlePositionRef = useRef<(force?: boolean) => void>(() => {});
+  const recomputeWindowPassthroughRef = useRef<() => void>(() => { });
+  const updateDragHandlePositionRef = useRef<(force?: boolean) => void>(() => { });
   const cursorPollRafRef = useRef<number | null>(null);
   const clearContextZoneLatchTimer = useCallback(() => {
     if (contextZoneReleaseTimerRef.current !== null) {
@@ -158,6 +185,13 @@ const PetCanvas: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const initialEdge = getWindowRightEdge();
+    rightEdgeBaselineRef.current = initialEdge;
+    debugLog('[PetCanvas] baseline init', { initialEdge });
+  }, []);
+
   const scheduleDragHandleHide = useCallback((delay = 3000) => {
     if (!showDragHandleOnHover) return;
     cancelDragHandleHide();
@@ -177,6 +211,7 @@ const PetCanvas: React.FC = () => {
 
   const hideDragHandleImmediately = useCallback(() => {
     cancelDragHandleHide();
+    dragHandleActiveRef.current = false;
     setDragHandleVisibility(false);
   }, [cancelDragHandleHide, setDragHandleVisibility]);
 
@@ -224,7 +259,7 @@ const PetCanvas: React.FC = () => {
     if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) return;
     lastResizeAtRef.current = now;
     lastRequestedSizeRef.current = { w: width, h: height };
-    console.log('[PetCanvas] requestResize', { width, height });
+    debugLog('[PetCanvas] requestResize', { width, height });
     try {
       const api = (window as any).petAPI;
       if (typeof api?.setSize === 'function') {
@@ -242,25 +277,11 @@ const PetCanvas: React.FC = () => {
       if (force) {
         bubblePositionRef.current = null;
         setBubblePosition(null);
-        // Bubble dismissed -> resize back to model-only width
-        const model = modelRef.current;
-        const app = appRef.current;
-        const container = canvasRef.current;
-        const canvas = (app?.view as HTMLCanvasElement | undefined) ?? undefined;
-        if (model && app && container && canvas) {
-          const bounds = model.getBounds?.();
-          const canvasRect = canvas.getBoundingClientRect();
-          if (bounds && canvasRect.width > 0) {
-            // model projected width in DOM
-            const screen = app.renderer?.screen;
-            if (screen?.width) {
-              const modelWidthRatio = bounds.width / screen.width;
-              const modelDomWidth = modelWidthRatio * canvasRect.width;
-              const baseWidth = Math.ceil(Math.max(MIN_BASE_WIDTH, modelDomWidth + BUBBLE_PADDING * 2));
-              const baseHeight = Math.max(MIN_BASE_HEIGHT, window.innerHeight); // keep height stable
-              requestResize(baseWidth, baseHeight);
-            }
-          }
+        commitBubbleReady(false);
+        const backup = autoResizeBackupRef.current;
+        if (backup) {
+          autoResizeBackupRef.current = null;
+          requestResize(backup.width, backup.height);
         }
       }
       return;
@@ -277,15 +298,69 @@ const PetCanvas: React.FC = () => {
     const container = canvasRef.current;
     const canvas = (app?.view as HTMLCanvasElement | undefined) ?? undefined;
     const bubbleEl = bubbleRef.current;
-    if (!model || !app || !container || !canvas || !bubbleEl) return;
+    if (!model || !app || !container || !canvas || !bubbleEl) {
+      commitBubbleReady(false);
+      return;
+    }
 
     const bounds = model.getBounds?.();
-    if (!bounds) return;
+    if (!bounds) {
+      commitBubbleReady(false);
+      return;
+    }
 
     const canvasRect = canvas.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
     const screen = app.renderer?.screen;
-    if (!screen?.width || !screen?.height || canvasRect.width === 0 || canvasRect.height === 0) return;
+    if (!screen?.width || !screen?.height || canvasRect.width === 0 || canvasRect.height === 0) {
+      commitBubbleReady(false);
+      return;
+    }
+
+    const pendingResize = pendingResizeRef.current;
+    if (pendingResize) {
+      const widthSatisfied = containerRect.width >= pendingResize.width - 1 || Math.abs(containerRect.width - pendingResize.width) < 1.2;
+      const heightSatisfied = containerRect.height >= pendingResize.height - 1 || Math.abs(containerRect.height - pendingResize.height) < 1.2;
+      if (!widthSatisfied || !heightSatisfied) {
+        const issuedAt = pendingResizeIssuedAtRef.current;
+        const nowTs = typeof performance !== 'undefined' && typeof performance.now === 'function'
+          ? performance.now()
+          : Date.now();
+        const elapsed = issuedAt !== null ? nowTs - issuedAt : null;
+        if (elapsed !== null && elapsed > 900) {
+          suppressResizeForBubbleRef.current = true;
+          pendingResizeRef.current = null;
+          pendingResizeIssuedAtRef.current = null;
+          debugLog('[PetCanvas] resize fallback after timeout', {
+            pendingResize,
+            containerWidth: containerRect.width,
+            containerHeight: containerRect.height,
+            widthSatisfied,
+            heightSatisfied,
+            elapsed,
+          });
+        } else {
+          commitBubbleReady(false);
+          debugLog('[PetCanvas] waiting for resize to settle', {
+            pendingResize,
+            containerWidth: containerRect.width,
+            containerHeight: containerRect.height,
+            widthSatisfied,
+            heightSatisfied,
+            elapsed,
+          });
+          return;
+        }
+      } else {
+        pendingResizeRef.current = null;
+        pendingResizeIssuedAtRef.current = null;
+        debugLog('[PetCanvas] resize satisfied, continuing bubble layout', {
+          pendingResize,
+          containerWidth: containerRect.width,
+          containerHeight: containerRect.height,
+        });
+      }
+    }
 
     // Head region heuristic: top 18% vertically of bounds
     const headHeightRatio = 0.18;
@@ -302,13 +377,21 @@ const PetCanvas: React.FC = () => {
     const anchorDomY = canvasRect.top + clampedNormY * canvasRect.height;
 
     // Measure bubble natural size
-    bubbleEl.style.visibility = 'hidden';
+    const prevDisplay = bubbleEl.style.display;
+    const prevWidthStyle = bubbleEl.style.width;
+    const prevMaxWidth = bubbleEl.style.maxWidth;
+    const prevVisibility = bubbleEl.style.visibility;
     bubbleEl.style.maxWidth = `${BUBBLE_MAX_WIDTH}px`;
     bubbleEl.style.width = 'auto';
     bubbleEl.style.display = 'block';
+    bubbleEl.style.visibility = 'hidden';
     const bubbleRect = bubbleEl.getBoundingClientRect();
     const bubbleWidth = bubbleRect.width || BUBBLE_MAX_WIDTH;
     const bubbleHeight = bubbleRect.height || 40;
+    bubbleEl.style.display = prevDisplay;
+    bubbleEl.style.width = prevWidthStyle;
+    bubbleEl.style.maxWidth = prevMaxWidth;
+    bubbleEl.style.visibility = prevVisibility;
 
     const modelLeftDom = anchorDomX - containerRect.left;
     const modelDomWidth = (bounds.width / screen.width) * canvasRect.width;
@@ -334,9 +417,20 @@ const PetCanvas: React.FC = () => {
     const preferLeftByScreen = spaceLeftScreen >= spaceRightScreen;
     const preferLeftByInternal = internalLeftSpace >= internalRightSpace;
 
+    const prevAlignment = bubbleAlignmentRef.current;
+    const prevStillFits = prevAlignment === 'left'
+      ? leftFits
+      : prevAlignment === 'right'
+        ? rightFits
+        : false;
+
     let nextBubbleSide: 'left' | 'right';
     if (!leftFits && !rightFits) {
-      nextBubbleSide = preferLeftByScreen ? 'left' : 'right';
+      nextBubbleSide = prevAlignment && (prevAlignment === 'left' || prevAlignment === 'right')
+        ? prevAlignment
+        : (preferLeftByScreen ? 'left' : 'right');
+    } else if (prevStillFits) {
+      nextBubbleSide = prevAlignment as 'left' | 'right';
     } else if (!leftFits) {
       nextBubbleSide = 'right';
     } else if (!rightFits) {
@@ -366,7 +460,7 @@ const PetCanvas: React.FC = () => {
     if (bubbleAlignmentRef.current !== nextBubbleSide) {
       bubbleAlignmentRef.current = nextBubbleSide;
       setBubbleAlignment(nextBubbleSide);
-      console.log('[PetCanvas] bubble alignment changed', {
+      debugLog('[PetCanvas] bubble alignment changed', {
         nextBubbleSide,
         spaceLeftScreen,
         spaceRightScreen,
@@ -380,13 +474,50 @@ const PetCanvas: React.FC = () => {
     if (!leftFits && !rightFits) {
       const bestSpace = Math.max(internalLeftSpace, internalRightSpace);
       const widthDeficit = bubbleHorizontalSpaceNeeded - bestSpace;
-      if (widthDeficit > 0.5) {
-        const baseWidth = Math.ceil(Math.max(MIN_BASE_WIDTH, modelDomWidth + BUBBLE_PADDING * 2));
-        const requiredWidth = Math.ceil(containerRect.width + widthDeficit);
-        const desiredWidth = Math.max(baseWidth, requiredWidth);
-        const requiredHeight = Math.ceil(Math.max(containerRect.height, targetY + bubbleHeight + BUBBLE_PADDING));
-        const desiredHeight = Math.max(MIN_BASE_HEIGHT, requiredHeight);
-        requestResize(desiredWidth, desiredHeight);
+      const baseWidth = Math.ceil(Math.max(MIN_BASE_WIDTH, modelDomWidth + BUBBLE_PADDING * 2));
+      const requiredWidth = Math.ceil(containerRect.width + Math.max(0, widthDeficit));
+      const desiredWidth = Math.max(baseWidth, requiredWidth);
+      const requiredHeight = Math.ceil(Math.max(containerRect.height, targetY + bubbleHeight + BUBBLE_PADDING));
+      const desiredHeight = Math.max(MIN_BASE_HEIGHT, requiredHeight);
+      const needWidthExpand = widthDeficit > 0.5 && desiredWidth > containerRect.width + 0.5;
+      const needHeightExpand = desiredHeight > containerRect.height + 0.5;
+      if ((needWidthExpand || needHeightExpand) && !suppressResizeForBubbleRef.current) {
+        if (!autoResizeBackupRef.current) {
+          autoResizeBackupRef.current = {
+            width: Math.round(containerRect.width),
+            height: Math.round(containerRect.height),
+          };
+        }
+        const targetWidth = needWidthExpand ? desiredWidth : Math.round(containerRect.width);
+        const targetHeight = needHeightExpand ? desiredHeight : Math.round(containerRect.height);
+        pendingResizeRef.current = { width: targetWidth, height: targetHeight };
+        pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
+          ? performance.now()
+          : Date.now();
+        bubblePositionRef.current = null;
+        setBubblePosition(null);
+        commitBubbleReady(false);
+        debugLog('[PetCanvas] bubble needs window resize', {
+          widthDeficit,
+          desiredWidth,
+          desiredHeight,
+          needWidthExpand,
+          needHeightExpand,
+          containerWidth: containerRect.width,
+          containerHeight: containerRect.height,
+        });
+        requestResize(targetWidth, targetHeight);
+        return;
+      } else if (needWidthExpand || needHeightExpand) {
+        debugLog('[PetCanvas] skip resize request due to suppression', {
+          widthDeficit,
+          desiredWidth,
+          desiredHeight,
+          needWidthExpand,
+          needHeightExpand,
+          containerWidth: containerRect.width,
+          containerHeight: containerRect.height,
+        });
       }
     }
 
@@ -395,7 +526,8 @@ const PetCanvas: React.FC = () => {
       bubblePositionRef.current = nextPosition;
       setBubblePosition(nextPosition);
     }
-  }, [setBubblePosition, requestResize, setBubbleAlignment]);
+    commitBubbleReady(true);
+  }, [setBubblePosition, requestResize, setBubbleAlignment, commitBubbleReady]);
 
   const updateDragHandlePosition = useCallback((force = false) => {
     if (typeof window === 'undefined') return;
@@ -461,7 +593,7 @@ const PetCanvas: React.FC = () => {
       }
     }
 
-    const contextZoneWidth = Math.max(48, Math.min(96, containerRect.width * 0.28));
+    const contextZoneWidth = Math.max(56, Math.min(104, containerRect.width * 0.28));
     const contextZoneHeight = Math.max(48, Math.min(120, containerRect.height * 0.18));
     const screenObj = window.screen as unknown as { availLeft?: number; availWidth?: number; width?: number };
     const screenAvailLeft = typeof screenObj?.availLeft === 'number' ? screenObj.availLeft : 0;
@@ -474,8 +606,8 @@ const PetCanvas: React.FC = () => {
     const rawRightSpace = (screenAvailLeft + screenAvailWidth) - (windowGlobalLeft + windowGlobalWidth);
     const safeLeftSpace = Number.isFinite(rawLeftSpace) ? rawLeftSpace : 0;
     const safeRightSpace = Number.isFinite(rawRightSpace) ? rawRightSpace : 0;
-    const leftMargin = 20;
-    const rightMargin = 20;
+    const leftMargin = 14;
+    const rightMargin = 14;
     const internalLeftRoom = containerRect.width - contextZoneWidth - leftMargin;
     const internalRightRoom = containerRect.width - contextZoneWidth - rightMargin;
     const EDGE_THRESHOLD = 48;
@@ -495,20 +627,17 @@ const PetCanvas: React.FC = () => {
     if (contextZoneAlignmentRef.current !== nextContextAlignment) {
       contextZoneAlignmentRef.current = nextContextAlignment;
       setContextZoneAlignment(nextContextAlignment);
-      console.log('[PetCanvas] context zone alignment changed', {
-        nextContextAlignment,
-        safeLeftSpace,
-        safeRightSpace,
-        internalLeftRoom,
-        internalRightRoom,
-      });
     }
 
     let contextZoneLeft = nextContextAlignment === 'right'
       ? containerRect.width - contextZoneWidth - rightMargin
       : leftMargin;
     contextZoneLeft = clamp(contextZoneLeft, 12, Math.max(12, containerRect.width - contextZoneWidth - 12));
-    const contextZoneTop = clamp(Math.max(12, Math.min(containerRect.height - contextZoneHeight - 12, 24)), 12, Math.max(12, containerRect.height - contextZoneHeight - 12));
+
+    const modelTopDom = Math.max(0, Math.min(containerRect.height, topDomY - containerRect.top));
+    const modelHeightDom = Math.max(48, Math.min(containerRect.height, (bounds.height / screen.height) * canvasRect.height));
+    const preferredContextTop = modelTopDom + modelHeightDom * 0.2 - contextZoneHeight / 2;
+    const contextZoneTop = clamp(preferredContextTop, 12, Math.max(12, containerRect.height - contextZoneHeight - 12));
 
     const contextZoneLeftAbs = containerRect.left + contextZoneLeft;
     const contextZoneTopAbs = containerRect.top + contextZoneTop;
@@ -559,21 +688,11 @@ const PetCanvas: React.FC = () => {
     }
     if (pointerInsideContextZoneRef.current !== pointerInsideContextZone) {
       pointerInsideContextZoneRef.current = pointerInsideContextZone;
-      console.log('[PetCanvas] pointerInsideContextZone changed', {
-        pointerInsideContextZone,
-        contextZone: {
-          left: contextZoneLeft,
-          top: contextZoneTop,
-          width: contextZoneWidth,
-          height: contextZoneHeight,
-        },
-      });
       recomputeWindowPassthroughRef.current();
     }
 
     if (pointerInsideModelRef.current !== pointerInsideModel) {
       pointerInsideModelRef.current = pointerInsideModel;
-      console.log('[PetCanvas] pointerInsideModel changed', { pointerInsideModel, pointerWithinCanvas });
       if (pointerInsideModel && !dragHandleHoverRef.current && showDragHandleOnHover) {
         triggerDragHandleReveal();
       } else if (!pointerInsideModel && !dragHandleHoverRef.current && showDragHandleOnHover) {
@@ -594,7 +713,6 @@ const PetCanvas: React.FC = () => {
 
     if (pointerInsideBubbleRef.current !== pointerInsideBubble) {
       pointerInsideBubbleRef.current = pointerInsideBubble;
-      console.log('[PetCanvas] pointerInsideBubble changed', { pointerInsideBubble });
       recomputeWindowPassthroughRef.current();
     }
 
@@ -608,7 +726,6 @@ const PetCanvas: React.FC = () => {
     }
     if (pointerInsideHandleRef.current !== pointerInsideHandle) {
       pointerInsideHandleRef.current = pointerInsideHandle;
-      console.log('[PetCanvas] pointerInsideHandle changed', { pointerInsideHandle });
       if (pointerInsideHandle) {
         dragHandleHoverRef.current = true;
         if (showDragHandleOnHover) {
@@ -617,7 +734,7 @@ const PetCanvas: React.FC = () => {
         }
       } else {
         dragHandleHoverRef.current = false;
-        if (showDragHandleOnHover && !pointerInsideModelRef.current) {
+        if (!dragHandleActiveRef.current && showDragHandleOnHover && !pointerInsideModelRef.current) {
           scheduleDragHandleHide();
         }
       }
@@ -647,19 +764,29 @@ const PetCanvas: React.FC = () => {
     Promise.all([api.getCursorScreenPoint(), boundsPromise])
       .then(([point, bounds]: [{ x: number; y: number } | null, { x: number; y: number; width: number; height: number } | null]) => {
         if (!point || !mousePassthroughRef.current) return;
+        if (!motionTextRef.current && autoResizeBackupRef.current === null) {
+          if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.width)) {
+            const newBaseline = bounds.x + bounds.width;
+            if (Math.abs((rightEdgeBaselineRef.current ?? newBaseline) - newBaseline) > 0.5) {
+              rightEdgeBaselineRef.current = newBaseline;
+            } else {
+              rightEdgeBaselineRef.current = newBaseline;
+            }
+          } else if (typeof window !== 'undefined') {
+            const fallbackBaseline = getWindowRightEdge();
+            rightEdgeBaselineRef.current = fallbackBaseline;
+          }
+        }
         const originX = bounds?.x ?? (window.screenX ?? window.screenLeft ?? 0);
         const originY = bounds?.y ?? (window.screenY ?? window.screenTop ?? 0);
         const localX = point.x - originX;
         const localY = point.y - originY;
         pointerX.current = localX;
         pointerY.current = localY;
-        console.log('[PetCanvas] cursor poll', { point, bounds, originX, originY, localX, localY, devicePixelRatio: window.devicePixelRatio });
         updateDragHandlePositionRef.current?.(true);
         recomputeWindowPassthroughRef.current();
       })
-      .catch(error => {
-        console.log('[PetCanvas] cursor poll failed', error);
-      })
+      .catch(() => { /* swallow cursor poll errors */ })
       .finally(() => {
         if (!mousePassthroughRef.current || typeof window === 'undefined') {
           cursorPollRafRef.current = null;
@@ -672,7 +799,6 @@ const PetCanvas: React.FC = () => {
   const startCursorPoll = useCallback(() => {
     if (typeof window === 'undefined') return;
     if (cursorPollRafRef.current !== null) return;
-    console.log('[PetCanvas] start cursor poll');
     cursorPollRafRef.current = -1;
     pollCursorPosition();
   }, [pollCursorPosition]);
@@ -683,19 +809,15 @@ const PetCanvas: React.FC = () => {
       window.cancelAnimationFrame(cursorPollRafRef.current);
     }
     cursorPollRafRef.current = null;
-    console.log('[PetCanvas] stop cursor poll');
   }, []);
 
   const setWindowMousePassthrough = useCallback((passthrough: boolean) => {
     if (typeof window === 'undefined') return;
     if (mousePassthroughRef.current === passthrough) return;
     mousePassthroughRef.current = passthrough;
-    console.log('[PetCanvas] setWindowMousePassthrough', { passthrough });
     const bridge = (window as any).petAPI?.setMousePassthrough?.(passthrough);
     if (bridge && typeof bridge.then === 'function') {
-      bridge.then(() => {
-        console.log('[PetCanvas] setMousePassthrough resolved', { passthrough });
-      }).catch((error: unknown) => {
+      bridge.then(() => { /* no-op */ }).catch((error: unknown) => {
         console.warn('[PetCanvas] setMousePassthrough rejected', error);
       });
     }
@@ -719,19 +841,9 @@ const PetCanvas: React.FC = () => {
       pointerInsideModelRef.current ||
       pointerInsideBubbleRef.current ||
       pointerInsideHandleRef.current ||
-      dragHandleHoverRef.current
+      dragHandleHoverRef.current ||
+      dragHandleActiveRef.current
     ));
-    console.log('[PetCanvas] recomputeWindowPassthrough', {
-      ignoreMouse: ignoreMouseRef.current,
-      pointerInsideModel: pointerInsideModelRef.current,
-      pointerInsideBubble: pointerInsideBubbleRef.current,
-      pointerInsideHandle: pointerInsideHandleRef.current,
-      dragHandleHover: dragHandleHoverRef.current,
-      pointerInsideContextZone: pointerInsideContextZoneRef.current,
-      contextZoneActive,
-      contextZoneActiveUntil: contextZoneActiveUntilRef.current,
-      shouldCapture,
-    });
     setWindowMousePassthrough(!shouldCapture);
   }, [setWindowMousePassthrough, clearContextZoneLatchTimer]);
 
@@ -784,8 +896,34 @@ const PetCanvas: React.FC = () => {
     if (!m || !app) return;
     const winW = window.innerWidth;
     const winH = window.innerHeight;
+    const currentRightEdge = getWindowRightEdge();
+    const bubbleActive = motionTextRef.current !== null;
+    const resizingForBubble = autoResizeBackupRef.current !== null;
+    if (!bubbleActive && !resizingForBubble) {
+      rightEdgeBaselineRef.current = currentRightEdge;
+    }
+    let rightEdgeCompensation = 0;
+    const baselineRightEdge = rightEdgeBaselineRef.current;
+    if ((bubbleActive || resizingForBubble) && baselineRightEdge !== null) {
+      const drift = currentRightEdge - baselineRightEdge;
+      if (Math.abs(drift) > 0.5) {
+        rightEdgeCompensation = drift;
+      }
+    }
+    const stored = baseWindowSizeRef.current;
+    if (!stored) {
+      baseWindowSizeRef.current = { width: winW, height: winH };
+    } else {
+      const nextWidth = Math.min(stored.width, winW);
+      const nextHeight = Math.min(stored.height, winH);
+      if (nextWidth !== stored.width || nextHeight !== stored.height) {
+        baseWindowSizeRef.current = { width: nextWidth, height: nextHeight };
+      }
+    }
+    const reference = baseWindowSizeRef.current ?? { width: winW, height: winH };
+    const referenceHeight = Math.min(reference.height, winH);
     const lb = m.getLocalBounds();
-    const targetH = winH * 0.95;
+    const targetH = referenceHeight * 0.95;
     const base = targetH / (lb.height || 1);
     m.scale.set(base * (scale || 1));
     m.pivot.set(lb.x + lb.width / 2, lb.y + lb.height / 2);
@@ -793,7 +931,34 @@ const PetCanvas: React.FC = () => {
     const scaledH = lb.height * m.scale.y;
     const marginRight = 40;
     const marginBottom = 40;
-    m.position.set(winW - scaledW / 2 - marginRight, winH - scaledH / 2 - marginBottom);
+    const targetX = winW - scaledW / 2 - marginRight - rightEdgeCompensation;
+    const targetY = winH - scaledH / 2 - marginBottom;
+    debugLog('[PetCanvas] applyLayout', {
+      bubbleActive,
+      resizingForBubble,
+      currentRightEdge,
+      baselineRightEdge,
+      rightEdgeCompensation,
+      winW,
+      winH,
+      targetX,
+      targetY,
+      scale,
+    });
+    m.position.set(targetX, targetY);
+    if (pendingResizeRef.current) {
+      const { width, height } = pendingResizeRef.current;
+      const widthDiff = Math.abs(winW - width);
+      const heightDiff = Math.abs(winH - height);
+      if (widthDiff < 1 && heightDiff < 1) {
+        debugLog('[PetCanvas] resize target reached', { width, height });
+        pendingResizeRef.current = null;
+        pendingResizeIssuedAtRef.current = null;
+        requestAnimationFrame(() => {
+          updateBubblePosition(true);
+        });
+      }
+    }
     updateBubblePosition(true);
     updateDragHandlePosition(true);
   }, [scale, updateBubblePosition, updateDragHandlePosition]);
@@ -1224,14 +1389,6 @@ const PetCanvas: React.FC = () => {
     else if (ny <= qunziEnd) group = 'Tapqunzi';
     else if (ny <= legEnd) group = 'Tapleg';
 
-    console.log('[PetCanvas] handlePointerTap', {
-      clientX,
-      clientY,
-      withinCanvas: withinX && withinY,
-      mappedGroup: group,
-      nx,
-      ny,
-    });
 
     if (!group) return;
 
@@ -1279,27 +1436,34 @@ const PetCanvas: React.FC = () => {
       if (showDragHandleOnHover) {
         setDragHandleVisibility(true);
       }
-      console.log('[PetCanvas] drag handle enter');
       recomputeWindowPassthrough();
     };
     const onLeave = () => {
       dragHandleHoverRef.current = false;
-      scheduleDragHandleHide();
-      console.log('[PetCanvas] drag handle leave');
+      if (!dragHandleActiveRef.current) {
+        scheduleDragHandleHide();
+      }
       recomputeWindowPassthrough();
     };
     const onPointerDown = () => {
       dragHandleHoverRef.current = true;
+      dragHandleActiveRef.current = true;
       cancelDragHandleHide();
       setDragHandleVisibility(true);
-      console.log('[PetCanvas] drag handle pointerdown');
       recomputeWindowPassthrough();
       updateBubblePosition(true);
     };
     const onPointerUp = () => {
       dragHandleHoverRef.current = false;
+      dragHandleActiveRef.current = false;
       scheduleDragHandleHide();
-      console.log('[PetCanvas] drag handle pointerup');
+      recomputeWindowPassthrough();
+      updateBubblePosition(true);
+    };
+    const onPointerCancel = () => {
+      dragHandleHoverRef.current = false;
+      dragHandleActiveRef.current = false;
+      scheduleDragHandleHide();
       recomputeWindowPassthrough();
       updateBubblePosition(true);
     };
@@ -1308,16 +1472,18 @@ const PetCanvas: React.FC = () => {
     handle.addEventListener('pointerleave', onLeave);
     handle.addEventListener('pointerdown', onPointerDown);
     handle.addEventListener('pointerup', onPointerUp);
+    handle.addEventListener('pointercancel', onPointerCancel);
 
     return () => {
       handle.removeEventListener('pointerenter', onEnter);
       handle.removeEventListener('pointerleave', onLeave);
       handle.removeEventListener('pointerdown', onPointerDown);
       handle.removeEventListener('pointerup', onPointerUp);
+      handle.removeEventListener('pointercancel', onPointerCancel);
     };
   }, [dragHandlePosition, cancelDragHandleHide, scheduleDragHandleHide, setDragHandleVisibility, showDragHandleOnHover, recomputeWindowPassthrough, updateBubblePosition]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     motionTextRef.current = motionText;
 
     const releaseSurrogateAudio = () => {
@@ -1332,13 +1498,38 @@ const PetCanvas: React.FC = () => {
     };
 
     if (!motionText) {
+      suppressResizeForBubbleRef.current = false;
+      pendingResizeIssuedAtRef.current = null;
       bubblePositionRef.current = null;
       setBubblePosition(null);
+      commitBubbleReady(false);
       releaseSurrogateAudio();
       clearBubbleTimer();
+      const backup = autoResizeBackupRef.current;
+      if (backup) {
+        autoResizeBackupRef.current = null;
+        pendingResizeRef.current = { width: backup.width, height: backup.height };
+        pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
+          ? performance.now()
+          : Date.now();
+        requestResize(backup.width, backup.height);
+      }
+      if (typeof window !== 'undefined') {
+        const immediate = getWindowRightEdge();
+        rightEdgeBaselineRef.current = immediate;
+        debugLog('[PetCanvas] baseline after bubble dismissed', { immediate });
+        window.setTimeout(() => {
+          const delayed = getWindowRightEdge();
+          rightEdgeBaselineRef.current = delayed;
+          debugLog('[PetCanvas] baseline delayed refresh', { delayed });
+        }, 120);
+      }
       return undefined;
     }
 
+    suppressResizeForBubbleRef.current = false;
+    pendingResizeIssuedAtRef.current = null;
+    commitBubbleReady(false);
     updateBubblePosition(true);
     updateDragHandlePosition(true);
     releaseSurrogateAudio();
@@ -1413,7 +1604,7 @@ const PetCanvas: React.FC = () => {
       releaseSurrogateAudio();
       clearBubbleTimer();
     };
-  }, [motionText, motionSound, clearBubbleTimer, scheduleBubbleDismiss, setMotionText, updateBubblePosition, setBubblePosition, resolveSoundUrl, updateDragHandlePosition]);
+  }, [motionText, motionSound, clearBubbleTimer, scheduleBubbleDismiss, setMotionText, updateBubblePosition, setBubblePosition, resolveSoundUrl, updateDragHandlePosition, requestResize, commitBubbleReady]);
 
   return (
     <>
@@ -1458,7 +1649,10 @@ const PetCanvas: React.FC = () => {
               top: bubblePosition ? bubblePosition.top : 24,
               maxWidth: BUBBLE_MAX_WIDTH,
               // ensure bubble re-measures correctly on content change
-              position: 'absolute'
+              position: 'absolute',
+              visibility: bubbleReady ? 'visible' : 'hidden',
+              opacity: bubbleReady ? 1 : 0,
+              transition: 'opacity 120ms ease'
             }}
           >
             <div className={`chat ${bubbleAlignment === 'left' ? 'chat-end' : 'chat-start'}`}>

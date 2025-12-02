@@ -85,7 +85,7 @@ const ControlPanel: React.FC = () => {
 		if (debounceRef.current) {
 			clearTimeout(debounceRef.current);
 		}
-		debounceRef.current = window.setTimeout(() => {
+		debounceRef.current = setTimeout(() => {
 			editRef.current = false;
 			commitScale(value);
 		}, 120);

@@ -125,7 +125,7 @@ const ensureControlPanelWindow = () => {
             nodeIntegration: false,
             contextIsolation: true,
             webSecurity: true,
-            sandbox: false,
+            sandbox:false,
             enableRemoteModule: false,
             preload: path.join(__dirname, 'preload.js'),
         },
@@ -229,8 +229,8 @@ const broadcastSettings = () => {
 };
 const createMainWindow = () => {
     mainWindow = new BrowserWindow({
-        width: 600,
-        height: 1000,
+        width: 500,
+        height: 900,
         hasShadow: false,
         transparent: true,
         resizable: true,
@@ -265,6 +265,17 @@ const createMainWindow = () => {
         menu?.popup({ window: mainWindow ?? undefined });
     });
 
+    // 主窗口移动/缩放时广播 bounds，帮助渲染进程及时调整气泡样式
+    const emitBounds = () => {
+        try {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
+            const b = mainWindow.getBounds();
+            mainWindow.webContents.send('pet:windowBoundsChanged', b);
+        } catch {}
+    };
+    mainWindow.on('moved', emitBounds);
+    mainWindow.on('resize', emitBounds);
+
     return mainWindow;
 };
 
@@ -274,31 +285,11 @@ ipcMain.handle('pet:getSettings', () => {
 });
 
 ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-
-    const currentBounds = mainWindow.getBounds();
-    const safeWidth = Math.max(75, Math.floor(width));
-    const safeHeight = Math.max(250, Math.floor(height));
-
-    const widthDiff = safeWidth - currentBounds.width;
-    const heightDiff = safeHeight - currentBounds.height;
-
-    if (widthDiff === 0 && heightDiff === 0) {
-        return;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setSize(Math.max(75, Math.floor(width)), Math.max(250, Math.floor(height)));
     }
-
-    mainWindow.setSize(safeWidth, safeHeight);
-
-    const nextX = Math.round(currentBounds.x - widthDiff);
-    const nextY = Math.round(currentBounds.y - heightDiff);
-
-    const display = screen.getDisplayNearestPoint({ x: currentBounds.x, y: currentBounds.y });
-    const workArea = display?.workArea;
-    const clampX = workArea ? Math.min(Math.max(nextX, workArea.x), workArea.x + workArea.width - safeWidth) : nextX;
-    const clampY = workArea ? Math.min(Math.max(nextY, workArea.y), workArea.y + workArea.height - safeHeight) : nextY;
-
-    mainWindow.setPosition(clampX, clampY);
-});
+    }
+);
 
 ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
     try {
@@ -333,7 +324,7 @@ ipcMain.handle('pet:getWindowBounds', (event) => {
     }
 });
 
-ipcMain.handle('pet:updateSettings', (_event, patch = {}) => {
+ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
     const safePatch = {};
     if (patch && typeof patch === 'object') {
         if (typeof patch.showDragHandleOnHover === 'boolean') {
@@ -349,7 +340,7 @@ ipcMain.handle('pet:updateSettings', (_event, patch = {}) => {
             safePatch.scale = patch.scale;
         }
 
-        if (typeof patch.forcedFollow === 'boolean') {
+        if( typeof patch.forcedFollow === 'boolean') {
             safePatch.forcedFollow = patch.forcedFollow;
         }
     }
@@ -362,7 +353,7 @@ ipcMain.handle('pet:updateSettings', (_event, patch = {}) => {
     const next = { ...current, ...safePatch };
     settingsCache = next;
     writeSettingsToDisk(next);
-    settingsLoaded = false;
+    settingsLoaded =false;
     broadcastSettings();
 
     if (Object.prototype.hasOwnProperty.call(safePatch, 'autoLaunch')) {

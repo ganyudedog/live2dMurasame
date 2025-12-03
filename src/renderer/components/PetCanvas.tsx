@@ -3,27 +3,17 @@
 import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from 'react';
 import { ChatBubble } from '../other/ChatBubble';
 import { Application, Ticker } from 'pixi.js';
+import { computeContextZone } from '../logic/contextZone/contextZoneEngine';
+import { computeDragHandlePosition } from '../logic/dragHandle/dragHandleEngine';
 import { usePetStore } from '../state/usePetStore';
 import { loadModel } from '../live2d/loader';
 import { Live2DModel } from '../live2d/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2d/runtime';
+import { getVisualFrameDom as getVisualFrameDomLocal } from '../logic/visual/visualFrame';
+import { computeBubblePlacement } from '../logic/bubble/placementEngine';
 
-// 环境变量读取助手 (兼容 Vite import.meta.env 与 process.env)
-const env = (key: string): string | undefined => {
-  try {
-
-    if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key] !== undefined) {
-      return (import.meta as any).env[key];
-    }
-  } catch { /* swallow */ }
-
-  const globalEnv = typeof globalThis !== 'undefined' ? (globalThis as any)?.process?.env : undefined;
-  if (globalEnv && globalEnv[key] !== undefined) {
-    return globalEnv[key];
-  }
-
-  return undefined;
-};
+// 环境变量读取助手
+import { env } from '../utils/env';
 
 const MODEL_PATH = env('VITE_MODEL_PATH') || '/model/murasame/Murasame.model3.json';
 const DEFAULT_EYE_MAX_UP = parseFloat(env('VITE_EYE_MAX_UP') || '0.5');
@@ -39,37 +29,22 @@ const BUBBLE_PADDING = 12; // padding inside window edges
 const RESIZE_THROTTLE_MS = 120;
 const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
 
-// 视觉矩形参数（用于对称边界，规避发丝/透明留白导致的外扩不均）
-const VISUAL_FRAME_RATIO = parseFloat(env('VITE_VISUAL_FRAME_RATIO') || '0.62'); // 取模型 getBounds 宽度的比例
-const VISUAL_FRAME_MIN_PX = parseFloat(env('VITE_VISUAL_FRAME_MIN_PX') || '180'); // 最小视觉宽度（DOM像素）
-const VISUAL_FRAME_PADDING_PX = parseFloat(env('VITE_VISUAL_FRAME_PADDING_PX') || '0'); // 可选左右额外内收/外扩
-const VISUAL_FRAME_CENTER_MODE = (env('VITE_VISUAL_FRAME_CENTER') || 'bounds').toLowerCase(); // 'bounds' | 'face'
-const VISUAL_FRAME_OFFSET_PX = parseFloat(env('VITE_VISUAL_FRAME_OFFSET_PX') || '0'); // 额外水平偏移（DOM像素，正值向右）
-const VISUAL_FRAME_OFFSET_RATIO = parseFloat(env('VITE_VISUAL_FRAME_OFFSET_RATIO') || '0'); // 相对宽度的偏移比例（正值向右）
+import { log as debugLog } from '../utils/env';
 
-const debugLog = (...args: Parameters<typeof console.log>): void => {
-  console.log(...args);
-};
-
-const clamp = (value: number, min: number, max: number) => {
-  if (!Number.isFinite(value)) return min;
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
-};
+import { clamp, clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../utils/math';
 
 const clampEyeBallY = (value: number): number => {
   const limit = typeof window !== 'undefined' && typeof (window as any).LIVE2D_EYE_MAX_UP === 'number'
     ? (window as any).LIVE2D_EYE_MAX_UP
     : DEFAULT_EYE_MAX_UP;
-  return Math.max(-1, Math.min(limit, value));
+  return clampEyeBallYBase(value, limit);
 };
 
 const clampAngleY = (value: number): number => {
   const limit = typeof window !== 'undefined' && typeof (window as any).LIVE2D_ANGLE_MAX_UP === 'number'
     ? (window as any).LIVE2D_ANGLE_MAX_UP
     : DEFAULT_ANGLE_MAX_UP;
-  return Math.max(-40, Math.min(limit, value));
+  return clampAngleYBase(value, limit);
 };
 
 const getWindowRightEdge = () => {
@@ -82,69 +57,8 @@ const getWindowRightEdge = () => {
 };
 
 // 将模型 getBounds 映射到 Canvas DOM 坐标系的“视觉矩形”（左右对称）
-function getVisualFrameDom(
-  bounds: { x: number; y: number; width: number; height: number },
-  screen: { x: number; y: number; width: number; height: number },
-  canvasRect: DOMRect,
-  opts?: { model?: Live2DModelType | null; faceAreaId?: string | null }
-) {
-  const safeRatio = Math.max(0.1, Math.min(1, Number.isFinite(VISUAL_FRAME_RATIO) ? VISUAL_FRAME_RATIO : 0.62));
-  const padding = Number.isFinite(VISUAL_FRAME_PADDING_PX) ? VISUAL_FRAME_PADDING_PX : 0;
-
-  // 先用 getBounds 的几何中心
-  let centerX = bounds.x + bounds.width / 2;
-
-  // 可选：用面部 hitArea 估计中心（更贴近“脸部”而非发丝外扩）
-  try {
-    const preferFace = VISUAL_FRAME_CENTER_MODE === 'face';
-    const model = opts?.model ?? null;
-    const faceId = (opts?.faceAreaId ?? '').toString();
-    if (preferFace && model && faceId) {
-      const hairEndFaceEnd = (() => {
-        if (DEFAULT_TOUCH_MAP_RAW) {
-          const arr = DEFAULT_TOUCH_MAP_RAW.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
-          if (arr.length >= 2) return { hairEnd: arr[0], faceEnd: arr[1] };
-        }
-        return { hairEnd: 0.1, faceEnd: 0.19 };
-      })();
-      const ny = clamp((hairEndFaceEnd.hairEnd + hairEndFaceEnd.faceEnd) / 2, 0, 1);
-      const sampleY = bounds.y + bounds.height * ny;
-      let minX: number | null = null;
-      let maxX: number | null = null;
-      const steps = Math.max(24, Math.min(100, Math.floor(bounds.width / 8)));
-      const step = Math.max(1, bounds.width / steps);
-      for (let x = bounds.x; x <= bounds.x + bounds.width; x += step) {
-        const hit = (model as any).hitTest?.(faceId, x, sampleY);
-        if (hit) {
-          if (minX === null) minX = x;
-          maxX = x;
-        }
-      }
-      if (minX !== null && maxX !== null && maxX > minX) {
-        centerX = (minX + maxX) / 2;
-      }
-    }
-  } catch { /* swallow face center estimation */ }
-
-  // 映射到 DOM
-  let centerDomX = canvasRect.left + (((centerX) - screen.x) / screen.width) * canvasRect.width;
-  // 模型宽（DOM）
-  const rawWidthDom = (bounds.width / screen.width) * canvasRect.width;
-  // 视觉宽：对称收缩 + 最小宽度 + 额外 padding
-  const visualWidthDom = Math.max(
-    Number.isFinite(VISUAL_FRAME_MIN_PX) ? VISUAL_FRAME_MIN_PX : 180,
-    rawWidthDom * safeRatio,
-  ) + padding * 2;
-
-  // 手动或比例偏移（正值向右），用于修正 getBounds 中心偏移导致的左右观感不一致
-  const extraOffsetPx = (Number.isFinite(VISUAL_FRAME_OFFSET_PX) ? VISUAL_FRAME_OFFSET_PX : 0)
-    + (Number.isFinite(VISUAL_FRAME_OFFSET_RATIO) ? (visualWidthDom * VISUAL_FRAME_OFFSET_RATIO) : 0);
-  if (extraOffsetPx) centerDomX += extraOffsetPx;
-
-  const leftDom = centerDomX - visualWidthDom / 2;
-  const rightDom = centerDomX + visualWidthDom / 2;
-  return { centerDomX, leftDom, rightDom, visualWidthDom };
-}
+// 使用抽取后的视觉矩形工具
+const getVisualFrameDom = getVisualFrameDomLocal;
 
 const TOUCH_PRIORITY = ((): string[] => {
   if (DEFAULT_TOUCH_PRIORITY_RAW) {
@@ -443,136 +357,52 @@ const PetCanvas: React.FC = () => {
     const s = Math.max(0.8, Math.min(1.4, (scale || 1)));
     const modelTopDom = canvasRect.top + ((bounds.y - screen.y) / screen.height) * canvasRect.height;
     // 使用“视觉矩形”作为对称边界，替代原始 bounds 左右边
-    // 若可用，优先用面部 hitArea 估计中心
     const faceEntry = hitAreasRef.current.find(a => /face|head/i.test(a.name) || /face|head/i.test(a.id));
-    const vf = getVisualFrameDom(bounds, screen, canvasRect, { model, faceAreaId: faceEntry?.id ?? null });
-    const modelLeftDom = vf.leftDom - containerRect.left;
-    const modelRightDom = vf.rightDom - containerRect.left;
-    const modelWidthDom = vf.visualWidthDom;
+    // 可视渲染使用偏移后的视觉矩形
+    const vfVisible = getVisualFrameDom(bounds, screen, canvasRect, { model, faceAreaId: faceEntry?.id ?? null, ignoreOffset: false });
+    // 可用空间判定使用未偏移的视觉矩形，避免水平偏移影响左右可用性
+    const vfBase = getVisualFrameDom(bounds, screen, canvasRect, { model, faceAreaId: faceEntry?.id ?? null, ignoreOffset: true });
     const modelHeightDom = (bounds.height / screen.height) * canvasRect.height;
 
     // 更新红线位置（与视觉中心对齐）
-    const nextRedLeft = vf.centerDomX - containerRect.left;
+    const nextRedLeft = vfVisible.centerDomX - containerRect.left;
     const prevRed = redLineLeftRef.current;
     if (prevRed == null || Math.abs(prevRed - nextRedLeft) > 0.5) {
       redLineLeftRef.current = nextRedLeft;
       setRedLineLeft(nextRedLeft);
     }
 
-    // 目标区域宽度（按缩放）
-    const zoneTarget = BUBBLE_ZONE_BASE_WIDTH * s;
-    // 可用空间同时预留与模型的固定间距 BUBBLE_GAP，确保左右对称并以右侧规则为主
-    const leftAvailable = Math.max(0, modelLeftDom - BUBBLE_PADDING - BUBBLE_GAP); // 左侧剩余空间（含固定间距）
-    const rightAvailable = Math.max(0, containerRect.width - modelRightDom - BUBBLE_PADDING - BUBBLE_GAP); // 右侧剩余空间（含固定间距）
-    const zoneWidthLeft = Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.min(zoneTarget, Math.max(0, leftAvailable)));
-    const zoneWidthRight = Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.min(zoneTarget, Math.max(0, rightAvailable)));
-    const canLeft = leftAvailable >= BUBBLE_ZONE_MIN_WIDTH;
-    const canRight = rightAvailable >= BUBBLE_ZONE_MIN_WIDTH;
+    // 先应用建议的最大宽度，确保测量一致
+    bubbleEl.style.setProperty('--bubble-max-width', `${Math.round(Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.min(BUBBLE_MAX_WIDTH, BUBBLE_ZONE_BASE_WIDTH)))}px`);
 
-    // ---- 改进侧向选择：同时考虑裁剪与屏幕边缘可见性 ----
-    const predictedLeftWidth = Math.min(zoneWidthLeft, BUBBLE_MAX_WIDTH);
-    const predictedRightWidth = Math.min(zoneWidthRight, BUBBLE_MAX_WIDTH);
-    // 为保持与右侧一致的间距，左侧同样预留 BUBBLE_GAP
-    const predictedLeftX = modelLeftDom - BUBBLE_GAP - predictedLeftWidth;
-    const predictedRightX = modelRightDom + BUBBLE_GAP;
-    const leftClipPixels = predictedLeftX < BUBBLE_PADDING ? (BUBBLE_PADDING - predictedLeftX) : 0;
-    const rightClipPixels = (predictedRightX + predictedRightWidth) > (containerRect.width - BUBBLE_PADDING)
-      ? (predictedRightX + predictedRightWidth) - (containerRect.width - BUBBLE_PADDING)
-      : 0;
-
-    let spaceLeftScreen = 0; let spaceRightScreen = 0;
-    try {
-      const screenObj = window.screen as unknown as { availLeft?: number; availWidth?: number; width?: number };
-      const screenAvailLeft = typeof screenObj?.availLeft === 'number' ? screenObj.availLeft : 0;
-      const screenAvailWidth = typeof screenObj?.availWidth === 'number'
-        ? screenObj.availWidth
-        : (typeof screenObj?.width === 'number' ? screenObj.width : window.innerWidth);
-      const winBounds = windowBoundsRef.current;
-      const windowGlobalLeft = (winBounds?.x ?? (window.screenX ?? window.screenLeft ?? 0));
-      const windowGlobalWidth = (winBounds?.width ?? window.outerWidth ?? containerRect.width);
-      const rawLeft = windowGlobalLeft - screenAvailLeft;
-      const rawRight = (screenAvailLeft + screenAvailWidth) - (windowGlobalLeft + windowGlobalWidth);
-      spaceLeftScreen = Number.isFinite(rawLeft) ? rawLeft : 0;
-      spaceRightScreen = Number.isFinite(rawRight) ? rawRight : 0;
-    } catch { /* swallow */ }
-
-    // 使用“打分制”选择侧向，结合屏幕边缘与裁剪像素
-    // 调整权重：靠近屏幕边缘时更强烈地偏向远离边缘的一侧
-    const EDGE_SAFE = 56; // 小于该值认为靠近屏幕边缘（更宽的安全带）
-    const clipWeight = 1.0; // 降低裁剪权重
-    const edgeWeight = 2.5; // 提高边缘惩罚权重
-    const cantUsePenalty = 1e6; // 侧区不可用时的巨大惩罚
-
-    const leftEdgePenalty = Math.max(0, EDGE_SAFE - spaceLeftScreen) * edgeWeight;
-    const rightEdgePenalty = Math.max(0, EDGE_SAFE - spaceRightScreen) * edgeWeight;
-    const leftScoreBase = leftClipPixels * clipWeight + leftEdgePenalty + (canLeft ? 0 : cantUsePenalty);
-    const rightScoreBase = rightClipPixels * clipWeight + rightEdgePenalty + (canRight ? 0 : cantUsePenalty);
-
-    // 进一步偏好无裁剪一侧
-    const leftScore = leftScoreBase + (leftClipPixels === 0 ? -1 : 0);
-    const rightScore = rightScoreBase + (rightClipPixels === 0 ? -1 : 0);
-
-    // 贴屏强制兜底：如果某侧几乎贴到屏幕边缘且另一侧可用，强制选另一侧
-    const EDGE_FORCE = 14; // px，认为“几乎贴边”的阈值
-    let nextBubbleSide: 'left' | 'right';
-    if (spaceRightScreen < EDGE_FORCE && canLeft) {
-      nextBubbleSide = 'left';
-    } else if (spaceLeftScreen < EDGE_FORCE && canRight) {
-      nextBubbleSide = 'right';
-    } else if (leftScore === rightScore) {
-      // 打平时：优先屏幕空间更大的一侧；再退化为内部可用空间更多的一侧
-      if (spaceLeftScreen !== spaceRightScreen) {
-        nextBubbleSide = spaceLeftScreen > spaceRightScreen ? 'left' : 'right';
-      } else if (leftAvailable !== rightAvailable) {
-        nextBubbleSide = leftAvailable >= rightAvailable ? 'left' : 'right';
-      } else {
-        nextBubbleSide = canLeft ? 'left' : 'right';
-      }
-    } else {
-      nextBubbleSide = leftScore < rightScore ? 'left' : 'right';
-    }
-
-    let chosenZoneWidth = nextBubbleSide === 'left' ? predictedLeftWidth : predictedRightWidth;
-
-    // 可选：对称宽度（避免左右宽度不同导致换行高度差，造成视觉“远近”不一致）
-    const symmetricEnabled = env('VITE_BUBBLE_SYMMETRIC');
-    let symmetricWidth: number | null = null;
-    if (symmetricEnabled === '1' && canLeft && canRight) {
-      // 取两侧可用宽度的交集最小值，保证不溢出任一侧
-      symmetricWidth = Math.min(predictedLeftWidth, predictedRightWidth);
-      chosenZoneWidth = symmetricWidth;
-    }
-    debugLog('[PetCanvas] bubble side adjust', {
-      canLeft, canRight,
-      predictedLeftWidth, predictedRightWidth,
-      leftClipPixels, rightClipPixels,
-      spaceLeftScreen, spaceRightScreen,
-      scores: { leftScore, rightScore, leftEdgePenalty, rightEdgePenalty },
-      choose: nextBubbleSide,
-      symmetricEnabled, symmetricWidth, finalZoneWidth: chosenZoneWidth,
+    // 使用抽取的放置引擎进行决策与定位
+    const placement = computeBubblePlacement({
+      scale: s,
+      baseFrame: vfBase,
+      visibleFrame: vfVisible,
+      container: { width: containerRect.width, height: containerRect.height, top: containerRect.top, left: containerRect.left },
+      modelTopDom,
+      modelHeightDom,
+      bubbleEl,
+      constants: {
+        BUBBLE_ZONE_BASE_WIDTH,
+        BUBBLE_ZONE_MIN_WIDTH,
+        BUBBLE_MAX_WIDTH,
+        BUBBLE_PADDING,
+        BUBBLE_GAP,
+        BUBBLE_HEAD_SAFE_GAP,
+      },
     });
 
-    // 先应用宽度限制再测量，保证使用最终宽度以维持左右一致的间距
-    bubbleEl.style.setProperty('--bubble-max-width', `${chosenZoneWidth}px`);
-    bubbleEl.style.visibility = 'visible';
-    // 强制一次读取触发布局，获取最终尺寸
-    const measuredRect = bubbleEl.getBoundingClientRect?.();
-    let bubbleWidth: number;
-    let bubbleHeight: number;
-    if (measuredRect && measuredRect.width > 0 && measuredRect.height > 0) {
-      bubbleWidth = measuredRect.width;
-      bubbleHeight = measuredRect.height;
-    } else {
-      bubbleWidth = Math.min(chosenZoneWidth, BUBBLE_MAX_WIDTH); // 回退估算
-      bubbleHeight = 48 * s;
-    }
+    const nextBubbleSide: 'left' | 'right' = placement.side;
+    const bubbleWidth = placement.bubbleWidth;
+    const targetX = placement.targetX;
+    let targetY = placement.targetY;
+    const severeOverlap = placement.severeOverlap;
 
-    // 水平定位：贴模型边缘+夹紧
-    let targetX = nextBubbleSide === 'left'
-      ? modelLeftDom - BUBBLE_GAP - bubbleWidth
-      : modelRightDom + BUBBLE_GAP;
-    const maxLeft = containerRect.width - bubbleWidth - BUBBLE_PADDING;
-    targetX = clamp(targetX, BUBBLE_PADDING, maxLeft);
+    // 测量当前气泡高度（用于垂直定位与遮挡判断）
+    const measuredRect = bubbleEl.getBoundingClientRect?.();
+    const bubbleHeight = measuredRect && measuredRect.height > 0 ? measuredRect.height : 0;
 
     // 垂直定位：根据触摸比例头锚点（使用 hairEnd*0.85 回退）
     let headAnchorRatio = 0.085; // 默认回退
@@ -589,17 +419,16 @@ const PetCanvas: React.FC = () => {
       if (Number.isFinite(parsed)) headAnchorRatio = clamp(parsed, 0, 1);
     }
     const headAnchorDomY = modelTopDom + modelHeightDom * headAnchorRatio;
-    let targetY = headAnchorDomY - containerRect.top - bubbleHeight - BUBBLE_HEAD_SAFE_GAP;
     const maxTop = containerRect.height - bubbleHeight - BUBBLE_PADDING;
-    targetY = clamp(targetY, BUBBLE_PADDING, maxTop);
-
-    // 计算尾巴在气泡内部的 Y，使其指向嘴部（头部锚点附近）
-    // 注意：外层容器做了 scale，bubbleHeight 为“缩放后”尺寸；需换算回未缩放的内部坐标
+    targetY = clamp(headAnchorDomY - containerRect.top - bubbleHeight - BUBBLE_HEAD_SAFE_GAP, BUBBLE_PADDING, maxTop);
+    // 计算尾巴在气泡内部的 Y，使其指向头部锚点附近
     const tailSize = 10; // 与 ChatBubble 默认尾巴大小一致
-    const unscaledHeight = bubbleHeight / s;
-    const unscaledTailY = (headAnchorDomY - containerRect.top - targetY) / s;
-    const tailY = clamp(unscaledTailY, tailSize, unscaledHeight - tailSize);
-    setBubbleTailY(Math.round(tailY));
+    const unscaledHeight = bubbleHeight > 0 ? (bubbleHeight / s) : 0;
+    const unscaledTailY = bubbleHeight > 0 ? ((headAnchorDomY - containerRect.top - targetY) / s) : 0;
+    const nextTailY = bubbleHeight > 0 ? clamp(unscaledTailY, tailSize, Math.max(tailSize, unscaledHeight - tailSize)) : null;
+    if (nextTailY !== null) {
+      setBubbleTailY(Math.round(nextTailY));
+    }
 
     // 头部区域定义与遮挡检测（使用 touch map 第二段作为脸底 / 或 hairEnd*1.35 回退）
     let headTopRatio = headAnchorRatio; // 近似头顶
@@ -617,11 +446,11 @@ const PetCanvas: React.FC = () => {
     const headTopDom = modelTopDom + modelHeightDom * headTopRatio;
     const headBottomDom = modelTopDom + modelHeightDom * headBottomRatio;
 
-    // 计算气泡矩形（当前拟定）
+    // 根据头部上缘做一次上推，避免底边压住头部
     const bubbleTopDom = targetY + containerRect.top;
     const bubbleBottomDom = bubbleTopDom + bubbleHeight;
     let overlapAdjusted = false;
-    if (bubbleBottomDom > headTopDom - 4) { // 若气泡底边进入头部上缘（允许微 4px 缓冲）
+    if (bubbleBottomDom > headTopDom - 4) {
       const desiredTopDom = headTopDom - BUBBLE_HEAD_SAFE_GAP - bubbleHeight;
       const desiredTop = desiredTopDom - containerRect.top;
       const clampedDesiredTop = clamp(desiredTop, BUBBLE_PADDING, maxTop);
@@ -631,30 +460,24 @@ const PetCanvas: React.FC = () => {
       }
     }
 
-    // 再次检测：如果仍覆盖大部分头部（长文本高度巨大），可后续考虑缩宽；此处仅记录标记
-    const postBubbleTopDom = targetY + containerRect.top;
-    const postBubbleBottomDom = postBubbleTopDom + bubbleHeight;
-    const severeOverlap = postBubbleBottomDom > headBottomDom && (postBubbleBottomDom - headBottomDom) > bubbleHeight * 0.25;
-
     // pointer-events 保护：避免遮挡模型点击（后续可扩展悬停激活）
     bubbleEl.style.pointerEvents = 'none';
 
-    // 严重遮挡回退：尝试缩宽以减少高度（换行重新排版），然后下一帧重算一次位置
+    // 严重遮挡回退：缩宽以减少高度（换行重新排版），然后下一帧重算一次位置
     if (severeOverlap) {
       const cssVar = bubbleEl.style.getPropertyValue('--bubble-max-width');
-      const currentMaxWidth = parseFloat(cssVar || `${chosenZoneWidth}`);
+      const currentMaxWidth = parseFloat(cssVar || `${bubbleWidth}`);
       if (Number.isFinite(currentMaxWidth) && currentMaxWidth > BUBBLE_ZONE_MIN_WIDTH + 12) {
         const shrinkWidth = Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.floor(currentMaxWidth * 0.85));
         if (shrinkWidth < currentMaxWidth - 4) {
           bubbleEl.style.setProperty('--bubble-max-width', `${shrinkWidth}px`);
-          debugLog('[PetCanvas] bubble severeOverlap shrink', { before: currentMaxWidth, after: shrinkWidth, bubbleHeight, headBottomDom, postBubbleBottomDom });
+          debugLog('[PetCanvas] bubble severeOverlap shrink', { before: currentMaxWidth, after: shrinkWidth, bubbleHeight, headBottomDom, postBubbleBottomDom: (targetY + containerRect.top + bubbleHeight) });
           requestAnimationFrame(() => updateBubblePosition(true));
         }
       }
     }
 
-    // 更新状态（样式已在测量前设置）
-
+    // 更新状态
     const nextPosition = { left: targetX, top: targetY };
     if (bubbleAlignmentRef.current !== nextBubbleSide) {
       bubbleAlignmentRef.current = nextBubbleSide;
@@ -666,10 +489,16 @@ const PetCanvas: React.FC = () => {
       setBubblePosition(nextPosition);
     }
 
-   
-    // 新日志
-    debugLog('[PetCanvas] bubble zones', { s, zoneTarget, leftAvailable, rightAvailable, zoneWidthLeft, zoneWidthRight, canLeft, canRight, chosenZoneWidth, visualFrameDomWidth: modelWidthDom });
-    debugLog('[PetCanvas] bubble place', { side: nextBubbleSide, bubbleWidth, bubbleHeight, targetX, targetY, headAnchorRatio, headAnchorDomY, modelLeftDom, modelRightDom });
+    // 新日志（移除未定义变量，保留关键信息）
+    debugLog('[PetCanvas] bubble place', {
+      side: nextBubbleSide,
+      bubbleWidth,
+      bubbleHeight,
+      targetX,
+      targetY,
+      modelLeftDom: (vfVisible.leftDom - containerRect.left),
+      modelRightDom: (vfVisible.rightDom - containerRect.left),
+    });
     debugLog('[PetCanvas] head overlap', { headTopRatio, headBottomRatio, headTopDom, headBottomDom, overlapAdjusted, severeOverlap });
 
     commitBubbleReady(true);
@@ -698,30 +527,22 @@ const PetCanvas: React.FC = () => {
     const screen = app.renderer?.screen;
     if (!screen?.width || !screen?.height || canvasRect.width === 0 || canvasRect.height === 0) return;
 
-    const centerRatio = screen.width ? ((bounds.x + bounds.width / 2) - screen.x) / screen.width : 0.5;
-    const topRatio = screen.height ? (bounds.y - screen.y) / screen.height : 0;
-    const widthRatio = screen.width ? bounds.width / screen.width : 0.3;
+    // 计算模型顶端在 Canvas DOM 的位置（供上下文区引擎使用）
+    const topRatioTmp = screen.height ? (bounds.y - screen.y) / screen.height : 0;
+    const clampedTopTmp = Math.max(0, Math.min(1, Number.isFinite(topRatioTmp) ? topRatioTmp : 0));
+    const topDomY = canvasRect.top + clampedTopTmp * canvasRect.height;
 
-    const clampedCenter = Math.max(0, Math.min(1, Number.isFinite(centerRatio) ? centerRatio : 0.5));
-    const clampedTop = Math.max(0, Math.min(1, Number.isFinite(topRatio) ? topRatio : 0));
-    const safeWidthRatio = Math.max(0.05, Math.min(1, Number.isFinite(widthRatio) ? widthRatio : 0.3));
-
-    const centerDomX = canvasRect.left + clampedCenter * canvasRect.width;
-    const topDomY = canvasRect.top + clampedTop * canvasRect.height;
-    const approxWidth = Math.max(140, Math.min(canvasRect.width * safeWidthRatio * 0.65, canvasRect.width - 48));
-
+    // 使用 dragHandleEngine 计算手柄位置（纯函数）
     const offsetConfig = (window as any)?.LIVE2D_DRAG_HANDLE_OFFSET;
-    const offsetX = typeof offsetConfig?.x === 'number' ? offsetConfig.x : -48;
-    const offsetY = typeof offsetConfig?.y === 'number' ? offsetConfig.y : -96;
-    const relativeLeft = centerDomX - containerRect.left - approxWidth / 2 + offsetX;
-    const relativeTop = topDomY - containerRect.top + offsetY;
-
-    const maxLeft = Math.max(16, containerRect.width - approxWidth - 16);
-    const nextPosition = {
-      left: Math.max(10, Math.min(maxLeft, Number.isFinite(relativeLeft) ? relativeLeft : 10)),
-      top: Math.max(9, Math.min(containerRect.height - 64, Number.isFinite(relativeTop) ? relativeTop : 9)),
-      width: approxWidth,
-    };
+    const dh = computeDragHandlePosition({
+      canvasWidth: canvasRect.width,
+      canvasHeight: canvasRect.height,
+      bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      screen: { width: screen.width, height: screen.height, x: screen.x as number, y: screen.y as number },
+      offsetX: typeof offsetConfig?.x === 'number' ? offsetConfig.x : -48,
+      offsetY: typeof offsetConfig?.y === 'number' ? offsetConfig.y : -96,
+    });
+    const nextPosition = dh.position;
 
     const prev = dragHandlePositionRef.current;
     if (!prev || Math.abs(prev.left - nextPosition.left) > 0.5 || Math.abs(prev.top - nextPosition.top) > 0.5 || Math.abs(prev.width - nextPosition.width) > 0.5) {
@@ -739,8 +560,7 @@ const PetCanvas: React.FC = () => {
       }
     }
 
-    const contextZoneWidth = Math.max(56, Math.min(104, containerRect.width * 0.28));
-    const contextZoneHeight = Math.max(48, Math.min(120, containerRect.height * 0.18));
+    // 使用 contextZoneEngine 计算上下文区对齐与样式（纯函数）
     const screenObj = window.screen as unknown as { availLeft?: number; availWidth?: number; width?: number };
     const screenAvailLeft = typeof screenObj?.availLeft === 'number' ? screenObj.availLeft : 0;
     const screenAvailWidth = typeof screenObj?.availWidth === 'number'
@@ -748,78 +568,55 @@ const PetCanvas: React.FC = () => {
       : (typeof screenObj?.width === 'number' ? screenObj.width : window.innerWidth);
     const windowGlobalLeft = window.screenX ?? window.screenLeft ?? 0;
     const windowGlobalWidth = window.outerWidth || containerRect.width;
-    const rawLeftSpace = windowGlobalLeft - screenAvailLeft;
-    const rawRightSpace = (screenAvailLeft + screenAvailWidth) - (windowGlobalLeft + windowGlobalWidth);
-    const safeLeftSpace = Number.isFinite(rawLeftSpace) ? rawLeftSpace : 0;
-    const safeRightSpace = Number.isFinite(rawRightSpace) ? rawRightSpace : 0;
-    const leftMargin = 14;
-    const rightMargin = 14;
-    const internalLeftRoom = containerRect.width - contextZoneWidth - leftMargin;
-    const internalRightRoom = containerRect.width - contextZoneWidth - rightMargin;
-    const EDGE_THRESHOLD = 48;
-    let nextContextAlignment: 'left' | 'right';
-    if (internalRightRoom < 12 && internalLeftRoom >= internalRightRoom) {
-      nextContextAlignment = 'left';
-    } else if (internalLeftRoom < 12 && internalRightRoom >= internalLeftRoom) {
-      nextContextAlignment = 'right';
-    } else if (safeRightSpace < EDGE_THRESHOLD && safeLeftSpace > safeRightSpace) {
-      nextContextAlignment = 'left';
-    } else if (safeLeftSpace < EDGE_THRESHOLD && safeRightSpace >= safeLeftSpace) {
-      nextContextAlignment = 'right';
-    } else {
-      nextContextAlignment = safeRightSpace >= safeLeftSpace ? 'right' : 'left';
-    }
 
-    console.log('[PetCanvas] context alignment decision', {
-      safeLeftSpace,
-      safeRightSpace,
-      internalLeftRoom,
-      internalRightRoom,
-      EDGE_THRESHOLD,
-      nextContextAlignment,
+    const cz = computeContextZone({
+      containerWidth: containerRect.width,
+      containerHeight: containerRect.height,
+      containerLeft: containerRect.left,
+      containerTop: containerRect.top,
+      modelTopDom: Math.max(0, Math.min(containerRect.height, topDomY - containerRect.top)),
+      modelHeightDom: Math.max(48, Math.min(containerRect.height, (bounds.height / screen.height) * canvasRect.height)),
+      screenAvailLeft,
+      screenAvailWidth,
+      windowGlobalLeft,
+      windowGlobalWidth,
+      leftMargin: 14,
+      rightMargin: 14,
+    }, {
+      EDGE_THRESHOLD: 48,
+      MIN_WIDTH: 56,
+      MAX_WIDTH: 104,
+      MIN_HEIGHT: 48,
+      MAX_HEIGHT: 120,
     });
 
-    if (contextZoneAlignmentRef.current !== nextContextAlignment) {
-      contextZoneAlignmentRef.current = nextContextAlignment;
-      setContextZoneAlignment(nextContextAlignment);
+    debugLog('[PetCanvas] context alignment decision', {
+      alignment: cz.alignment,
+      style: cz.style,
+    });
+
+    if (contextZoneAlignmentRef.current !== cz.alignment) {
+      contextZoneAlignmentRef.current = cz.alignment;
+      setContextZoneAlignment(cz.alignment);
     }
 
-    let contextZoneLeft = nextContextAlignment === 'right'
-      ? containerRect.width - contextZoneWidth - rightMargin
-      : leftMargin;
-    contextZoneLeft = clamp(contextZoneLeft, 12, Math.max(12, containerRect.width - contextZoneWidth - 12));
-
-    const modelTopDom = Math.max(0, Math.min(containerRect.height, topDomY - containerRect.top));
-    const modelHeightDom = Math.max(48, Math.min(containerRect.height, (bounds.height / screen.height) * canvasRect.height));
-    const preferredContextTop = modelTopDom + modelHeightDom * 0.2 - contextZoneHeight / 2;
-    const contextZoneTop = clamp(preferredContextTop, 12, Math.max(12, containerRect.height - contextZoneHeight - 12));
-
-    const contextZoneLeftAbs = containerRect.left + contextZoneLeft;
-    const contextZoneTopAbs = containerRect.top + contextZoneTop;
-    const contextZoneRightAbs = contextZoneLeftAbs + contextZoneWidth;
-    const contextZoneBottomAbs = contextZoneTopAbs + contextZoneHeight;
-    const nextContextZoneStyle = {
-      left: contextZoneLeft,
-      top: contextZoneTop,
-      width: contextZoneWidth,
-      height: contextZoneHeight,
-    };
+    const nextContextZoneStyle = cz.style;
     const prevContextZoneStyle = contextZoneStyleRef.current;
     if (!prevContextZoneStyle
       || Math.abs(prevContextZoneStyle.left - nextContextZoneStyle.left) > 0.5
       || Math.abs(prevContextZoneStyle.top - nextContextZoneStyle.top) > 0.5
       || Math.abs(prevContextZoneStyle.width - nextContextZoneStyle.width) > 0.5
       || Math.abs(prevContextZoneStyle.height - nextContextZoneStyle.height) > 0.5) {
-      console.log('[PetCanvas] contextZone style update', { prev: prevContextZoneStyle, next: nextContextZoneStyle });
+      debugLog('[PetCanvas] contextZone style update', { prev: prevContextZoneStyle, next: nextContextZoneStyle });
       contextZoneStyleRef.current = nextContextZoneStyle;
       setContextZoneStyle(nextContextZoneStyle);
     }
     let pointerInsideContextZone = false;
     if (Number.isFinite(pointerX.current) && Number.isFinite(pointerY.current)) {
-      pointerInsideContextZone = pointerX.current >= contextZoneLeftAbs
-        && pointerX.current <= contextZoneRightAbs
-        && pointerY.current >= contextZoneTopAbs
-        && pointerY.current <= contextZoneBottomAbs;
+      pointerInsideContextZone = pointerX.current >= cz.rectAbs.left
+        && pointerX.current <= cz.rectAbs.right
+        && pointerY.current >= cz.rectAbs.top
+        && pointerY.current <= cz.rectAbs.bottom;
     }
     const nowForZone = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()

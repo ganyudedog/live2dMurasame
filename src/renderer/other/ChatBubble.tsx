@@ -42,6 +42,8 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
     // 气泡主体盒子：使用对称的 padding 与圆角
     const resolvedMaxWidth: number | string = maxWidth ?? 'var(--bubble-max-width, 260px)';
     const sidePadding = tailSize + 1; // 包含轻微高光的占位，确保尾巴不越界
+    // 避免同时混用 padding 与 paddingLeft/Right 导致 React 警告：使用完全展开的 padding 属性
+    const baseHorizPadding = 12;
     const bubbleStyle: React.CSSProperties = {
         position: 'relative',
         display: 'inline-block',
@@ -49,8 +51,10 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
         background: '#0f172a', // 近似 DaisyUI dark bubble
         color: '#fff',
         borderRadius: 10,
-        padding: '10px 12px',
-        ...(isLeft ? { paddingRight: sidePadding } : { paddingLeft: sidePadding }),
+        paddingTop: 10,
+        paddingBottom: 10,
+        paddingLeft: isLeft ? baseHorizPadding : baseHorizPadding + sidePadding,
+        paddingRight: isLeft ? baseHorizPadding + sidePadding : baseHorizPadding,
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
         // 为避免左右内部留白不一致，不做额外对齐，只由外层决定 side
     };

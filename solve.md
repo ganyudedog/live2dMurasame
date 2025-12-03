@@ -1,156 +1,98 @@
-# Live2D 桌宠实现方案（初稿，待你审核）
+# PetCanvas 拆分方案（保留现有调试能力）
 
-## 1. 项目目标
-构建一个跨平台（Windows 主优先）Live2D 桌面宠物应用：
-- 使用 Electron 创建透明、置顶、可拖拽、可选择是否穿透点击的桌面窗口。
-- 基于 Pixi.js 与官方 Live2D Cubism SDK（通过 `pixi-live2d-display` 或手动集成）进行模型渲染。
-- 使用 React + TailwindCSS 构建配置与控制界面（轻量，尽量不干扰桌宠主窗口性能）。
-- 支持动作（motion）、表情（expression）、物理（physics）、音频同步播放、闲置随机动画、交互触发（点击、拖拽、右键菜单）。
-- 提供最小可用设置：开机自启、缩放、位置锁定、是否允许鼠标事件、动作选择、音量开关。
+- 目标：将 `src/renderer/components/PetCanvas.tsx` 按职责拆分为多个小型模块，降低耦合，便于定位与修复 bug，同时完整保留现有调试日志、红线可视化与环境变量开关。
 
-后续增量可扩展：多模型切换、热加载、脚本化行为（例如基于时间段或系统事件触发）、插件机制、通知整合。
+## 模块总览
+- `components/PetCanvasRoot.tsx`：顶层容器组件，负责挂载 Pixi 应用、模型加载生命周期、跨模块状态桥接，仅组合子组件与 hooks。
+- `components/bubble/BubbleManager.tsx`：气泡渲染与定位的纯组件（接收位置、对齐、尾巴 Y、宽度上限等），不含业务决策。
+- `logic/bubble/placementEngine.ts`：气泡放置决策引擎（评分、边缘惩罚、裁剪计算、兜底策略、对称/严格模式）；导出纯函数，入参为模型视觉矩形、容器尺寸、环境变量与当前缩放。
+- `logic/visual/visualFrame.ts`：`getVisualFrameDom` 及相关“视觉矩形”算法，支持 `ignoreOffset`/`face center`/`padding` 等；提供渲染用和判定用两套输出。
+- `logic/contextZone/contextZoneEngine.ts`：上下文区域（菜单区）定位与对齐决策，含“边缘闩锁”与指针穿透的时序逻辑；输出样式与对齐。
+- `hooks/usePixiApp.ts`：Pixi `Application` 创建、销毁与 ticker 管理；暴露 `appRef` 与 `screen`。
+- `hooks/useLive2DModel.ts`：模型加载与引用管理（`loadModel`/`Live2DModel`），读取 `MODEL_PATH` 与 baseUrl，封装 `getBounds` 读法。
+- `hooks/usePointerStates.ts`：统一管理指针命中状态（模型/气泡/拖拽手柄/上下文区），对外暴露布尔值与坐标；内部节流。
+- `components/DragHandle.tsx`：拖拽手柄组件，接收位置与可见性，内部只处理 hover/active UI；位置计算放入 `logic/dragHandle/dragHandleEngine.ts`。
+- `logic/dragHandle/dragHandleEngine.ts`：根据模型 bounds、屏幕与容器尺寸计算手柄位置与可见性；保留 `LIVE2D_DRAG_HANDLE_OFFSET` 支持。
+- `logic/window/resizeManager.ts`：窗口尺寸请求节流（`requestResize`）、备份与回退；暴露简单 API。
+- `state/usePetStore.ts`：沿用现有 zustand store，不改动；新模块以最小读取/写入方式衔接。
+- `debug/RedLine.tsx`：红线可视化组件，接收 `left` 像素位置，内部仅渲染；逻辑在 `visualFrame.ts`。
+- `utils/env.ts`：统一封装环境变量读取助手，兼容 `import.meta.env` 与 `process.env`。
+- `utils/math.ts`：`clamp`、`clampAngleY`、`clampEyeBallY` 等数学工具。
 
-## 2. 技术栈与核心依赖
-| 功能 | 选型 | 说明 |
-|------|------|------|
-| 渲染 | `pixi.js` | WebGL 渲染基础 |
-| Live2D 支持 | `pixi-live2d-display` | 封装 Cubism SDK，简化与 Pixi 集成 |
-| 框架 | `react`, `react-dom` | UI 层 |
-| 样式 | `tailwindcss`, `postcss`, `autoprefixer` | 原子化样式，加速迭代 |
-| 状态管理 | `zustand`（或 `jotai`） | 轻量，全局配置、模型状态；优先 `zustand` |
-| Electron | `electron` | 主进程 + 渲染进程 |
-| 配置持久化 | `electron-store` | 保存用户设置（JSON）|
-| 构建 | `vite` | 已存在，继续使用；分出 `main` 与 `renderer` 构建 |
-| 类型 | `typescript` | 保持现有 ts 环境 |
-| 打包 | `electron-builder` | 生成安装包（后期阶段）|
-| 音频 | 原生 HTMLAudio / WebAudio | 与 motion 触发同步 |
-
-可选增强：
-- `pixi-viewport`（若后续有复杂镜头/缩放拖动需求）。
-- `eventemitter3`（若状态事件较多，可单独抽象）。
-- `electron-updater`（自动更新，后期再加）。
-
-移除/清理：删除当前 `src/App.tsx` 示例逻辑，替换为桌宠专用入口与组件结构。
-
-## 3. 整体架构概览
+## 目录结构建议
 ```
-electron/
-  main.ts            # 主进程：创建窗口、IPC 通道、托盘菜单、开机自启
-src/
-  renderer/
-	 index.tsx        # React 入口，挂载控制/设置 UI
-	 components/
-		PetCanvas.tsx  # 包含 <canvas>，初始化 Pixi Application 与 Live2D 模型
-		ControlPanel.tsx # 简易控制面板（动作、表情、缩放、开关）
-		SettingsPortal.tsx # 高级设置/弹窗
-	 state/
-		usePetStore.ts # zustand 管理：当前动作、队列、音量、可交互等
-	 live2d/
-		loader.ts      # 模型加载与缓存（读取 public/model 内 *.model3.json）
-		motionManager.ts # 动作/表情调度，空闲循环策略
-		interaction.ts  # 点击、拖拽、命中区域判定
-	 ipc/
-		bridge.ts      # 封装与主进程 IPC 的调用（开机自启、窗口模式等）
-public/model/        # 已存在 Live2D 资产目录
+src/renderer/
+	components/
+		PetCanvasRoot.tsx
+		DragHandle.tsx
+		debug/RedLine.tsx
+		bubble/
+			BubbleManager.tsx
+	hooks/
+		usePixiApp.ts
+		useLive2DModel.ts
+		usePointerStates.ts
+	logic/
+		bubble/placementEngine.ts
+		visual/visualFrame.ts
+		contextZone/contextZoneEngine.ts
+		dragHandle/dragHandleEngine.ts
+		window/resizeManager.ts
+	utils/
+		env.ts
+		math.ts
 ```
 
-Electron 主窗口：
-- `BrowserWindow` 参数：`transparent: true`, `frame: false`, `alwaysOnTop: true`, `skipTaskbar: true`, `backgroundColor: '#00000000'`。
-- 支持“点击穿透”模式：调用 `win.setIgnoreMouseEvents(true, { forward: true })`（通过设置切换）。
-- 托盘菜单：显示/隐藏控制面板、锁定位置、退出。
+## 拆分边界与数据流
+- `PetCanvasRoot`：
+	- 依赖：`usePixiApp`、`useLive2DModel`、`usePointerStates`、`visualFrame.ts`、`placementEngine.ts`、`contextZoneEngine.ts`、`dragHandleEngine.ts`、`resizeManager.ts`。
+	- 输出：将位置、对齐与样式传给 `BubbleManager`、`DragHandle`、`RedLine`。
+	- 保留：`debugLog` 调用点与调试开关；当 `VITE_BUBBLE_SYMMETRIC`、`VITE_BUBBLE_STRICT_SYMMETRY` 等开关启用时，调用 `placementEngine` 对应分支。
 
-渲染层两个窗口策略（可选）：
-1. 单窗口：透明层 + 浮动 UI（UI 绝对定位在右下角/可隐藏）。
-2. 双窗口：桌宠透明窗口 + 普通设置窗口（更干净，推荐后期）。初版先做单窗口降低复杂度。
+- `visualFrame.ts`：
+	- 提供 `getVisualFrameDom(bounds, screen, canvasRect, opts)`，其中 `opts.ignoreOffset` 用于“几何判定参考系”；`opts.faceAreaId` 保留面部中心估计。
+	- 导出：`getVisibleFrame()` 与 `getBaseFrame()` 两个包装，以减少重复参数。
+	- 保留：红线位置以 `visible.centerDomX` 输出；日志调用仍在 `Root`，便于统一开关。
 
-## 4. 模块与职责拆分
-1. Live2DLoader (`live2d/loader.ts`)
-	- 解析 `model3.json`，加载 `moc3`、`textures`、`motions`、`expressions`、`physics3.json`。
-	- 返回模型实例（`Live2DModel`）。
-2. MotionManager (`live2d/motionManager.ts`)
-	- 提供 `playMotion(name)`、`queueMotion(name)`、`playRandomIdle()`。
-	- 动作结束事件监听，自动触发下一队列或闲置动画。
-3. Interaction (`live2d/interaction.ts`)
-	- 拖拽桌宠：监听 pointer down / move / up，更新窗口位置（通过 IPC 调主进程 `win.setPosition`).
-	- 点击热点区域：可定义模型坐标映射（例如头部触发表情；身体触发动作）。
-4. 状态管理 (`usePetStore.ts`)
-	- `currentMotion`, `pendingQueue`, `scale`, `allowMouse`, `volume`, `panelVisible` 等。
-	- 动作触发与 UI 联动。
-5. 音频系统
-	- 与特定 motion 绑定音频文件（在 `model/motion/*.motion3.json` 中有时包含音频路径，若无则自定义映射表）。
-6. Electron IPC (`bridge.ts` + 主进程 handlers)
-	- `toggleIgnoreMouseEvents`, `setScale`, `setAutoLaunch`, `getAppVersion` 等。
-7. 设置存储 `electron-store`
-	- 初始化默认配置；首次启动写入；修改后立即持久化。
+- `placementEngine.ts`：
+	- 入参：`baseFrame`、`visibleFrame`、`containerRect`、`scale`、`envOptions`（权重、阈值、开关）。
+	- 出参：`side: 'left'|'right'`、`maxWidthPx`、`positionX`、`positionY`、`tailY`、`flags`（`severeOverlap` 等）。
+	- 规则：保留当前“评分+兜底”策略；严格对称模式下以 `visible.centerDomX` 为基准进行镜像 clamp。
+	- 保留：debug 日志字段（scores、penalties、chosen 等）。
 
-## 5. 动作与表情策略
-Idle 策略：
-- 每 N 秒（例如 20–40 区间随机）若无队列播放 `playRandomIdle()`。
-- 队列优先：当用户点击或触发事件加入队列，空闲循环暂停。
+- `contextZoneEngine.ts`：
+	- 入参：容器尺寸、屏幕与窗口边缘空间、指针位置与时间戳。
+	- 出参：`style {left,top,width,height}` 与 `alignment`、`activeUntil` 等。
+	- 保留：`CONTEXT_ZONE_LATCH_MS` 闩锁与定时器外部触发接口（`scheduleContextZoneLatchCheck`）。
 
-动作与表情：
-- 基于文件名或自建映射（例如 `motion01.motion3.json => wave`）。
-- 提供一个 JSON 映射：`motionMap.ts`：`{ wave: 'motion01', happy: 'motion03', ... }`。
-- 表情切换：通过 `model.expression()`（取决于 SDK）（若使用 `pixi-live2d-display` 提供的 API）。
+- `dragHandleEngine.ts`：
+	- 入参：模型 bounds、screen、containerRect、`LIVE2D_DRAG_HANDLE_OFFSET`。
+	- 出参：`position {left,top,width}` 与可见性建议。
+	- 保留：与指针状态联动的显隐逻辑仍在 `PetCanvasRoot`，避免组件内部引入副作用。
 
-## 6. Tailwind 集成与样式
-步骤：
-1. 安装：`tailwindcss postcss autoprefixer`。
-2. 生成 `tailwind.config.js`：指定 `content: ["./index.html", "./src/**/*.{ts,tsx}"]`。
-3. 在 `src/renderer/index.css` 引入 `@tailwind base; @tailwind components; @tailwind utilities;`。
-4. 控制面板组件使用简单卡片风格（半透明黑底 + 毛玻璃，可选 `backdrop-filter`）。
+- `BubbleManager.tsx`：
+	- 接口：`props {left, top, alignment, tailY, maxWidth}`；内部仅渲染 `ChatBubble` 并设置 `--bubble-max-width`、`pointer-events`。
+	- 保留：现有 `pointer-events: none` 以避免遮挡点击；高度变化后由 `Root` 触发一次 `placementEngine` 复算。
 
-## 7. 分阶段里程碑
-| 阶段 | 目标 | 交付物 |
-|------|------|--------|
-| Phase 0 | 清理与依赖 | 移除旧示例、安装依赖、调整目录、Electron 主窗口跑起来 |
-| Phase 1 | 模型加载渲染 | 显示 Live2D 模型，支持缩放、拖拽基础 |
-| Phase 2 | 动作/表情 API | 播放指定动作，空闲随机循环，队列机制 |
-| Phase 3 | UI 控制面板 | React 面板控制动作、缩放、是否穿透、显示/隐藏 |
-| Phase 4 | 设置与持久化 | electron-store 保存配置，开机自启（可选）|
-| Phase 5 | 音频与扩展 | 动作音频同步；托盘菜单；小优化 |
-| Phase 6 | 打包与发布 | electron-builder 输出安装包，图标与版本信息 |
+## 调试与兼容保留
+- 保留所有现有 `debugLog(...)` 调用点；将其封装至 `utils/env.ts` 暴露 `debugEnabled()` 与 `log()`，便于统一开关。
+- 红线：保留 `RedLine` 组件与 `setRedLineLeft(next)` 更新路径；计算依据 `visibleFrame.centerDomX`。
+- 环境变量：保留 `VISUAL_FRAME_*`、`VITE_BUBBLE_*`、`LIVE2D_*` 等全部开关；读取由 `utils/env.ts` 提供。
+- 性能：节流窗口请求（`RESIZE_THROTTLE_MS`）、布局计算帧率限制（`last*UpdateRef`）；保持原语义。
 
-## 8. 预期新增/修改依赖命令（参考）
-```
-pnpm add pixi.js pixi-live2d-display zustand electron-store classnames
-pnpm add -D tailwindcss postcss autoprefixer electron-builder @types/node
-```
-（Electron 若已安装则跳过；若无：`pnpm add electron`）
+## 迁移步骤（增量，可分 PR）
+1. 提取 `utils/env.ts` 与 `utils/math.ts`；将 `PetCanvas.tsx` 引用替换为新工具。
+2. 抽取 `visualFrame.ts` 并在 `PetCanvas` 中改为双帧（base/visible）调用；保持原日志。
+3. 抽取 `placementEngine.ts`：将 `updateBubblePosition` 的决策段迁移为纯函数；`BubbleManager` 只接收结果。
+4. 抽取 `contextZoneEngine.ts` 与 `dragHandleEngine.ts`；将样式与显隐状态计算迁移；`PetCanvasRoot` 负责副作用（定时器、窗口穿透）。
+5. 引入 `PetCanvasRoot.tsx`，将原 `PetCanvas.tsx` 逐段迁移组件与 hooks；保留对 `usePetStore` 的读写路径不变。
+6. 最后将 `PetCanvas.tsx` 过渡为 `PetCanvasRoot.tsx` 的薄包装或直接替换导出，维持外部 API 与路径稳定。
 
-## 9. 性能与注意事项
-- 尽量避免在 React state 中存放巨大对象（模型实例单独持有）。
-- Pixi Application 只创建一次，组件卸载时销毁（桌宠主窗口一般不会销毁）。
-- 开启穿透鼠标后要留一个唤出控制面板的方式（托盘菜单或快捷键）。
-- 窗口移动使用 `win.setPosition`（频率不宜过高，可在拖拽时节流 16ms）。
-- 资源加载失败时给出回退提示（例如模型路径错误）。
+## 风险与回滚
+- 风险：布局计算跨模块后时序问题；用单一 `update` 调度函数串联（先视觉帧，后放置/上下文/手柄）。
+- 回滚：按迁移步骤，每步保持旧路径可选；若出现问题，可以逐步回退至上一步的单文件实现。
 
-## 10. 安全与分发
-- 禁止加载远程任意脚本；模型和配置固定在 `public/model`。
-- 打包时排除无关开发文件（node_modules prune）。
-- 后期自动更新需签名与版本 API；初版不做。
-
-## 11. 下一步建议执行顺序（实现层面）
-1. Phase 0：清理 `src` 现有示例，建立 `src/renderer` 结构与入口文件。调整 Electron 主进程脚本（`electron/main.js` → `electron/main.ts` 若迁移到 TS）。
-2. Phase 1：编写 `PetCanvas.tsx`，集成 Pixi 与模型加载（硬编码加载第一只模型）。
-3. Phase 2：实现 `motionManager.ts` + 空闲策略；连接 zustand。
-4. Phase 3：开发控制面板组件，提供动作按钮与缩放滑条。
-5. Phase 4：加入 `electron-store`，设置持久化，增加穿透与置顶切换。
-6. Phase 5：音频映射与托盘菜单。
-7. Phase 6：打包脚本（`electron-builder` 配置）与发布测试。
-
-## 12. 审核要点（请你确认）
-请确认：
-- 是否接受单窗口策略作为初版？
-- 是否需要在第一版就加入开机自启与自动更新？
-- 是否需要多模型切换（若有则 Phase 1 要做模型选择工具）？
-- 状态管理选 `zustand` 是否 OK？
-
-确认后我将：
-1. 执行 Phase 0 清理与依赖安装脚本建议。
-2. 输出初始代码骨架与关键空文件。 
-3. 开始逐步实现。
-
----
-（等待你的审核与反馈）
+## 备注
+- 当前调试内容（日志、红线、环境开关、评分细节）全部保留。
+- 严格对称模式与未偏移参考系的分离，已在 `visualFrame.ts`/`placementEngine.ts` 设计中体现，便于后续 bug 修复与 A/B 验证。
 

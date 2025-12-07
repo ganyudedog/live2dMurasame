@@ -93,6 +93,18 @@ const applyAutoLaunchSetting = (enabled) => {
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const rootIndex = path.join(__dirname, '..', 'index.html');
 
+// 在 Windows 上透明窗口 + DevTools 可能触发 GPU/驱动崩溃（0xC0000005）
+// 通过禁用硬件加速与 GPU 作为兜底，避免打开控制台时进程异常退出。
+// 可按需通过环境变量恢复：设置 VITE_ENABLE_GPU=1
+const enableGpu = process.env.VITE_ENABLE_GPU === '1';
+if (!enableGpu) {
+    try {
+        app.disableHardwareAcceleration();
+        app.commandLine.appendSwitch('disable-gpu');
+        app.commandLine.appendSwitch('disable-gpu-compositing');
+    } catch {}
+}
+
 // 加载主窗口
 const loadMainWindow = (target) => {
     if (!target) return;
@@ -250,6 +262,10 @@ const createMainWindow = () => {
     });
 
     loadMainWindow(mainWindow);
+    // 打开 DevTools 时使用 detach 模式，减少与透明窗口叠加导致的崩溃概率
+    if (!app.isPackaged && process.env.VITE_OPEN_DEVTOOLS === '1') {
+        try { mainWindow.webContents.openDevTools({ mode: 'detach' }); } catch {}
+    }
 
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
         controlPanelWindow.setParentWindow(mainWindow);

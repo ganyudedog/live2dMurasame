@@ -1,16 +1,22 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from 'react';
+import React, { useRef, useCallback, useState, useLayoutEffect } from 'react';
 import { ChatBubble } from '../other/ChatBubble';
-import { Application, Ticker } from 'pixi.js';
+import { Application } from 'pixi.js';
 import { computeContextZone } from '../logic/contextZone/contextZoneEngine';
 import { computeDragHandlePosition } from '../logic/dragHandle/dragHandleEngine';
 import { usePetStore } from '../state/usePetStore';
-import { loadModel } from '../live2d/loader';
-import { Live2DModel } from '../live2d/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2d/runtime';
 import { getVisualFrameDom as getVisualFrameDomLocal } from '../logic/visual/visualFrame';
 import { computeBubblePlacement } from '../logic/bubble/placementEngine';
+import { usePetSettings } from '../hooks/usePetSettings';
+import { usePetModel } from '../hooks/usePetModel';
+import { usePetLayout } from '../hooks/usePetLayout';
+import { useEyeReset } from '../hooks/useEyeReset';
+import { useMousePassthrough } from '../hooks/useMousePassthrough';
+import { useDragHandleController } from '../hooks/useDragHandleController';
+import { usePointerTapHandler } from '../hooks/usePointerTapHandler';
+import { useBubbleLifecycle } from '../hooks/useBubbleLifecycle';
+import { useContextZoneController } from '../hooks/useContextZoneController';
 
 // 环境变量读取助手
 import { env } from '../utils/env';
@@ -24,8 +30,8 @@ const BUBBLE_MAX_WIDTH = 260; // legacy cap (still used as hard ceiling)
 const BUBBLE_ZONE_BASE_WIDTH = 200; // scale=1 时单侧气泡区域目标宽度
 const BUBBLE_ZONE_MIN_WIDTH = 120; // 单侧最小可用宽度
 const BUBBLE_HEAD_SAFE_GAP = 18; // 头部安全间距
-const BUBBLE_GAP = 16; // gap between model and bubble
-const BUBBLE_PADDING = 12; // padding inside window edges
+const BUBBLE_GAP = 16; // 模型和气泡之间的距离
+const BUBBLE_PADDING = 12; // 窗口边缘内边距
 const RESIZE_THROTTLE_MS = 120;
 const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
 
@@ -73,10 +79,13 @@ const PetCanvas: React.FC = () => {
   const settingsLoaded = usePetStore(s => s.settingsLoaded);
   const loadSettings = usePetStore(s => s.loadSettings);
 
+  usePetSettings(loadSettings);
+
   // 辅助引用
   const hitAreasRef = useRef<Array<{ id: string; motion: string; name: string }>>([]); // 点击区域
   const modelBaseUrlRef = useRef<string | null>(null); // 模型基础 URL
   const surrogateAudioRef = useRef<HTMLAudioElement | null>(null); // 替代音频元素
+  const updateBubblePositionRef = useRef<(force?: boolean) => void>(() => { }); // 更新气泡位置函数引用
   const updateDragHandlePositionRef = useRef<(force?: boolean) => void>(() => { }); // 更新拖拽手柄位置的函数引用
   const cursorPollRafRef = useRef<number | null>(null); // 光标轮询请求动画帧 ID
 
@@ -204,48 +213,7 @@ const PetCanvas: React.FC = () => {
       recomputeWindowPassthroughRef.current();
     }, delay);
   }, [clearContextZoneLatchTimer]);
-  const setDragHandleVisibility = useCallback((visible: boolean) => {
-    if (dragHandleVisibleRef.current === visible) return;
-    dragHandleVisibleRef.current = visible;
-    setDragHandleVisible(visible);
-  }, []);
-
-  const cancelDragHandleHide = useCallback(() => {
-    if (dragHandleHideTimerRef.current !== null) {
-      window.clearTimeout(dragHandleHideTimerRef.current);
-      dragHandleHideTimerRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const initialEdge = getWindowRightEdge();
-    rightEdgeBaselineRef.current = initialEdge;
-    debugLog('[PetCanvas] baseline init', { initialEdge });
-  }, []);
-
-  const scheduleDragHandleHide = useCallback((delay = 3000) => {
-    if (!showDragHandleOnHover) return;
-    cancelDragHandleHide();
-    dragHandleHideTimerRef.current = window.setTimeout(() => {
-      dragHandleHideTimerRef.current = null;
-      if (!dragHandleHoverRef.current) {
-        setDragHandleVisibility(false);
-      }
-    }, delay);
-  }, [showDragHandleOnHover, cancelDragHandleHide, setDragHandleVisibility]);
-
-  const triggerDragHandleReveal = useCallback(() => {
-    if (!showDragHandleOnHover) return;
-    setDragHandleVisibility(true);
-    scheduleDragHandleHide();
-  }, [showDragHandleOnHover, scheduleDragHandleHide, setDragHandleVisibility]);
-
-  const hideDragHandleImmediately = useCallback(() => {
-    cancelDragHandleHide();
-    dragHandleActiveRef.current = false;
-    setDragHandleVisibility(false);
-  }, [cancelDragHandleHide, setDragHandleVisibility]);
+  
 
   const clearBubbleTimer = useCallback(() => {
     if (!bubbleTimerRef.current) return;
@@ -307,13 +275,30 @@ const PetCanvas: React.FC = () => {
 
     if (!motionTextRef.current) {
       if (force) {
+        suppressResizeForBubbleRef.current = false;
+        pendingResizeRef.current = null;
+        pendingResizeIssuedAtRef.current = null;
         bubblePositionRef.current = null;
         setBubblePosition(null);
         commitBubbleReady(false);
         const backup = autoResizeBackupRef.current;
         if (backup) {
           autoResizeBackupRef.current = null;
+          pendingResizeRef.current = { width: backup.width, height: backup.height };
+          pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now();
           requestResize(backup.width, backup.height);
+        }
+        if (typeof window !== 'undefined') {
+          const immediate = getWindowRightEdge();
+          rightEdgeBaselineRef.current = immediate;
+          debugLog('[PetCanvas] baseline after bubble dismissed', { immediate });
+          window.setTimeout(() => {
+            const delayed = getWindowRightEdge();
+            rightEdgeBaselineRef.current = delayed;
+            debugLog('[PetCanvas] baseline delayed refresh', { delayed });
+          }, 120);
         }
       }
       return;
@@ -472,7 +457,7 @@ const PetCanvas: React.FC = () => {
         if (shrinkWidth < currentMaxWidth - 4) {
           bubbleEl.style.setProperty('--bubble-max-width', `${shrinkWidth}px`);
           debugLog('[PetCanvas] bubble severeOverlap shrink', { before: currentMaxWidth, after: shrinkWidth, bubbleHeight, headBottomDom, postBubbleBottomDom: (targetY + containerRect.top + bubbleHeight) });
-          requestAnimationFrame(() => updateBubblePosition(true));
+          requestAnimationFrame(() => updateBubblePositionRef.current?.(true));
         }
       }
     }
@@ -503,6 +488,81 @@ const PetCanvas: React.FC = () => {
 
     commitBubbleReady(true);
   }, [scale, commitBubbleReady, requestResize]);
+
+  useLayoutEffect(() => {
+    updateBubblePositionRef.current = updateBubblePosition;
+  }, [updateBubblePosition]);
+
+  const { recomputeWindowPassthrough } = useMousePassthrough({
+    ignoreMouse,
+    ignoreMouseRef,
+    mousePassthroughRef,
+    pointerInsideModelRef,
+    pointerInsideBubbleRef,
+    pointerInsideHandleRef,
+    pointerInsideContextZoneRef,
+    dragHandleHoverRef,
+    dragHandleActiveRef,
+    contextZoneActiveUntilRef,
+    cursorPollRafRef,
+    pointerX,
+    pointerY,
+    motionTextRef,
+    autoResizeBackupRef,
+    updateDragHandlePositionRef,
+    rightEdgeBaselineRef,
+    getWindowRightEdge,
+    recomputeWindowPassthroughRef,
+    clearContextZoneLatchTimer,
+  });
+
+  const {
+    setDragHandleVisibility,
+    cancelDragHandleHide,
+    scheduleDragHandleHide,
+    triggerDragHandleReveal,
+  } = useDragHandleController({
+    showDragHandleOnHover,
+    dragHandleRef,
+    dragHandleVisibleRef,
+    dragHandleHideTimerRef,
+    dragHandleActiveRef,
+    dragHandleHoverRef,
+    setDragHandleVisibleState: setDragHandleVisible,
+    recomputeWindowPassthrough,
+    updateBubblePosition,
+    dragHandlePosition,
+  });
+
+  const {
+    applyContextZoneDecision,
+    updateInteractiveZones,
+  } = useContextZoneController({
+    contextZoneStyleRef,
+    contextZoneAlignmentRef,
+    contextZoneActiveUntilRef,
+    contextZoneReleaseTimerRef,
+    pointerInsideContextZoneRef,
+    pointerInsideBubbleRef,
+    pointerInsideHandleRef,
+    pointerInsideModelRef,
+    dragHandleHoverRef,
+    dragHandleActiveRef,
+    dragHandleVisibleRef,
+    pointerX,
+    pointerY,
+    setContextZoneStyle,
+    setContextZoneAlignment,
+    recomputeWindowPassthroughRef,
+    showDragHandleOnHover,
+    scheduleContextZoneLatchCheck,
+    clearContextZoneLatchTimer,
+    triggerDragHandleReveal,
+    scheduleDragHandleHide,
+    cancelDragHandleHide,
+    setDragHandleVisibility,
+    latchDurationMs: CONTEXT_ZONE_LATCH_MS,
+  });
 
   const updateDragHandlePosition = useCallback((force = false) => {
     if (typeof window === 'undefined') return;
@@ -594,213 +654,24 @@ const PetCanvas: React.FC = () => {
       alignment: cz.alignment,
       style: cz.style,
     });
+    applyContextZoneDecision({
+      alignment: cz.alignment,
+      style: cz.style,
+      rectAbs: cz.rectAbs,
+    });
 
-    if (contextZoneAlignmentRef.current !== cz.alignment) {
-      contextZoneAlignmentRef.current = cz.alignment;
-      setContextZoneAlignment(cz.alignment);
-    }
-
-    const nextContextZoneStyle = cz.style;
-    const prevContextZoneStyle = contextZoneStyleRef.current;
-    if (!prevContextZoneStyle
-      || Math.abs(prevContextZoneStyle.left - nextContextZoneStyle.left) > 0.5
-      || Math.abs(prevContextZoneStyle.top - nextContextZoneStyle.top) > 0.5
-      || Math.abs(prevContextZoneStyle.width - nextContextZoneStyle.width) > 0.5
-      || Math.abs(prevContextZoneStyle.height - nextContextZoneStyle.height) > 0.5) {
-      debugLog('[PetCanvas] contextZone style update', { prev: prevContextZoneStyle, next: nextContextZoneStyle });
-      contextZoneStyleRef.current = nextContextZoneStyle;
-      setContextZoneStyle(nextContextZoneStyle);
-    }
-    let pointerInsideContextZone = false;
-    if (Number.isFinite(pointerX.current) && Number.isFinite(pointerY.current)) {
-      pointerInsideContextZone = pointerX.current >= cz.rectAbs.left
-        && pointerX.current <= cz.rectAbs.right
-        && pointerY.current >= cz.rectAbs.top
-        && pointerY.current <= cz.rectAbs.bottom;
-    }
-    const nowForZone = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    if (pointerInsideContextZone) {
-      const candidateExpiry = nowForZone + CONTEXT_ZONE_LATCH_MS;
-      const nextExpiry = candidateExpiry > contextZoneActiveUntilRef.current
-        ? candidateExpiry
-        : contextZoneActiveUntilRef.current;
-      const shouldReschedule = nextExpiry !== contextZoneActiveUntilRef.current || contextZoneReleaseTimerRef.current === null;
-      contextZoneActiveUntilRef.current = nextExpiry;
-      if (shouldReschedule) {
-        scheduleContextZoneLatchCheck(contextZoneActiveUntilRef.current);
-      }
-    } else if (contextZoneActiveUntilRef.current > nowForZone) {
-      if (contextZoneReleaseTimerRef.current === null) {
-        scheduleContextZoneLatchCheck(contextZoneActiveUntilRef.current);
-      }
-    } else if (contextZoneActiveUntilRef.current !== 0) {
-      contextZoneActiveUntilRef.current = 0;
-      clearContextZoneLatchTimer();
-    }
-    if (pointerInsideContextZoneRef.current !== pointerInsideContextZone) {
-      pointerInsideContextZoneRef.current = pointerInsideContextZone;
-      recomputeWindowPassthroughRef.current();
-    }
-
-    if (pointerInsideModelRef.current !== pointerInsideModel) {
-      pointerInsideModelRef.current = pointerInsideModel;
-      if (pointerInsideModel && !dragHandleHoverRef.current && showDragHandleOnHover) {
-        triggerDragHandleReveal();
-      } else if (!pointerInsideModel && !dragHandleHoverRef.current && showDragHandleOnHover) {
-        scheduleDragHandleHide();
-      }
-      recomputeWindowPassthroughRef.current();
-    }
-
-    let pointerInsideBubble = false;
     const bubbleEl = bubbleRef.current;
-    if (bubbleEl) {
-      const bubbleRect = bubbleEl.getBoundingClientRect();
-      pointerInsideBubble = pointerX.current >= bubbleRect.left
-        && pointerX.current <= bubbleRect.right
-        && pointerY.current >= bubbleRect.top
-        && pointerY.current <= bubbleRect.bottom;
-    }
+    const handleEl = dragHandleRef.current;
+    updateInteractiveZones({
+      bubbleEl,
+      handleEl,
+      pointerInsideModel,
+    });
+  }, [setDragHandlePosition, applyContextZoneDecision, updateInteractiveZones]);
 
-    if (pointerInsideBubbleRef.current !== pointerInsideBubble) {
-      pointerInsideBubbleRef.current = pointerInsideBubble;
-      recomputeWindowPassthroughRef.current();
-    }
-
-    let pointerInsideHandle = false;
-    if (dragHandleRef.current && (dragHandleVisibleRef.current || !showDragHandleOnHover)) {
-      const handleRect = dragHandleRef.current.getBoundingClientRect();
-      pointerInsideHandle = pointerX.current >= handleRect.left
-        && pointerX.current <= handleRect.right
-        && pointerY.current >= handleRect.top
-        && pointerY.current <= handleRect.bottom;
-    }
-    if (pointerInsideHandleRef.current !== pointerInsideHandle) {
-      pointerInsideHandleRef.current = pointerInsideHandle;
-      if (pointerInsideHandle) {
-        dragHandleHoverRef.current = true;
-        if (showDragHandleOnHover) {
-          cancelDragHandleHide();
-          setDragHandleVisibility(true);
-        }
-      } else {
-        dragHandleHoverRef.current = false;
-        if (!dragHandleActiveRef.current && showDragHandleOnHover && !pointerInsideModelRef.current) {
-          scheduleDragHandleHide();
-        }
-      }
-      recomputeWindowPassthroughRef.current();
-    }
-  }, [setDragHandlePosition, showDragHandleOnHover, scheduleDragHandleHide, triggerDragHandleReveal, cancelDragHandleHide, setDragHandleVisibility, scheduleContextZoneLatchCheck, clearContextZoneLatchTimer, setContextZoneStyle, setContextZoneAlignment]);
-
-  updateDragHandlePositionRef.current = updateDragHandlePosition;
-
-  const pollCursorPosition = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    if (!mousePassthroughRef.current) {
-      cursorPollRafRef.current = null;
-      return;
-    }
-    if (cursorPollRafRef.current === null) {
-      cursorPollRafRef.current = -1; // sentinel: poll in-flight
-    }
-    const api = (window as any).petAPI;
-    if (!api?.getCursorScreenPoint) {
-      cursorPollRafRef.current = null;
-      return;
-    }
-    const boundsPromise = typeof api.getWindowBounds === 'function'
-      ? api.getWindowBounds()
-      : Promise.resolve(null);
-    Promise.all([api.getCursorScreenPoint(), boundsPromise])
-      .then(([point, bounds]: [{ x: number; y: number } | null, { x: number; y: number; width: number; height: number } | null]) => {
-        if (!point || !mousePassthroughRef.current) return;
-        if (!motionTextRef.current && autoResizeBackupRef.current === null) {
-          if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.width)) {
-            const newBaseline = bounds.x + bounds.width;
-            if (Math.abs((rightEdgeBaselineRef.current ?? newBaseline) - newBaseline) > 0.5) {
-              rightEdgeBaselineRef.current = newBaseline;
-            } else {
-              rightEdgeBaselineRef.current = newBaseline;
-            }
-          } else if (typeof window !== 'undefined') {
-            const fallbackBaseline = getWindowRightEdge();
-            rightEdgeBaselineRef.current = fallbackBaseline;
-          }
-        }
-        const originX = bounds?.x ?? (window.screenX ?? window.screenLeft ?? 0);
-        const originY = bounds?.y ?? (window.screenY ?? window.screenTop ?? 0);
-        const localX = point.x - originX;
-        const localY = point.y - originY;
-        pointerX.current = localX;
-        pointerY.current = localY;
-        updateDragHandlePositionRef.current?.(true);
-        recomputeWindowPassthroughRef.current();
-      })
-      .catch(() => { /* swallow cursor poll errors */ })
-      .finally(() => {
-        if (!mousePassthroughRef.current || typeof window === 'undefined') {
-          cursorPollRafRef.current = null;
-          return;
-        }
-        cursorPollRafRef.current = window.requestAnimationFrame(pollCursorPosition);
-      });
-  }, []);
-
-  const startCursorPoll = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    if (cursorPollRafRef.current !== null) return;
-    cursorPollRafRef.current = -1;
-    pollCursorPosition();
-  }, [pollCursorPosition]);
-
-  const stopCursorPoll = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    if (cursorPollRafRef.current !== null && cursorPollRafRef.current >= 0) {
-      window.cancelAnimationFrame(cursorPollRafRef.current);
-    }
-    cursorPollRafRef.current = null;
-  }, []);
-
-  const setWindowMousePassthrough = useCallback((passthrough: boolean) => {
-    if (typeof window === 'undefined') return;
-    if (mousePassthroughRef.current === passthrough) return;
-    mousePassthroughRef.current = passthrough;
-    const bridge = (window as any).petAPI?.setMousePassthrough?.(passthrough);
-    if (bridge && typeof bridge.then === 'function') {
-      bridge.then(() => { /* no-op */ }).catch((error: unknown) => {
-        console.warn('[PetCanvas] setMousePassthrough rejected', error);
-      });
-    }
-    if (passthrough) {
-      startCursorPoll();
-    } else {
-      stopCursorPoll();
-    }
-  }, [startCursorPoll, stopCursorPoll]);
-
-  const recomputeWindowPassthrough = useCallback(() => {
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    const contextZoneActive = pointerInsideContextZoneRef.current || contextZoneActiveUntilRef.current > now;
-    if (!contextZoneActive && contextZoneActiveUntilRef.current !== 0) {
-      contextZoneActiveUntilRef.current = 0;
-      clearContextZoneLatchTimer();
-    }
-    const shouldCapture = contextZoneActive || (!ignoreMouseRef.current && (
-      pointerInsideModelRef.current ||
-      pointerInsideBubbleRef.current ||
-      pointerInsideHandleRef.current ||
-      dragHandleHoverRef.current ||
-      dragHandleActiveRef.current
-    ));
-    setWindowMousePassthrough(!shouldCapture);
-  }, [setWindowMousePassthrough, clearContextZoneLatchTimer]);
-
-  recomputeWindowPassthroughRef.current = recomputeWindowPassthrough;
+  useLayoutEffect(() => {
+    updateDragHandlePositionRef.current = updateDragHandlePosition;
+  }, [updateDragHandlePosition]);
 
   const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
     const settings = (modelInstance as any).internalModel?.settings;
@@ -881,415 +752,42 @@ const PetCanvas: React.FC = () => {
     updateDragHandlePosition(true);
   }, [scale, updateBubblePosition, updateDragHandlePosition]);
 
+  // 布局副作用拆分：初始化基线与缩放时的布局刷新
+  usePetLayout({
+    scale,
+    applyLayout,
+    rightEdgeBaselineRef,
+    getWindowRightEdge,
+  });
 
-  // Load persisted settings
-  useLayoutEffect(() => {
-    const off = loadSettings();
-    return () => {
-      try {
-        if (off !== undefined && typeof off === 'function') off();
-      } catch { /* empty */ }
-    };
-  }, [loadSettings]);
-  // Initialize Pixi (v7) & load model once
-  useEffect(() => {
-    if (!settingsLoaded) return;
-    if (!canvasRef.current) return;
-    (Live2DModel as unknown as { registerTicker: (t: unknown) => void }).registerTicker(Ticker as unknown as object);
+  // Live2D 模型生命周期（封装于自定义 Hook）
+  usePetModel({
+    settingsLoaded,
+    canvasRef: canvasRef as React.RefObject<HTMLDivElement>,
+    appRef,
+    modelRef,
+    detachEyeHandlerRef,
+    frameCountRef,
+    paramCacheRef,
+    modelBaseUrlRef,
+    pointerX,
+    pointerY,
+    ignoreMouseRef,
+    windowBoundsRef,
+    setModel,
+    setModelLoadStatus,
+    updateHitAreas,
+    updateBubblePosition,
+    updateDragHandlePosition,
+    applyLayout,
+    isIdleState,
+    clampEyeBallY,
+    clampAngleY,
+    modelPath: MODEL_PATH,
+  });
 
-    const container = canvasRef.current;
-    const app = new Application({ backgroundAlpha: 0, resizeTo: container, autoStart: true, antialias: true });
-    appRef.current = app;
-    let disposed = false;
-    container.appendChild(app.view as HTMLCanvasElement);
-    container.style.position = 'relative';
-    container.style.overflow = 'hidden';
-
-    const attachEyeFollow = (modelInstance: Live2DModelType) => {
-      if (detachEyeHandlerRef.current) {
-        detachEyeHandlerRef.current();
-        detachEyeHandlerRef.current = null;
-      }
-
-      const onTick = () => {
-        const m = modelRef.current ?? modelInstance;
-        if (!m) return;
-        const internal = (m as any).internalModel;
-        const core = internal?.coreModel;
-        if (!core) return;
-        const debugMotion = (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
-        frameCountRef.current++;
-
-        // 首次参数 ID 输出
-        if (debugMotion && !paramCacheRef.current && typeof core.getParameterCount === 'function') {
-          try {
-            const count = core.getParameterCount();
-            const ids: string[] = [];
-            for (let i = 0; i < count; i++) ids.push(core.getParameterId?.(i));
-            paramCacheRef.current = ids;
-            console.log('[EyeDebug] ids', ids);
-          } catch (e) { console.log('[EyeDebug] list ids failed', e); }
-        }
-
-        // 运动管理器（兼容不同内部字段）
-        const motionMgr = internal?.motionManager || internal?._motionManager || internal?.animator || internal?._animator;
-        const isIdle = isIdleState(motionMgr);
-
-        // 归一化鼠标坐标
-        const b = m.getBounds();
-        const cx = b.x + b.width / 2;
-        const cy = b.y + b.height / 2;
-        const nx = b.width === 0 ? 0 : (pointerX.current - cx) / (b.width / 2);
-        const ny = b.height === 0 ? 0 : (pointerY.current - cy) / (b.height / 2);
-        const targetX = Math.max(-1, Math.min(1, nx));
-        const targetY = Math.max(-1, Math.min(1, ny));
-
-        if (ignoreMouseRef.current) {
-          core.setParameterValueById?.('ParamEyeBallX', 0);
-          core.setParameterValueById?.('ParamEyeBallY', 0);
-          core.setParameterValueById?.('ParamAngleX', 0);
-          core.setParameterValueById?.('ParamAngleY', 0);
-          return;
-        }
-
-        // 混合策略：空闲=1，非空闲=window.LIVE2D_EYE_BLEND(默认0.3)
-        const blendRaw = isIdle ? 1 : (typeof (window as any).LIVE2D_EYE_BLEND === 'number' ? (window as any).LIVE2D_EYE_BLEND : 0.3);
-        const blend = Math.max(0, Math.min(1, blendRaw));
-        const preEyeX = core.getParameterValueById?.('ParamEyeBallX') ?? 0;
-        const preEyeY = core.getParameterValueById?.('ParamEyeBallY') ?? 0;
-        const preAngleX = core.getParameterValueById?.('ParamAngleX') ?? 0;
-        const preAngleY = core.getParameterValueById?.('ParamAngleY') ?? 0;
-        const newEyeX = preEyeX * (1 - blend) + targetX * blend;
-        const newEyeY = preEyeY * (1 - blend) + (-targetY) * blend;
-        const newAngleX = preAngleX * (1 - blend) + (targetX * 30) * blend;
-        const newAngleY = preAngleY * (1 - blend) + (-targetY * 30) * blend;
-        const clampedEyeY = clampEyeBallY(newEyeY);
-        const clampedAngleY = clampAngleY(newAngleY);
-        core.setParameterValueById?.('ParamEyeBallX', newEyeX);
-        core.setParameterValueById?.('ParamEyeBallY', clampedEyeY);
-        core.setParameterValueById?.('ParamAngleX', newAngleX);
-        core.setParameterValueById?.('ParamAngleY', clampedAngleY);
-
-        if (debugMotion && frameCountRef.current % 60 === 0) {
-          console.log('[MotionDebug][blendTick]', { isIdle, blend, target: { x: targetX, y: targetY }, result: { newEyeX, newEyeY: clampedEyeY, newAngleX, newAngleY: clampedAngleY } });
-        }
-
-        updateBubblePosition();
-        updateDragHandlePosition();
-      };
-
-      app.ticker.add(onTick);
-      detachEyeHandlerRef.current = () => { app.ticker.remove(onTick); };
-    };
-
-    // 在 motion 写入后立即护眼：拦截 motionManager 的更新并恢复/混合眼睛参数
-    const installMotionEyeGuard = (modelInstance: Live2DModelType) => {
-      const internal = (modelInstance as any).internalModel;
-      if (!internal) return;
-      const motionMgr = internal?.motionManager || internal?._motionManager || internal?.animator || internal?._animator;
-      if (!motionMgr) return;
-      if ((motionMgr as any).__eyeGuardPatched) return;
-      const core = internal?.coreModel;
-      if (!core) return;
-      const debug = () => (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
-
-      const wrap = (fnName: string) => {
-        const orig = (motionMgr as any)[fnName];
-        if (typeof orig !== 'function') return false;
-        (motionMgr as any)[fnName] = (...args: any[]) => {
-          const guard = (window as any).LIVE2D_EYE_GUARD === true || (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
-          let pre = null as null | { x: number; y: number; ax: number; ay: number };
-          if (guard) {
-            pre = {
-              x: core.getParameterValueById?.('ParamEyeBallX') ?? 0,
-              y: core.getParameterValueById?.('ParamEyeBallY') ?? 0,
-              ax: core.getParameterValueById?.('ParamAngleX') ?? 0,
-              ay: core.getParameterValueById?.('ParamAngleY') ?? 0,
-            };
-          }
-          const ret = orig.apply(motionMgr, args);
-          if (guard && !ignoreMouseRef.current) {
-            try {
-              const b = (modelInstance as any).getBounds?.() ?? { x: 0, y: 0, width: 1, height: 1 };
-              const cx = b.x + b.width / 2;
-              const cy = b.y + b.height / 2;
-              const nx = b.width === 0 ? 0 : (pointerX.current - cx) / (b.width / 2);
-              const ny = b.height === 0 ? 0 : (pointerY.current - cy) / (b.height / 2);
-              const tx = Math.max(-1, Math.min(1, nx));
-              const ty = Math.max(-1, Math.min(1, ny));
-              const idleNow = isIdleState(motionMgr);
-              const rawBlend = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true ? 1 : (idleNow ? 1 : (typeof (window as any).LIVE2D_EYE_BLEND_GUARD === 'number' ? (window as any).LIVE2D_EYE_BLEND_GUARD : 0.5));
-              const blend = Math.max(0, Math.min(1, rawBlend));
-              const baseX = (pre?.x ?? core.getParameterValueById?.('ParamEyeBallX')) ?? 0;
-              const baseY = (pre?.y ?? core.getParameterValueById?.('ParamEyeBallY')) ?? 0;
-              const baseAX = (pre?.ax ?? core.getParameterValueById?.('ParamAngleX')) ?? 0;
-              const baseAY = (pre?.ay ?? core.getParameterValueById?.('ParamAngleY')) ?? 0;
-              const writeX = baseX * (1 - blend) + tx * blend;
-              const writeY = baseY * (1 - blend) + (-ty) * blend;
-              const writeAX = baseAX * (1 - blend) + (tx * 30) * blend;
-              const writeAY = baseAY * (1 - blend) + (-ty * 30) * blend;
-              const clampedY = clampEyeBallY(writeY);
-              const clampedAY = clampAngleY(writeAY);
-              core.setParameterValueById?.('ParamEyeBallX', writeX);
-              core.setParameterValueById?.('ParamEyeBallY', clampedY);
-              core.setParameterValueById?.('ParamAngleX', writeAX);
-              core.setParameterValueById?.('ParamAngleY', clampedAY);
-              if (debug() && frameCountRef.current % 60 === 0) {
-                console.log('[EyeGuard][afterMotion]', { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
-              }
-            } catch { /* swallow */ }
-          }
-          return ret;
-        };
-        return true;
-      };
-
-      const ok = wrap('updateMotion') || wrap('update');
-      if (ok) (motionMgr as any).__eyeGuardPatched = true;
-      if (debug()) console.log('[EyeGuard] motion manager patched with', ok ? 'success' : 'no-op');
-    };
-
-    // 在 internalModel.update 后强制写入（最终阶段），防止被 motion/physics 覆盖
-    const installInternalAfterUpdatePatch = (modelInstance: Live2DModelType) => {
-      const internal = (modelInstance as any).internalModel;
-      if (!internal) return;
-      if ((internal as any).__eyeAfterPatched) return;
-      const origUpdate = typeof internal.update === 'function' ? internal.update.bind(internal) : null;
-      if (!origUpdate) return;
-      (internal as any).__eyeAfterPatched = true;
-      const modelAny = modelInstance as any;
-      internal.update = (dt: number, ...args: any[]) => {
-        // 先执行原始更新（motion/physics/pose 等）
-        origUpdate(dt, ...args as any);
-        try {
-          const forceAlways = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
-          const blendOverride = (window as any).LIVE2D_EYE_FORCE_BLEND;
-          // 未开启强制或混合覆盖时，跳过
-          if (!forceAlways && typeof blendOverride !== 'number') return;
-          if (ignoreMouseRef.current) return;
-          const core = internal?.coreModel;
-          if (!core) return;
-          // 计算目标（基于最新鼠标位置和模型包围盒）
-          const b = modelAny.getBounds?.() ?? { x: 0, y: 0, width: 1, height: 1 };
-          const cx = b.x + b.width / 2;
-          const cy = b.y + b.height / 2;
-          const nx = b.width === 0 ? 0 : (pointerX.current - cx) / (b.width / 2);
-          const ny = b.height === 0 ? 0 : (pointerY.current - cy) / (b.height / 2);
-          const tx = Math.max(-1, Math.min(1, nx));
-          const ty = Math.max(-1, Math.min(1, ny));
-          // 根据是否 idle 计算混合（强制时=1；否则用覆盖权重或默认）
-          const motionMgr = internal?.motionManager || internal?._motionManager || internal?.animator || internal?._animator;
-          const idleNow = isIdleState(motionMgr);
-          const rawBlend = forceAlways ? 1 : (idleNow ? 1 : (typeof blendOverride === 'number' ? blendOverride : 0.3));
-          const blend = Math.max(0, Math.min(1, rawBlend));
-          const preX = core.getParameterValueById?.('ParamEyeBallX') ?? 0;
-          const preY = core.getParameterValueById?.('ParamEyeBallY') ?? 0;
-          const preAX = core.getParameterValueById?.('ParamAngleX') ?? 0;
-          const preAY = core.getParameterValueById?.('ParamAngleY') ?? 0;
-          const writeX = preX * (1 - blend) + tx * blend;
-          const writeY = preY * (1 - blend) + (-ty) * blend;
-          const writeAX = preAX * (1 - blend) + (tx * 30) * blend;
-          const writeAY = preAY * (1 - blend) + (-ty * 30) * blend;
-          const clampedY = clampEyeBallY(writeY);
-          const clampedAY = clampAngleY(writeAY);
-          core.setParameterValueById?.('ParamEyeBallX', writeX);
-          core.setParameterValueById?.('ParamEyeBallY', clampedY);
-          core.setParameterValueById?.('ParamAngleX', writeAX);
-          core.setParameterValueById?.('ParamAngleY', clampedAY);
-          if (((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) && frameCountRef.current % 60 === 0) {
-            console.log('[EyePatch][afterInternalUpdate]', { idleNow, blend, result: { writeX, writeY: clampedY, writeAX, writeAY: clampedAY } });
-          }
-        } catch { /* swallow */ }
-      };
-      if ((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) {
-        console.log('[EyePatch] internal.update patched');
-      }
-    };
-
-    (async () => {
-      setModelLoadStatus('loading');
-      try {
-        const model = await loadModel(MODEL_PATH);
-        if (disposed) return;
-        if (typeof window !== 'undefined') {
-          try {
-            const resolvedModelUrl = new URL(MODEL_PATH, window.location.href);
-            const base = new URL('.', resolvedModelUrl);
-            modelBaseUrlRef.current = base.toString();
-          } catch {
-            modelBaseUrlRef.current = null;
-          }
-        }
-        modelRef.current = model;
-        (model as any).eventMode = 'none';
-        app.stage.addChild(model as any);
-        applyLayout();
-        setModel(model);
-        setModelLoadStatus('loaded');
-        updateHitAreas(model);
-        attachEyeFollow(model);
-        // 安装护眼补丁（拦截 motion 更新后恢复眼睛参数）
-        installMotionEyeGuard(model);
-        // 安装 internal.update 补丁，确保强制写发生在所有内部更新之后
-        installInternalAfterUpdatePatch(model);
-
-        // debug: 在 internal update 后读取最终值
-        if (!(model as any).__motionUpdateHooked) {
-          (model as any).__motionUpdateHooked = true;
-          model.on('update', () => {
-            const forceAlways = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
-            const debugEnabled = (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
-            const internalModel = (model as any).internalModel;
-            const c = internalModel?.coreModel;
-            if (!c) return;
-            const motionMgr = internalModel?.motionManager || internalModel?._motionManager || internalModel?.animator || internalModel?._animator;
-            const idleNow = isIdleState(motionMgr);
-            if (forceAlways && !ignoreMouseRef.current) {
-              // 使用最新鼠标坐标再混合一次，保证最终值
-              const bounds = (model as any).getBounds?.() ?? { x: 0, y: 0, width: 1, height: 1 };
-              const cX = bounds.x + bounds.width / 2;
-              const cY = bounds.y + bounds.height / 2;
-              const nx = bounds.width === 0 ? 0 : (pointerX.current - cX) / (bounds.width / 2);
-              const ny = bounds.height === 0 ? 0 : (pointerY.current - cY) / (bounds.height / 2);
-              const tX = Math.max(-1, Math.min(1, nx));
-              const tY = Math.max(-1, Math.min(1, ny));
-              const blendRaw = idleNow ? 1 : (typeof (window as any).LIVE2D_EYE_BLEND === 'number' ? (window as any).LIVE2D_EYE_BLEND : 0.3);
-              const blend = Math.max(0, Math.min(1, blendRaw));
-              const preX = c.getParameterValueById?.('ParamEyeBallX') ?? 0;
-              const preY = c.getParameterValueById?.('ParamEyeBallY') ?? 0;
-              const preAX = c.getParameterValueById?.('ParamAngleX') ?? 0;
-              const preAY = c.getParameterValueById?.('ParamAngleY') ?? 0;
-              const writeEyeX = preX * (1 - blend) + tX * blend;
-              const writeEyeY = preY * (1 - blend) + (-tY) * blend;
-              const writeAngleX = preAX * (1 - blend) + (tX * 30) * blend;
-              const writeAngleY = preAY * (1 - blend) + (-tY * 30) * blend;
-              const clampedEyeY = clampEyeBallY(writeEyeY);
-              const clampedAngleY = clampAngleY(writeAngleY);
-              c.setParameterValueById?.('ParamEyeBallX', writeEyeX);
-              c.setParameterValueById?.('ParamEyeBallY', clampedEyeY);
-              c.setParameterValueById?.('ParamAngleX', writeAngleX);
-              c.setParameterValueById?.('ParamAngleY', clampedAngleY);
-              if (debugEnabled && frameCountRef.current % 60 === 0) {
-                console.log('[MotionDebug][forceAfter]', { idleNow, blend, result: { writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY } });
-              }
-            }
-            if (!debugEnabled || frameCountRef.current % 30 !== 0) return;
-            try {
-              const state = {
-                type: motionMgr?.constructor?.name,
-                isFinished: typeof motionMgr?.isFinished === 'function' ? motionMgr.isFinished() : motionMgr?.isFinished,
-                currentPriority: motionMgr?._currentPriority ?? motionMgr?.currentPriority,
-                playing: motionMgr?._playingMotions?.length ?? motionMgr?.playingMotions?.length,
-                isIdle: idleNow,
-                forceAlways,
-              };
-              console.log('[MotionDebug][postUpdate]', {
-                EyeBallX: c.getParameterValueById?.('ParamEyeBallX'),
-                EyeBallY: c.getParameterValueById?.('ParamEyeBallY'),
-                AngleX: c.getParameterValueById?.('ParamAngleX'),
-                AngleY: c.getParameterValueById?.('ParamAngleY'),
-                state,
-              });
-            } catch { /* swallow debug */ }
-          });
-        }
-      } catch (err) {
-        console.error('Load model failed', err);
-        setModelLoadStatus('error', (err as Error).message);
-      }
-    })();
-
-    const handleResize = () => { applyLayout(); };
-    const handleMouseMove = (e: MouseEvent) => {
-      pointerX.current = e.clientX;
-      pointerY.current = e.clientY;
-      updateDragHandlePosition(true);
-    };
-    pointerX.current = window.innerWidth / 2;
-    pointerY.current = window.innerHeight / 2;
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('resize', handleResize);
-
-    // 监听 Electron 主进程发来的窗口 bounds 变化，存储并触发布局与气泡更新
-    const onBoundsChanged = (bounds?: { x: number; y: number; width: number; height: number }) => {
-      try {
-        console.log('[PetCanvas] onBoundsChanged received', bounds);
-        if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
-          windowBoundsRef.current = bounds;
-          console.log('[PetCanvas] windowBoundsRef updated', windowBoundsRef.current);
-        } else {
-          console.log('[PetCanvas] windowBoundsRef ignored due to invalid payload');
-        }
-        updateBubblePosition(true);
-        updateDragHandlePosition(true);
-      } catch (e) {
-        console.log('[PetCanvas] onBoundsChanged error', e);
-      }
-    };
-    try {
-      (window as any).petAPI?.on?.('pet:windowBoundsChanged', onBoundsChanged);
-    } catch { /* swallow */ }
-
-    return () => {
-      disposed = true;
-      if (detachEyeHandlerRef.current) {
-        detachEyeHandlerRef.current();
-        detachEyeHandlerRef.current = null;
-      }
-      if (modelRef.current) {
-        modelRef.current.destroy();
-        modelRef.current = null;
-      }
-      window.removeEventListener('resize', handleResize);
-      try {
-        (window as any).petAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
-      } catch { /* swallow */ }
-      window.removeEventListener('mousemove', handleMouseMove);
-      app.destroy(true);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsLoaded]);
-
-  // React to scale changes
-  useEffect(() => {
-    requestAnimationFrame(applyLayout);
-  }, [scale, applyLayout]);
-
-  // 当 ignoreMouse 变化时立即重置眼球位置
-  useEffect(() => {
-    const m = modelRef.current;
-    if (!m) return;
-    try {
-      const core = (m as unknown as { internalModel?: { coreModel?: any } }).internalModel?.coreModel;
-      if (core) {
-        core.setParameterValueById?.('ParamEyeBallX', 0);
-        core.setParameterValueById?.('ParamEyeBallY', 0);
-        core.setParameterValueById?.('ParamAngleX', 0);
-        core.setParameterValueById?.('ParamAngleY', 0);
-      }
-    } catch { /* swallow */ }
-  }, [ignoreMouse]);
-
-  useEffect(() => {
-    ignoreMouseRef.current = ignoreMouse;
-    recomputeWindowPassthrough();
-  }, [ignoreMouse, recomputeWindowPassthrough]);
-
-  useEffect(() => {
-    recomputeWindowPassthrough();
-  }, [recomputeWindowPassthrough]);
-
-  useEffect(() => () => {
-    stopCursorPoll();
-    setWindowMousePassthrough(false);
-    clearContextZoneLatchTimer();
-  }, [setWindowMousePassthrough, stopCursorPoll, clearContextZoneLatchTimer]);
-
-  useEffect(() => {
-    if (!showDragHandleOnHover) {
-      hideDragHandleImmediately();
-    }
-  }, [showDragHandleOnHover, hideDragHandleImmediately]);
+  // 忽略鼠标时重置模型朝向参数
+  useEyeReset({ ignoreMouse, modelRef });
 
   const handlePointerTap = useCallback((clientX: number, clientY: number) => {
     const model = modelRef.current;
@@ -1354,200 +852,24 @@ const PetCanvas: React.FC = () => {
     }
   }, [interruptMotion]);
 
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (event.button !== 0) return;
-      if (target?.closest('[data-live2d-drag-handle="true"]')) return;
-      handlePointerTap(event.clientX, event.clientY);
-    };
-    window.addEventListener('pointerdown', onPointerDown);
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown);
-    };
-  }, [handlePointerTap]);
+  usePointerTapHandler({ handlePointerTap });
 
-  useEffect(() => {
-    const handle = dragHandleRef.current;
-    if (!handle) return;
-
-    const onEnter = () => {
-      dragHandleHoverRef.current = true;
-      cancelDragHandleHide();
-      if (showDragHandleOnHover) {
-        setDragHandleVisibility(true);
-      }
-      recomputeWindowPassthrough();
-    };
-    const onLeave = () => {
-      dragHandleHoverRef.current = false;
-      if (!dragHandleActiveRef.current) {
-        scheduleDragHandleHide();
-      }
-      recomputeWindowPassthrough();
-    };
-    const onPointerDown = () => {
-      dragHandleHoverRef.current = true;
-      dragHandleActiveRef.current = true;
-      cancelDragHandleHide();
-      setDragHandleVisibility(true);
-      recomputeWindowPassthrough();
-      updateBubblePosition(true);
-    };
-    const onPointerUp = () => {
-      dragHandleHoverRef.current = false;
-      dragHandleActiveRef.current = false;
-      scheduleDragHandleHide();
-      recomputeWindowPassthrough();
-      updateBubblePosition(true);
-    };
-    const onPointerCancel = () => {
-      dragHandleHoverRef.current = false;
-      dragHandleActiveRef.current = false;
-      scheduleDragHandleHide();
-      recomputeWindowPassthrough();
-      updateBubblePosition(true);
-    };
-
-    handle.addEventListener('pointerenter', onEnter);
-    handle.addEventListener('pointerleave', onLeave);
-    handle.addEventListener('pointerdown', onPointerDown);
-    handle.addEventListener('pointerup', onPointerUp);
-    handle.addEventListener('pointercancel', onPointerCancel);
-
-    return () => {
-      handle.removeEventListener('pointerenter', onEnter);
-      handle.removeEventListener('pointerleave', onLeave);
-      handle.removeEventListener('pointerdown', onPointerDown);
-      handle.removeEventListener('pointerup', onPointerUp);
-      handle.removeEventListener('pointercancel', onPointerCancel);
-    };
-  }, [dragHandlePosition, cancelDragHandleHide, scheduleDragHandleHide, setDragHandleVisibility, showDragHandleOnHover, recomputeWindowPassthrough, updateBubblePosition]);
-
-  useLayoutEffect(() => {
-    motionTextRef.current = motionText;
-
-    const releaseSurrogateAudio = () => {
-      const existing = surrogateAudioRef.current;
-      if (!existing) return;
-      try { existing.pause?.(); } catch { /* swallow */ }
-      try {
-        existing.src = '';
-        existing.load?.();
-      } catch { /* swallow */ }
-      surrogateAudioRef.current = null;
-    };
-
-    if (!motionText) {
-      suppressResizeForBubbleRef.current = false;
-      pendingResizeIssuedAtRef.current = null;
-      bubblePositionRef.current = null;
-      setBubblePosition(null);
-      commitBubbleReady(false);
-      releaseSurrogateAudio();
-      clearBubbleTimer();
-      const backup = autoResizeBackupRef.current;
-      if (backup) {
-        autoResizeBackupRef.current = null;
-        pendingResizeRef.current = { width: backup.width, height: backup.height };
-        pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
-          ? performance.now()
-          : Date.now();
-        requestResize(backup.width, backup.height);
-      }
-      if (typeof window !== 'undefined') {
-        const immediate = getWindowRightEdge();
-        rightEdgeBaselineRef.current = immediate;
-        debugLog('[PetCanvas] baseline after bubble dismissed', { immediate });
-        window.setTimeout(() => {
-          const delayed = getWindowRightEdge();
-          rightEdgeBaselineRef.current = delayed;
-          debugLog('[PetCanvas] baseline delayed refresh', { delayed });
-        }, 120);
-      }
-      return undefined;
-    }
-
-    suppressResizeForBubbleRef.current = false;
-    pendingResizeIssuedAtRef.current = null;
-    commitBubbleReady(false);
-    updateBubblePosition(true);
-    updateDragHandlePosition(true);
-    releaseSurrogateAudio();
-
-    const model = modelRef.current as (Live2DModelType & { internalModel?: any }) | null;
-    const internal = model?.internalModel;
-
-    // 通过音频调整气泡显示时间
-    const motionMgr = internal?.motionManager || internal?._motionManager || internal?.animator || internal?._animator;
-    const runtimeAudio: HTMLAudioElement | undefined = motionMgr?._currentAudio;
-    const cleanupFns: Array<() => void> = [];
-    const bufferMs = 400;
-
-    const applyDuration = (seconds: number | null | undefined) => {
-      const requested = typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
-        ? seconds * 1000 + bufferMs
-        : null;
-      scheduleBubbleDismiss(requested, 7000);
-    };
-
-    const handleEnded = () => {
-      clearBubbleTimer();
-      setMotionText(null);
-    };
-
-    if (runtimeAudio) {
-      runtimeAudio.addEventListener('ended', handleEnded);
-      cleanupFns.push(() => runtimeAudio.removeEventListener('ended', handleEnded));
-
-      if (Number.isFinite(runtimeAudio.duration) && runtimeAudio.duration > 0) {
-        applyDuration(runtimeAudio.duration);
-      } else {
-        const handleLoaded = () => {
-          applyDuration(runtimeAudio.duration);
-        };
-        runtimeAudio.addEventListener('loadedmetadata', handleLoaded);
-        cleanupFns.push(() => runtimeAudio.removeEventListener('loadedmetadata', handleLoaded));
-        applyDuration(null);
-      }
-    } else {
-      const resolvedSound = resolveSoundUrl(motionSound);
-      if (resolvedSound && typeof Audio !== 'undefined') {
-        const surrogate = new Audio();
-        surrogate.preload = 'metadata';
-        surrogate.crossOrigin = 'anonymous';
-        surrogate.src = resolvedSound;
-        surrogateAudioRef.current = surrogate;
-
-        const handleMetadata = () => {
-          applyDuration(surrogate.duration);
-        };
-        const handleSurrogateError = () => {
-          applyDuration(null);
-        };
-        surrogate.addEventListener('loadedmetadata', handleMetadata);
-        surrogate.addEventListener('error', handleSurrogateError);
-        cleanupFns.push(() => {
-          surrogate.removeEventListener('loadedmetadata', handleMetadata);
-          surrogate.removeEventListener('error', handleSurrogateError);
-        });
-        try {
-          surrogate.load();
-        } catch { /* swallow */ }
-        applyDuration(null);
-      } else {
-        applyDuration(null);
-      }
-    }
-
-    return () => {
-      cleanupFns.forEach(fn => {
-        try { fn(); } catch { /* swallow */ }
-      });
-      releaseSurrogateAudio();
-      clearBubbleTimer();
-    };
-  }, [motionText, motionSound, clearBubbleTimer, scheduleBubbleDismiss, setMotionText, updateBubblePosition, setBubblePosition, resolveSoundUrl, updateDragHandlePosition, requestResize, commitBubbleReady]);
+  useBubbleLifecycle({
+    motionText,
+    motionSound,
+    motionTextRef,
+    modelRef,
+    surrogateAudioRef,
+    suppressResizeForBubbleRef,
+    pendingResizeIssuedAtRef,
+    updateBubblePosition,
+    updateDragHandlePosition,
+    scheduleBubbleDismiss,
+    clearBubbleTimer,
+    setMotionText,
+    resolveSoundUrl,
+    commitBubbleReady,
+  });
 
   return (
     <>

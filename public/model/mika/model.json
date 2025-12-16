@@ -1,1 +1,334 @@
-{"Version": 3, "ConfVer": 0, "Type": 0, "FileReferences": {"Moc": "Moc.moc3", "Textures": ["Textures_.png", "Textures_.png", "Textures_.png"], "Physics": "Physics.json", "PhysicsV2": {"File": "Physics.json", "MaxWeight": 1.003}, "Motions": {"Idle": [{"File": "Motions_Idle_0.json", "WrapMode": 1, "FadeIn": 500, "Priority": 2, "VarFloats": [{"Type": 2}]}], "Tapbody": [{"File": "Motions_Tapbody_0.json", "Sound": "Motions_Tapbody_0.wav", "SoundVolume": 0.3, "Text": "嗯~今天天气真好啊！在这样的日子光顾着工作，不觉得可惜吗？……等工作结束了， 一起去散步好不好？", "FadeIn": 500, "TextDuration": 17000, "Priority": 3, "Interruptable": true, "VarFloats": [{"Name": "A", "Type": 1, "Code": "equal 0"}, {"Name": "A", "Type": 2, "Code": "assign 1"}]}, {"File": "Motions_Tapbody_1.json", "Sound": "Motions_Tapbody_1.wav", "SoundVolume": 0.3, "Text": "我说…… 值日员就只用做这些吗？我，我倒没有在期待什么……", "FadeIn": 500, "TextDuration": 10000, "Priority": 3, "VarFloats": [{"Name": "A", "Type": 1, "Code": "equal 1"}, {"Name": "A", "Type": 2, "Code": "assign 2"}]}, {"File": "Motions_Tapbody_2.json", "Sound": "Motions_Tapbody_2.wav", "SoundVolume": 0.3, "Text": "\r唔…… 倒也不是无聊……", "FadeIn": 500, "TextDuration": 7000, "Priority": 3, "VarFloats": [{"Name": "A", "Type": 1, "Code": "equal 2"}, {"Name": "A", "Type": 2, "Code": "assign 3"}]}, {"File": "Motions_Tapbody_3.json", "Sound": "Motions_Tapbody_3.wav", "SoundVolume": 0.3, "Text": "\r有什么我能帮上忙的吗？ 只要你交给我，我都会努力去做的！", "FadeIn": 500, "TextDuration": 7000, "Priority": 3, "VarFloats": [{"Name": "A", "Type": 1, "Code": "equal 3"}, {"Name": "A", "Type": 2, "Code": "assign 4"}]}, {"File": "Motions_Tapbody_4.json", "Sound": "Motions_Tapbody_4.wav", "SoundVolume": 0.3, "Text": "\r……诶。 老师认真工作的时候， 原来是这种感觉啊……", "FadeIn": 500, "TextDuration": 7000, "Priority": 3, "VarFloats": [{"Name": "A", "Type": 1, "Code": "equal 4"}, {"Name": "A", "Type": 2, "Code": "assign 0"}]}], "Idle#2": [{"File": "Motions_Idle#2_0.json", "WrapMode": 1, "FadeIn": 0}], "breast": [{"File": "Motions_breast_0.json", "Sound": "Motions_breast_0.wav", "Text": " ", "TextDuration": 1, "Priority": 5}], "foot": [{"File": "Motions_foot_0.json", "Priority": 3}], "head": [{"File": "Motions_head_0.json", "Sound": "Motions_head_0.wav", "SoundVolume": 0.298, "Text": "老师，你回来了！ 我正等着你呢！", "Priority": 3}, {"File": "Motions_head_1.json", "Sound": "Motions_head_1.wav", "SoundVolume": 0.298, "Text": "\r老师，欢迎回来！ 我一直乖乖地等着你哦。", "Priority": 3}], "hand": [{"File": "Motions_Tapbody_3.json", "Sound": "Motions_Tapbody_3.wav", "SoundVolume": 0.298, "Text": "有什么我能帮上忙的吗？ 只要你交给我，我都会努力去做的！", "TextDuration": 7000, "Priority": 3}], "Start": [{"File": "Motions_head_0.json", "Sound": "Motions_head_0.wav", "SoundVolume": 0.298, "Text": "老师，你回来了！ 我正等着你呢！", "FadeIn": 0, "TextDuration": 4210, "Interruptable": true, "VarFloats": [{"Name": "A", "Type": 2, "Code": "assign 0"}]}, {"File": "Motions_head_1.json", "Sound": "Motions_head_1.wav", "SoundVolume": 0.298, "Text": "老师，欢迎回来！ 我一直乖乖地等着你哦。", "FadeIn": 0, "TextDuration": 5000, "Interruptable": true, "VarFloats": [{"Name": "A", "Type": 2, "Code": "assign 0"}]}]}}, "Controllers": {"ParamHit": {"Items": [{"Id": "ParamXeye", "HitArea": "head", "Axis": 0, "Factor": 0.01, "ReleaseType": 0, "Type": 1}], "Enabled": true}, "ParamLoop": {}, "KeyTrigger": {}, "ParamTrigger": {}, "AreaTrigger": {}, "HandTrigger": {}, "EyeBlink": {"MinInterval": 500, "MaxInterval": 6000, "Items": [{"Id": "ParamEyeLOpen", "Min": 0.0, "Max": 1.0, "BlendMode": 2, "Input": 0}, {"Id": "ParamEyeROpen", "Min": 0.0, "Max": 1.0, "BlendMode": 2, "Input": 0}], "Enabled": true}, "LipSync": {"Gain": 5.0, "Items": [{"Id": "ParamMouthOpenY", "Min": 0.0, "Max": 1.0, "Input": 0}]}, "MouseTracking": {"SmoothTime": 0.15, "Enabled": true}, "AutoBreath": {"Enabled": true}, "ExtraMotion": {}, "Accelerometer": {"Enabled": true}, "Microphone": {}, "Transform": {}, "FaceTracking": {"Enabled": true}, "HandTracking": {}, "ParamValue": {}, "PartOpacity": {}, "ArtmeshOpacity": {}, "ArtmeshColor": {}, "ArtmeshCulling": {"DefaultMode": 0}, "IntimacySystem": {}}, "HitAreas": [{"Name": "head", "Id": "head", "Motion": "head"}, {"Name": "hand", "Id": "hand", "Order": 7, "Motion": "hand"}, {"Name": "foot", "Id": "foot", "Motion": "foot"}, {"Name": "body", "Id": "body", "Order": 5, "Motion": "Tapbody"}, {"Name": "breast", "Id": "breast", "Order": 6, "Motion": "breast"}], "Options": {"TexFixed": true, "TexType": 0}}
+{
+  "Version": 3,
+  "ConfVer": 0,
+  "Type": 0,
+  "FileReferences": {
+    "Moc": "Moc.moc3",
+    "Textures": [
+      "Textures_.png",
+      "Textures__1.png",
+      "Textures__2.png"
+    ],
+    "Physics": "Physics.json",
+    "PhysicsV2": {
+      "File": "Physics.json",
+      "MaxWeight": 1.003
+    },
+    "Motions": {
+      "Idle": [
+        {
+          "File": "Motions_Idle_0.json",
+          "WrapMode": 1,
+          "FadeIn": 500,
+          "Priority": 2,
+          "VarFloats": [
+            {
+              "Type": 2
+            }
+          ]
+        }
+      ],
+      "Tapbody": [
+        {
+          "File": "Motions_Tapbody_0.json",
+          "Sound": "Motions_Tapbody_0.wav",
+          "SoundVolume": 0.3,
+          "Text": "嗯~今天天气真好啊！在这样的日子光顾着工作，不觉得可惜吗？……等工作结束了， 一起去散步好不好？",
+          "FadeIn": 500,
+          "TextDuration": 17000,
+          "Priority": 3,
+          "Interruptable": true,
+          "VarFloats": [
+            {
+              "Name": "A",
+              "Type": 1,
+              "Code": "equal 0"
+            },
+            {
+              "Name": "A",
+              "Type": 2,
+              "Code": "assign 1"
+            }
+          ]
+        },
+        {
+          "File": "Motions_Tapbody_1.json",
+          "Sound": "Motions_Tapbody_1.wav",
+          "SoundVolume": 0.3,
+          "Text": "我说…… 值日员就只用做这些吗？我，我倒没有在期待什么……",
+          "FadeIn": 500,
+          "TextDuration": 10000,
+          "Priority": 3,
+          "VarFloats": [
+            {
+              "Name": "A",
+              "Type": 1,
+              "Code": "equal 1"
+            },
+            {
+              "Name": "A",
+              "Type": 2,
+              "Code": "assign 2"
+            }
+          ]
+        },
+        {
+          "File": "Motions_Tapbody_2.json",
+          "Sound": "Motions_Tapbody_2.wav",
+          "SoundVolume": 0.3,
+          "Text": "\r唔…… 倒也不是无聊……",
+          "FadeIn": 500,
+          "TextDuration": 7000,
+          "Priority": 3,
+          "VarFloats": [
+            {
+              "Name": "A",
+              "Type": 1,
+              "Code": "equal 2"
+            },
+            {
+              "Name": "A",
+              "Type": 2,
+              "Code": "assign 3"
+            }
+          ]
+        },
+        {
+          "File": "Motions_Tapbody_3.json",
+          "Sound": "Motions_Tapbody_3.wav",
+          "SoundVolume": 0.3,
+          "Text": "\r有什么我能帮上忙的吗？ 只要你交给我，我都会努力去做的！",
+          "FadeIn": 500,
+          "TextDuration": 7000,
+          "Priority": 3,
+          "VarFloats": [
+            {
+              "Name": "A",
+              "Type": 1,
+              "Code": "equal 3"
+            },
+            {
+              "Name": "A",
+              "Type": 2,
+              "Code": "assign 4"
+            }
+          ]
+        },
+        {
+          "File": "Motions_Tapbody_4.json",
+          "Sound": "Motions_Tapbody_4.wav",
+          "SoundVolume": 0.3,
+          "Text": "\r……诶。 老师认真工作的时候， 原来是这种感觉啊……",
+          "FadeIn": 500,
+          "TextDuration": 7000,
+          "Priority": 3,
+          "VarFloats": [
+            {
+              "Name": "A",
+              "Type": 1,
+              "Code": "equal 4"
+            },
+            {
+              "Name": "A",
+              "Type": 2,
+              "Code": "assign 0"
+            }
+          ]
+        }
+      ],
+      "Idle#2": [
+        {
+          "File": "Motions_Idle#2_0.json",
+          "WrapMode": 1,
+          "FadeIn": 0
+        }
+      ],
+      "breast": [
+        {
+          "File": "Motions_breast_0.json",
+          "Sound": "Motions_breast_0.wav",
+          "Text": " ",
+          "TextDuration": 1,
+          "Priority": 5
+        }
+      ],
+      "foot": [
+        {
+          "File": "Motions_foot_0.json",
+          "Priority": 3
+        }
+      ],
+      "head": [
+        {
+          "File": "Motions_head_0.json",
+          "Sound": "Motions_head_0.wav",
+          "SoundVolume": 0.298,
+          "Text": "老师，你回来了！ 我正等着你呢！",
+          "Priority": 3
+        },
+        {
+          "File": "Motions_head_1.json",
+          "Sound": "Motions_head_1.wav",
+          "SoundVolume": 0.298,
+          "Text": "\r老师，欢迎回来！ 我一直乖乖地等着你哦。",
+          "Priority": 3
+        }
+      ],
+      "hand": [
+        {
+          "File": "Motions_Tapbody_3.json",
+          "Sound": "Motions_Tapbody_3.wav",
+          "SoundVolume": 0.298,
+          "Text": "有什么我能帮上忙的吗？ 只要你交给我，我都会努力去做的！",
+          "TextDuration": 7000,
+          "Priority": 3
+        }
+      ],
+      "Start": [
+        {
+          "File": "Motions_head_0.json",
+          "Sound": "Motions_head_0.wav",
+          "SoundVolume": 0.298,
+          "Text": "老师，你回来了！ 我正等着你呢！",
+          "FadeIn": 0,
+          "TextDuration": 4210,
+          "Interruptable": true,
+          "VarFloats": [
+            {
+              "Name": "A",
+              "Type": 2,
+              "Code": "assign 0"
+            }
+          ]
+        },
+        {
+          "File": "Motions_head_1.json",
+          "Sound": "Motions_head_1.wav",
+          "SoundVolume": 0.298,
+          "Text": "老师，欢迎回来！ 我一直乖乖地等着你哦。",
+          "FadeIn": 0,
+          "TextDuration": 5000,
+          "Interruptable": true,
+          "VarFloats": [
+            {
+              "Name": "A",
+              "Type": 2,
+              "Code": "assign 0"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "Controllers": {
+    "ParamHit": {
+      "Items": [
+        {
+          "Id": "ParamXeye",
+          "HitArea": "head",
+          "Axis": 0,
+          "Factor": 0.01,
+          "ReleaseType": 0,
+          "Type": 1
+        }
+      ],
+      "Enabled": true
+    },
+    "ParamLoop": {},
+    "KeyTrigger": {},
+    "ParamTrigger": {},
+    "AreaTrigger": {},
+    "HandTrigger": {},
+    "EyeBlink": {
+      "MinInterval": 500,
+      "MaxInterval": 6000,
+      "Items": [
+        {
+          "Id": "ParamEyeLOpen",
+          "Min": 0.0,
+          "Max": 1.0,
+          "BlendMode": 2,
+          "Input": 0
+        },
+        {
+          "Id": "ParamEyeROpen",
+          "Min": 0.0,
+          "Max": 1.0,
+          "BlendMode": 2,
+          "Input": 0
+        }
+      ],
+      "Enabled": true
+    },
+    "LipSync": {
+      "Gain": 5.0,
+      "Items": [
+        {
+          "Id": "ParamMouthOpenY",
+          "Min": 0.0,
+          "Max": 1.0,
+          "Input": 0
+        }
+      ]
+    },
+    "MouseTracking": {
+      "SmoothTime": 0.15,
+      "Enabled": true
+    },
+    "AutoBreath": {
+      "Enabled": true
+    },
+    "ExtraMotion": {},
+    "Accelerometer": {
+      "Enabled": true
+    },
+    "Microphone": {},
+    "Transform": {},
+    "FaceTracking": {
+      "Enabled": true
+    },
+    "HandTracking": {},
+    "ParamValue": {},
+    "PartOpacity": {},
+    "ArtmeshOpacity": {},
+    "ArtmeshColor": {},
+    "ArtmeshCulling": {
+      "DefaultMode": 0
+    },
+    "IntimacySystem": {}
+  },
+  "HitAreas": [
+    {
+      "Name": "head",
+      "Id": "head",
+      "Motion": "head"
+    },
+    {
+      "Name": "hand",
+      "Id": "hand",
+      "Order": 7,
+      "Motion": "hand"
+    },
+    {
+      "Name": "foot",
+      "Id": "foot",
+      "Motion": "foot"
+    },
+    {
+      "Name": "body",
+      "Id": "body",
+      "Order": 5,
+      "Motion": "Tapbody"
+    },
+    {
+      "Name": "breast",
+      "Id": "breast",
+      "Order": 6,
+      "Motion": "breast"
+    }
+  ],
+  "Options": {
+    "TexFixed": true,
+    "TexType": 0
+  }
+}

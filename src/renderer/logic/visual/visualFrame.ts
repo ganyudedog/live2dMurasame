@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { Live2DModel as Live2DModelType } from '../../live2d/runtime';
+import type { Live2DModel as Live2DModelType } from '../../live2dManage/runtime';
 import { env } from '../../utils/env';
 import { clamp } from '../../utils/math';
 

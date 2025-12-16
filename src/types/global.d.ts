@@ -7,6 +7,7 @@ declare global {
     showDragHandleOnHover?: boolean;
     autoLaunch?: boolean;
     forcedFollow?: boolean;
+    debugModeEnabled?: boolean;
   }
 
   type PetControlAction =

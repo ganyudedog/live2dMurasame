@@ -1,33 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { usePetStore } from '../state/usePetStore';
+import { usePetStore } from '../store/usePetStore';
 
 const formatScale = (value: number) => value.toFixed(2);
-
-const getWindowFlag = (key: string) => {
-	if (typeof window === 'undefined') return false;
-	const win = window as unknown as Record<string, unknown>;
-	return win[key] === true;
-};
-
-const readWindowNumber = (key: string, fallback: number) => {
-	if (typeof window === 'undefined') return fallback;
-	const win = window as unknown as Record<string, unknown>;
-	const raw = win[key];
-	return typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
-};
-
-const setWindowFlag = (key: string, value: boolean) => {
-	if (typeof window === 'undefined') return;
-	const win = window as unknown as Record<string, unknown>;
-	win[key] = value;
-};
-
-const setWindowNumber = (key: string, value: number) => {
-	if (typeof window === 'undefined') return;
-	const win = window as unknown as Record<string, unknown>;
-	win[key] = value;
-};
-
 const ControlPanel: React.FC = () => {
 	// 模型大小
 	const scale = usePetStore(s => s.scale);
@@ -37,6 +11,15 @@ const ControlPanel: React.FC = () => {
 	// 是否忽视鼠标
 	const ignoreMouse = usePetStore(s => s.ignoreMouse);
 	const setIgnoreMouse = usePetStore(s => s.setIgnoreMouse);
+
+	// 调试模式
+	const debugModeEnabled = usePetStore(s => s.debugModeEnabled);
+	const setDebugModeEnabled = usePetStore(s => s.setDebugModeEnabled);
+
+	// 模型强制跟随鼠标
+	const forcedFollow = usePetStore(s => s.forcedFollow);
+	const setForcedFollow = usePetStore(s => s.setForcedFollow);
+	
 
 	// 模型的加载
 	const modelLoadStatus = usePetStore(s => s.modelLoadStatus);
@@ -56,10 +39,6 @@ const ControlPanel: React.FC = () => {
 
 	// 初始化
 	const loadSettings = usePetStore(s => s.loadSettings);
-
-	const [forceFollow, setForceFollow] = useState<boolean>(() => getWindowFlag('LIVE2D_EYE_FORCE_ALWAYS'));
-	const [blendValue, setBlendValue] = useState<number>(() => readWindowNumber('LIVE2D_EYE_BLEND', 0.3));
-	const [forceBlendValue, setForceBlendValue] = useState<number>(() => readWindowNumber('LIVE2D_EYE_FORCE_BLEND', 0.5));
 
 	// 拖动条编辑锁，防止外部回流写入
 	const [tempScale, setTempScale] = useState(scale);
@@ -125,24 +104,6 @@ const ControlPanel: React.FC = () => {
 	}, [modelLoadStatus]);
 
 
-	const handleToggleForceFollow = () => {
-		const next = !forceFollow;
-		setWindowFlag('LIVE2D_EYE_FORCE_ALWAYS', next);
-		setForceFollow(next);
-	};
-
-	const handleBlendChange = (value: number) => {
-		const clamped = Math.max(0, Math.min(1, value));
-		setWindowNumber('LIVE2D_EYE_BLEND', clamped);
-		setBlendValue(clamped);
-	};
-
-	const handleForceBlendChange = (value: number) => {
-		const clamped = Math.max(0, Math.min(1, value));
-		setWindowNumber('LIVE2D_EYE_FORCE_BLEND', clamped);
-		setForceBlendValue(clamped);
-	};
-
 	const handleMotionClick = (group: string) => {
 		interruptMotion(group);
 	};
@@ -198,6 +159,14 @@ const ControlPanel: React.FC = () => {
 						<span className="label-text text-sm">开机自启动</span>
 						<input type="checkbox" className="toggle toggle-sm" checked={autoLaunchEnabled} onChange={e => setAutoLaunchEnabled(e.target.checked)} />
 					</label>
+					<label className="label cursor-pointer justify-between p-0">
+						<span className="label-text text-sm">调试模式</span>
+						<input type="checkbox" className="toggle toggle-sm" checked={debugModeEnabled} onChange={e => setDebugModeEnabled(e.target.checked)} />
+					</label>
+					<label className="label cursor-pointer justify-between p-0">
+						<span className="label-text text-sm">强制最终跟随</span>
+						<input type="checkbox" className="toggle toggle-sm" checked={forcedFollow} onChange={e => setForcedFollow(e.target.checked)} />
+					</label>
 				</section>
 
 				<section className="space-y-2">
@@ -223,40 +192,6 @@ const ControlPanel: React.FC = () => {
 					) : (
 						<p className="text-xs text-base-content/70">暂无动作分组，等待模型加载。</p>
 					)}
-				</section>
-
-				<section className="space-y-3">
-					<div className="flex flex-wrap gap-2">
-						<button type="button" className={`btn btn-xs ${forceFollow ? 'btn-accent' : 'btn-outline'}`} onClick={handleToggleForceFollow}>强制最终跟随</button>
-					</div>
-					<div className="space-y-2">
-						<label className="flex items-center justify-between text-xs gap-2">
-							<span>非 idle 混合强度</span>
-							<span className="tabular-nums">{blendValue.toFixed(2)}</span>
-						</label>
-						<input
-							type="range"
-							min="0"
-							max="1"
-							step="0.05"
-							value={blendValue}
-							onChange={event => handleBlendChange(parseFloat(event.target.value))}
-							className="range range-xs"
-						/>
-						<label className="flex items-center justify-between text-xs gap-2">
-							<span>强制跟随混合</span>
-							<span className="tabular-nums">{forceBlendValue.toFixed(2)}</span>
-						</label>
-						<input
-							type="range"
-							min="0"
-							max="1"
-							step="0.05"
-							value={forceBlendValue}
-							onChange={event => handleForceBlendChange(parseFloat(event.target.value))}
-							className="range range-xs"
-						/>
-					</div>
 				</section>
 			</div>
 		</div>

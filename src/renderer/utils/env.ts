@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* Environment helper: works with Vite import.meta.env and process.env */
 export const env = (key: string): string | undefined => {
   try {
@@ -21,6 +22,7 @@ export const debugEnabled = (): boolean => {
 };
 
 export const log = (...args: any[]): void => {
-  // keep behavior: always log; you can gate with debugEnabled() if desired
+  const debug = debugEnabled();
+  if (!debug) return;
   console.log(...args);
 };

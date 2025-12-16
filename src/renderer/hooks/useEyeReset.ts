@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, type RefObject } from 'react';
-import type { Live2DModel as Live2DModelType } from '../live2d/runtime';
+import type { Live2DModel as Live2DModelType } from '../live2dManage/runtime';
 
 export interface UseEyeResetParams {
   ignoreMouse: boolean;

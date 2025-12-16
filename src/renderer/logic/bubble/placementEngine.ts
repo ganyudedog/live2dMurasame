@@ -1,8 +1,14 @@
 import { clamp } from '../../utils/math';
-import { env } from '../../utils/env';
+import { env, log as debugLog } from '../../utils/env';
 
 export type Frame = { leftDom: number; rightDom: number; centerDomX: number; visualWidthDom: number };
 export type Container = { width: number; height: number; top: number; left: number };
+
+export type BubbleZones = {
+  center: { left: number; right: number; width: number };
+  left: { left: number; right: number; width: number };
+  right: { left: number; right: number; width: number };
+};
 
 export type PlacementInput = {
   scale: number;
@@ -12,6 +18,8 @@ export type PlacementInput = {
   modelTopDom: number;
   modelHeightDom: number;
   bubbleEl: HTMLElement;
+  zones: BubbleZones;
+  visualZones?: BubbleZones;
   constants: {
     BUBBLE_ZONE_BASE_WIDTH: number;
     BUBBLE_ZONE_MIN_WIDTH: number;
@@ -32,38 +40,45 @@ export type PlacementOutput = {
 };
 
 export function computeBubblePlacement(input: PlacementInput): PlacementOutput {
-  const { scale, baseFrame, visibleFrame, container, modelTopDom, modelHeightDom, bubbleEl, constants } = input;
+  const { scale, zones, visualZones, container, modelTopDom, modelHeightDom, bubbleEl, constants } = input;
+  const scoringZones = visualZones ?? zones;
   const s = Math.max(0.8, Math.min(1.4, (scale || 1)));
   const {
     BUBBLE_ZONE_BASE_WIDTH,
-    BUBBLE_ZONE_MIN_WIDTH,
+    // BUBBLE_ZONE_MIN_WIDTH,
     BUBBLE_MAX_WIDTH,
     BUBBLE_PADDING,
     BUBBLE_GAP,
-    BUBBLE_HEAD_SAFE_GAP,
   } = constants;
 
   const zoneTarget = BUBBLE_ZONE_BASE_WIDTH * s;
-  const modelLeftDom = baseFrame.leftDom - container.left;
-  const modelRightDom = baseFrame.rightDom - container.left;
-  const modelLeftDomVisible = visibleFrame.leftDom - container.left;
-  const modelRightDomVisible = visibleFrame.rightDom - container.left;
+  const centerRect = scoringZones.center;
+  const leftZone = scoringZones.left;
+  const rightZone = scoringZones.right;
 
-  const leftAvailable = Math.max(0, modelLeftDom - BUBBLE_PADDING - BUBBLE_GAP);
-  const rightAvailable = Math.max(0, container.width - modelRightDom - BUBBLE_PADDING - BUBBLE_GAP);
-  const zoneWidthLeft = Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.min(zoneTarget, Math.max(0, leftAvailable)));
-  const zoneWidthRight = Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.min(zoneTarget, Math.max(0, rightAvailable)));
-  const canLeft = leftAvailable >= BUBBLE_ZONE_MIN_WIDTH;
-  const canRight = rightAvailable >= BUBBLE_ZONE_MIN_WIDTH;
+  const leftUsable = Math.max(0, leftZone.width - BUBBLE_GAP);
+  const rightUsable = Math.max(0, rightZone.width - BUBBLE_GAP);
+  const zoneWidthLeft = Math.min(zoneTarget, leftUsable);
+  const zoneWidthRight = Math.min(zoneTarget, rightUsable);
+  const canLeft = leftUsable >= 24;
+  const canRight = rightUsable >= 24;
 
-  const predictedLeftWidth = Math.min(zoneWidthLeft, BUBBLE_MAX_WIDTH);
-  const predictedRightWidth = Math.min(zoneWidthRight, BUBBLE_MAX_WIDTH);
-  const predictedLeftX = modelLeftDom - BUBBLE_GAP - predictedLeftWidth;
-  const predictedRightX = modelRightDom + BUBBLE_GAP;
-  const leftClipPixels = predictedLeftX < BUBBLE_PADDING ? (BUBBLE_PADDING - predictedLeftX) : 0;
-  const rightClipPixels = (predictedRightX + predictedRightWidth) > (container.width - BUBBLE_PADDING)
-    ? (predictedRightX + predictedRightWidth) - (container.width - BUBBLE_PADDING)
-    : 0;
+  const predictedLeftWidth = Math.min(zoneWidthLeft, leftUsable, BUBBLE_MAX_WIDTH);
+  const predictedRightWidth = Math.min(zoneWidthRight, rightUsable, BUBBLE_MAX_WIDTH);
+  const leftClipPixels = Math.max(0, predictedLeftWidth - leftUsable);
+  const rightClipPixels = Math.max(0, predictedRightWidth - rightUsable);
+
+  if (env('VITE_BUBBLE_DEBUG') === '1') {
+    debugLog('[bubblePlacement] zone geometry', {
+      centerRect,
+      leftZone,
+      rightZone,
+      leftUsable,
+      rightUsable,
+      predictedLeftWidth,
+      predictedRightWidth,
+    });
+  }
 
   // 计算屏幕边缘空间（与现有实现保持一致）
   let spaceLeftScreen = 0; let spaceRightScreen = 0;
@@ -102,8 +117,8 @@ export function computeBubblePlacement(input: PlacementInput): PlacementOutput {
   } else if (leftScore === rightScore) {
     if (spaceLeftScreen !== spaceRightScreen) {
       side = spaceLeftScreen > spaceRightScreen ? 'left' : 'right';
-    } else if (leftAvailable !== rightAvailable) {
-      side = leftAvailable >= rightAvailable ? 'left' : 'right';
+    } else if (leftUsable !== rightUsable) {
+      side = leftUsable >= rightUsable ? 'left' : 'right';
     } else {
       side = canLeft ? 'left' : 'right';
     }
@@ -116,16 +131,45 @@ export function computeBubblePlacement(input: PlacementInput): PlacementOutput {
   if (symmetricEnabled === '1' && canLeft && canRight) {
     chosenZoneWidth = Math.min(predictedLeftWidth, predictedRightWidth);
   }
+  if (chosenZoneWidth <= 0) {
+    chosenZoneWidth = Math.min(zoneTarget, BUBBLE_MAX_WIDTH);
+  }
 
   // 写入 max-width 后测量真实尺寸
   bubbleEl.style.setProperty('--bubble-max-width', `${chosenZoneWidth}px`);
   bubbleEl.style.visibility = 'visible';
   const measuredRect = bubbleEl.getBoundingClientRect?.();
   const bubbleWidth = measuredRect && measuredRect.width > 0 ? measuredRect.width : Math.min(chosenZoneWidth, BUBBLE_MAX_WIDTH);
-  let targetX = side === 'left'
-    ? modelLeftDomVisible - BUBBLE_GAP - bubbleWidth
-    : modelRightDomVisible + BUBBLE_GAP;
   const maxLeft = container.width - bubbleWidth - BUBBLE_PADDING;
+  let targetX: number;
+  if (side === 'left') {
+    const bubbleRightLimit = centerRect.left - BUBBLE_GAP;
+    const allowedMin = Math.max(BUBBLE_PADDING, leftZone.left);
+    const allowedMax = Math.min(bubbleRightLimit - bubbleWidth, maxLeft);
+    if (allowedMin > allowedMax) {
+      targetX = clamp(allowedMin, BUBBLE_PADDING, maxLeft);
+    } else {
+      targetX = allowedMax;
+    }
+    if (targetX + bubbleWidth > bubbleRightLimit) {
+      targetX = bubbleRightLimit - bubbleWidth;
+    }
+    if (targetX < allowedMin) targetX = allowedMin;
+  } else {
+    const bubbleLeftLimit = centerRect.right + BUBBLE_GAP;
+    const allowedMin = Math.max(BUBBLE_PADDING, bubbleLeftLimit);
+    const allowedMax = Math.min(rightZone.right - bubbleWidth, maxLeft);
+    if (allowedMin > allowedMax) {
+      targetX = clamp(allowedMin, BUBBLE_PADDING, maxLeft);
+    } else {
+      targetX = allowedMin;
+    }
+    if (targetX < allowedMin) targetX = allowedMin;
+    if (targetX + bubbleWidth > Math.min(rightZone.right, maxLeft + bubbleWidth)) {
+      const rightBoundary = Math.min(rightZone.right, maxLeft + bubbleWidth);
+      targetX = rightBoundary - bubbleWidth;
+    }
+  }
   targetX = clamp(targetX, BUBBLE_PADDING, maxLeft);
 
   // 垂直定位
@@ -144,46 +188,19 @@ export function computeBubblePlacement(input: PlacementInput): PlacementOutput {
     if (Number.isFinite(parsed)) headAnchorRatio = clamp(parsed, 0, 1);
   }
   const headAnchorDomY = modelTopDom + modelHeightDom * headAnchorRatio;
-  let targetY = headAnchorDomY - container.top - bubbleWidth /* placeholder */ - BUBBLE_HEAD_SAFE_GAP;
+  let targetY = headAnchorDomY - container.top - bubbleWidth /* placeholder */;
   // 需要准确高度，回退后再计算
   const measuredRect2 = bubbleEl.getBoundingClientRect?.();
   const bubbleHeight = measuredRect2 && measuredRect2.height > 0 ? measuredRect2.height : 48 * s;
   const maxTop = container.height - bubbleHeight - BUBBLE_PADDING;
-  targetY = clamp(headAnchorDomY - container.top - bubbleHeight - BUBBLE_HEAD_SAFE_GAP, BUBBLE_PADDING, maxTop);
+  targetY = clamp(headAnchorDomY - container.top - bubbleHeight, BUBBLE_PADDING, maxTop);
 
   const tailSize = 10;
   const unscaledHeight = bubbleHeight / s;
   const unscaledTailY = (headAnchorDomY - container.top - targetY) / s;
   const tailY = clamp(unscaledTailY, tailSize, unscaledHeight - tailSize);
 
-  // 头部遮挡调整（简化版）
-  const DEFAULT_TOUCH_MAP_RAW2 = env('VITE_TOUCH_MAP');
-  let headTopRatio = headAnchorRatio;
-  let headBottomRatio = headAnchorRatio + 0.09;
-  if (DEFAULT_TOUCH_MAP_RAW2) {
-    const ratios = DEFAULT_TOUCH_MAP_RAW2.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
-    if (ratios.length > 1) {
-      const hairEnd = ratios[0];
-      const faceEnd = ratios[1];
-      if (Number.isFinite(hairEnd)) headTopRatio = clamp(hairEnd * 0.85, 0, 1);
-      if (Number.isFinite(faceEnd)) headBottomRatio = clamp(faceEnd, headTopRatio + 0.02, 1);
-      else headBottomRatio = clamp(hairEnd * 1.35, headTopRatio + 0.02, 1);
-    }
-  }
-  const headTopDom = modelTopDom + modelHeightDom * headTopRatio;
-  const bubbleTopDom = targetY + container.top;
-  const bubbleBottomDom = bubbleTopDom + bubbleHeight;
-  let severeOverlap = false;
-  if (bubbleBottomDom > headTopDom - 4) {
-    const desiredTopDom = headTopDom - BUBBLE_HEAD_SAFE_GAP - bubbleHeight;
-    const desiredTop = desiredTopDom - container.top;
-    const clampedDesiredTop = clamp(desiredTop, BUBBLE_PADDING, maxTop);
-    targetY = clampedDesiredTop;
-    const headBottomDom = modelTopDom + modelHeightDom * headBottomRatio;
-    const postBubbleTopDom = targetY + container.top;
-    const postBubbleBottomDom = postBubbleTopDom + bubbleHeight;
-    severeOverlap = postBubbleBottomDom > headBottomDom && (postBubbleBottomDom - headBottomDom) > bubbleHeight * 0.25;
-  }
+  const severeOverlap = false;
 
   return { side, bubbleWidth, targetX, targetY, tailY: Math.round(tailY), severeOverlap };
 }

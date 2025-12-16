@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { Application, Ticker } from 'pixi.js';
-import { loadModel } from '../live2d/loader';
-import { Live2DModel } from '../live2d/runtime';
-import type { Live2DModel as Live2DModelType } from '../live2d/runtime';
+import { loadModel } from '../live2dManage/loader';
+import { Live2DModel } from '../live2dManage/runtime';
+import type { Live2DModel as Live2DModelType } from '../live2dManage/runtime';
 
 export interface UsePetModelParams {
   settingsLoaded: boolean;
@@ -18,6 +18,7 @@ export interface UsePetModelParams {
   pointerY: RefObject<number>;
   ignoreMouseRef: RefObject<boolean>;
   windowBoundsRef: RefObject<{ x: number; y: number; width: number; height: number } | null>;
+  forcedFollow: boolean;
   setModel: (model: Live2DModelType | null) => void;
   setModelLoadStatus: (status: 'idle' | 'loading' | 'loaded' | 'error', error?: string) => void;
   updateHitAreas: (model: Live2DModelType) => void;
@@ -46,6 +47,7 @@ export const usePetModel = ({
   pointerY,
   ignoreMouseRef,
   windowBoundsRef,
+  forcedFollow,
   setModel,
   setModelLoadStatus,
   updateHitAreas,
@@ -57,6 +59,10 @@ export const usePetModel = ({
   clampAngleY,
   modelPath,
 }: UsePetModelParams): void => {
+  const forcedFollowRef = useRef(forcedFollow);
+  useEffect(() => {
+    forcedFollowRef.current = forcedFollow;
+  },[forcedFollow])
   useEffect(() => {
     if (!settingsLoaded) return;
     if (!canvasRef.current) return;
@@ -83,10 +89,9 @@ export const usePetModel = ({
         const internal = (m as any).internalModel;
         const core = internal?.coreModel;
         if (!core) return;
-        const debugMotion = (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
         frameCountRef.current++;
 
-        if (debugMotion && !paramCacheRef.current && typeof core.getParameterCount === 'function') {
+        if ( !paramCacheRef.current && typeof core.getParameterCount === 'function') {
           try {
             const count = core.getParameterCount();
             const ids: string[] = [];
@@ -132,7 +137,7 @@ export const usePetModel = ({
         core.setParameterValueById?.('ParamAngleX', newAngleX);
         core.setParameterValueById?.('ParamAngleY', clampedAngleY);
 
-        if (debugMotion && frameCountRef.current % 60 === 0) {
+        if (frameCountRef.current % 60 === 0) {
           console.log('[MotionDebug][blendTick]', { idle, blend, target: { x: targetX, y: targetY }, result: { newEyeX, newEyeY: clampedEyeY, newAngleX, newAngleY: clampedAngleY } });
         }
 
@@ -144,6 +149,7 @@ export const usePetModel = ({
       detachEyeHandlerRef.current = () => { app.ticker.remove(onTick); };
     };
 
+    // 护眼模式，并强行脸部动作跟随鼠标
     const installMotionEyeGuard = (modelInstance: Live2DModelType) => {
       const internal = (modelInstance as any).internalModel;
       if (!internal) return;
@@ -152,13 +158,11 @@ export const usePetModel = ({
       if ((motionMgr as any).__eyeGuardPatched) return;
       const core = internal?.coreModel;
       if (!core) return;
-      const debug = () => (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
-
       const wrap = (fnName: string) => {
         const orig = (motionMgr as any)[fnName];
         if (typeof orig !== 'function') return false;
         (motionMgr as any)[fnName] = (...args: any[]) => {
-          const guard = (window as any).LIVE2D_EYE_GUARD === true || (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
+          const guard = forcedFollowRef.current === true;
           let pre = null as null | { x: number; y: number; ax: number; ay: number };
           if (guard) {
             pre = {
@@ -179,7 +183,7 @@ export const usePetModel = ({
               const tx = Math.max(-1, Math.min(1, nx));
               const ty = Math.max(-1, Math.min(1, ny));
               const idleNow = isIdleState(motionMgr);
-              const rawBlend = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true ? 1 : (idleNow ? 1 : (typeof (window as any).LIVE2D_EYE_BLEND_GUARD === 'number' ? (window as any).LIVE2D_EYE_BLEND_GUARD : 0.5));
+              const rawBlend = forcedFollowRef.current === true ? 1 : (idleNow ? 1 : (typeof (window as any).LIVE2D_EYE_BLEND_GUARD === 'number' ? (window as any).LIVE2D_EYE_BLEND_GUARD : 0.5));
               const blend = Math.max(0, Math.min(1, rawBlend));
               const baseX = (pre?.x ?? core.getParameterValueById?.('ParamEyeBallX')) ?? 0;
               const baseY = (pre?.y ?? core.getParameterValueById?.('ParamEyeBallY')) ?? 0;
@@ -195,7 +199,7 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamEyeBallY', clampedY);
               core.setParameterValueById?.('ParamAngleX', writeAX);
               core.setParameterValueById?.('ParamAngleY', clampedAY);
-              if (debug() && frameCountRef.current % 60 === 0) {
+              if (frameCountRef.current % 60 === 0) {
                 console.log('[EyeGuard][afterMotion]', { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
               }
             } catch { /* swallow */ }
@@ -207,9 +211,10 @@ export const usePetModel = ({
 
       const ok = wrap('updateMotion') || wrap('update');
       if (ok) (motionMgr as any).__eyeGuardPatched = true;
-      if (debug()) console.log('[EyeGuard] motion manager patched with', ok ? 'success' : 'no-op');
+      console.log('[EyeGuard] motion manager patched with', ok ? 'success' : 'no-op');
     };
 
+    // 安装内部更新补丁，以捕捉所有的动作更新
     const installInternalAfterUpdatePatch = (modelInstance: Live2DModelType) => {
       const internal = (modelInstance as any).internalModel;
       if (!internal) return;
@@ -221,7 +226,7 @@ export const usePetModel = ({
       internal.update = (dt: number, ...args: any[]) => {
         origUpdate(dt, ...args as any);
         try {
-          const forceAlways = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
+          const forceAlways = forcedFollowRef.current === true;
           const blendOverride = (window as any).LIVE2D_EYE_FORCE_BLEND;
           if (!forceAlways && typeof blendOverride !== 'number') return;
           if (ignoreMouseRef.current) return;
@@ -252,14 +257,12 @@ export const usePetModel = ({
           core.setParameterValueById?.('ParamEyeBallY', clampedY);
           core.setParameterValueById?.('ParamAngleX', writeAX);
           core.setParameterValueById?.('ParamAngleY', clampedAY);
-          if (((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) && frameCountRef.current % 60 === 0) {
+          if (frameCountRef.current % 60 === 0) {
             console.log('[EyePatch][afterInternalUpdate]', { idleNow, blend, result: { writeX, writeY: clampedY, writeAX, writeAY: clampedAY } });
           }
         } catch { /* swallow */ }
-      };
-      if ((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) {
-        console.log('[EyePatch] internal.update patched');
-      }
+      };    
+      console.log('[EyePatch] internal.update patched');
     };
 
     (async () => {
@@ -290,8 +293,7 @@ export const usePetModel = ({
         if (!(model as any).__motionUpdateHooked) {
           (model as any).__motionUpdateHooked = true;
           model.on('update', () => {
-            const forceAlways = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
-            const debugEnabled = (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
+            const forceAlways = forcedFollowRef.current === true;
             const internalModel = (model as any).internalModel;
             const core = internalModel?.coreModel;
             if (!core) return;
@@ -321,11 +323,11 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamEyeBallY', clampedEyeY);
               core.setParameterValueById?.('ParamAngleX', writeAngleX);
               core.setParameterValueById?.('ParamAngleY', writeAngleY);
-              if (debugEnabled && frameCountRef.current % 60 === 0) {
+              if (frameCountRef.current % 60 === 0) {
                 console.log('[MotionDebug][forceAfter]', { idleNow, blend, result: { writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY } });
               }
             }
-            if (!debugEnabled || frameCountRef.current % 30 !== 0) return;
+            if (frameCountRef.current % 30 !== 0) return;
             try {
               const state = {
                 type: motionMgr?.constructor?.name,

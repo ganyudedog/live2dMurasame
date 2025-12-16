@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS = {
     autoLaunch: false,
     showDragHandleOnHover: true,
     forcedFollow: false,
+    debugModeEnabled: false,
 };
 
 let settingsCache = { ...DEFAULT_SETTINGS };
@@ -304,7 +305,7 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setSize(Math.max(75, Math.floor(width)), Math.max(250, Math.floor(height)));
     }
-    }
+}
 );
 
 ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {

@@ -356,9 +356,11 @@ ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
         if (typeof patch.scale === 'number') {
             safePatch.scale = patch.scale;
         }
-
         if( typeof patch.forcedFollow === 'boolean') {
             safePatch.forcedFollow = patch.forcedFollow;
+        }
+        if (typeof patch.debugModeEnabled === 'boolean') {
+            safePatch.debugModeEnabled = patch.debugModeEnabled;
         }
     }
 

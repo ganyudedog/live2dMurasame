@@ -1041,12 +1041,12 @@ const PetCanvas: React.FC = () => {
         className="absolute inset-0 z-0 pointer-events-auto perspective-normal"
       >
         {/* 视觉中心红线：位于最上层、无事件、始终显示 */}
-        {debugModeEnabled  && redLineLeft !== null && (
+        {debugModeEnabled && redLineLeft !== null && (
           <DebugRedLine redLineLeft={redLineLeft} ></DebugRedLine>
         )}
 
         {/* 真正计算的三矩形容器 */}
-        { debugModeEnabled && symmetricMasks && (
+        {debugModeEnabled && symmetricMasks && (
           <DebugSymmetricMasks symmetricMasks={symmetricMasks} />
         )}
 

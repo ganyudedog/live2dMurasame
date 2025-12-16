@@ -43,7 +43,7 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
     const resolvedMaxWidth: number | string = maxWidth ?? 'var(--bubble-max-width, 260px)';
     const sidePadding = tailSize + 1; // 包含轻微高光的占位，确保尾巴不越界
     // 避免同时混用 padding 与 paddingLeft/Right 导致 React 警告：使用完全展开的 padding 属性
-    const baseHorizPadding = 12;
+    const baseHorizPadding = 3;
     const bubbleStyle: React.CSSProperties = {
         position: 'relative',
         display: 'inline-block',

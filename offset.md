@@ -1,40 +1,10 @@
-## 虚拟矩形对称方案
+## 模型切换与视觉偏移动态化方案
 
-### 背景
-- 现有三矩形（左/中心/右）完全基于模型包围盒计算，确保中心区覆盖模型并作为碰撞约束。
-- `.env` 中的 `VITE_VISUAL_FRAME_*` 偏移仅影响调试红线，但不会传导到气泡布局，导致视觉对齐与实际布局不一致。
-- 需求：气泡左右基于偏移后的对称中心布局，同时保持对模型的完整保护。
-
-### 目标
-- 引入一套“虚拟矩形”（含中心与左右区）用于评分、择边与目标定位，完全按照视觉偏移产生。
-- 保留原“三矩形”作为“真实矩形”，用于 clamp 与碰撞约束，确保模型不被压缩。
-- 调试蒙版可选择叠加真实/虚拟两套数据，帮助区分视觉与逻辑范围。
-
-### 实施步骤
-1. **数据结构扩展**
-	- 在 `computeBubblePlacement` 参数中新增 `visualZones`（虚拟三矩形），并保留现有 `zones` 作为真实三矩形。
-	- 若不想扩展接口，可在函数内部拆分：先以虚拟矩形计算结果，再引用真实矩形 clamp。
-2. **PetCanvas 中的计算**
-	- 继续以模型包围盒生成 `bubbleZones`（真实）。
-	- 追加 `visualZones`：在 `bubbleZones.center` 基础上施加 `.env` 偏移与比例，生成 `visualCenter`，从而得到偏移后的左右区宽度。
-	- 调试蒙版：增加配置以决定显示真实矩形、虚拟矩形或两者叠加（颜色区分）。
-3. **放置引擎调整**
-	- 评分、择边、`targetX` 初值等运算基于 `visualZones`。
-	- 计算完成后，对 `targetX` 调用真实 `zones` 与容器边界 clamp，确保不越界。
-	- 若 clamp 造成偏差（比如收窄后空间不足），触发现有扩窗逻辑或记录警告。
-4. **日志与调试**
-	- 在调试日志中分开输出 `visualZones` 与 `zones`，便于验证。
-	- 可在 UI 上标注“视觉矩形”与“真实矩形”图层，提高可视化可读性。
-
-### 验证计划
-- 在 scale=1、0.8、1.4 场景下触发左右气泡，确认相对红线对称且未压到模型。
-- 人为设置偏移为正负值，检查 clamp 后气泡仍落在真实安全区内，并观察是否需要额外扩窗。
-- 观察调试日志，确保评分使用虚拟矩形、限制使用真实矩形。
-
-### 风险与对策
-- **虚拟偏移过大导致 clamp 返回原区**：在 clamp 后对偏移量与实际偏移差异做监控，必要时限制 `.env` 偏移范围或自动触发扩窗。
-- **调试误判**：通过颜色/标签区分两套矩形，防止误认为视觉矩形等同真实矩形。
-- **兼容性**：保持 `BUBBLE_ZONE_MIN_WIDTH` 等常量应用于两套矩形，避免在狭窄窗口下出现不同的最小宽度约束。
-
-### 后续
-- 若需要进一步视觉调整，可追加参数控制虚拟矩形的缩放/偏移幅度，但始终保持真实矩形覆盖模型。
+1. **模型目录扫描（Electron 主进程）** 仅遍历 `public/model/*` 的第二级目录，发现内部的 `*.model3.json`，构建结构 `{ slug, displayName, modelPath }`，其中 `slug` 即目录名（例：`model/mika` → `mika`）。
+2. **配置文件布局** 在 `electron/config/models/` 下为每个 `slug` 按需生成独立 JSON（`{ modelPath, visualOffsetRatio, updatedAt }`），并维护 `electron/config/active-model.json` 记录当前启用的 `slug`。
+3. **主进程初始化与 IPC** 启动时加载上述配置，缺失则用 `.env` 中的初始值填充；开放 `getModelCatalog`、`setActiveModel`、`updateModelOffset` IPC 接口供渲染层使用。
+4. **Preload 桥接** 通过 `contextBridge` 暴露 `window.petAPI.listModels()`、`window.petAPI.selectModel(slug)`、`window.petAPI.updateVisualOffset(slug, ratio)`，确保渲染层无法绕过安全通道直接访问文件系统。
+5. **渲染端状态（usePetStore）** 扩展 store 字段：`availableModels`、`activeModelSlug`、`visualOffsetRatio`，并提供 `initModels`、`chooseModel`、`setVisualOffset` 等方法；原本从 `.env` 读取 `VITE_MODEL_PATH` 和 `VITE_VISUAL_FRAME_OFFSET_RATIO` 的组件改为订阅 store。
+6. **控制面板 UI** 新增模型选择下拉框（显示名/目录名）以及范围 `[-0.5, 0.5]`、步长 `0.01` 的滑条；用户操作时调用 store 方法并经过 IPC 同步至主进程配置。
+7. **持久化流转** 切换模型时调用 `setActiveModel` 写入 `active-model.json` 并触发 Live2D 重载；调节偏移时通过节流/防抖调用 `updateModelOffset` 写回对应模型 JSON；默认值缺失时回退到 `0`。
+8. **首次迁移** 首次运行时读取现有 `.env` 的 `VITE_MODEL_PATH`、`VITE_VISUAL_FRAME_OFFSET_RATIO` 生成对应模型配置，之后运行时不再依赖 `.env` 改动即可实现动态切换。

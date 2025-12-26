@@ -15,8 +15,19 @@
 - 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 与相关 Hook 中移除右缘锚定，新增中心基线 `centerBaselineRef` 与 `alignWindowToCenterLine`，请求扩窗时通过 `anchorCenter` 保持红线对称；同步更新 IPC 通道（[electron/preload.js](electron/preload.js)、[electron/main.js](electron/main.js)）支持中心锚定并扩充调试日志，用于验证左右平均扩展效果。
 
 - 2025-12-26：更新 [src/renderer/hooks/usePetModel.ts](src/renderer/hooks/usePetModel.ts) 的 resize 监听，改为引用最新的 `applyLayout`，防止在自动扩窗后 scale 被回退到初始值。
+
 - 2025-12-26：调整 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 的 `applyLayout`，让模型围绕红线中心布置，同时保持屏幕级锚点不被布局覆盖，并对水平安全边距做对称限位，避免因窗口扩展造成模型左右漂移。
 
 - 2025-12-26：为程序化扩窗新增窗口 bounds 预测缓存（仅在宽度与目标一致时参与布局），并在主进程广播到达后清除，避免预测值与真实宽度不一致造成的抖动，同时扩充调试日志输出当前预测与广播数据。
+
 - 2025-12-26：改为按 scale 直接计算“三矩形”目标宽度，并通过渲染层统一请求窗口尺寸，去除气泡出现/消失时的临时扩窗逻辑，确保窗口宽度仅随 scale 变化。
+
 - 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 为对称扩窗添加目标宽度缓存与 pending 校验，使用预测宽度参与气泡布局，并在窗口对齐后同步清理标记，消除缩放后交互触发的反复宽度抖动。
+
+- 2025-12-26：放宽 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 中中心线对齐阈值，当窗口宽度已匹配目标时容忍 ±2.4px 的中心误差，避免缩放刚结束时额外的对齐回弹。
+
+- 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 中改为通过 `requestAnimationFrame` 延后一帧再执行缩放后的强制气泡测量，确保 PIXI 更新完模型包围盒后再请求窗口宽度，消除缩放瞬间的先缩后放回弹。
+
+- 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 的 `updateBubblePosition` 内复用待处理的窗口目标宽度，在主线程尚未完成扩窗时忽略暂时偏小的测量值，防止缩放过程被旧数据触发额外缩窗。
+
+- 2025-12-26：为放大过程保存当前窗口宽度基准，当 scale 增长时禁止请求小于该基准的宽度，待新宽度稳定后再允许正常缩放，彻底消除首次放大到更大 scale 时的缩窗回弹。

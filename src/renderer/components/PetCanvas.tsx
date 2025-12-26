@@ -146,12 +146,15 @@ const PetCanvas: React.FC = () => {
   const motionTextRef = useRef(motionText); // 动作文本引用
   const bubblePositionRef = useRef<{ left: number; top: number } | null>(null); // 气泡位置
   const lastBubbleUpdateRef = useRef(0); // 上次气泡更新时间
+  const layoutBubbleMeasureRafRef = useRef<number | null>(null); // 布局后延迟测量的动画帧 ID
   const [bubblePosition, setBubblePosition] = useState<{ left: number; top: number } | null>(null); // 气泡位置状态
   const [bubbleAlignment, setBubbleAlignment] = useState<'left' | 'right'>('left'); // 气泡对齐方式
   const [bubbleReady, setBubbleReady] = useState(false); // 气泡是否准备就绪
   const bubbleReadyRef = useRef(false); // 气泡准备状态引用
   const bubbleAlignmentRef = useRef<'left' | 'right' | null>(null); // 气泡对齐方式引用
   const [bubbleTailY, setBubbleTailY] = useState<number | null>(null); // 气泡尾巴对齐 Y
+  const lastScaleRef = useRef<number | null>(null); // 上次处理的缩放值
+  const scaleIncreaseBaselineWidthRef = useRef<number | null>(null); // 放大过程中保持的最小窗口宽度
 
   // 视觉中心红线（仅用于调试/对称对齐可视化）
   const redLineRef = useRef<HTMLDivElement | null>(null);
@@ -397,6 +400,9 @@ const PetCanvas: React.FC = () => {
       return;
     }
 
+    const targetWidthSnapshot = targetWindowWidthRef.current;
+    const widthMatchesTarget = targetWidthSnapshot !== null && Math.abs(bounds.width - (targetWidthSnapshot as number)) <= 1;
+
     if (baseline == null) {
       centerBaselineRef.current = actualCenter;
       pendingResizeRef.current = null;
@@ -407,7 +413,7 @@ const PetCanvas: React.FC = () => {
     }
 
     const diff = Math.abs(actualCenter - baseline);
-    if (diff <= 1.5) {
+    if (diff <= 1.5 || (widthMatchesTarget && diff <= 2.4)) {
       centerBaselineRef.current = actualCenter;
       pendingResizeRef.current = null;
       pendingBoundsPredictionRef.current = null;
@@ -445,6 +451,20 @@ const PetCanvas: React.FC = () => {
     if (typeof window === 'undefined') return;
 
     const hasBubble = Boolean(motionTextRef.current);
+
+    const currentScale = scale || 1;
+    const previousScale = lastScaleRef.current;
+    if (previousScale === null) {
+      lastScaleRef.current = currentScale;
+    } else {
+      const delta = currentScale - previousScale;
+      if (delta > 0.0005) {
+        scaleIncreaseBaselineWidthRef.current = window.innerWidth;
+      } else if (delta < -0.0005) {
+        scaleIncreaseBaselineWidthRef.current = null;
+      }
+      lastScaleRef.current = currentScale;
+    }
 
     const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
@@ -531,7 +551,23 @@ const PetCanvas: React.FC = () => {
     const rightShortfallPx = Math.max(0, zoneTarget - rightCapacity);
     const capacityShortfall = leftShortfallPx > 0 || rightShortfallPx > 0;
 
-    applyWindowWidth(requiredWindowWidth, hasBubble ? 'bubble-active' : 'layout');
+    let enforcedWindowWidth = requiredWindowWidth;
+    const pendingGoalWidth = pendingResizeRef.current?.width ?? null;
+    const cachedGoalWidth = targetWindowWidthRef.current;
+    const lastGoalWidth = pendingGoalWidth ?? cachedGoalWidth;
+    if (pendingGoalWidth !== null && lastGoalWidth !== null) {
+      const normalizedGoal = Math.max(Math.round(lastGoalWidth), 320);
+      if (requiredWindowWidth < normalizedGoal - 2) {
+        enforcedWindowWidth = normalizedGoal;
+      }
+    }
+
+    const scaleBaselineWidth = scaleIncreaseBaselineWidthRef.current;
+    if (scaleBaselineWidth !== null && enforcedWindowWidth < scaleBaselineWidth - 1) {
+      enforcedWindowWidth = scaleBaselineWidth;
+    }
+
+    applyWindowWidth(enforcedWindowWidth, hasBubble ? 'bubble-active' : 'layout');
     suppressResizeForBubbleRef.current = false;
 
     if (!hasBubble) {
@@ -1068,7 +1104,17 @@ const PetCanvas: React.FC = () => {
       broadcastBounds: windowBoundsRef.current,
     });
     m.position.set(targetX, targetY);
-    updateBubblePosition(true);
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      if (layoutBubbleMeasureRafRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(layoutBubbleMeasureRafRef.current);
+      }
+      layoutBubbleMeasureRafRef.current = window.requestAnimationFrame(() => {
+        layoutBubbleMeasureRafRef.current = null;
+        updateBubblePosition(true);
+      });
+    } else {
+      updateBubblePosition(true);
+    }
     updateDragHandlePosition(true);
   }, [scale, updateBubblePosition, updateDragHandlePosition]);
 

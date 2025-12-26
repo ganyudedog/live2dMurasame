@@ -372,6 +372,13 @@ const PetCanvas: React.FC = () => {
     }
 
     targetWindowWidthRef.current = normalizedWidth;
+    if (!pending) {
+      const baselineCenter = getWindowCenter();
+      if (Number.isFinite(baselineCenter)) {
+        // 先刷新基线，确保首次缩放时 anchorCenter 与当前窗口中心一致
+        centerBaselineRef.current = baselineCenter;
+      }
+    }
     pendingResizeRef.current = { width: normalizedWidth, height: desiredHeight };
     pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()

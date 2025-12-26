@@ -29,3 +29,5 @@
 - 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 中改为通过 `requestAnimationFrame` 延后一帧再执行缩放后的强制气泡测量，确保 PIXI 更新完模型包围盒后再请求窗口宽度，消除缩放瞬间的先缩后放回弹。
 
 - 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 的 `updateBubblePosition` 内复用待处理的窗口目标宽度，在主线程尚未完成扩窗时忽略暂时偏小的测量值，防止缩放过程被旧数据触发额外缩窗。
+
+- 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 中请求首次对称扩窗前先刷新窗口中心基线，确保 anchorCenter 与当前窗口位置一致，消除气泡存在时首轮缩放导致的左右漂移。

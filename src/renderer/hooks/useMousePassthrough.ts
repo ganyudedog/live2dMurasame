@@ -19,8 +19,8 @@ export interface UseMousePassthroughParams {
   motionTextRef: RefObject<string | null>;
   autoResizeBackupRef: RefObject<{ width: number; height: number } | null>;
   updateDragHandlePositionRef: RefObject<((force?: boolean) => void) | null>;
-  rightEdgeBaselineRef: RefObject<number | null>;
-  getWindowRightEdge: () => number;
+  centerBaselineRef: RefObject<number | null>;
+  getWindowCenter: () => number;
   recomputeWindowPassthroughRef: RefObject<() => void>;
   clearContextZoneLatchTimer: () => void;
 }
@@ -52,8 +52,8 @@ export const useMousePassthrough = ({
   motionTextRef,
   autoResizeBackupRef,
   updateDragHandlePositionRef,
-  rightEdgeBaselineRef,
-  getWindowRightEdge,
+  centerBaselineRef,
+  getWindowCenter,
   recomputeWindowPassthroughRef,
   clearContextZoneLatchTimer,
 }: UseMousePassthroughParams): UseMousePassthroughResult => {
@@ -66,8 +66,8 @@ export const useMousePassthrough = ({
     autoResizeBackupRef,
     updateDragHandlePositionRef,
     recomputeWindowPassthroughRef,
-    rightEdgeBaselineRef,
-    getWindowRightEdge,
+    centerBaselineRef,
+    getWindowCenter,
   });
 
   const setWindowMousePassthrough = useCallback((passthrough: boolean) => {

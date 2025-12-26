@@ -1,7 +1,18 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('petAPI', {
-  setSize: (width, height) => ipcRenderer.invoke('pet:resizeMainWindow', width, height),
+  setSize: (width, height, options = {}) => {
+    if (width && typeof width === 'object') {
+      return ipcRenderer.invoke('pet:resizeMainWindow', width);
+    }
+    const payload = {
+      width,
+      height,
+      ...options,
+    };
+    return ipcRenderer.invoke('pet:resizeMainWindow', payload);
+  },
+  setBounds: (bounds) => ipcRenderer.invoke('pet:setMainWindowBounds', bounds),
   setMousePassthrough: (enabled) => ipcRenderer.invoke('pet:setMousePassthrough', enabled),
   getCursorScreenPoint: () => ipcRenderer.invoke('pet:getCursorScreenPoint'),
   getWindowBounds: () => ipcRenderer.invoke('pet:getWindowBounds'),

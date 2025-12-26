@@ -18,13 +18,13 @@ export interface UsePetModelParams {
   pointerY: RefObject<number>;
   ignoreMouseRef: RefObject<boolean>;
   windowBoundsRef: RefObject<{ x: number; y: number; width: number; height: number } | null>;
-  forcedFollow: boolean;
   setModel: (model: Live2DModelType | null) => void;
   setModelLoadStatus: (status: 'idle' | 'loading' | 'loaded' | 'error', error?: string) => void;
   updateHitAreas: (model: Live2DModelType) => void;
   updateBubblePosition: (force?: boolean) => void;
   updateDragHandlePosition: (force?: boolean) => void;
   applyLayout: () => void;
+  alignWindowToCenterLine: (bounds: { x: number; y: number; width: number; height: number }) => void;
   isIdleState: (motionManager: any) => boolean;
   clampEyeBallY: (value: number) => number;
   clampAngleY: (value: number) => number;
@@ -47,22 +47,22 @@ export const usePetModel = ({
   pointerY,
   ignoreMouseRef,
   windowBoundsRef,
-  forcedFollow,
   setModel,
   setModelLoadStatus,
   updateHitAreas,
   updateBubblePosition,
   updateDragHandlePosition,
   applyLayout,
+  alignWindowToCenterLine,
   isIdleState,
   clampEyeBallY,
   clampAngleY,
   modelPath,
 }: UsePetModelParams): void => {
-  const forcedFollowRef = useRef(forcedFollow);
+  const applyLayoutRef = useRef(applyLayout);
   useEffect(() => {
-    forcedFollowRef.current = forcedFollow;
-  },[forcedFollow])
+    applyLayoutRef.current = applyLayout;
+  }, [applyLayout]);
   useEffect(() => {
     if (!settingsLoaded) return;
     if (!canvasRef.current) return;
@@ -89,9 +89,10 @@ export const usePetModel = ({
         const internal = (m as any).internalModel;
         const core = internal?.coreModel;
         if (!core) return;
+        const debugMotion = (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
         frameCountRef.current++;
 
-        if ( !paramCacheRef.current && typeof core.getParameterCount === 'function') {
+        if (debugMotion && !paramCacheRef.current && typeof core.getParameterCount === 'function') {
           try {
             const count = core.getParameterCount();
             const ids: string[] = [];
@@ -137,7 +138,7 @@ export const usePetModel = ({
         core.setParameterValueById?.('ParamAngleX', newAngleX);
         core.setParameterValueById?.('ParamAngleY', clampedAngleY);
 
-        if (frameCountRef.current % 60 === 0) {
+        if (debugMotion && frameCountRef.current % 60 === 0) {
           console.log('[MotionDebug][blendTick]', { idle, blend, target: { x: targetX, y: targetY }, result: { newEyeX, newEyeY: clampedEyeY, newAngleX, newAngleY: clampedAngleY } });
         }
 
@@ -149,7 +150,6 @@ export const usePetModel = ({
       detachEyeHandlerRef.current = () => { app.ticker.remove(onTick); };
     };
 
-    // 护眼模式，并强行脸部动作跟随鼠标
     const installMotionEyeGuard = (modelInstance: Live2DModelType) => {
       const internal = (modelInstance as any).internalModel;
       if (!internal) return;
@@ -158,11 +158,13 @@ export const usePetModel = ({
       if ((motionMgr as any).__eyeGuardPatched) return;
       const core = internal?.coreModel;
       if (!core) return;
+      const debug = () => (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
+
       const wrap = (fnName: string) => {
         const orig = (motionMgr as any)[fnName];
         if (typeof orig !== 'function') return false;
         (motionMgr as any)[fnName] = (...args: any[]) => {
-          const guard = forcedFollowRef.current === true;
+          const guard = (window as any).LIVE2D_EYE_GUARD === true || (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
           let pre = null as null | { x: number; y: number; ax: number; ay: number };
           if (guard) {
             pre = {
@@ -183,7 +185,7 @@ export const usePetModel = ({
               const tx = Math.max(-1, Math.min(1, nx));
               const ty = Math.max(-1, Math.min(1, ny));
               const idleNow = isIdleState(motionMgr);
-              const rawBlend = forcedFollowRef.current === true ? 1 : (idleNow ? 1 : (typeof (window as any).LIVE2D_EYE_BLEND_GUARD === 'number' ? (window as any).LIVE2D_EYE_BLEND_GUARD : 0.5));
+              const rawBlend = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true ? 1 : (idleNow ? 1 : (typeof (window as any).LIVE2D_EYE_BLEND_GUARD === 'number' ? (window as any).LIVE2D_EYE_BLEND_GUARD : 0.5));
               const blend = Math.max(0, Math.min(1, rawBlend));
               const baseX = (pre?.x ?? core.getParameterValueById?.('ParamEyeBallX')) ?? 0;
               const baseY = (pre?.y ?? core.getParameterValueById?.('ParamEyeBallY')) ?? 0;
@@ -199,7 +201,7 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamEyeBallY', clampedY);
               core.setParameterValueById?.('ParamAngleX', writeAX);
               core.setParameterValueById?.('ParamAngleY', clampedAY);
-              if (frameCountRef.current % 60 === 0) {
+              if (debug() && frameCountRef.current % 60 === 0) {
                 console.log('[EyeGuard][afterMotion]', { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
               }
             } catch { /* swallow */ }
@@ -211,10 +213,9 @@ export const usePetModel = ({
 
       const ok = wrap('updateMotion') || wrap('update');
       if (ok) (motionMgr as any).__eyeGuardPatched = true;
-      console.log('[EyeGuard] motion manager patched with', ok ? 'success' : 'no-op');
+      if (debug()) console.log('[EyeGuard] motion manager patched with', ok ? 'success' : 'no-op');
     };
 
-    // 安装内部更新补丁，以捕捉所有的动作更新
     const installInternalAfterUpdatePatch = (modelInstance: Live2DModelType) => {
       const internal = (modelInstance as any).internalModel;
       if (!internal) return;
@@ -226,7 +227,7 @@ export const usePetModel = ({
       internal.update = (dt: number, ...args: any[]) => {
         origUpdate(dt, ...args as any);
         try {
-          const forceAlways = forcedFollowRef.current === true;
+          const forceAlways = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
           const blendOverride = (window as any).LIVE2D_EYE_FORCE_BLEND;
           if (!forceAlways && typeof blendOverride !== 'number') return;
           if (ignoreMouseRef.current) return;
@@ -257,12 +258,14 @@ export const usePetModel = ({
           core.setParameterValueById?.('ParamEyeBallY', clampedY);
           core.setParameterValueById?.('ParamAngleX', writeAX);
           core.setParameterValueById?.('ParamAngleY', clampedAY);
-          if (frameCountRef.current % 60 === 0) {
+          if (((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) && frameCountRef.current % 60 === 0) {
             console.log('[EyePatch][afterInternalUpdate]', { idleNow, blend, result: { writeX, writeY: clampedY, writeAX, writeAY: clampedAY } });
           }
         } catch { /* swallow */ }
-      };    
-      console.log('[EyePatch] internal.update patched');
+      };
+      if ((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) {
+        console.log('[EyePatch] internal.update patched');
+      }
     };
 
     (async () => {
@@ -282,7 +285,7 @@ export const usePetModel = ({
         modelRef.current = model;
         (model as any).eventMode = 'none';
         app.stage.addChild(model as any);
-        applyLayout();
+        applyLayoutRef.current?.();
         setModel(model);
         setModelLoadStatus('loaded');
         updateHitAreas(model);
@@ -293,7 +296,8 @@ export const usePetModel = ({
         if (!(model as any).__motionUpdateHooked) {
           (model as any).__motionUpdateHooked = true;
           model.on('update', () => {
-            const forceAlways = forcedFollowRef.current === true;
+            const forceAlways = (window as any).LIVE2D_EYE_FORCE_ALWAYS === true;
+            const debugEnabled = (window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true;
             const internalModel = (model as any).internalModel;
             const core = internalModel?.coreModel;
             if (!core) return;
@@ -323,11 +327,11 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamEyeBallY', clampedEyeY);
               core.setParameterValueById?.('ParamAngleX', writeAngleX);
               core.setParameterValueById?.('ParamAngleY', writeAngleY);
-              if (frameCountRef.current % 60 === 0) {
+              if (debugEnabled && frameCountRef.current % 60 === 0) {
                 console.log('[MotionDebug][forceAfter]', { idleNow, blend, result: { writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY } });
               }
             }
-            if (frameCountRef.current % 30 !== 0) return;
+            if (!debugEnabled || frameCountRef.current % 30 !== 0) return;
             try {
               const state = {
                 type: motionMgr?.constructor?.name,
@@ -353,7 +357,7 @@ export const usePetModel = ({
       }
     })();
 
-    const handleResize = () => { applyLayout(); };
+    const handleResize = () => { applyLayoutRef.current?.(); };
     const handleMouseMove = (e: MouseEvent) => {
       pointerX.current = e.clientX;
       pointerY.current = e.clientY;
@@ -369,6 +373,7 @@ export const usePetModel = ({
         console.log('[PetCanvas] onBoundsChanged received', bounds);
         if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
           windowBoundsRef.current = bounds;
+          alignWindowToCenterLine(bounds);
           console.log('[PetCanvas] windowBoundsRef updated', windowBoundsRef.current);
         } else {
           console.log('[PetCanvas] windowBoundsRef ignored due to invalid payload');

@@ -4,8 +4,8 @@ import { log as debugLog } from '../utils/env';
 export interface UsePetLayoutParams {
   scale: number | null | undefined;
   applyLayout: () => void;
-  rightEdgeBaselineRef: RefObject<number | null>;
-  getWindowRightEdge: () => number;
+  centerBaselineRef: RefObject<number | null>;
+  getWindowCenter: () => number;
 }
 
 /**
@@ -14,15 +14,15 @@ export interface UsePetLayoutParams {
 export const usePetLayout = ({
   scale,
   applyLayout,
-  rightEdgeBaselineRef,
-  getWindowRightEdge,
+  centerBaselineRef,
+  getWindowCenter,
 }: UsePetLayoutParams): void => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const initialEdge = getWindowRightEdge();
-    rightEdgeBaselineRef.current = initialEdge;
-    debugLog('[usePetLayout] baseline init', { initialEdge });
-  }, [getWindowRightEdge, rightEdgeBaselineRef]);
+    const initialCenter = getWindowCenter();
+    centerBaselineRef.current = initialCenter;
+    debugLog('[usePetLayout] baseline init', { initialCenter });
+  }, [getWindowCenter, centerBaselineRef]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

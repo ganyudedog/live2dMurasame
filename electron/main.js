@@ -302,23 +302,90 @@ ipcMain.handle('pet:getSettings', () => {
 });
 
 ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.setSize(Math.max(75, Math.floor(width)), Math.max(250, Math.floor(height)));
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        return;
+    }
+
+    let payload;
+    if (width && typeof width === 'object') {
+        payload = width;
+    } else {
+        payload = { width, height };
+    }
+
+    const currentBounds = mainWindow.getBounds();
+    const targetWidth = Math.max(75, Math.floor(Number.isFinite(payload.width) ? payload.width : currentBounds.width));
+    const targetHeight = Math.max(250, Math.floor(Number.isFinite(payload.height) ? payload.height : currentBounds.height));
+    const anchorCenter = typeof payload.anchorCenter === 'number' && Number.isFinite(payload.anchorCenter)
+        ? payload.anchorCenter
+        : null;
+    const anchorRight = typeof payload.anchorRightEdge === 'number' && Number.isFinite(payload.anchorRightEdge)
+        ? payload.anchorRightEdge
+        : null;
+
+    if (anchorCenter !== null) {
+        const targetX = Math.round(anchorCenter - targetWidth / 2);
+        console.log('[pet] resize using center anchor', {
+            anchorCenter,
+            targetX,
+            targetWidth,
+            targetHeight,
+        });
+        mainWindow.setBounds({
+            x: targetX,
+            y: currentBounds.y,
+            width: targetWidth,
+            height: targetHeight,
+        });
+    } else if (anchorRight !== null) {
+        const targetX = Math.round(anchorRight - targetWidth);
+        console.log('[pet] resize using right anchor', {
+            anchorRight,
+            targetX,
+            targetWidth,
+            targetHeight,
+        });
+        mainWindow.setBounds({
+            x: targetX,
+            y: currentBounds.y,
+            width: targetWidth,
+            height: targetHeight,
+        });
+    } else {
+        console.log('[pet] resize using size only', {
+            width: targetWidth,
+            height: targetHeight,
+        });
+        mainWindow.setSize(targetWidth, targetHeight);
     }
 }
 );
 
-ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
-    try {
-        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
-        if (!target || target.isDestroyed()) return;
-        const enabled = Boolean(passthrough);
-        target.setIgnoreMouseEvents(enabled, { forward: true });
-        return enabled;
-    } catch (error) {
-        console.warn('[pet] setMousePassthrough failed', error);
-        throw error;
+ipcMain.handle('pet:setMainWindowBounds', (_event, bounds) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        return;
     }
+    const currentBounds = mainWindow.getBounds();
+    const next = {
+        x: Number.isFinite(bounds?.x) ? Math.round(bounds.x) : currentBounds.x,
+        y: Number.isFinite(bounds?.y) ? Math.round(bounds.y) : currentBounds.y,
+        width: Number.isFinite(bounds?.width) ? Math.max(75, Math.floor(bounds.width)) : currentBounds.width,
+        height: Number.isFinite(bounds?.height) ? Math.max(250, Math.floor(bounds.height)) : currentBounds.height,
+    };
+    mainWindow.setBounds(next);
+});
+
+ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
+    // try {
+    //     const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    //     if (!target || target.isDestroyed()) return;
+    //     const enabled = Boolean(passthrough);
+    //     target.setIgnoreMouseEvents(enabled, { forward: true });
+    //     return enabled;
+    // } catch (error) {
+    //     console.warn('[pet] setMousePassthrough failed', error);
+    //     throw error;
+    // }
 });
 
 ipcMain.handle('pet:getCursorScreenPoint', () => {

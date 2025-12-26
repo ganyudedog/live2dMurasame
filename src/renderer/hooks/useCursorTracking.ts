@@ -9,8 +9,8 @@ export interface UseCursorTrackingParams {
   autoResizeBackupRef: RefObject<{ width: number; height: number } | null>;
   updateDragHandlePositionRef: RefObject<((force?: boolean) => void) | null>;
   recomputeWindowPassthroughRef: RefObject<(() => void) | null>;
-  rightEdgeBaselineRef: RefObject<number | null>;
-  getWindowRightEdge: () => number;
+  centerBaselineRef: RefObject<number | null>;
+  getWindowCenter: () => number;
 }
 
 export interface UseCursorTrackingResult {
@@ -30,8 +30,8 @@ export const useCursorTracking = ({
   autoResizeBackupRef,
   updateDragHandlePositionRef,
   recomputeWindowPassthroughRef,
-  rightEdgeBaselineRef,
-  getWindowRightEdge,
+  centerBaselineRef,
+  getWindowCenter,
 }: UseCursorTrackingParams): UseCursorTrackingResult => {
   const pollCursorPosition = useCallback(function pollCursorPositionInternal() {
     if (typeof window === 'undefined') {
@@ -62,14 +62,14 @@ export const useCursorTracking = ({
 
         if (!motionTextRef.current && autoResizeBackupRef.current === null) {
           if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.width)) {
-            const newBaseline = bounds.x + bounds.width;
-            if (Math.abs((rightEdgeBaselineRef.current ?? newBaseline) - newBaseline) > 0.5) {
-              rightEdgeBaselineRef.current = newBaseline;
+            const newBaseline = bounds.x + bounds.width / 2;
+            if (Math.abs((centerBaselineRef.current ?? newBaseline) - newBaseline) > 0.5) {
+              centerBaselineRef.current = newBaseline;
             } else {
-              rightEdgeBaselineRef.current = newBaseline;
+              centerBaselineRef.current = newBaseline;
             }
           } else {
-            rightEdgeBaselineRef.current = getWindowRightEdge();
+            centerBaselineRef.current = getWindowCenter();
           }
         }
 
@@ -92,13 +92,13 @@ export const useCursorTracking = ({
   }, [
     autoResizeBackupRef,
     cursorPollRafRef,
-    getWindowRightEdge,
+    getWindowCenter,
     motionTextRef,
     mousePassthroughRef,
     pointerX,
     pointerY,
     recomputeWindowPassthroughRef,
-    rightEdgeBaselineRef,
+    centerBaselineRef,
     updateDragHandlePositionRef,
   ]);
 

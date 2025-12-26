@@ -153,8 +153,6 @@ const PetCanvas: React.FC = () => {
   const bubbleReadyRef = useRef(false); // 气泡准备状态引用
   const bubbleAlignmentRef = useRef<'left' | 'right' | null>(null); // 气泡对齐方式引用
   const [bubbleTailY, setBubbleTailY] = useState<number | null>(null); // 气泡尾巴对齐 Y
-  const lastScaleRef = useRef<number | null>(null); // 上次处理的缩放值
-  const scaleIncreaseBaselineWidthRef = useRef<number | null>(null); // 放大过程中保持的最小窗口宽度
 
   // 视觉中心红线（仅用于调试/对称对齐可视化）
   const redLineRef = useRef<HTMLDivElement | null>(null);
@@ -452,20 +450,6 @@ const PetCanvas: React.FC = () => {
 
     const hasBubble = Boolean(motionTextRef.current);
 
-    const currentScale = scale || 1;
-    const previousScale = lastScaleRef.current;
-    if (previousScale === null) {
-      lastScaleRef.current = currentScale;
-    } else {
-      const delta = currentScale - previousScale;
-      if (delta > 0.0005) {
-        scaleIncreaseBaselineWidthRef.current = window.innerWidth;
-      } else if (delta < -0.0005) {
-        scaleIncreaseBaselineWidthRef.current = null;
-      }
-      lastScaleRef.current = currentScale;
-    }
-
     const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
@@ -560,11 +544,6 @@ const PetCanvas: React.FC = () => {
       if (requiredWindowWidth < normalizedGoal - 2) {
         enforcedWindowWidth = normalizedGoal;
       }
-    }
-
-    const scaleBaselineWidth = scaleIncreaseBaselineWidthRef.current;
-    if (scaleBaselineWidth !== null && enforcedWindowWidth < scaleBaselineWidth - 1) {
-      enforcedWindowWidth = scaleBaselineWidth;
     }
 
     applyWindowWidth(enforcedWindowWidth, hasBubble ? 'bubble-active' : 'layout');

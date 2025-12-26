@@ -351,10 +351,26 @@ const PetCanvas: React.FC = () => {
     if (typeof window === 'undefined') return;
     if (!Number.isFinite(requiredWidth)) return;
     const normalizedWidth = Math.max(Math.round(requiredWidth), 320);
-    targetWindowWidthRef.current = normalizedWidth;
-    const currentWidth = window.innerWidth;
-    if (Math.abs(currentWidth - normalizedWidth) <= 1) return;
     const desiredHeight = window.innerHeight;
+    const pending = pendingResizeRef.current;
+    const pendingMatches = pending && Math.abs(pending.width - normalizedWidth) <= 1 && Math.abs(pending.height - desiredHeight) <= 1;
+    if (pendingMatches) {
+      targetWindowWidthRef.current = normalizedWidth;
+      return;
+    }
+
+    const currentWidth = window.innerWidth;
+    if (Math.abs(currentWidth - normalizedWidth) <= 1) {
+      targetWindowWidthRef.current = normalizedWidth;
+      return;
+    }
+
+    if (targetWindowWidthRef.current !== null && Math.abs((targetWindowWidthRef.current as number) - normalizedWidth) <= 1 && !pending) {
+      targetWindowWidthRef.current = normalizedWidth;
+      return;
+    }
+
+    targetWindowWidthRef.current = normalizedWidth;
     pendingResizeRef.current = { width: normalizedWidth, height: desiredHeight };
     pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
@@ -377,6 +393,7 @@ const PetCanvas: React.FC = () => {
     if (!programmaticResize) {
       centerBaselineRef.current = actualCenter;
       pendingBoundsPredictionRef.current = null;
+      targetWindowWidthRef.current = bounds.width;
       return;
     }
 
@@ -384,6 +401,7 @@ const PetCanvas: React.FC = () => {
       centerBaselineRef.current = actualCenter;
       pendingResizeRef.current = null;
       pendingBoundsPredictionRef.current = null;
+      targetWindowWidthRef.current = bounds.width;
       suppressResizeForBubbleRef.current = false;
       return;
     }
@@ -393,6 +411,7 @@ const PetCanvas: React.FC = () => {
       centerBaselineRef.current = actualCenter;
       pendingResizeRef.current = null;
       pendingBoundsPredictionRef.current = null;
+      targetWindowWidthRef.current = bounds.width;
       suppressResizeForBubbleRef.current = false;
       return;
     }
@@ -499,11 +518,15 @@ const PetCanvas: React.FC = () => {
     const centerDom = vfVisible.centerDomX - containerRect.left;
     const gapEffective = BUBBLE_GAP + BUBBLE_EXTRA_GAP * s;
 
+    const effectiveContainerWidth = pendingResizeRef.current?.width
+      ?? targetWindowWidthRef.current
+      ?? containerRect.width;
+
     const leftCapacity = Math.max(0, centerDom - gapEffective - BUBBLE_PADDING);
-    const rightCapacity = Math.max(0, containerRect.width - (centerDom + gapEffective) - BUBBLE_PADDING);
+    const rightCapacity = Math.max(0, effectiveContainerWidth - (centerDom + gapEffective) - BUBBLE_PADDING);
     const baseFrameWidthDom = vfBase.visualWidthDom;
     const requiredWindowWidth = Math.ceil(baseFrameWidthDom + zoneTarget * 2 + gapEffective * 2 + BUBBLE_PADDING * 2);
-    const currentWindowWidth = containerRect.width;
+    const currentWindowWidth = effectiveContainerWidth;
     const leftShortfallPx = Math.max(0, zoneTarget - leftCapacity);
     const rightShortfallPx = Math.max(0, zoneTarget - rightCapacity);
     const capacityShortfall = leftShortfallPx > 0 || rightShortfallPx > 0;

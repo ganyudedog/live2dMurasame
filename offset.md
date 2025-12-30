@@ -1,14 +1,115 @@
-## 模型切换与视觉偏移动态化方案
+## 多模型支持与配置分层方案草案
 
-1. **模型目录扫描（Electron 主进程）** 仅遍历 `public/model/*` 的第二级目录，发现内部的 `*.model3.json`，构建结构 `{ slug, displayName, modelPath }`，其中 `slug` 即目录名（例：`model/mika` → `mika`）。
-2. **配置文件布局** 在 `electron/config/models/` 下为每个 `slug` 按需生成独立 JSON（`{ modelPath, visualOffsetRatio, updatedAt }`），并维护 `electron/config/active-model.json` 记录当前启用的 `slug`。
-3. **主进程初始化与 IPC** 启动时加载上述配置，缺失则用 `.env` 中的初始值填充；开放 `getModelCatalog`、`setActiveModel`、`updateModelOffset` IPC 接口供渲染层使用。
-4. **Preload 桥接** 通过 `contextBridge` 暴露 `window.petAPI.listModels()`、`window.petAPI.selectModel(slug)`、`window.petAPI.updateVisualOffset(slug, ratio)`，确保渲染层无法绕过安全通道直接访问文件系统。
-5. **渲染端状态（usePetStore）** 扩展 store 字段：`availableModels`、`activeModelSlug`、`visualOffsetRatio`，并提供 `initModels`、`chooseModel`、`setVisualOffset` 等方法；原本从 `.env` 读取 `VITE_MODEL_PATH` 和 `VITE_VISUAL_FRAME_OFFSET_RATIO` 的组件改为订阅 store。
-6. **控制面板 UI** 新增模型选择下拉框（显示名/目录名）以及范围 `[-0.5, 0.5]`、步长 `0.01` 的滑条；用户操作时调用 store 方法并经过 IPC 同步至主进程配置。
-7. **持久化流转** 切换模型时调用 `setActiveModel` 写入 `active-model.json` 并触发 Live2D 重载；调节偏移时通过节流/防抖调用 `updateModelOffset` 写回对应模型 JSON；默认值缺失时回退到 `0`。
-8. **首次迁移** 首次运行时读取现有 `.env` 的 `VITE_MODEL_PATH`、`VITE_VISUAL_FRAME_OFFSET_RATIO` 生成对应模型配置，之后运行时不再依赖 `.env` 改动即可实现动态切换。
+### 1. 配置拆分目标
+- 新增全局配置文件：`liv2denv.json`。
+	- 字段 `VITE_TOUCH_PRIORITY`：字符串数组，决定交互排序。
+	- 字段 `VITE_MODEL_PATHS`：字符串数组，存储所有模型目录的绝对路径。
+	- 字段 `VITE_DEBUG`：布尔值或字符串开关，对应原 `.env` 中调试标志。
+	- 字段 `CURRENT_PATH`：字符串，记录当前/下次默认启动使用的模型目录绝对路径。
+	- 可选 `LAST_SELECTED_AT`：时间戳，用于 debug 或未来排序（可选实现）。
+- 每个模型独立配置：命名规则为 `<模型目录名>.json`（目录名统一转小写）。
+	- 所有与模型表现相关的参数（如视觉矩形、气泡、头锚点、气泡对称设置、动作映射等）写入此文件。
+	- 字段结构示例：
+		```json
+		{
+			"touchMap": [0.1, 0.19, 0.39, 0.53, 1],
+			"visualFrame": {
+				"ratio": 0.7,
+				"minPx": 100,
+				"paddingPx": 0,
+				"center": "face",
+				"offsetPx": 0,
+				"offsetRatio": -0.16
+			},
+			"bubble": {
+				"symmetric": true,
+				"headRatio": 0.12
+			},
+			"interactionZones": {
+				"face": {
+					"heightRange": [0.18, 0.32],
+					"motions": ["Tapface"]
+				},
+				"hair": {
+					"heightRange": [0.32, 0.45],
+					"motions": ["Taphair"]
+				}
+			}
+		}
+		```
 
+### 2. 启动流程与模型管理
+1. **首次启动**：
+	 - 主进程读取 `liv2denv.json`，若文件不存在或 `VITE_MODEL_PATHS` 为空，弹出系统对话框让用户选择模型目录（内含 `*.model3.json`）。
+	 - 选择后写入 `VITE_MODEL_PATHS` 数组，并设 `CURRENT_PATH` 为新目录。
+	 - 若目录已存在配置文件 `<目录名>.json`，载入并合并参数；否则生成默认模板，供控制面板后续编辑。
+2. **模型选择弹窗**：
+	 - 当 `VITE_MODEL_PATHS` 有多项但 `CURRENT_PATH` 为空或用户主动切换时，弹窗列出可选模型（名称取目录名）。
+	 - 选择后刷新 `CURRENT_PATH`，并广播到渲染层重新加载模型。
+3. **后续启动**：
+	 - 直接按 `CURRENT_PATH` 加载模型。若路径失效（文件被移动/删除），回退到选择流程。
+4. **新增模型**：
+	 - 控制面板提供“添加模型”入口，调用主进程打开文件夹选择器，选中后更新 `VITE_MODEL_PATHS`。
+5. **移除模型**（可选）：
+	 - 控制面板/弹窗允许移除路径，确认后同时移除对应 `<目录名>.json`（保留已备份的可选）。
 
-## 交互系统由于动作过多不好分区的解决办法
-在live2dViewerEx中，其直接通过套索工具来精确交互位置，而在前端无法实现这种功能，所以直接采用分区算法，将模型划分为头发，头，身体，裙子，脚五个部位，然后设定每个动作可以触发的区域，随机播放。
+### 3. 模型配置读取与合并策略
+- 渲染进程启动时：
+	1. 请求主进程提供 `liv2denv.json` 内容与当前模型路径。
+	2. 加载 `<模型目录名>.json`，与默认值深合并。
+	3. 把最终配置喂给现有的 `env()` 读取逻辑（需改造为支持动态来源，而非 `.env`）。
+- 写入流程：
+	- 控制面板修改模型参数时，只更新模型专属文件；涉及全局设置（如调试开关）写回 `liv2denv.json`。
+	- 使用防抖/批量写入，避免频繁 IO。
+
+### 4. 交互区域自定义
+- 控制面板新增“交互设置”板块：
+	- 列出模型的 hitAreas（或自定义区域列表）。
+	- 每个区域可设置垂直范围（0~1），提供滑块或输入框结对，保存到模型配置 `interactionZones`。
+	- 动作列表支持多选；播放时从列表内随机挑选（现有 `availableMotions` 与 `interruptMotion` 逻辑可复用）。
+- 渲染层更新：
+	- `PetCanvas` 读取 `interactionZones`，覆盖当前的 `DEFAULT_TOUCH_MAP`、动作映射与高度。
+	- 若某区域未配置则使用默认行为。
+
+### 5. 控制面板架构调整
+- 目标：缓解 IPC 防抖带来的延迟，同时撑起更多配置项。
+- 方案 A（推荐）：将控制面板合并到主窗口中，作为内嵌板块。
+	- 通过显示/隐藏在同一 `BrowserWindow` 内渲染，省去跨进程 `IPC`，改用同一 store/state。
+	- 引入 Tab/Page 结构，如：
+		1. **模型管理**：添加/选择/移除模型，显示当前路径。
+		2. **展示设置**：缩放、忽略鼠标、拖拽手柄等快速操作。
+		3. **交互设置**：配置区域高度、动作列表、气泡参数。
+		4. **高级调试**：视觉框、日志级别、对齐阈值等。
+	- 对于需要系统窗口的场景（如模型选择弹窗），仍由主进程负责。
+- 方案 B：保留独立窗口但共享 `store`
+	- 使用 `electron-store` 等在主进程统一托管状态；每次面板更改通过 `contextBridge` 同步。
+	- 手动实现更细的消息节流，降低 UI 卡顿。
+
+### 6. 文件结构与兼容考虑
+- 新增目录/文件：
+	- `config/liv2denv.json`（位置：`appData` 或项目根目录，需统一路径策略）。
+	- `config/models/<modelName>.json`
+- 需提供迁移脚本：
+	- 从 `.env` 读取旧字段写入新结构。
+	- 将现有模型路径（若只有一个）自动填入 `VITE_MODEL_PATHS`。
+- 回退策略：
+	- 若读取配置出错，加载默认模型参数，提示用户修复或重新选取模型。
+
+### 7. 待确认问题
+1. `liv2denv.json` 存储路径：使用 `app.getPath('userData')` 还是项目目录？
+使用 `app.getPath('userData')` 获取用户数据目录
+
+2. 模型路径是否需要支持相对路径或网络地址？本方案仅考虑本地绝对路径。
+直接存储本地绝对路径
+
+3. 控制面板嵌入后，UI 大小/布局对主窗口是否可接受？需与现有 Live2D 区域协调。
+能否做到在不影响现有live2d的区域下嵌入
+
+4. 激活其他模型前是否需要卸载当前模型资源（Pixi/声音）？需要规划生命周期钩子。
+若不卸载，是否会有内存泄漏，或者卡顿问题，若没有，则无需卸载
+卸载
+
+5. 多模型的声音/文本资源路径是否统一？需保证模型目录内引用能通过 `app://` 或 `file://` 正确解析。
+声音和文本资源可以直接通过读取model.json中的路径来获取
+
+6. 控制面板采用双窗口，用ipc通信，暂不需要考虑防抖的延时问题

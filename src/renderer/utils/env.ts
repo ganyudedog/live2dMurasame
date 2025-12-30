@@ -2,6 +2,13 @@
 /* Environment helper: works with Vite import.meta.env and process.env */
 export const env = (key: string): string | undefined => {
   try {
+    const runtimeOverrides = typeof globalThis !== 'undefined' ? (globalThis as any)?.__PET_ENV__ : undefined;
+    if (runtimeOverrides && runtimeOverrides[key] !== undefined) {
+      return runtimeOverrides[key];
+    }
+  } catch { /* ignore override lookup errors */ }
+
+  try {
     // Vite style
     if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key] !== undefined) {
       return (import.meta as any).env[key];

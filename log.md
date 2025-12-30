@@ -31,3 +31,12 @@
 - 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 的 `updateBubblePosition` 内复用待处理的窗口目标宽度，在主线程尚未完成扩窗时忽略暂时偏小的测量值，防止缩放过程被旧数据触发额外缩窗。
 
 - 2025-12-26：在 [src/renderer/components/PetCanvas.tsx](src/renderer/components/PetCanvas.tsx) 中请求首次对称扩窗前先刷新窗口中心基线，确保 anchorCenter 与当前窗口位置一致，消除气泡存在时首轮缩放导致的左右漂移。
+
+---
+多模型适配
+
+- 2025-12-30：重建 [electron/config/configManager.js](electron/config/configManager.js) 统一维护 `liv2denv.json`（新增 `GLOBAL` 设置块），恢复 [electron/config/globalConfig.js](electron/config/globalConfig.js) / [electron/runtime/index.js](electron/runtime/index.js) / [electron/settings/index.js](electron/settings/index.js) 的分层职责，并让 [electron/main.js](electron/main.js) 与 [electron/preload.js](electron/preload.js) 以 IPC 广播同步环境变量和全局设置。
+
+- 2025-12-30：扩充 [electron/main.js](electron/main.js) 的配置广播，新增 `pet:configSnapshotUpdated` 全量负载并让 `pet:globalConfigUpdated` / `pet:modelConfigUpdated` 携带完整快照；同步在 [electron/preload.js](electron/preload.js) 引入集中派发器保持环境变量和本地缓存一致，渲染端监听可直接获取 `snapshot`；同时将设置事件更名为 `pet:persistentSettingsUpdated` 并更新类型定义 [src/types/global.d.ts](src/types/global.d.ts)。
+- 2025-12-30：将运行时配置按职责拆分到 [electron/live2denv/](electron/live2denv) 与 [electron/modelenv/](electron/modelenv)，公共工具抽到 [electron/utils/](electron/utils)，并让 [electron/runtime/index.js](electron/runtime/index.js) 仅作为聚合入口，保持现有导出不变；主目录现仅保留 [electron/main.js](electron/main.js) 与 [electron/preload.js](electron/preload.js)。
+

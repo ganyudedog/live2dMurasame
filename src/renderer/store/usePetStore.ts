@@ -97,8 +97,8 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 
 			// Load settings from Electron main process
 			const api = getPetApi();
-			if (api?.getSettings) {
-				api.getSettings().then(remote => {
+			if (api?.getLive2denvGlobal) {
+				api.getLive2denvGlobal().then(remote => {
 					if (!remote || typeof remote !== 'object') return;
 					const patch: Partial<PetStoreState> = {};
 					const persistPatch: Partial<PersistedSettings> = {};
@@ -137,8 +137,8 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 				});
 			}
 			let off: (()=>void) | undefined;
-			if (api?.onSettingsUpdated) {
-				off = api.onSettingsUpdated((newSettings) => {
+			if (api?.onLive2denvGlobalUpdated) {
+				off = api.onLive2denvGlobalUpdated((newSettings) => {
 					set({ ...newSettings });
 				}) as (() => void) | undefined;
 			}
@@ -152,7 +152,7 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 			updateScaleTimer = setTimeout(() => {
 				const api = getPetApi();
 				console.log('[PetStore] update scale', clamped);
-				api?.updateSettings?.({scale: clamped}).catch((error: unknown) => {
+				api?.updateLive2denvGlobal?.({scale: clamped}).catch((error: unknown) => {
 					console.warn('[PetStore] update settings failed', error);
 				});
 				
@@ -173,7 +173,7 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 			set({ ignoreMouse: value });
 			const api = getPetApi();
 			console.log('[PetStore] update ignoreMouse', value);
-			api?.updateSettings?.({ ignoreMouse: value }).catch((error: unknown) => {
+			api?.updateLive2denvGlobal?.({ ignoreMouse: value }).catch((error: unknown) => {
 				console.warn('[PetStore] update settings failed', error);
 			});
 		},
@@ -181,7 +181,7 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 		setShowDragHandleOnHover: (value) => {
 			set({ showDragHandleOnHover: value });
 			const api = getPetApi();
-			api?.updateSettings?.({ showDragHandleOnHover: value }).catch((error: unknown) => {
+			api?.updateLive2denvGlobal?.({ showDragHandleOnHover: value }).catch((error: unknown) => {
 				console.warn('[PetStore] update settings failed', error);
 			});
 		},
@@ -191,14 +191,14 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 			const nextValue = Boolean(value);
 			set({ autoLaunchEnabled: nextValue });
 			const api = getPetApi();
-			api?.updateSettings?.({ autoLaunch: nextValue }).catch((error: unknown) => {
+			api?.updateLive2denvGlobal?.({ autoLaunch: nextValue }).catch((error: unknown) => {
 				console.warn('[PetStore] sync autoLaunch failed', error);
 			});
 		},
 		setDebugModeEnabled(value) {
 			set({ debugModeEnabled: value });
 			const api = getPetApi();
-			api?.updateSettings?.({ debugModeEnabled: value }).catch((error: unknown) => {
+			api?.updateLive2denvGlobal?.({ debugModeEnabled: value }).catch((error: unknown) => {
 				console.warn('[PetStore] sync debugModeEnabled failed', error);
 			});
 		},
@@ -206,7 +206,7 @@ export const usePetStore = create<PetStoreState>((set, get) => {
 		setForcedFollow(value) {
 			set({ forcedFollow: value });
 			const api = getPetApi();
-			api?.updateSettings?.({ forcedFollow: value }).catch((error: unknown) => {
+			api?.updateLive2denvGlobal?.({ forcedFollow: value }).catch((error: unknown) => {
 				console.warn('[PetStore] sync forcedFollow failed', error);
 			});
 		},

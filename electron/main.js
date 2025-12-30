@@ -1,7 +1,26 @@
 import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+    initializeRuntimeConfig,
+    reloadGlobalConfig,
+    getConfigSnapshot,
+    getGlobalConfigCache,
+    applyGlobalConfigPatch,
+    getModelConfigState,
+    applyModelConfigPatch,
+    listModelPaths,
+    getLastEnvOverrides,
+    getDefaultModelConfig,
+} from './runtime/index.js';
+import {
+    ensureLive2denvGlobalLoaded,
+    overrideLive2denvGlobalCache,
+    persistLive2denvGlobal,
+    invalidateLive2denvGlobalCache,
+    applyAutoLaunchSetting,
+    getLive2denvGlobalSnapshot,
+} from './config/live2dGlobal.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,93 +29,10 @@ let mainWindow = null;
 let controlPanelWindow = null;
 let isQuitting = false;
 
-const DEFAULT_SETTINGS = {
-    scale: 1.0,
-    ignoreMouse: false,
-    autoLaunch: false,
-    showDragHandleOnHover: true,
-    forcedFollow: false,
-    debugModeEnabled: false,
-};
-
-let settingsCache = { ...DEFAULT_SETTINGS };
-let settingsLoaded = false;
-// 获取存储json路径
-const getSettingsFilePath = () => {
-    if (!app.isReady()) {
-        return null;
-    }
-    return path.join(app.getPath('userData'), 'pet-settings.json');
-};
-
-// 读取json文件内容
-const readSettingsFromDisk = () => {
-    try {
-        const filePath = getSettingsFilePath();
-        if (!filePath) {
-            return { ...DEFAULT_SETTINGS };
-        }
-        if (!fs.existsSync(filePath)) {
-            return { ...DEFAULT_SETTINGS };
-        }
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        if (!raw) {
-            return { ...DEFAULT_SETTINGS };
-        }
-        const parsed = JSON.parse(raw);
-
-        return { ...DEFAULT_SETTINGS, ...parsed };
-    } catch (error) {
-        console.warn('[pet] load settings failed', error);
-        return { ...DEFAULT_SETTINGS };
-    }
-};
-
-// 将更改内容写入json
-const writeSettingsToDisk = (settings) => {
-    try {
-        const filePath = getSettingsFilePath();
-        if (!filePath) {
-            return;
-        }
-        console.log('[pet] write settings to disk', settings);
-        fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8');
-    } catch (error) {
-        console.warn('[pet] save settings failed', error);
-    }
-};
-
-// 返回当前设置
-const ensureSettingsLoaded = () => {
-    if (!settingsLoaded && app.isReady()) {
-        settingsCache = readSettingsFromDisk();
-        settingsLoaded = true;
-    }
-    return settingsCache;
-};
-
-// 应用开机自启动
-const applyAutoLaunchSetting = (enabled) => {
-    try {
-        const settings = {
-            openAtLogin: Boolean(enabled),
-            openAsHidden: process.platform === 'darwin',
-        };
-        if (process.platform === 'win32') {
-            settings.path = process.execPath;
-        }
-        app.setLoginItemSettings(settings);
-    } catch (error) {
-        console.warn('[pet] apply autoLaunch failed', error);
-    }
-};
-
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const rootIndex = path.join(__dirname, '..', 'index.html');
 
-// 在 Windows 上透明窗口 + DevTools 可能触发 GPU/驱动崩溃（0xC0000005）
-// 通过禁用硬件加速与 GPU 作为兜底，避免打开控制台时进程异常退出。
-// 可按需通过环境变量恢复：设置 VITE_ENABLE_GPU=1
+// 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
 const enableGpu = process.env.VITE_ENABLE_GPU === '1';
 if (!enableGpu) {
     try {
@@ -106,7 +42,6 @@ if (!enableGpu) {
     } catch {}
 }
 
-// 加载主窗口
 const loadMainWindow = (target) => {
     if (!target) return;
     if (devServerUrl) {
@@ -116,7 +51,15 @@ const loadMainWindow = (target) => {
     }
 };
 
-// 控制面板窗口
+const loadControlPanelWindow = (target) => {
+    if (!target) return;
+    if (devServerUrl) {
+        target.loadURL(`${devServerUrl}?window=control-panel`);
+    } else {
+        target.loadFile(rootIndex, { query: { window: 'control-panel' } });
+    }
+};
+
 const ensureControlPanelWindow = () => {
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
         return controlPanelWindow;
@@ -138,14 +81,13 @@ const ensureControlPanelWindow = () => {
             nodeIntegration: false,
             contextIsolation: true,
             webSecurity: true,
-            sandbox:false,
+            sandbox: false,
             enableRemoteModule: false,
             preload: path.join(__dirname, 'preload.js'),
         },
     });
 
     loadControlPanelWindow(controlPanelWindow);
-
 
     controlPanelWindow.on('close', (event) => {
         if (!isQuitting) {
@@ -160,20 +102,9 @@ const ensureControlPanelWindow = () => {
 
     return controlPanelWindow;
 };
-// 加载控制面板窗口
-const loadControlPanelWindow = (target) => {
-    if (!target) return;
-    if (devServerUrl) {
-        target.loadURL(`${devServerUrl}?window=control-panel`);
-    } else {
-        target.loadFile(rootIndex, { query: { window: 'control-panel' } });
-    }
-};
 
-// 判断控制面板窗口是否可见
 const isControlPanelVisible = () => Boolean(controlPanelWindow?.isVisible());
 
-// 隐藏控制面板窗口
 const hideControlPanel = () => {
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
         controlPanelWindow.hide();
@@ -197,7 +128,6 @@ const showControlPanel = () => {
     }
 };
 
-// 设置是否可见
 const setControlPanelVisibility = (visible) => {
     if (visible) {
         showControlPanel();
@@ -207,7 +137,6 @@ const setControlPanelVisibility = (visible) => {
     return isControlPanelVisible();
 };
 
-// 右键菜单构建
 const buildMainContextMenu = () => {
     const template = [
         {
@@ -229,17 +158,49 @@ const buildMainContextMenu = () => {
     return Menu.buildFromTemplate(template);
 };
 
-// 广播函数，由于不同的窗口的js环境是完全隔离的，所以即便使用同一个store，也是独立的存储空间
-const broadcastSettings = () => {
-    const settings = { ...ensureSettingsLoaded() };
-    const targets = [mainWindow, controlPanelWindow];
+// 广播配置快照更新到所有窗口
+const broadcastConfigSnapshot = (snapshot, options = { global: true, model: true }) => {
+    if (!snapshot) return;
+    const targets = BrowserWindow.getAllWindows();
+    const sharedPayload = {
+        global: snapshot.global,
+        modelConfig: snapshot.modelConfig,
+        envOverrides: snapshot.envOverrides,
+        activeModelPath: snapshot.activeModelPath,
+    };
 
-    targets.forEach((target) => {
-        if (target && !target.isDestroyed()) {
-            target.webContents.send('pet:settingsUpdated', settings);
+    targets.forEach((win) => {
+        if (!win || win.isDestroyed()) return;
+
+        win.webContents.send('pet:configSnapshotUpdated', sharedPayload);
+
+        if (options.global) {
+            win.webContents.send('pet:globalConfigUpdated', {
+                ...sharedPayload,
+                snapshot,
+            });
+        }
+
+        if (options.model) {
+            win.webContents.send('pet:modelConfigUpdated', {
+                ...sharedPayload,
+                modelPath: sharedPayload.activeModelPath,
+                snapshot,
+            });
         }
     });
 };
+
+const broadcastLive2denvGlobal = () => {
+    const targets = [mainWindow, controlPanelWindow];
+    const settings = getLive2denvGlobalSnapshot();
+    targets.forEach((target) => {
+        if (target && !target.isDestroyed()) {
+            target.webContents.send('pet:persistentSettingsUpdated', settings);
+        }
+    });
+};
+
 const createMainWindow = () => {
     mainWindow = new BrowserWindow({
         width: 500,
@@ -263,9 +224,11 @@ const createMainWindow = () => {
     });
 
     loadMainWindow(mainWindow);
-    // 打开 DevTools 时使用 detach 模式，减少与透明窗口叠加导致的崩溃概率
+
     if (!app.isPackaged && process.env.VITE_OPEN_DEVTOOLS === '1') {
-        try { mainWindow.webContents.openDevTools({ mode: 'detach' }); } catch {}
+        try {
+            mainWindow.webContents.openDevTools({ mode: 'detach' });
+        } catch {}
     }
 
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
@@ -282,12 +245,11 @@ const createMainWindow = () => {
         menu?.popup({ window: mainWindow ?? undefined });
     });
 
-    // 主窗口移动/缩放时广播 bounds，帮助渲染进程及时调整气泡样式
     const emitBounds = () => {
         try {
             if (!mainWindow || mainWindow.isDestroyed()) return;
-            const b = mainWindow.getBounds();
-            mainWindow.webContents.send('pet:windowBoundsChanged', b);
+            const bounds = mainWindow.getBounds();
+            mainWindow.webContents.send('pet:windowBoundsChanged', bounds);
         } catch {}
     };
     mainWindow.on('moved', emitBounds);
@@ -296,9 +258,61 @@ const createMainWindow = () => {
     return mainWindow;
 };
 
+ipcMain.handle('pet:getLive2denvGlobal', () => {
+    return ensureLive2denvGlobalLoaded();
+});
 
-ipcMain.handle('pet:getSettings', () => {
-    return { ...ensureSettingsLoaded() };
+ipcMain.handle('pet:config:getSnapshot', () => {
+    return getConfigSnapshot();
+});
+
+ipcMain.on('pet:config:getSnapshotSync', (event) => {
+    try {
+        event.returnValue = getConfigSnapshot();
+    } catch (error) {
+        console.warn('[pet] get config snapshot sync failed', error);
+        event.returnValue = {
+            global: getGlobalConfigCache(),
+            activeModelPath: null,
+            modelConfig: getDefaultModelConfig(),
+            envOverrides: getLastEnvOverrides(),
+        };
+    }
+});
+
+ipcMain.handle('pet:getGlobalConfig', () => {
+    return getGlobalConfigCache();
+});
+
+ipcMain.handle('pet:updateGlobalConfig', (_event, patch = {}) => {
+    const snapshot = applyGlobalConfigPatch(patch || {});
+    broadcastConfigSnapshot(snapshot, { global: true, model: true });
+    return snapshot.global;
+});
+
+ipcMain.handle('pet:getModelConfig', (_event, modelPath) => {
+    return getModelConfigState(modelPath);
+});
+
+ipcMain.handle('pet:updateModelConfig', (_event, payload = {}) => {
+    const result = applyModelConfigPatch(payload || {});
+    if (result) {
+        broadcastConfigSnapshot(result, { global: false, model: true });
+        return {
+            modelPath: result.activeModelPath,
+            config: result.modelConfig,
+            envOverrides: result.envOverrides,
+        };
+    }
+    return {
+        modelPath: null,
+        config: getDefaultModelConfig(),
+        envOverrides: getLastEnvOverrides(),
+    };
+});
+
+ipcMain.handle('pet:listModelPaths', () => {
+    return listModelPaths();
 });
 
 ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
@@ -358,8 +372,7 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
         });
         mainWindow.setSize(targetWidth, targetHeight);
     }
-}
-);
+});
 
 ipcMain.handle('pet:setMainWindowBounds', (_event, bounds) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -376,16 +389,16 @@ ipcMain.handle('pet:setMainWindowBounds', (_event, bounds) => {
 });
 
 ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
-    // try {
-    //     const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
-    //     if (!target || target.isDestroyed()) return;
-    //     const enabled = Boolean(passthrough);
-    //     target.setIgnoreMouseEvents(enabled, { forward: true });
-    //     return enabled;
-    // } catch (error) {
-    //     console.warn('[pet] setMousePassthrough failed', error);
-    //     throw error;
-    // }
+    try {
+        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+        if (!target || target.isDestroyed()) return;
+        const enabled = Boolean(passthrough);
+        target.setIgnoreMouseEvents(enabled, { forward: true });
+        return enabled;
+    } catch (error) {
+        console.warn('[pet] setMousePassthrough failed', error);
+        throw error;
+    }
 });
 
 ipcMain.handle('pet:getCursorScreenPoint', () => {
@@ -408,7 +421,7 @@ ipcMain.handle('pet:getWindowBounds', (event) => {
     }
 });
 
-ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
+ipcMain.handle('pet:updateLive2denvGlobal', (_event, patch = {}) => {
     const safePatch = {};
     if (patch && typeof patch === 'object') {
         if (typeof patch.showDragHandleOnHover === 'boolean') {
@@ -423,7 +436,7 @@ ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
         if (typeof patch.scale === 'number') {
             safePatch.scale = patch.scale;
         }
-        if( typeof patch.forcedFollow === 'boolean') {
+        if (typeof patch.forcedFollow === 'boolean') {
             safePatch.forcedFollow = patch.forcedFollow;
         }
         if (typeof patch.debugModeEnabled === 'boolean') {
@@ -432,15 +445,21 @@ ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
     }
 
     if (!Object.keys(safePatch).length) {
-        return ensureSettingsLoaded();
+        return ensureLive2denvGlobalLoaded();
     }
 
-    const current = ensureSettingsLoaded();
+    const current = ensureLive2denvGlobalLoaded();
     const next = { ...current, ...safePatch };
-    settingsCache = next;
-    writeSettingsToDisk(next);
-    settingsLoaded =false;
-    broadcastSettings();
+    // 复写缓存
+    overrideLive2denvGlobalCache(next);
+    // 持久化到配置文件
+    persistLive2denvGlobal(next);
+    // 使缓存失效以便下次重新加载
+    invalidateLive2denvGlobalCache();
+    
+    const snapshot = reloadGlobalConfig();
+    broadcastLive2denvGlobal();
+    broadcastConfigSnapshot(snapshot, { global: true, model: false });
 
     if (Object.prototype.hasOwnProperty.call(safePatch, 'autoLaunch')) {
         applyAutoLaunchSetting(safePatch.autoLaunch);
@@ -448,14 +467,19 @@ ipcMain.handle('pet:updateSettings', (_event ,patch = {}) => {
     return { ...next };
 });
 
-
 app.on('before-quit', () => {
     isQuitting = true;
 });
 
 app.whenReady().then(() => {
-    const loaded = ensureSettingsLoaded();
-    applyAutoLaunchSetting(loaded.autoLaunch);
+    const loadedSettings = ensureLive2denvGlobalLoaded();
+    applyAutoLaunchSetting(loadedSettings.autoLaunch);
+    try {
+        const snapshot = initializeRuntimeConfig();
+        console.log('[pet] global config loaded', snapshot.global);
+    } catch (error) {
+        console.warn('[pet] failed to initialize config directories', error);
+    }
     createMainWindow();
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {

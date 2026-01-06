@@ -38,5 +38,10 @@
 - 2025-12-30：重建 [electron/config/configManager.js](electron/config/configManager.js) 统一维护 `liv2denv.json`（新增 `GLOBAL` 设置块），恢复 [electron/config/globalConfig.js](electron/config/globalConfig.js) / [electron/runtime/index.js](electron/runtime/index.js) / [electron/settings/index.js](electron/settings/index.js) 的分层职责，并让 [electron/main.js](electron/main.js) 与 [electron/preload.js](electron/preload.js) 以 IPC 广播同步环境变量和全局设置。
 
 - 2025-12-30：扩充 [electron/main.js](electron/main.js) 的配置广播，新增 `pet:configSnapshotUpdated` 全量负载并让 `pet:globalConfigUpdated` / `pet:modelConfigUpdated` 携带完整快照；同步在 [electron/preload.js](electron/preload.js) 引入集中派发器保持环境变量和本地缓存一致，渲染端监听可直接获取 `snapshot`；同时将设置事件更名为 `pet:persistentSettingsUpdated` 并更新类型定义 [src/types/global.d.ts](src/types/global.d.ts)。
+
 - 2025-12-30：将运行时配置按职责拆分到 [electron/live2denv/](electron/live2denv) 与 [electron/modelenv/](electron/modelenv)，公共工具抽到 [electron/utils/](electron/utils)，并让 [electron/runtime/index.js](electron/runtime/index.js) 仅作为聚合入口，保持现有导出不变；主目录现仅保留 [electron/main.js](electron/main.js) 与 [electron/preload.js](electron/preload.js)。
+
+- 2026-01-06：修复 [electron/runtime/index.js](electron/runtime/index.js) 中模型配置字段解构不一致（将 `config` 统一为 `modelConfig`），避免快照 `modelConfig` 丢失；同时移除空目录 `electron/settings/`，精简后端结构。
+
+- 2026-01-06：重构控制面板为纯 UI（暂不接入 IPC/Zustand）：采用固定 300px 左侧 Tab 栏（顶部预留 Logo 区域）、右侧内容区随窗口缩放；Tab 调整为「首页 / 模型选择 / 交互设置 / AI设置」，并新增亮/暗主题切换（使用 `data-theme=light|dark`，无紫色渐变）。
 

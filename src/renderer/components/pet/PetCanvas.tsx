@@ -1,25 +1,25 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useRef, useCallback, useState, useLayoutEffect } from 'react';
-import { ChatBubble } from '../other/ChatBubble';
+import { ChatBubble } from './UI/ChatBubble';
 import { Application } from 'pixi.js';
-import { computeContextZone } from '../logic/contextZone/contextZoneEngine';
-import { computeDragHandlePosition } from '../logic/dragHandle/dragHandleEngine';
-import { usePetStore } from '../store/usePetStore';
-import type { Live2DModel as Live2DModelType } from '../live2dManage/runtime';
-import { getVisibleFrame, getBaseFrame } from '../logic/visual/getVisualFrameDom';
-import { computeBubblePlacement } from '../logic/bubble/placementEngine';
-import { usePetSettings } from '../hooks/usePetSettings';
-import { usePetModel } from '../hooks/usePetModel';
-import { usePetLayout } from '../hooks/usePetLayout';
-import { useEyeReset } from '../hooks/useEyeReset';
-import { useMousePassthrough } from '../hooks/useMousePassthrough';
-import { useDragHandleController } from '../hooks/useDragHandleController';
-import { usePointerTapHandler } from '../hooks/usePointerTapHandler';
-import { useBubbleLifecycle } from '../hooks/useBubbleLifecycle';
-import { useContextZoneController } from '../hooks/useContextZoneController';
+import { computeContextZone } from './logic/contextZone/contextZoneEngine';
+import { computeDragHandlePosition } from './logic/dragHandle/dragHandleEngine';
+import { usePetStore } from '../../store/usePetStore';
+import type { Live2DModel as Live2DModelType } from './live2dManage/runtime';
+import { getVisibleFrame, getBaseFrame } from './logic/visual/getVisualFrameDom';
+import { computeBubblePlacement } from './logic/bubble/placementEngine';
+import { usePetSettings } from './hooks/usePetSettings';
+import { usePetModel } from './hooks/usePetModel';
+import { usePetLayout } from './hooks/usePetLayout';
+import { useEyeReset } from './hooks/useEyeReset';
+import { useMousePassthrough } from './hooks/useMousePassthrough';
+import { useDragHandleController } from './hooks/useDragHandleController';
+import { usePointerTapHandler } from './hooks/usePointerTapHandler';
+import { useBubbleLifecycle } from './hooks/useBubbleLifecycle';
+import { useContextZoneController } from './hooks/useContextZoneController';
 
 // 环境变量读取助手
-import { env } from '../utils/env';
+import { env } from '../../utils/env';
 
 const MODEL_PATH = env('VITE_MODEL_PATH') || '/model/murasame/Murasame.model3.json';
 const DEFAULT_EYE_MAX_UP = parseFloat(env('VITE_EYE_MAX_UP') || '0.5');
@@ -36,9 +36,9 @@ const BUBBLE_PADDING = 12; // 窗口边缘内边距
 const RESIZE_THROTTLE_MS = 120;
 const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
 
-import { log as debugLog } from '../utils/env';
+import { log as debugLog } from '../../utils/env';
 
-import { clamp, clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../utils/math';
+import { clamp, clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../../utils/math';
 
 const clampEyeBallY = (value: number): number => {
   const limit = typeof window !== 'undefined' && typeof (window as any).LIVE2D_EYE_MAX_UP === 'number'

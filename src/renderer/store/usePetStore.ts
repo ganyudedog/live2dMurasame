@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { Live2DModel } from '../live2dManage/runtime';
-import { MotionManager } from '../live2dManage/motionManager';
+import type { Live2DModel } from '../components/pet/live2dManage/runtime';
+import { MotionManager } from '../components/pet/live2dManage/motionManager';
 
 type ModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 

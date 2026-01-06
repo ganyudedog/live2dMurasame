@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Live2DModel as Live2DModelType } from '../../live2dManage/runtime';
-import { env } from '../../utils/env';
-import { clamp } from '../../utils/math';
+import { env } from '../../../../utils/env';
+import { clamp } from '../../../../utils/math';
 
 const VISUAL_FRAME_RATIO = parseFloat(env('VITE_VISUAL_FRAME_RATIO') || '0.62');
 const VISUAL_FRAME_MIN_PX = parseFloat(env('VITE_VISUAL_FRAME_MIN_PX') || '180');

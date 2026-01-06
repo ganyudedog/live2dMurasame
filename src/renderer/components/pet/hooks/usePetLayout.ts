@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from 'react';
-import { log as debugLog } from '../utils/env';
+import { log as debugLog } from '../../../utils/env';
 
 export interface UsePetLayoutParams {
   scale: number | null | undefined;

@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import PetCanvas from './renderer/components/PetCanvas.tsx';
-import ControlPanel from './renderer/components/ControlPanel.tsx';;
+import PetCanvas from './renderer/components/pet/PetCanvas.tsx';
+import ControlPanel from './renderer/components/controlPanel/ControlPanel.tsx';;
 import './app.css';
 
 const searchParams = typeof window !== 'undefined'

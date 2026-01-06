@@ -28,21 +28,21 @@ const loadActiveModelConfig = (preferredPath) => {
 
 export const getConfigSnapshot = () => {
   const globalConfig = getGlobalConfigCacheInternal();
-  const { modelPath, config } = loadActiveModelConfig();
-  return createConfigSnapshot(globalConfig, modelPath, config);
+  const { modelPath, modelConfig } = loadActiveModelConfig();
+  return createConfigSnapshot(globalConfig, modelPath, modelConfig);
 };
 
 export const initializeRuntimeConfig = () => {
   const globalConfig = initializeGlobalConfig();
   clearModelConfigCache();
-  const { modelPath, config } = loadActiveModelConfig();
-  return createConfigSnapshot(globalConfig, modelPath, config);
+  const { modelPath, modelConfig } = loadActiveModelConfig();
+  return createConfigSnapshot(globalConfig, modelPath, modelConfig);
 };
 
 export const reloadGlobalConfig = () => {
   const globalConfig = reloadGlobalConfigCache();
-  const { modelPath, config } = loadActiveModelConfig();
-  return createConfigSnapshot(globalConfig, modelPath, config);
+  const { modelPath, modelConfig } = loadActiveModelConfig();
+  return createConfigSnapshot(globalConfig, modelPath, modelConfig);
 };
 
 export const getGlobalConfigCache = () => getGlobalConfigCacheInternal();

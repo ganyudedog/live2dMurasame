@@ -1,5 +1,5 @@
-import { clamp } from '../../utils/math';
-import { env } from '../../utils/env';
+import { clamp } from '../../../../utils/math';
+import { env } from '../../../../utils/env';
 
 export type Frame = { leftDom: number; rightDom: number; centerDomX: number; visualWidthDom: number };
 export type Container = { width: number; height: number; top: number; left: number };

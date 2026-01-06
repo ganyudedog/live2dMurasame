@@ -67,15 +67,18 @@ const ensureControlPanelWindow = () => {
 
     controlPanelWindow = new BrowserWindow({
         parent: mainWindow ?? undefined,
-        width: 360,
-        height: 560,
-        minWidth: 320,
-        minHeight: 360,
+        // 注意：minWidth/minHeight 只限制最小尺寸，不会自动设置初始尺寸。
+        // 不显式设置 width/height 时，Electron 可能用默认值创建窗口，导致第一次打开看起来小于期望。
+        width: 1000,
+        height: 800,
+        minWidth: 1000,
+        minHeight: 800,
         show: false,
         resizable: true,
         frame: true,
         transparent: false,
         title: 'Live2D 控制面板',
+        autoHideMenuBar: true,
         webPreferences: {
             devTools: true,
             nodeIntegration: false,

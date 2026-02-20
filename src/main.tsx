@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import PetCanvas from './renderer/components/pet/PetCanvas.tsx';
 import ControlPanel from './renderer/components/controlPanel/ControlPanel.tsx';;
+import DemoRoot from './demo/DemoRoot';
 import './app.css';
 
 const searchParams = typeof window !== 'undefined'
@@ -9,6 +10,7 @@ const searchParams = typeof window !== 'undefined'
   : new URLSearchParams();
 
 const isControlPanelView = searchParams.get('window') === 'control-panel';
+const isDemoView = searchParams.get('window') === 'demo';
 
 export function Root() {
   return (
@@ -26,7 +28,7 @@ export function ControlPanelRoot() {
   );
 }
 
-const ActiveRoot = isControlPanelView ? ControlPanelRoot : Root;
+const ActiveRoot = isDemoView ? DemoRoot : (isControlPanelView ? ControlPanelRoot : Root);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

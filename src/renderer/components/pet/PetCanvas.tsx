@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useRef, useCallback, useState, useLayoutEffect } from 'react';
+import React, { useRef, useCallback, useState, useLayoutEffect, useEffect, useMemo } from 'react';
 import { ChatBubble } from './UI/ChatBubble';
 import { Application } from 'pixi.js';
 import { computeContextZone } from './logic/contextZone/contextZoneEngine';
@@ -17,15 +17,10 @@ import { useDragHandleController } from './hooks/useDragHandleController';
 import { usePointerTapHandler } from './hooks/usePointerTapHandler';
 import { useBubbleLifecycle } from './hooks/useBubbleLifecycle';
 import { useContextZoneController } from './hooks/useContextZoneController';
+import { useConfigStore } from '../../store/useConfigStore';
 
 // 环境变量读取助手
 import { env } from '../../utils/env';
-
-const MODEL_PATH = env('VITE_MODEL_PATH') || '/model/murasame/Murasame.model3.json';
-const DEFAULT_EYE_MAX_UP = parseFloat(env('VITE_EYE_MAX_UP') || '0.5');
-const DEFAULT_ANGLE_MAX_UP = parseFloat(env('VITE_ANGLE_MAX_UP') || '20');
-const DEFAULT_TOUCH_MAP_RAW = env('VITE_TOUCH_MAP');
-const DEFAULT_TOUCH_PRIORITY_RAW = env('VITE_TOUCH_PRIORITY');
 const BUBBLE_MAX_WIDTH = 260; // legacy cap (still used as hard ceiling)
 const BUBBLE_ZONE_BASE_WIDTH = 200; // scale=1 时单侧气泡区域目标宽度
 const BUBBLE_ZONE_MIN_WIDTH = 120; // 单侧最小可用宽度
@@ -41,16 +36,16 @@ import { log as debugLog } from '../../utils/env';
 import { clamp, clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../../utils/math';
 
 const clampEyeBallY = (value: number): number => {
-  const limit = typeof window !== 'undefined' && typeof (window as any).LIVE2D_EYE_MAX_UP === 'number'
-    ? (window as any).LIVE2D_EYE_MAX_UP
-    : DEFAULT_EYE_MAX_UP;
+  const windowOverride = typeof window !== 'undefined' ? (window as any).LIVE2D_EYE_MAX_UP : undefined;
+  const envLimit = Number.parseFloat(env('VITE_EYE_MAX_UP') || '0.5');
+  const limit = typeof windowOverride === 'number' ? windowOverride : envLimit;
   return clampEyeBallYBase(value, limit);
 };
 
 const clampAngleY = (value: number): number => {
-  const limit = typeof window !== 'undefined' && typeof (window as any).LIVE2D_ANGLE_MAX_UP === 'number'
-    ? (window as any).LIVE2D_ANGLE_MAX_UP
-    : DEFAULT_ANGLE_MAX_UP;
+  const windowOverride = typeof window !== 'undefined' ? (window as any).LIVE2D_ANGLE_MAX_UP : undefined;
+  const envLimit = Number.parseFloat(env('VITE_ANGLE_MAX_UP') || '20');
+  const limit = typeof windowOverride === 'number' ? windowOverride : envLimit;
   return clampAngleYBase(value, limit);
 };
 
@@ -59,7 +54,9 @@ const getWindowMetrics = () => {
     return { left: 0, width: 0, right: 0, center: 0 };
   }
   const rawLeft = window.screenX ?? window.screenLeft ?? 0;
-  const rawWidth = window.outerWidth || window.innerWidth;
+  // 以 webContents 可视区域（innerWidth）为准：DevTools 停靠时 outerWidth 会包含 DevTools 面板宽度，
+  // 若用 outerWidth 计算 center，会导致布局基线与实际可视区域不一致，从而在调试/扩缩窗时出现抖动与跳动。
+  const rawWidth = window.innerWidth || window.outerWidth;
   const left = Number.isFinite(rawLeft) ? rawLeft : 0;
   const width = Number.isFinite(rawWidth) ? rawWidth : window.innerWidth;
   const right = left + width;
@@ -73,20 +70,111 @@ const getWindowMetrics = () => {
 
 const getWindowCenter = () => getWindowMetrics().center;
 
-const TOUCH_PRIORITY = ((): string[] => {
-  if (DEFAULT_TOUCH_PRIORITY_RAW) {
-    const arr = DEFAULT_TOUCH_PRIORITY_RAW.split(',').map(s => s.trim()).filter(Boolean);
-    if (arr.length) return arr;
+const isDevtoolsDockedLike = (params: {
+  boundsWidth?: number | null;
+  innerWidth: number;
+  outerWidth?: number | null;
+}): boolean => {
+  const { boundsWidth, innerWidth, outerWidth } = params;
+  const inferredOuter = (typeof boundsWidth === 'number' && Number.isFinite(boundsWidth))
+    ? boundsWidth
+    : ((typeof outerWidth === 'number' && Number.isFinite(outerWidth)) ? outerWidth : null);
+  if (inferredOuter == null) return false;
+  const delta = Math.max(0, inferredOuter - innerWidth);
+  // DevTools 停靠会让 outerWidth 显著大于 innerWidth（面板占用宽度）。
+  return delta >= 80;
+};
+
+const isDevToolsOpenedNow = (): boolean => {
+  try {
+    if (typeof window === 'undefined') return false;
+    const api = (window as any).petAPI;
+    if (typeof api?.isDevToolsOpened === 'function') {
+      return Boolean(api.isDevToolsOpened());
+    }
+    return false;
+  } catch {
+    return false;
   }
-  return ['hair', 'face', 'xiongbu', 'qunzi', 'leg'];
-})();
+};
 
 const PetCanvas: React.FC = () => {
   // 延迟加载模型
   const settingsLoaded = usePetStore(s => s.settingsLoaded);
   const loadSettings = usePetStore(s => s.loadSettings);
 
+  // 阶段 1：在模型窗口订阅 SharedWorker 的 scale 广播。
+  const connectSharedWorkerScale = usePetStore(s => s.connectSharedWorkerScale);
+
   usePetSettings(loadSettings);
+
+  useLayoutEffect(() => connectSharedWorkerScale(), [connectSharedWorkerScale]);
+
+  // 来自主进程的配置快照（offset.md 数据流真值）
+  const globalConfig = useConfigStore((s) => s.globalConfig);
+  const activeModelPath = useConfigStore((s) => s.activeModelPath);
+  const persistedModelConfig = useConfigStore((s) => s.modelConfig);
+  const envOverrides = useConfigStore((s) => s.envOverrides);
+  const hydrated = useConfigStore((s) => s.hydrated);
+  const refreshConfigSnapshot = useConfigStore((s) => s.refresh);
+
+  // 主窗口也需要在首次挂载时拉一次快照，避免 preload 同步快照缺失导致模型永远不加载。
+  useEffect(() => {
+    if (hydrated) return;
+    refreshConfigSnapshot().catch(() => {
+      // ignore
+    });
+  }, [hydrated, refreshConfigSnapshot]);
+
+  // 运行时 envOverrides 会由 preload 写入 process.env；这里每次渲染都重新读取。
+  // 订阅 activeModelPath/modelConfig 只是为了在切换模型或配置更新时触发重新渲染。
+  void activeModelPath;
+  void persistedModelConfig;
+
+  // 模型文件 URL 由主进程根据 CURRENT_PATH 解析并随快照下发（file://.../*.model3.json）。
+  // 不再使用默认模型路径；若未选中模型则保持为空，等待用户先选择。
+  const modelPath = typeof (envOverrides as any)?.VITE_MODEL_PATH === 'string'
+    ? String((envOverrides as any).VITE_MODEL_PATH)
+    : '';
+  const modelPathRef = useRef(modelPath);
+  useEffect(() => {
+    modelPathRef.current = modelPath;
+  }, [modelPath]);
+
+  const touchPriority = useMemo((): string[] => {
+    const fromConfig = globalConfig?.VITE_TOUCH_PRIORITY;
+    if (Array.isArray(fromConfig) && fromConfig.length) return fromConfig;
+    const raw = env('VITE_TOUCH_PRIORITY');
+    if (raw) {
+      const arr = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      if (arr.length) return arr;
+    }
+    return ['hair', 'face', 'xiongbu', 'qunzi', 'leg'];
+  }, [globalConfig?.VITE_TOUCH_PRIORITY]);
+
+  const touchPriorityRef = useRef(touchPriority);
+  useEffect(() => {
+    touchPriorityRef.current = touchPriority;
+  }, [touchPriority]);
+
+  const touchMapRef = useRef<number[] | null>(null);
+  useEffect(() => {
+    const raw = (persistedModelConfig as any)?.touchMap;
+    const ok = Array.isArray(raw)
+      && raw.length === 5
+      && raw.every((v: unknown) => typeof v === 'number' && Number.isFinite(v));
+    touchMapRef.current = ok ? (raw as number[]) : null;
+  }, [persistedModelConfig]);
+
+  const interactionZonesRef = useRef<Record<string, { heightRange?: [number, number]; motions?: string[] }> | null>(null);
+  useEffect(() => {
+    const raw = (persistedModelConfig as any)?.interactionZones;
+    if (!raw || typeof raw !== 'object') {
+      interactionZonesRef.current = null;
+      return;
+    }
+    interactionZonesRef.current = raw as Record<string, { heightRange?: [number, number]; motions?: string[] }>;
+  }, [persistedModelConfig]);
 
   // 辅助引用
   const hitAreasRef = useRef<Array<{ id: string; motion: string; name: string }>>([]); // 点击区域
@@ -125,6 +213,16 @@ const PetCanvas: React.FC = () => {
   const pointerInsideContextZoneRef = useRef(false); // 指针是否在上下文区域
   const dragHandleHoverRef = useRef(false); // 拖拽手柄是否处于悬停状态
   const dragHandleActiveRef = useRef(false); // 拖拽手柄是否处于激活状态
+
+  // 原生窗口拖动（WebkitAppRegion: drag）不会可靠触发 JS 拖拽状态，
+  // 这里通过 boundsChanged 的“移动特征”来抑制拖动期间的自动扩缩窗。
+  const suppressAutoResizeUntilRef = useRef(0);
+  const ignoreUserMoveDetectUntilRef = useRef(0);
+  const lastObservedBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  // 窗口宽度策略：只跟随 scale 变化。
+  // 在 scale 变化时置位，下一次 updateBubblePosition 计算出目标宽度后只触发一次 resize。
+  const resizeWindowOnNextLayoutRef = useRef(true);
 
   // 鼠标穿透
   const mousePassthroughRef = useRef<boolean | null>(null); // 鼠标穿透状态
@@ -193,11 +291,16 @@ const PetCanvas: React.FC = () => {
   const lastResizeAtRef = useRef(0); // 上次调整大小的时间戳
   const lastRequestedSizeRef = useRef<{ w: number; h: number } | null>(null); // 最后请求的尺寸
 
+  // Phase 1: inFlight gating (single outstanding resize) + latest-wins desired merge.
+  const resizeInFlightRequestIdRef = useRef<string | null>(null);
+  const latestResizeDesiredRef = useRef<{ width: number; height: number; anchorCenter?: number } | null>(null);
+  const lastSentResizeDesiredRef = useRef<{ width: number; height: number; anchorCenter?: number } | null>(null);
+
   const autoResizeBackupRef = useRef<{ width: number; height: number } | null>(null); // 自动调整前的备份尺寸
 
   const targetWindowWidthRef = useRef<number | null>(null); // 当前 scale 对应的目标窗口宽度
   const pendingResizeRef = useRef<{ width: number; height: number } | null>(null); // 待处理的调整尺寸
-  const pendingBoundsPredictionRef = useRef<{ x: number; width: number; height: number } | null>(null); // 预测中的窗口 bounds（尚未收到主进程广播）
+  const pendingBoundsPredictionRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null); // 预测中的窗口 bounds（尚未收到主进程广播）
   const pendingResizeIssuedAtRef = useRef<number | null>(null); // 发起调整的时间戳
 
   const suppressResizeForBubbleRef = useRef(false); // 是否抑制气泡引起的尺寸调整
@@ -212,6 +315,36 @@ const PetCanvas: React.FC = () => {
   const windowBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const paramCacheRef = useRef<string[] | null>(null); // 参数缓存
   const detachEyeHandlerRef = useRef<(() => void) | null>(null); // 眼部追踪处理器解绑函数
+
+  // 启动时主动从主进程拉取一次 outer bounds，避免首次 resize/boundsChanged 之前 windowBoundsRef 为空。
+  // 这在 DevTools 停靠时尤为关键：outer bounds 与 innerWidth 差异很大，若无基线就会导致首次扩缩窗“猛跳/占满桌面”。
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = (window as any).petAPI;
+        if (typeof api?.getWindowBounds !== 'function') return;
+        const bounds = await api.getWindowBounds();
+        if (cancelled) return;
+        if (!bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
+          return;
+        }
+        windowBoundsRef.current = bounds;
+
+        // baseline 使用“内容区中心”的屏幕坐标：outerLeft + innerWidth/2。
+        // DevTools 停靠时不要用 outerWidth/2（会把面板宽度算进去）。
+        const innerWidth = typeof window.innerWidth === 'number' ? window.innerWidth : 0;
+        const baseline = bounds.x + innerWidth / 2;
+        if (Number.isFinite(baseline)) {
+          centerBaselineRef.current = baseline;
+        }
+      } catch { /* swallow */ }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
 
   // 上下文区域
@@ -279,7 +412,7 @@ const PetCanvas: React.FC = () => {
         return new URL(soundPath, base).toString();
       }
       if (typeof window !== 'undefined') {
-        const resolvedModelUrl = new URL(MODEL_PATH, window.location.href);
+        const resolvedModelUrl = new URL(modelPathRef.current, window.location.href);
         const fallbackBase = new URL('.', resolvedModelUrl);
         return new URL(soundPath, fallbackBase).toString();
       }
@@ -292,8 +425,13 @@ const PetCanvas: React.FC = () => {
     const now = performance?.now ? performance.now() : Date.now();
     const prev = lastRequestedSizeRef.current;
     if (prev && Math.abs(prev.w - width) < 2 && Math.abs(prev.h - height) < 2) return; // ignore tiny diff
-    if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) return;
-    lastResizeAtRef.current = now;
+
+    // 若用户正在拖动/移动窗口，暂停自动 resize，避免与原生拖动互相“拉扯”造成抖动。
+    if (now < suppressAutoResizeUntilRef.current) {
+      lastRequestedSizeRef.current = { w: width, h: height };
+      return;
+    }
+
     lastRequestedSizeRef.current = { w: width, h: height };
     let anchorCenter: number | null = null;
     if (options?.preserveCenterLine) {
@@ -309,6 +447,38 @@ const PetCanvas: React.FC = () => {
     if (anchorCenter !== null) {
       centerBaselineRef.current = anchorCenter;
     }
+
+    const desired = {
+      width,
+      height,
+      anchorCenter: anchorCenter ?? undefined,
+    };
+    latestResizeDesiredRef.current = desired;
+
+    // If a resize is already in flight, only record the latest desired.
+    // We'll flush it when the in-flight request is ACK'ed via boundsChanged(requestId).
+    if (resizeInFlightRequestIdRef.current) {
+      debugLog('[PetCanvas] requestResize merged (inFlight)', {
+        inFlight: resizeInFlightRequestIdRef.current,
+        desired,
+      });
+      return;
+    }
+
+    // Throttle only when actually issuing a new request (ACK flush bypasses this).
+    if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) return;
+    lastResizeAtRef.current = now;
+
+    const makeRequestId = () => {
+      const t = Date.now().toString(36);
+      const r = Math.random().toString(36).slice(2, 8);
+      return `rsz_${t}_${r}`;
+    };
+
+    const requestId = makeRequestId();
+    resizeInFlightRequestIdRef.current = requestId;
+    lastSentResizeDesiredRef.current = desired;
+
     let predictedLeft: number | null = null;
     if (anchorCenter !== null && Number.isFinite(anchorCenter)) {
       predictedLeft = Math.round(anchorCenter - width / 2);
@@ -336,6 +506,7 @@ const PetCanvas: React.FC = () => {
       width,
       height,
       anchorCenter: anchorCenter ?? undefined,
+      requestId,
     };
     debugLog('[PetCanvas] requestResize', { width, height, anchorCenter, predictedLeft });
     try {
@@ -345,12 +516,150 @@ const PetCanvas: React.FC = () => {
       } else {
         api?.invoke?.('pet:resizeMainWindow', payload);
       }
-    } catch { /* swallow */ }
+      // 主动 resize 会触发一系列 boundsChanged（含 x/y 变化），这里短暂忽略“用户拖动”检测。
+      ignoreUserMoveDetectUntilRef.current = now + 240;
+    } catch {
+      // If IPC fails, allow future attempts.
+      if (resizeInFlightRequestIdRef.current === requestId) {
+        resizeInFlightRequestIdRef.current = null;
+      }
+    }
+  }, []);
+
+  const handleWindowBoundsAck = useCallback((bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
+    const ackId = bounds?.requestId;
+    if (!ackId) return;
+    const inFlight = resizeInFlightRequestIdRef.current;
+    if (!inFlight || inFlight !== ackId) return;
+
+    resizeInFlightRequestIdRef.current = null;
+
+    const latest = latestResizeDesiredRef.current;
+    const lastSent = lastSentResizeDesiredRef.current;
+    if (!latest) return;
+
+    const sameDesired = Boolean(
+      lastSent
+      && Math.abs(lastSent.width - latest.width) <= 1
+      && Math.abs(lastSent.height - latest.height) <= 1
+      && (lastSent.anchorCenter == null || latest.anchorCenter == null
+        ? lastSent.anchorCenter == null && latest.anchorCenter == null
+        : Math.abs(lastSent.anchorCenter - latest.anchorCenter) <= 0.5)
+    );
+    if (sameDesired) return;
+
+    // Flush latest desired immediately (latest-wins), bypassing throttle.
+    try {
+      const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+
+      // Respect user-move suppression to avoid tug-of-war.
+      if (now < suppressAutoResizeUntilRef.current) return;
+
+      const makeRequestId = () => {
+        const t = Date.now().toString(36);
+        const r = Math.random().toString(36).slice(2, 8);
+        return `rsz_${t}_${r}`;
+      };
+      const requestId = makeRequestId();
+      resizeInFlightRequestIdRef.current = requestId;
+      lastSentResizeDesiredRef.current = latest;
+      lastResizeAtRef.current = now;
+
+      // Keep legacy refs in sync so other parts (prediction/layout) treat this as a programmatic resize.
+      pendingResizeRef.current = { width: latest.width, height: latest.height };
+      pendingResizeIssuedAtRef.current = now;
+      targetWindowWidthRef.current = latest.width;
+
+      const anchorCenter = typeof latest.anchorCenter === 'number' && Number.isFinite(latest.anchorCenter)
+        ? latest.anchorCenter
+        : null;
+      if (anchorCenter !== null) {
+        const predictedLeft = Math.round(anchorCenter - latest.width / 2);
+        const existingBounds = windowBoundsRef.current;
+        const fallbackScreenLeft = window.screenX ?? window.screenLeft ?? 0;
+        const fallbackScreenTop = window.screenY ?? window.screenTop ?? 0;
+        pendingBoundsPredictionRef.current = {
+          x: Number.isFinite(predictedLeft) ? predictedLeft : fallbackScreenLeft,
+          y: Number.isFinite(existingBounds?.y) ? (existingBounds as { y: number }).y : fallbackScreenTop,
+          width: Number.isFinite(latest.width) ? latest.width : (existingBounds?.width ?? window.innerWidth),
+          height: Number.isFinite(latest.height) ? latest.height : (existingBounds?.height ?? window.innerHeight),
+        };
+      } else {
+        pendingBoundsPredictionRef.current = null;
+      }
+
+      const payload = {
+        width: latest.width,
+        height: latest.height,
+        anchorCenter: latest.anchorCenter,
+        requestId,
+      };
+      debugLog('[PetCanvas] requestResize flushLatest', payload);
+      const api = (window as any).petAPI;
+      if (typeof api?.setSize === 'function') {
+        api.setSize(payload);
+      } else {
+        api?.invoke?.('pet:resizeMainWindow', payload);
+      }
+      ignoreUserMoveDetectUntilRef.current = now + 240;
+    } catch {
+      resizeInFlightRequestIdRef.current = null;
+    }
   }, []);
 
   const applyWindowWidth = useCallback((requiredWidth: number, reason: 'layout' | 'bubble-active') => {
     if (typeof window === 'undefined') return;
     if (!Number.isFinite(requiredWidth)) return;
+
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+
+    // 原生窗口拖动（WebkitAppRegion: drag）不会可靠触发 JS 的拖拽状态，
+    // 因此这里用“近期检测到用户移动窗口”的冷却窗口来抑制自动 resize。
+    if (now < suppressAutoResizeUntilRef.current) {
+      targetWindowWidthRef.current = window.innerWidth;
+      return;
+    }
+
+    // 在尚未获得主进程 outer bounds（windowBoundsRef 为空）之前，禁止自动扩缩窗。
+    // 否则首次（尤其是打开/停靠 DevTools 后）很容易在无基线情况下把窗口拉到错误位置/尺寸，出现剧烈抖动。
+    if (!windowBoundsRef.current) {
+      targetWindowWidthRef.current = window.innerWidth;
+      pendingResizeRef.current = null;
+      pendingBoundsPredictionRef.current = null;
+      return;
+    }
+
+    // 只要 DevTools 已打开（无论是否已稳定停靠），都禁用自动扩缩窗。
+    // 经验上 DevTools 打开/停靠的过渡阶段 outer/inner/bounds 会出现跳变，
+    // 若在此期间执行 preserveCenterLine 扩缩窗，最容易出现“占满桌面 + 强烈抖动”。
+    if (isDevToolsOpenedNow()) {
+      pendingResizeRef.current = null;
+      pendingBoundsPredictionRef.current = null;
+      targetWindowWidthRef.current = window.innerWidth;
+      suppressResizeForBubbleRef.current = false;
+      return;
+    }
+
+    // 方案 A：当 DevTools 停靠导致 outer bounds 与 innerWidth 差值很大时，禁用自动扩缩窗。
+    // 否则会把 DevTools 面板也一起算进“需要满足的宽度”，表现为窗口占满桌面并伴随抖动。
+    const dockedLike = isDevtoolsDockedLike({
+      boundsWidth: windowBoundsRef.current?.width ?? null,
+      innerWidth: typeof window.innerWidth === 'number' ? window.innerWidth : 0,
+      outerWidth: typeof window.outerWidth === 'number' ? window.outerWidth : null,
+    });
+    if (dockedLike) {
+      pendingResizeRef.current = null;
+      pendingBoundsPredictionRef.current = null;
+      targetWindowWidthRef.current = window.innerWidth;
+      suppressResizeForBubbleRef.current = false;
+      // 不触发 requestResize / setBounds，让调试时窗口保持用户尺寸。
+      return;
+    }
+
     const normalizedWidth = Math.max(Math.round(requiredWidth), 320);
     const desiredHeight = window.innerHeight;
     const pending = pendingResizeRef.current;
@@ -389,19 +698,50 @@ const PetCanvas: React.FC = () => {
       currentWidth,
       desiredHeight,
     });
+
     requestResize(normalizedWidth, desiredHeight, { preserveCenterLine: true });
   }, [requestResize]);
 
   const alignWindowToCenterLine = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
     if (typeof window === 'undefined') return;
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+
     const actualCenter = bounds.x + bounds.width / 2;
     const baseline = centerBaselineRef.current;
     const programmaticResize = pendingResizeRef.current !== null;
+    const resizeInFlight = resizeInFlightRequestIdRef.current !== null;
+
+    // === 用户拖动/移动窗口检测 ===
+    // 原生拖动过程中会高频收到 boundsChanged（x/y 变化，width/height 基本不变）。
+    // 若我们在此时继续自动扩缩/对齐，会与原生拖动互相“拉扯”，表现为抖动/闪烁。
+    const prevObserved = lastObservedBoundsRef.current;
+    lastObservedBoundsRef.current = bounds;
+    if (prevObserved && now >= ignoreUserMoveDetectUntilRef.current) {
+      const moved = Math.abs(bounds.x - prevObserved.x) > 1 || Math.abs(bounds.y - prevObserved.y) > 1;
+      const sizeStable = Math.abs(bounds.width - prevObserved.width) <= 1 && Math.abs(bounds.height - prevObserved.height) <= 1;
+      if (moved && sizeStable) {
+        suppressAutoResizeUntilRef.current = now + 650;
+        centerBaselineRef.current = actualCenter;
+        pendingResizeRef.current = null;
+        pendingBoundsPredictionRef.current = null;
+        targetWindowWidthRef.current = bounds.width;
+        suppressResizeForBubbleRef.current = false;
+        return;
+      }
+    }
 
     if (!programmaticResize) {
       centerBaselineRef.current = actualCenter;
       pendingBoundsPredictionRef.current = null;
       targetWindowWidthRef.current = bounds.width;
+      return;
+    }
+
+    // During an in-flight programmatic resize we must not issue additional x-only moves.
+    // Otherwise we become a second writer and can cause the first-time scale change to jitter.
+    if (resizeInFlight) {
       return;
     }
 
@@ -427,9 +767,6 @@ const PetCanvas: React.FC = () => {
       return;
     }
 
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
     if (now - lastAlignAttemptRef.current < 48) return;
     lastAlignAttemptRef.current = now;
 
@@ -449,6 +786,8 @@ const PetCanvas: React.FC = () => {
       } else {
         api?.invoke?.('pet:setMainWindowBounds', payload);
       }
+      // 这是我们自己发起的 x-only 对齐移动，避免被误判成用户拖动。
+      ignoreUserMoveDetectUntilRef.current = now + 180;
     } catch { /* swallow */ }
   }, []);
 
@@ -553,8 +892,13 @@ const PetCanvas: React.FC = () => {
       }
     }
 
-    applyWindowWidth(enforcedWindowWidth, hasBubble ? 'bubble-active' : 'layout');
-    suppressResizeForBubbleRef.current = false;
+    // 窗口宽度只跟随 scale：不要在拖动/动画/bounds 变化时持续触发 resize。
+    // 仅当 scale 变化（或首次挂载）时，触发一次窗口宽度同步。
+    if (resizeWindowOnNextLayoutRef.current) {
+      resizeWindowOnNextLayoutRef.current = false;
+      applyWindowWidth(enforcedWindowWidth, 'layout');
+      suppressResizeForBubbleRef.current = false;
+    }
 
     if (!hasBubble) {
       bubblePositionRef.current = null;
@@ -695,9 +1039,14 @@ const PetCanvas: React.FC = () => {
 
     // 垂直定位：根据触摸比例头锚点（使用 hairEnd*0.85 回退）
     let headAnchorRatio = 0.085; // 默认回退
-    if (DEFAULT_TOUCH_MAP_RAW) {
-      const ratios = DEFAULT_TOUCH_MAP_RAW.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
-      if (ratios.length > 0) {
+    {
+      const ratios = touchMapRef.current ?? (() => {
+        const raw = env('VITE_TOUCH_MAP');
+        if (!raw) return null;
+        const parsed = raw.split(',').map((v) => Number.parseFloat(v)).filter((n) => Number.isFinite(n));
+        return parsed.length ? parsed : null;
+      })();
+      if (ratios && ratios.length > 0) {
         const hairEnd = ratios[0];
         if (Number.isFinite(hairEnd)) headAnchorRatio = clamp(hairEnd * 0.85, 0, 1);
       }
@@ -722,9 +1071,14 @@ const PetCanvas: React.FC = () => {
     // 头部区域定义与遮挡检测（使用 touch map 第二段作为脸底 / 或 hairEnd*1.35 回退）
     let headTopRatio = headAnchorRatio; // 近似头顶
     let headBottomRatio = headAnchorRatio + 0.09; // 回退脸底估计
-    if (DEFAULT_TOUCH_MAP_RAW) {
-      const ratios = DEFAULT_TOUCH_MAP_RAW.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
-      if (ratios.length > 1) {
+    {
+      const ratios = touchMapRef.current ?? (() => {
+        const raw = env('VITE_TOUCH_MAP');
+        if (!raw) return null;
+        const parsed = raw.split(',').map((v) => Number.parseFloat(v)).filter((n) => Number.isFinite(n));
+        return parsed.length ? parsed : null;
+      })();
+      if (ratios && ratios.length > 1) {
         const hairEnd = ratios[0];
         const faceEnd = ratios[1];
         if (Number.isFinite(hairEnd)) headTopRatio = clamp(hairEnd * 0.85, 0, 1);
@@ -791,7 +1145,11 @@ const PetCanvas: React.FC = () => {
     debugLog('[PetCanvas] head overlap', { headTopRatio, headBottomRatio, headTopDom, headBottomDom, overlapAdjusted, severeOverlap });
 
     commitBubbleReady(true);
-  }, [scale, commitBubbleReady, requestResize]);
+  }, [scale, commitBubbleReady, applyWindowWidth]);
+
+  useEffect(() => {
+    resizeWindowOnNextLayoutRef.current = true;
+  }, [scale]);
 
   useLayoutEffect(() => {
     updateBubblePositionRef.current = updateBubblePosition;
@@ -988,10 +1346,11 @@ const PetCanvas: React.FC = () => {
       }))
       .filter(area => area.id && area.motion);
     mapped.sort((a, b) => {
-      const ai = TOUCH_PRIORITY.indexOf(a.name);
-      const bi = TOUCH_PRIORITY.indexOf(b.name);
-      const safeA = ai === -1 ? TOUCH_PRIORITY.length : ai;
-      const safeB = bi === -1 ? TOUCH_PRIORITY.length : bi;
+      const order = touchPriorityRef.current;
+      const ai = order.indexOf(a.name);
+      const bi = order.indexOf(b.name);
+      const safeA = ai === -1 ? order.length : ai;
+      const safeB = bi === -1 ? order.length : bi;
       return safeA - safeB;
     });
     hitAreasRef.current = mapped;
@@ -1024,6 +1383,7 @@ const PetCanvas: React.FC = () => {
     if (!m || !app) return;
     const winW = window.innerWidth;
     const winH = window.innerHeight;
+    const devToolsOpened = isDevToolsOpenedNow();
     // 移除右缘补偿，避免气泡出现时模型水平漂移
     const stored = baseWindowSizeRef.current;
     if (!stored) {
@@ -1055,12 +1415,15 @@ const PetCanvas: React.FC = () => {
     }
     const windowMetrics = getWindowMetrics();
     const boundsSnapshot = (() => {
-      if (pendingBoundsPredictionRef.current && pendingResizeRef.current) {
+      if (devToolsOpened) {
+        return windowBoundsRef.current;
+      }
+      // When a programmatic resize is in progress, window.innerWidth and main-process bounds
+      // may be temporarily out of sync (especially on the first-ever new size). In that
+      // transition window, prefer the predicted outer bounds to keep center-line math stable.
+      if (pendingBoundsPredictionRef.current && (pendingResizeRef.current || resizeInFlightRequestIdRef.current)) {
         const predicted = pendingBoundsPredictionRef.current;
-        const approxWidthMatch = Math.abs(winW - predicted.width) <= 2;
-        if (approxWidthMatch) {
-          return predicted;
-        }
+        return predicted;
       }
       return windowBoundsRef.current;
     })();
@@ -1080,12 +1443,13 @@ const PetCanvas: React.FC = () => {
       targetX,
       targetY,
       scale,
+      devToolsOpened,
       baselineScreen,
       rawCenterLocal,
       targetCenterLocal,
       windowLeft,
       liveWindowCenter,
-      usingPredictedBounds: pendingBoundsPredictionRef.current ? Math.abs(winW - (pendingBoundsPredictionRef.current?.width ?? winW)) <= 2 : false,
+      usingPredictedBounds: !devToolsOpened && pendingBoundsPredictionRef.current ? Math.abs(winW - (pendingBoundsPredictionRef.current?.width ?? winW)) <= 2 : false,
       predictedBounds: pendingBoundsPredictionRef.current,
       broadcastBounds: windowBoundsRef.current,
     });
@@ -1104,10 +1468,25 @@ const PetCanvas: React.FC = () => {
     updateDragHandlePosition(true);
   }, [scale, updateBubblePosition, updateDragHandlePosition]);
 
+  // 合帧调度：同一帧内多次触发布局（scale/resize/bounds 等）只执行一次 applyLayout。
+  const applyLayoutRafRef = useRef<number | null>(null);
+  const scheduleApplyLayout = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (typeof window.requestAnimationFrame !== 'function') {
+      applyLayout();
+      return;
+    }
+    if (applyLayoutRafRef.current !== null) return;
+    applyLayoutRafRef.current = window.requestAnimationFrame(() => {
+      applyLayoutRafRef.current = null;
+      applyLayout();
+    });
+  }, [applyLayout]);
+
   // 布局副作用拆分：初始化基线与缩放时的布局刷新
   usePetLayout({
     scale,
-    applyLayout,
+    scheduleApplyLayout,
     centerBaselineRef,
     getWindowCenter,
   });
@@ -1131,12 +1510,13 @@ const PetCanvas: React.FC = () => {
     updateHitAreas,
     updateBubblePosition,
     updateDragHandlePosition,
-    applyLayout,
+    scheduleApplyLayout,
+    handleWindowBoundsAck,
     alignWindowToCenterLine,
     isIdleState,
     clampEyeBallY,
     clampAngleY,
-    modelPath: MODEL_PATH,
+    modelPath,
   });
 
   // 忽略鼠标时重置模型朝向参数
@@ -1161,10 +1541,19 @@ const PetCanvas: React.FC = () => {
     const ny = (y - bounds.y) / (bounds.height || 1); // 0..1  顶部=0 底部=1
     if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
 
-    // 默认分层百分比，可通过 window.LIVE2D_TOUCH_MAP 覆盖 (数组: [hairEnd, faceEnd, xiongbuEnd, qunziEnd, legEnd])
+    // 默认分层百分比，可通过：
+    // 1) 模型配置 touchMap（offset.md）
+    // 2) envOverrides: VITE_TOUCH_MAP
+    // 3) window.LIVE2D_TOUCH_MAP（调试覆盖）
     const DEFAULT_MAP = ((): number[] => {
-      if (DEFAULT_TOUCH_MAP_RAW) {
-        const parsed = DEFAULT_TOUCH_MAP_RAW.split(',').map(v => parseFloat(v.trim())).filter(v => Number.isFinite(v));
+      const fromModelConfig = touchMapRef.current;
+      if (fromModelConfig) return fromModelConfig;
+      const raw = env('VITE_TOUCH_MAP');
+      if (raw) {
+        const parsed = raw
+          .split(',')
+          .map((v) => Number.parseFloat(v.trim()))
+          .filter((v) => Number.isFinite(v));
         if (parsed.length === 5) return parsed;
       }
       return [0.1, 0.19, 0.39, 0.53, 1];
@@ -1175,11 +1564,49 @@ const PetCanvas: React.FC = () => {
     const [hairEnd, faceEnd, xiongbuEnd, qunziEnd, legEnd] = customMap.map((v: number) => Math.max(0, Math.min(1, v)));
 
     let group: string | null = null;
-    if (ny <= hairEnd) group = 'Taphair';
-    else if (ny <= faceEnd) group = 'Tapface';
-    else if (ny <= xiongbuEnd) group = 'Tapxiongbu';
-    else if (ny <= qunziEnd) group = 'Tapqunzi';
-    else if (ny <= legEnd) group = 'Tapleg';
+
+    // 优先使用 interactionZones（offset.md）
+    const zones = interactionZonesRef.current;
+    if (zones) {
+      const order = touchPriorityRef.current;
+      const matches: Array<{ key: string; motions: string[] }> = [];
+      Object.entries(zones).forEach(([key, zone]) => {
+        const range = zone?.heightRange;
+        const motions = Array.isArray(zone?.motions) ? zone.motions.filter(Boolean) : [];
+        if (!Array.isArray(range) || range.length !== 2) return;
+        const start = Number(range[0]);
+        const end = Number(range[1]);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+        const lo = Math.max(0, Math.min(1, Math.min(start, end)));
+        const hi = Math.max(0, Math.min(1, Math.max(start, end)));
+        if (ny < lo || ny > hi) return;
+        if (!motions.length) return;
+        matches.push({ key: String(key).toLowerCase(), motions });
+      });
+
+      if (matches.length) {
+        matches.sort((a, b) => {
+          const ai = order.indexOf(a.key);
+          const bi = order.indexOf(b.key);
+          const safeA = ai === -1 ? order.length : ai;
+          const safeB = bi === -1 ? order.length : bi;
+          return safeA - safeB;
+        });
+        const picked = matches[0];
+        const list = picked.motions;
+        const idx = Math.floor(Math.random() * list.length);
+        group = list[idx] ?? null;
+      }
+    }
+
+    // 回退：按 touchMap 分段映射固定动作组
+    if (!group) {
+      if (ny <= hairEnd) group = 'Taphair';
+      else if (ny <= faceEnd) group = 'Tapface';
+      else if (ny <= xiongbuEnd) group = 'Tapxiongbu';
+      else if (ny <= qunziEnd) group = 'Tapqunzi';
+      else if (ny <= legEnd) group = 'Tapleg';
+    }
 
 
     if (!group) return;

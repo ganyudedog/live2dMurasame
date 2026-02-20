@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { GlobalUiSettings, ModelConfig, ModelEntry } from '../types';
+import { sharedStoreClient } from '../../../shared/sharedStoreClient';
 
 export default function HomePage({
   model,
@@ -17,6 +18,23 @@ export default function HomePage({
   onGotoModels: () => void;
 }) {
   const scaleLabel = useMemo(() => globalSettings.scale.toFixed(2), [globalSettings.scale]);
+  const touchMapKey = useMemo(() => modelConfig.touchMap.join(', '), [modelConfig.touchMap]);
+  const touchMapDraftRef = useRef(touchMapKey);
+  useEffect(() => {
+    touchMapDraftRef.current = touchMapKey;
+  }, [touchMapKey]);
+
+  const commitTouchMap = () => {
+    const parts = touchMapDraftRef.current.split(/[\s,]+/).filter(Boolean);
+    const next = parts
+      .map((value) => Number.parseFloat(value))
+      .filter((value) => Number.isFinite(value));
+    if (!next.length) return;
+    onModelConfigChange({
+      ...modelConfig,
+      touchMap: next,
+    });
+  };
 
   return (
     <div className="p-4 space-y-4">
@@ -35,7 +53,7 @@ export default function HomePage({
           <header className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium">当前模型</div>
-              <div className="text-xs text-base-content/60">仅 UI / 本地状态</div>
+              <div className="text-xs text-base-content/60">缩放：SharedWorker 实时联动（阶段 1）</div>
             </div>
             <span className="badge badge-outline">{model.id}</span>
           </header>
@@ -46,7 +64,6 @@ export default function HomePage({
         <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
           <header className="flex items-center justify-between">
             <div className="text-sm font-medium">展示设置</div>
-            <span className="text-sm tabular-nums">{scaleLabel}</span>
           </header>
 
           <div className="space-y-2">
@@ -60,12 +77,15 @@ export default function HomePage({
               max={2}
               step={0.01}
               value={globalSettings.scale}
-              onChange={(e) =>
+              onChange={(e) => {
+                const nextScale = Number.parseFloat(e.target.value);
                 onGlobalSettingsChange({
                   ...globalSettings,
-                  scale: Number.parseFloat(e.target.value),
-                })
-              }
+                  scale: nextScale,
+                });
+                // 阶段 1：每次拖动都直接发 patch，模型窗口会实时响应。
+                sharedStoreClient.dispatchPatch([{ path: 'global.scale', value: nextScale }]);
+              }}
               className="range range-xs"
             />
           </div>
@@ -126,13 +146,13 @@ export default function HomePage({
         <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
           <header className="flex items-center justify-between">
             <div className="text-sm font-medium">模型参数（概览）</div>
-            <span className="badge badge-ghost">modelConfig</span>
+            <span className="badge badge-ghost">模型配置</span>
           </header>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="form-control">
               <div className="label py-0">
-                <span className="label-text text-xs">visualFrame.ratio</span>
+                <span className="label-text text-xs">显示框比例</span>
               </div>
               <input
                 className="input input-sm input-bordered"
@@ -153,7 +173,69 @@ export default function HomePage({
 
             <label className="form-control">
               <div className="label py-0">
-                <span className="label-text text-xs">visualFrame.offsetRatio</span>
+                <span className="label-text text-xs">显示框最小像素</span>
+              </div>
+              <input
+                className="input input-sm input-bordered"
+                type="number"
+                step={1}
+                value={modelConfig.visualFrame.minPx}
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    visualFrame: {
+                      ...modelConfig.visualFrame,
+                      minPx: Number.parseFloat(e.target.value || '0'),
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control">
+              <div className="label py-0">
+                <span className="label-text text-xs">显示框内边距像素</span>
+              </div>
+              <input
+                className="input input-sm input-bordered"
+                type="number"
+                step={1}
+                value={modelConfig.visualFrame.paddingPx}
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    visualFrame: {
+                      ...modelConfig.visualFrame,
+                      paddingPx: Number.parseFloat(e.target.value || '0'),
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control">
+              <div className="label py-0">
+                <span className="label-text text-xs">显示框中心点</span>
+              </div>
+              <input
+                className="input input-sm input-bordered"
+                value={modelConfig.visualFrame.center}
+                placeholder="face"
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    visualFrame: {
+                      ...modelConfig.visualFrame,
+                      center: e.target.value,
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control">
+              <div className="label py-0">
+                <span className="label-text text-xs">显示框偏移比例</span>
               </div>
               <input
                 className="input input-sm input-bordered"
@@ -174,7 +256,28 @@ export default function HomePage({
 
             <label className="form-control">
               <div className="label py-0">
-                <span className="label-text text-xs">bubble.symmetric</span>
+                <span className="label-text text-xs">显示框偏移像素</span>
+              </div>
+              <input
+                className="input input-sm input-bordered"
+                type="number"
+                step={1}
+                value={modelConfig.visualFrame.offsetPx}
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    visualFrame: {
+                      ...modelConfig.visualFrame,
+                      offsetPx: Number.parseFloat(e.target.value || '0'),
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control">
+              <div className="label py-0">
+                <span className="label-text text-xs">气泡左右对称</span>
               </div>
               <select
                 className="select select-sm select-bordered"
@@ -186,14 +289,14 @@ export default function HomePage({
                   })
                 }
               >
-                <option value="1">true</option>
-                <option value="0">false</option>
+                <option value="1">是</option>
+                <option value="0">否</option>
               </select>
             </label>
 
             <label className="form-control">
               <div className="label py-0">
-                <span className="label-text text-xs">bubble.headRatio</span>
+                <span className="label-text text-xs">气泡头部比例</span>
               </div>
               <input
                 className="input input-sm input-bordered"
@@ -214,11 +317,26 @@ export default function HomePage({
                 }}
               />
             </label>
+
+            <label className="form-control sm:col-span-2">
+              <div className="label py-0">
+                <span className="label-text text-xs">触摸分段（touchMap）</span>
+              </div>
+              <textarea
+                className="textarea textarea-sm textarea-bordered w-full"
+                rows={2}
+                key={touchMapKey}
+                defaultValue={touchMapKey}
+                onChange={(e) => {
+                  touchMapDraftRef.current = e.target.value;
+                }}
+                onBlur={commitTouchMap}
+                placeholder="0.1, 0.19, 0.39, 0.53, 1"
+              />
+            </label>
           </div>
 
-          <div className="text-xs text-base-content/60">
-            touchMap 分段数：{modelConfig.touchMap.length}（交互分配在「交互设置」中）
-          </div>
+          <div className="text-xs text-base-content/60">分段数：{modelConfig.touchMap.length}（动作分配在「交互设置」中）</div>
         </section>
       </div>
     </div>

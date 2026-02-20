@@ -29,7 +29,7 @@ export const debugEnabled = (): boolean => {
 };
 
 export const log = (...args: any[]): void => {
-  const debug = debugEnabled();
-  if (!debug) return;
+  // const debug = debugEnabled();
+  // if (!debug) return;
   console.log(...args);
 };

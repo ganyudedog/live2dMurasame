@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen, dialog } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -21,6 +21,7 @@ import {
     applyAutoLaunchSetting,
     getLive2denvGlobalSnapshot,
 } from './config/live2dGlobal.js';
+import { detectModelFilePath } from './utils/path.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,8 +30,57 @@ let mainWindow = null;
 let controlPanelWindow = null;
 let isQuitting = false;
 
+// 当渲染进程通过 IPC 主动触发一次 resize/setBounds 时，
+// 将本次请求的 requestId 附带在下一次 boundsChanged 广播中作为 ACK。
+// 用于渲染端抑制 resize 风暴（inFlight gating）。
+let pendingBoundsRequestId = null;
+
+// 限制边界广播到渲染器。
+// 某些平台在程序化移动期间不会可靠地触发 BrowserWindow 的 'moved' 事件（例如拖动时重复调用 setBounds）。在这里广播可以防止渲染器端的过时基线（anchorCenter）导致窗口跳动。
+// 移动（例如，在拖动时重复setBounds）。在这里广播可以防止
+// 渲染器端的过时基线（anchorCenter）导致窗口跳动。
+const EMIT_BOUNDS_THROTTLE_MS = 50;
+let boundsEmitTimer = null;
+let lastBoundsEmitAt = 0;
+
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const rootIndex = path.join(__dirname, '..', 'index.html');
+const isDevServerMode = Boolean(devServerUrl);
+
+const emitMainWindowBoundsNow = () => {
+    try {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const bounds = mainWindow.getBounds();
+        const requestId = pendingBoundsRequestId;
+        pendingBoundsRequestId = null;
+        if (typeof requestId === 'string' && requestId) {
+            mainWindow.webContents.send('pet:windowBoundsChanged', { ...bounds, requestId });
+        } else {
+            mainWindow.webContents.send('pet:windowBoundsChanged', bounds);
+        }
+    } catch {}
+};
+
+const scheduleEmitMainWindowBounds = () => {
+    try {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const now = Date.now();
+        const elapsed = now - lastBoundsEmitAt;
+        if (elapsed >= EMIT_BOUNDS_THROTTLE_MS && boundsEmitTimer === null) {
+            lastBoundsEmitAt = now;
+            emitMainWindowBoundsNow();
+            return;
+        }
+
+        if (boundsEmitTimer !== null) return;
+        const delay = Math.max(0, EMIT_BOUNDS_THROTTLE_MS - elapsed);
+        boundsEmitTimer = setTimeout(() => {
+            boundsEmitTimer = null;
+            lastBoundsEmitAt = Date.now();
+            emitMainWindowBoundsNow();
+        }, delay);
+    } catch {}
+};
 
 // 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
 const enableGpu = process.env.VITE_ENABLE_GPU === '1';
@@ -83,12 +133,15 @@ const ensureControlPanelWindow = () => {
             devTools: true,
             nodeIntegration: false,
             contextIsolation: true,
-            webSecurity: true,
+            // DevServer 模式下页面 origin 为 http://localhost，模型使用 file:// 读取本地绝对路径时会被 webSecurity 限制拦截。
+            // 仅在开发模式关闭，生产/打包仍保持开启。
+            webSecurity: !isDevServerMode,
             sandbox: false,
             enableRemoteModule: false,
             preload: path.join(__dirname, 'preload.js'),
         },
     });
+    controlPanelWindow.openDevTools(true);
 
     loadControlPanelWindow(controlPanelWindow);
 
@@ -218,7 +271,7 @@ const createMainWindow = () => {
             offscreen: false,
             nodeIntegration: false,
             contextIsolation: true,
-            webSecurity: true,
+            webSecurity: !isDevServerMode,
             sandbox: false,
             enableRemoteModule: false,
             backgroundThrottling: false,
@@ -248,15 +301,10 @@ const createMainWindow = () => {
         menu?.popup({ window: mainWindow ?? undefined });
     });
 
-    const emitBounds = () => {
-        try {
-            if (!mainWindow || mainWindow.isDestroyed()) return;
-            const bounds = mainWindow.getBounds();
-            mainWindow.webContents.send('pet:windowBoundsChanged', bounds);
-        } catch {}
-    };
-    mainWindow.on('moved', emitBounds);
-    mainWindow.on('resize', emitBounds);
+    // 在拖动过程中首选“move”更新;保留“move”作为后备。
+    mainWindow.on('move', scheduleEmitMainWindowBounds);
+    mainWindow.on('moved', scheduleEmitMainWindowBounds);
+    mainWindow.on('resize', scheduleEmitMainWindowBounds);
 
     return mainWindow;
 };
@@ -280,6 +328,21 @@ ipcMain.on('pet:config:getSnapshotSync', (event) => {
             modelConfig: getDefaultModelConfig(),
             envOverrides: getLastEnvOverrides(),
         };
+    }
+});
+
+// Renderer 侧推断 DevTools 停靠（outer-inner delta）在过渡帧会漏判，
+// 这里提供主进程真值：只要 DevTools 打开，就让渲染器禁用自动扩缩窗。
+ipcMain.on('pet:isDevToolsOpenedSync', (event) => {
+    try {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+            event.returnValue = false;
+            return;
+        }
+        const wc = mainWindow.webContents;
+        event.returnValue = Boolean(wc && typeof wc.isDevToolsOpened === 'function' && wc.isDevToolsOpened());
+    } catch {
+        event.returnValue = false;
     }
 });
 
@@ -318,6 +381,58 @@ ipcMain.handle('pet:listModelPaths', () => {
     return listModelPaths();
 });
 
+// 方案 A：使用主进程原生对话框拿到真实文件路径。
+// 只允许选择 *.model3.json（UI 过滤只能做到 json，后缀校验在这里做）。
+// 返回值统一为“模型目录绝对路径”（符合 offset.md：VITE_MODEL_PATHS/CURRENT_PATH 存目录）。
+ipcMain.handle('pet:pickModelFile', async () => {
+    try {
+        const parentWindow = BrowserWindow.getFocusedWindow()
+            ?? (controlPanelWindow && !controlPanelWindow.isDestroyed() ? controlPanelWindow : null)
+            ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+
+        try {
+            parentWindow?.show();
+            parentWindow?.focus();
+        } catch {}
+
+        const options = {
+            title: '选择 Live2D 模型文件（*.model3.json）',
+            properties: ['openFile'],
+            filters: [
+                { name: 'Live2D 模型（*.model3.json）', extensions: ['json'] },
+                { name: '所有文件', extensions: ['*'] },
+            ],
+        };
+
+        const result = parentWindow
+            ? await dialog.showOpenDialog(parentWindow, options)
+            : await dialog.showOpenDialog(options);
+        if (result.canceled) return null;
+        const picked = result.filePaths?.[0] ?? null;
+        if (!picked) return null;
+
+        const hit = detectModelFilePath(picked);
+        if (!hit) {
+            try {
+                const messageBoxOptions = {
+                    type: 'warning',
+                    message: '请选择以 .model3.json 结尾的 Live2D 模型文件。',
+                };
+                if (parentWindow) {
+                    await dialog.showMessageBox(parentWindow, messageBoxOptions);
+                } else {
+                    await dialog.showMessageBox(messageBoxOptions);
+                }
+            } catch {}
+            return null;
+        }
+        return path.dirname(hit);
+    } catch (error) {
+        console.warn('[pet] pick model file failed', error);
+        return null;
+    }
+});
+
 ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
         return;
@@ -333,6 +448,7 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
     const currentBounds = mainWindow.getBounds();
     const targetWidth = Math.max(75, Math.floor(Number.isFinite(payload.width) ? payload.width : currentBounds.width));
     const targetHeight = Math.max(250, Math.floor(Number.isFinite(payload.height) ? payload.height : currentBounds.height));
+    const requestId = typeof payload.requestId === 'string' ? payload.requestId : null;
     const anchorCenter = typeof payload.anchorCenter === 'number' && Number.isFinite(payload.anchorCenter)
         ? payload.anchorCenter
         : null;
@@ -343,37 +459,46 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
     if (anchorCenter !== null) {
         const targetX = Math.round(anchorCenter - targetWidth / 2);
         console.log('[pet] resize using center anchor', {
+            requestId,
             anchorCenter,
             targetX,
             targetWidth,
             targetHeight,
         });
+        if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setBounds({
             x: targetX,
             y: currentBounds.y,
             width: targetWidth,
             height: targetHeight,
         });
+        scheduleEmitMainWindowBounds();
     } else if (anchorRight !== null) {
         const targetX = Math.round(anchorRight - targetWidth);
         console.log('[pet] resize using right anchor', {
+            requestId,
             anchorRight,
             targetX,
             targetWidth,
             targetHeight,
         });
+        if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setBounds({
             x: targetX,
             y: currentBounds.y,
             width: targetWidth,
             height: targetHeight,
         });
+        scheduleEmitMainWindowBounds();
     } else {
         console.log('[pet] resize using size only', {
+            requestId,
             width: targetWidth,
             height: targetHeight,
         });
+        if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setSize(targetWidth, targetHeight);
+        scheduleEmitMainWindowBounds();
     }
 });
 
@@ -389,19 +514,20 @@ ipcMain.handle('pet:setMainWindowBounds', (_event, bounds) => {
         height: Number.isFinite(bounds?.height) ? Math.max(250, Math.floor(bounds.height)) : currentBounds.height,
     };
     mainWindow.setBounds(next);
+    scheduleEmitMainWindowBounds();
 });
 
 ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
-    try {
-        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
-        if (!target || target.isDestroyed()) return;
-        const enabled = Boolean(passthrough);
-        target.setIgnoreMouseEvents(enabled, { forward: true });
-        return enabled;
-    } catch (error) {
-        console.warn('[pet] setMousePassthrough failed', error);
-        throw error;
-    }
+    // try {
+    //     const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    //     if (!target || target.isDestroyed()) return;
+    //     const enabled = Boolean(passthrough);
+    //     target.setIgnoreMouseEvents(enabled, { forward: true });
+    //     return enabled;
+    // } catch (error) {
+    //     console.warn('[pet] setMousePassthrough failed', error);
+    //     throw error;
+    // }
 });
 
 ipcMain.handle('pet:getCursorScreenPoint', () => {
@@ -474,7 +600,7 @@ app.on('before-quit', () => {
     isQuitting = true;
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     const loadedSettings = ensureLive2denvGlobalLoaded();
     applyAutoLaunchSetting(loadedSettings.autoLaunch);
     try {

@@ -23,6 +23,7 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     symmetric: true,
     headRatio: null,
   },
+  interactionZones: {},
 };
 
 export const DEFAULT_MODELS: ModelEntry[] = [

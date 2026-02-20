@@ -3,7 +3,7 @@ import { log as debugLog } from '../../../utils/env';
 
 export interface UsePetLayoutParams {
   scale: number | null | undefined;
-  applyLayout: () => void;
+  scheduleApplyLayout: () => void;
   centerBaselineRef: RefObject<number | null>;
   getWindowCenter: () => number;
 }
@@ -13,12 +13,19 @@ export interface UsePetLayoutParams {
  */
 export const usePetLayout = ({
   scale,
-  applyLayout,
+  scheduleApplyLayout,
   centerBaselineRef,
   getWindowCenter,
 }: UsePetLayoutParams): void => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    // If PetCanvas already initialized baseline from main-process bounds,
+    // don't overwrite it here. Overwriting can cause the first resize/scale
+    // to jitter because the anchor center shifts mid-flight.
+    if (typeof centerBaselineRef.current === 'number' && Number.isFinite(centerBaselineRef.current)) {
+      debugLog('[usePetLayout] baseline init skipped (already set)', { baseline: centerBaselineRef.current });
+      return;
+    }
     const initialCenter = getWindowCenter();
     centerBaselineRef.current = initialCenter;
     debugLog('[usePetLayout] baseline init', { initialCenter });
@@ -26,10 +33,10 @@ export const usePetLayout = ({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    applyLayout();
+    scheduleApplyLayout();
     if (typeof window.requestAnimationFrame !== 'function') return;
     const raf = window.requestAnimationFrame(() => {
-      applyLayout();
+      scheduleApplyLayout();
     });
     return () => {
       if (typeof window === 'undefined') return;
@@ -37,5 +44,5 @@ export const usePetLayout = ({
         window.cancelAnimationFrame(raf);
       }
     };
-  }, [scale, applyLayout]);
+  }, [scale, scheduleApplyLayout]);
 };

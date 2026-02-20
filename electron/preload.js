@@ -34,6 +34,24 @@ try {
 const globalConfigListeners = new Set();
 const modelConfigListeners = new Set();
 
+// Whitelisted IPC events that renderers are allowed to subscribe to via petAPI.
+// Keep this list minimal to avoid exposing arbitrary ipcRenderer channels.
+const allowedIpcEvents = new Set([
+  'pet:windowBoundsChanged',
+]);
+
+// channel -> (callback -> wrappedListener)
+const ipcEventListenerRegistry = new Map();
+
+const getChannelRegistry = (channel) => {
+  let reg = ipcEventListenerRegistry.get(channel);
+  if (!reg) {
+    reg = new WeakMap();
+    ipcEventListenerRegistry.set(channel, reg);
+  }
+  return reg;
+};
+
 const dispatchSnapshotUpdate = (payload = {}) => {
   if (!payload || typeof payload !== 'object') return;
 
@@ -131,7 +149,18 @@ contextBridge.exposeInMainWorld('petAPI', {
   getCursorScreenPoint: () => ipcRenderer.invoke('pet:getCursorScreenPoint'),
   getWindowBounds: () => ipcRenderer.invoke('pet:getWindowBounds'),
 
+  // 主进程真值：DevTools 是否打开。
+  // 用于调试期间禁用自动扩缩窗，避免 DevTools 停靠/过渡导致 outer/inner 口径错配引发抖动与“占满桌面”。
+  isDevToolsOpened: () => {
+    try {
+      return Boolean(ipcRenderer.sendSync('pet:isDevToolsOpenedSync'));
+    } catch {
+      return false;
+    }
+  },
+
   listModelPaths: () => ipcRenderer.invoke('pet:listModelPaths'),
+  pickModelFile: () => ipcRenderer.invoke('pet:pickModelFile'),
   
   // 获取和设置live2denv中的GLOBAL
   getLive2denvGlobal: () => ipcRenderer.invoke('pet:getLive2denvGlobal'),
@@ -169,5 +198,34 @@ contextBridge.exposeInMainWorld('petAPI', {
     return () => {
       modelConfigListeners.delete(callback);
     };
+  },
+
+  // Minimal event bridge (whitelist only).
+  on: (channel, callback) => {
+    if (!allowedIpcEvents.has(channel)) return;
+    if (typeof callback !== 'function') return;
+
+    const reg = getChannelRegistry(channel);
+    if (reg.has(callback)) return;
+
+    const wrapped = (_event, ...args) => {
+      try {
+        callback(...args);
+      } catch (error) {
+        console.error('[petAPI] ipc listener error', channel, error);
+      }
+    };
+    reg.set(callback, wrapped);
+    ipcRenderer.on(channel, wrapped);
+  },
+
+  off: (channel, callback) => {
+    if (!allowedIpcEvents.has(channel)) return;
+    if (typeof callback !== 'function') return;
+    const reg = ipcEventListenerRegistry.get(channel);
+    const wrapped = reg?.get(callback);
+    if (!wrapped) return;
+    ipcRenderer.removeListener(channel, wrapped);
+    reg.delete(callback);
   },
 });

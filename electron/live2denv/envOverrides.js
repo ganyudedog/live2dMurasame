@@ -1,4 +1,5 @@
 import { detectModelFilePath } from '../utils/path.js';
+import { pathToFileURL } from 'node:url';
 
 let envOverrideCache = {};
 
@@ -32,7 +33,13 @@ export const buildEnvOverrides = (globalConfig, modelPath, modelConfig) => {
   }
   const detectedModelFile = detectModelFilePath(modelPath);
   if (detectedModelFile) {
-    envMap.VITE_MODEL_PATH = detectedModelFile.replace(/\\/g, '/');
+    try {
+      // Use a file:// URL so renderer fetch() can load absolute local files.
+      envMap.VITE_MODEL_PATH = pathToFileURL(detectedModelFile).toString();
+    } catch {
+      // Fallback to a normalized path string.
+      envMap.VITE_MODEL_PATH = detectedModelFile.replace(/\\/g, '/');
+    }
   }
   return envMap;
 };

@@ -3,13 +3,24 @@ import type { Live2DModel as Live2DModelType } from '../../live2dManage/runtime'
 import { env } from '../../../../utils/env';
 import { clamp } from '../../../../utils/math';
 
-const VISUAL_FRAME_RATIO = parseFloat(env('VITE_VISUAL_FRAME_RATIO') || '0.62');
-const VISUAL_FRAME_MIN_PX = parseFloat(env('VITE_VISUAL_FRAME_MIN_PX') || '180');
-const VISUAL_FRAME_PADDING_PX = parseFloat(env('VITE_VISUAL_FRAME_PADDING_PX') || '0');
-const VISUAL_FRAME_CENTER_MODE = (env('VITE_VISUAL_FRAME_CENTER') || 'bounds').toLowerCase();
-const VISUAL_FRAME_OFFSET_PX = parseFloat(env('VITE_VISUAL_FRAME_OFFSET_PX') || '0');
-const VISUAL_FRAME_OFFSET_RATIO = parseFloat(env('VITE_VISUAL_FRAME_OFFSET_RATIO') || '0');
-const DEFAULT_TOUCH_MAP_RAW = env('VITE_TOUCH_MAP');
+const getVisualFrameEnv = () => {
+  const ratio = parseFloat(env('VITE_VISUAL_FRAME_RATIO') || '0.62');
+  const minPx = parseFloat(env('VITE_VISUAL_FRAME_MIN_PX') || '180');
+  const paddingPx = parseFloat(env('VITE_VISUAL_FRAME_PADDING_PX') || '0');
+  const centerMode = (env('VITE_VISUAL_FRAME_CENTER') || 'bounds').toLowerCase();
+  const offsetPx = parseFloat(env('VITE_VISUAL_FRAME_OFFSET_PX') || '0');
+  const offsetRatio = parseFloat(env('VITE_VISUAL_FRAME_OFFSET_RATIO') || '0');
+  const touchMapRaw = env('VITE_TOUCH_MAP');
+  return {
+    ratio,
+    minPx,
+    paddingPx,
+    centerMode,
+    offsetPx,
+    offsetRatio,
+    touchMapRaw,
+  };
+};
 
 export type VisualFrame = {
   centerDomX: number;
@@ -33,12 +44,13 @@ const resolveFaceCenter = (
   faceAreaId: string | null | undefined,
 ): number | null => {
   if (!model || !faceAreaId) return null;
-  const preferFace = VISUAL_FRAME_CENTER_MODE === 'face';
+  const { centerMode, touchMapRaw } = getVisualFrameEnv();
+  const preferFace = centerMode === 'face';
   if (!preferFace) return null;
   try {
     const defaults = (() => {
-      if (DEFAULT_TOUCH_MAP_RAW) {
-        const arr = DEFAULT_TOUCH_MAP_RAW.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
+      if (touchMapRaw) {
+        const arr = touchMapRaw.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
         if (arr.length >= 2) return { hairEnd: arr[0], faceEnd: arr[1] };
       }
       return { hairEnd: 0.1, faceEnd: 0.19 };
@@ -70,8 +82,16 @@ export function getVisualFrameDom(
   canvasRect: DOMRect,
   opts?: FrameOptions,
 ): VisualFrame {
-  const safeRatio = Math.max(0.1, Math.min(1, Number.isFinite(VISUAL_FRAME_RATIO) ? VISUAL_FRAME_RATIO : 0.62));
-  const padding = Number.isFinite(VISUAL_FRAME_PADDING_PX) ? VISUAL_FRAME_PADDING_PX : 0;
+  const {
+    ratio,
+    minPx,
+    paddingPx,
+    offsetPx,
+    offsetRatio,
+  } = getVisualFrameEnv();
+
+  const safeRatio = Math.max(0.1, Math.min(1, Number.isFinite(ratio) ? ratio : 0.62));
+  const padding = Number.isFinite(paddingPx) ? paddingPx : 0;
 
   const faceCenter = resolveFaceCenter(bounds, opts?.model ?? null, opts?.faceAreaId ?? null);
   const defaultCenter = bounds.x + bounds.width / 2;
@@ -79,14 +99,14 @@ export function getVisualFrameDom(
 
   const rawWidthDom = (bounds.width / screen.width) * canvasRect.width;
   const visualWidthDom = Math.max(
-    Number.isFinite(VISUAL_FRAME_MIN_PX) ? VISUAL_FRAME_MIN_PX : 180,
+    Number.isFinite(minPx) ? minPx : 180,
     rawWidthDom * safeRatio,
   ) + padding * 2;
 
   let centerDomX = canvasRect.left + ((centerFromBounds - screen.x) / screen.width) * canvasRect.width;
 
-  const extraOffsetPxRaw = (Number.isFinite(VISUAL_FRAME_OFFSET_PX) ? VISUAL_FRAME_OFFSET_PX : 0)
-    + (Number.isFinite(VISUAL_FRAME_OFFSET_RATIO) ? (visualWidthDom * VISUAL_FRAME_OFFSET_RATIO) : 0);
+  const extraOffsetPxRaw = (Number.isFinite(offsetPx) ? offsetPx : 0)
+    + (Number.isFinite(offsetRatio) ? (visualWidthDom * offsetRatio) : 0);
   const extraOffsetPx = opts?.ignoreOffset ? 0 : extraOffsetPxRaw;
   if (extraOffsetPx) {
     centerDomX += extraOffsetPx;

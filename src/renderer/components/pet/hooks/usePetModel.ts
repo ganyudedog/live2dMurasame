@@ -23,7 +23,8 @@ export interface UsePetModelParams {
   updateHitAreas: (model: Live2DModelType) => void;
   updateBubblePosition: (force?: boolean) => void;
   updateDragHandlePosition: (force?: boolean) => void;
-  applyLayout: () => void;
+  scheduleApplyLayout: () => void;
+  handleWindowBoundsAck?: (bounds: { x: number; y: number; width: number; height: number; requestId?: string } | undefined) => void;
   alignWindowToCenterLine: (bounds: { x: number; y: number; width: number; height: number }) => void;
   isIdleState: (motionManager: any) => boolean;
   clampEyeBallY: (value: number) => number;
@@ -52,30 +53,167 @@ export const usePetModel = ({
   updateHitAreas,
   updateBubblePosition,
   updateDragHandlePosition,
-  applyLayout,
+  scheduleApplyLayout,
+  handleWindowBoundsAck,
   alignWindowToCenterLine,
   isIdleState,
   clampEyeBallY,
   clampAngleY,
   modelPath,
 }: UsePetModelParams): void => {
-  const applyLayoutRef = useRef(applyLayout);
+  const applyLayoutRef = useRef(scheduleApplyLayout);
   useEffect(() => {
-    applyLayoutRef.current = applyLayout;
-  }, [applyLayout]);
+    applyLayoutRef.current = scheduleApplyLayout;
+  }, [scheduleApplyLayout]);
+
+  // 1) Pixi Application 生命周期：只初始化一次，组件卸载时销毁。
   useEffect(() => {
     if (!settingsLoaded) return;
     if (!canvasRef.current) return;
+    if (appRef.current) return;
 
     (Live2DModel as unknown as { registerTicker: (t: unknown) => void }).registerTicker(Ticker as unknown as object);
 
     const container = canvasRef.current;
     const app = new Application({ backgroundAlpha: 0, resizeTo: container, autoStart: true, antialias: true });
     appRef.current = app;
-    let disposed = false;
     container.appendChild(app.view as HTMLCanvasElement);
     container.style.position = 'relative';
     container.style.overflow = 'hidden';
+
+    const handleResize = () => { applyLayoutRef.current?.(); };
+    const handleMouseMove = (e: MouseEvent) => {
+      pointerX.current = e.clientX;
+      pointerY.current = e.clientY;
+      updateDragHandlePosition(true);
+    };
+    pointerX.current = window.innerWidth / 2;
+    pointerY.current = window.innerHeight / 2;
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('resize', handleResize);
+
+    const onBoundsChanged = (bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
+      try {
+        console.log('[PetCanvas] onBoundsChanged received', bounds);
+        try {
+          handleWindowBoundsAck?.(bounds);
+        } catch {
+          // ignore ack handler errors
+        }
+        if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
+          const prev = windowBoundsRef.current;
+          windowBoundsRef.current = bounds;
+          alignWindowToCenterLine(bounds);
+          console.log('[PetCanvas] windowBoundsRef updated', windowBoundsRef.current);
+
+          const moveOnly = Boolean(prev)
+            && Math.abs(bounds.x - (prev as any).x) > 0
+            && (Math.abs(bounds.width - (prev as any).width) <= 1)
+            && (Math.abs(bounds.height - (prev as any).height) <= 1);
+          if (moveOnly) return;
+        } else {
+          console.log('[PetCanvas] windowBoundsRef ignored due to invalid payload');
+        }
+        updateBubblePosition(true);
+        updateDragHandlePosition(true);
+      } catch (e) {
+        console.log('[PetCanvas] onBoundsChanged error', e);
+      }
+    };
+    try {
+      (window as any).petAPI?.on?.('pet:windowBoundsChanged', onBoundsChanged);
+    } catch { /* ignore */ }
+
+    return () => {
+      // 清理 app 相关资源
+      try {
+        window.removeEventListener('resize', handleResize);
+        window.removeEventListener('mousemove', handleMouseMove);
+      } catch { /* ignore */ }
+      try {
+        (window as any).petAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
+      } catch { /* ignore */ }
+
+      // 清理模型与 ticker
+      try {
+        if (detachEyeHandlerRef.current) {
+          detachEyeHandlerRef.current();
+          detachEyeHandlerRef.current = null;
+        }
+      } catch { /* ignore */ }
+      try {
+        const existing = modelRef.current;
+        if (existing) {
+          try {
+            (app.stage as any)?.removeChild?.(existing as any);
+          } catch { /* ignore */ }
+          try {
+            existing.destroy();
+          } catch { /* ignore */ }
+          modelRef.current = null;
+        }
+      } catch { /* ignore */ }
+      try {
+        setModel(null);
+      } catch { /* ignore */ }
+      try {
+        modelBaseUrlRef.current = null;
+      } catch { /* ignore */ }
+
+      try {
+        const view = app.view as unknown as HTMLElement | undefined;
+        if (view && view.parentNode === container) {
+          container.removeChild(view);
+        }
+      } catch { /* ignore */ }
+      try {
+        app.destroy(true);
+      } catch { /* ignore */ }
+      appRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsLoaded]);
+
+  // 2) 模型加载/切换：仅替换 model，不重建 Pixi app/canvas。
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const app = appRef.current;
+    if (!app) return;
+
+    const disposeCurrentModel = () => {
+      try {
+        if (detachEyeHandlerRef.current) {
+          detachEyeHandlerRef.current();
+          detachEyeHandlerRef.current = null;
+        }
+      } catch { /* ignore */ }
+      const existing = modelRef.current;
+      if (existing) {
+        try {
+          (app.stage as any)?.removeChild?.(existing as any);
+        } catch { /* ignore */ }
+        try {
+          existing.destroy();
+        } catch { /* ignore */ }
+        modelRef.current = null;
+      }
+      try {
+        setModel(null);
+      } catch { /* ignore */ }
+      try {
+        modelBaseUrlRef.current = null;
+      } catch { /* ignore */ }
+    };
+
+    if (!modelPath || !modelPath.trim()) {
+      disposeCurrentModel();
+      try {
+        setModelLoadStatus('idle');
+      } catch { /* ignore */ }
+      return;
+    }
+
+    let disposed = false;
 
     const attachEyeFollow = (modelInstance: Live2DModelType) => {
       if (detachEyeHandlerRef.current) {
@@ -269,6 +407,8 @@ export const usePetModel = ({
     };
 
     (async () => {
+      // 切换前先卸载当前模型，避免资源/事件残留。
+      disposeCurrentModel();
       setModelLoadStatus('loading');
       try {
         const model = await loadModel(modelPath);
@@ -356,55 +496,11 @@ export const usePetModel = ({
         setModelLoadStatus('error', (err as Error).message);
       }
     })();
-
-    const handleResize = () => { applyLayoutRef.current?.(); };
-    const handleMouseMove = (e: MouseEvent) => {
-      pointerX.current = e.clientX;
-      pointerY.current = e.clientY;
-      updateDragHandlePosition(true);
-    };
-    pointerX.current = window.innerWidth / 2;
-    pointerY.current = window.innerHeight / 2;
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('resize', handleResize);
-
-    const onBoundsChanged = (bounds?: { x: number; y: number; width: number; height: number }) => {
-      try {
-        console.log('[PetCanvas] onBoundsChanged received', bounds);
-        if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
-          windowBoundsRef.current = bounds;
-          alignWindowToCenterLine(bounds);
-          console.log('[PetCanvas] windowBoundsRef updated', windowBoundsRef.current);
-        } else {
-          console.log('[PetCanvas] windowBoundsRef ignored due to invalid payload');
-        }
-        updateBubblePosition(true);
-        updateDragHandlePosition(true);
-      } catch (e) {
-        console.log('[PetCanvas] onBoundsChanged error', e);
-      }
-    };
-    try {
-      (window as any).petAPI?.on?.('pet:windowBoundsChanged', onBoundsChanged);
-    } catch { /* swallow */ }
-
     return () => {
       disposed = true;
-      if (detachEyeHandlerRef.current) {
-        detachEyeHandlerRef.current();
-        detachEyeHandlerRef.current = null;
-      }
-      if (modelRef.current) {
-        modelRef.current.destroy();
-        modelRef.current = null;
-      }
-      window.removeEventListener('resize', handleResize);
-      try {
-        (window as any).petAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
-      } catch { /* swallow */ }
-      window.removeEventListener('mousemove', handleMouseMove);
-      app.destroy(true);
+      // 停止 ticker（避免旧模型残留驱动）并卸载模型。
+      disposeCurrentModel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsLoaded]);
+  }, [settingsLoaded, modelPath]);
 };

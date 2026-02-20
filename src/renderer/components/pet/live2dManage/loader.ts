@@ -41,10 +41,14 @@ export async function loadModel(modelPath: string) {
   if (!(Live2DModel as any)) {
     throw new Error('Live2DModel unavailable after runtime import');
   }
-  // 预检：确保资源存在
-  const head = await fetch(modelPath, { method: 'HEAD' });
-  if (!head.ok) {
-    throw new Error('Model file not found: ' + modelPath + ' status=' + head.status);
+  // 预检：确保资源存在。
+  // 注意：file:// URL 在 Electron fetch 中不一定支持 HEAD，避免误判直接放行。
+  const isFileUrl = /^file:/i.test(modelPath);
+  if (!isFileUrl) {
+    const head = await fetch(modelPath, { method: 'HEAD' });
+    if (!head.ok) {
+      throw new Error('Model file not found: ' + modelPath + ' status=' + head.status);
+    }
   }
   // 禁用自动交互注册，避免在 Pixi v7 上依赖 legacy interaction manager
   const model = await Live2DModel.from(modelPath, { autoInteract: false });

@@ -35,4 +35,5 @@ export type ModelConfig = {
   touchMap: number[];
   visualFrame: VisualFrameConfig;
   bubble: BubbleConfig;
+  interactionZones: Record<string, { heightRange: [number, number]; motions: string[] }>;
 };

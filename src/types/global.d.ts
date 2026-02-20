@@ -85,6 +85,7 @@ declare global {
     getModelConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; config: PetModelConfig | null; envOverrides: Record<string, string> } | undefined>;
     updateModelConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; config: PetModelConfig | null; envOverrides: Record<string, string> } | undefined>;
     listModelPaths?: () => Promise<string[] | undefined>;
+    pickModelFile?: () => Promise<string | null | undefined>;
     onGlobalConfigUpdated?: (callback: (payload: { global?: PetGlobalConfig | null; activeModelPath?: string | null; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
     onModelConfigUpdated?: (callback: (payload: { modelPath?: string | null; config?: PetModelConfig | null; envOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
   }

@@ -1,12 +1,13 @@
 import {
   ensureConfigDirectories,
-  loadGlobalConfig,
-  saveGlobalConfig,
+  loadLive2denvConfig,
+  saveLive2denvConfig,
 } from '../config/configManager.js';
-import { DEFAULT_GLOBAL_CONFIG } from '../config/globalConfig.js';
+import { DEFAULT_LIVE2DENV_CONFIG } from '../config/globalConfig.js';
+import { ensureGlobalModelConfigLoaded } from '../config/live2dGlobal.js';
 import { clone } from '../utils/clone.js';
 
-let globalConfigCache = { ...DEFAULT_GLOBAL_CONFIG };
+let live2denvConfigCache = { ...DEFAULT_LIVE2DENV_CONFIG };
 
 const ensureCurrentPathSelected = (config) => {
   if (!config || typeof config !== 'object') return config;
@@ -20,65 +21,62 @@ const ensureCurrentPathSelected = (config) => {
   };
 };
 
-export const getGlobalConfigCache = () => clone(globalConfigCache);
-export const initializeGlobalConfig = () => {
+export const getLive2denvConfigCache = () => clone(live2denvConfigCache);
+
+export const getGlobalModelConfig = () => ensureGlobalModelConfigLoaded();
+
+export const initializeLive2denvConfig = () => {
   ensureConfigDirectories();
-  const loaded = loadGlobalConfig();
+  const loaded = loadLive2denvConfig();
   const ensured = ensureCurrentPathSelected(loaded);
   if (ensured !== loaded) {
     try {
-      globalConfigCache = saveGlobalConfig(ensured);
+      live2denvConfigCache = saveLive2denvConfig(ensured);
     } catch {
-      globalConfigCache = clone(ensured);
+      live2denvConfigCache = clone(ensured);
     }
   } else {
-    globalConfigCache = loaded;
+    live2denvConfigCache = loaded;
   }
-  return getGlobalConfigCache();
+  return getLive2denvConfigCache();
 };
 
-export const reloadGlobalConfigCache = () => {
-  const loaded = loadGlobalConfig();
+export const reloadLive2denvConfigCache = () => {
+  const loaded = loadLive2denvConfig();
   const ensured = ensureCurrentPathSelected(loaded);
   if (ensured !== loaded) {
     try {
-      globalConfigCache = saveGlobalConfig(ensured);
+      live2denvConfigCache = saveLive2denvConfig(ensured);
     } catch {
-      globalConfigCache = clone(ensured);
+      live2denvConfigCache = clone(ensured);
     }
   } else {
-    globalConfigCache = loaded;
+    live2denvConfigCache = loaded;
   }
-  return getGlobalConfigCache();
+  return getLive2denvConfigCache();
 };
 
-export const setGlobalConfigCache = (nextConfig) => {
-  globalConfigCache = clone(nextConfig);
+export const setLive2denvConfigCache = (nextConfig) => {
+  live2denvConfigCache = clone(nextConfig);
 };
 
-export const applyGlobalConfigCachePatch = (patch = {}) => {
-  const merged = { ...globalConfigCache, ...(patch || {}) };
-  if (patch && typeof patch === 'object' && 'GLOBAL' in patch) {
-    merged.GLOBAL = {
-      ...globalConfigCache.GLOBAL,
-      ...(patch.GLOBAL || {}),
-    };
-  }
+export const applyLive2denvConfigCachePatch = (patch = {}) => {
+  const merged = { ...live2denvConfigCache, ...(patch || {}) };
   const ensured = ensureCurrentPathSelected(merged);
   try {
-    const saved = saveGlobalConfig(ensured);
-    globalConfigCache = clone(saved) ?? { ...DEFAULT_GLOBAL_CONFIG };
+    const saved = saveLive2denvConfig(ensured);
+    live2denvConfigCache = clone(saved) ?? { ...DEFAULT_LIVE2DENV_CONFIG };
   } catch (error) {
     console.warn('[pet] update global config failed', error);
-    globalConfigCache = clone(ensured);
+    live2denvConfigCache = clone(ensured);
   }
-  return getGlobalConfigCache();
+  return getLive2denvConfigCache();
 };
 
-export const getCurrentModelPath = () => globalConfigCache?.CURRENT_PATH ?? null;
+export const getCurrentModelPath = () => live2denvConfigCache?.CURRENT_PATH ?? null;
 
 export const listModelPaths = () => (
-  Array.isArray(globalConfigCache?.VITE_MODEL_PATHS)
-    ? [...globalConfigCache.VITE_MODEL_PATHS]
+  Array.isArray(live2denvConfigCache?.VITE_MODEL_PATHS)
+    ? [...live2denvConfigCache.VITE_MODEL_PATHS]
     : []
 );

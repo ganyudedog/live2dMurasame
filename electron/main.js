@@ -3,23 +3,23 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
     initializeRuntimeConfig,
-    reloadGlobalConfig,
+    reloadLive2denvConfig,
     getConfigSnapshot,
-    getGlobalConfigCache,
-    applyGlobalConfigPatch,
+    getLive2denvConfigCache,
+    applyLive2denvConfigPatch,
     getModelConfigState,
     applyModelConfigPatch,
     listModelPaths,
-    getLastEnvOverrides,
+    getLastConfigOverrides,
     getDefaultModelConfig,
 } from './runtime/index.js';
 import {
-    ensureLive2denvGlobalLoaded,
-    overrideLive2denvGlobalCache,
-    persistLive2denvGlobal,
-    invalidateLive2denvGlobalCache,
+    ensureGlobalModelConfigLoaded,
+    overrideGlobalModelConfigCache,
+    persistGlobalModelConfig,
+    invalidateGlobalModelConfigCache,
     applyAutoLaunchSetting,
-    getLive2denvGlobalSnapshot,
+    getGlobalModelConfigSnapshot,
 } from './config/live2dGlobal.js';
 import { detectModelFilePath } from './utils/path.js';
 
@@ -107,6 +107,72 @@ const loadControlPanelWindow = (target) => {
         target.loadURL(`${devServerUrl}?window=control-panel`);
     } else {
         target.loadFile(rootIndex, { query: { window: 'control-panel' } });
+    }
+};
+
+const pickModelDirViaDialog = async (parentWindow) => {
+    try {
+        const options = {
+            title: '选择 Live2D 模型文件（*.model3.json）',
+            properties: ['openFile'],
+            filters: [
+                { name: 'Live2D 模型（*.model3.json）', extensions: ['json'] },
+                { name: '所有文件', extensions: ['*'] },
+            ],
+        };
+
+        const result = parentWindow
+            ? await dialog.showOpenDialog(parentWindow, options)
+            : await dialog.showOpenDialog(options);
+        if (result.canceled) return null;
+        const picked = result.filePaths?.[0] ?? null;
+        if (!picked) return null;
+
+        const hit = detectModelFilePath(picked);
+        if (!hit) {
+            try {
+                const messageBoxOptions = {
+                    type: 'warning',
+                    message: '请选择以 .model3.json 结尾的 Live2D 模型文件。',
+                };
+                if (parentWindow) {
+                    await dialog.showMessageBox(parentWindow, messageBoxOptions);
+                } else {
+                    await dialog.showMessageBox(messageBoxOptions);
+                }
+            } catch {}
+            return null;
+        }
+        return path.dirname(hit);
+    } catch (error) {
+        console.warn('[pet] pick model file failed', error);
+        return null;
+    }
+};
+
+const ensureModelSelectedOnStartup = async () => {
+    try {
+        const cfg = getLive2denvConfigCache();
+        const list = Array.isArray(cfg?.VITE_MODEL_PATHS) ? cfg.VITE_MODEL_PATHS.filter(Boolean) : [];
+        const hasCurrent = typeof cfg?.CURRENT_PATH === 'string' && cfg.CURRENT_PATH.trim();
+        if (hasCurrent || list.length) return;
+
+        const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+        try {
+            parentWindow?.show();
+            parentWindow?.focus();
+        } catch {}
+
+        const dir = await pickModelDirViaDialog(parentWindow);
+        if (!dir) return;
+
+        const snapshot = applyLive2denvConfigPatch({
+            VITE_MODEL_PATHS: [dir],
+            CURRENT_PATH: dir,
+        });
+        broadcastConfigSnapshot(snapshot, { live2denv: true, model: true });
+    } catch (error) {
+        console.warn('[pet] ensure model selected on startup failed', error);
     }
 };
 
@@ -215,14 +281,16 @@ const buildMainContextMenu = () => {
 };
 
 // 广播配置快照更新到所有窗口
-const broadcastConfigSnapshot = (snapshot, options = { global: true, model: true }) => {
+const broadcastConfigSnapshot = (snapshot, options = { live2denv: true, model: true }) => {
     if (!snapshot) return;
     const targets = BrowserWindow.getAllWindows();
     const sharedPayload = {
-        global: snapshot.global,
+        live2denvConfig: snapshot.live2denvConfig,
+        globalModelConfig: snapshot.globalModelConfig,
         modelConfig: snapshot.modelConfig,
-        envOverrides: snapshot.envOverrides,
+        configOverrides: snapshot.configOverrides,
         activeModelPath: snapshot.activeModelPath,
+        activeModelFileUrl: snapshot.activeModelFileUrl,
     };
 
     targets.forEach((win) => {
@@ -230,8 +298,8 @@ const broadcastConfigSnapshot = (snapshot, options = { global: true, model: true
 
         win.webContents.send('pet:configSnapshotUpdated', sharedPayload);
 
-        if (options.global) {
-            win.webContents.send('pet:globalConfigUpdated', {
+        if (options.live2denv) {
+            win.webContents.send('pet:live2denvConfigUpdated', {
                 ...sharedPayload,
                 snapshot,
             });
@@ -247,12 +315,12 @@ const broadcastConfigSnapshot = (snapshot, options = { global: true, model: true
     });
 };
 
-const broadcastLive2denvGlobal = () => {
+const broadcastGlobalModelConfig = () => {
     const targets = [mainWindow, controlPanelWindow];
-    const settings = getLive2denvGlobalSnapshot();
+    const config = getGlobalModelConfigSnapshot();
     targets.forEach((target) => {
         if (target && !target.isDestroyed()) {
-            target.webContents.send('pet:persistentSettingsUpdated', settings);
+            target.webContents.send('pet:globalModelConfigUpdated', config);
         }
     });
 };
@@ -309,8 +377,8 @@ const createMainWindow = () => {
     return mainWindow;
 };
 
-ipcMain.handle('pet:getLive2denvGlobal', () => {
-    return ensureLive2denvGlobalLoaded();
+ipcMain.handle('pet:getGlobalModelConfig', () => {
+    return ensureGlobalModelConfigLoaded();
 });
 
 ipcMain.handle('pet:config:getSnapshot', () => {
@@ -323,10 +391,13 @@ ipcMain.on('pet:config:getSnapshotSync', (event) => {
     } catch (error) {
         console.warn('[pet] get config snapshot sync failed', error);
         event.returnValue = {
-            global: getGlobalConfigCache(),
+            live2denvConfig: getLive2denvConfigCache(),
+            globalModelConfig: ensureGlobalModelConfigLoaded(),
             activeModelPath: null,
+            modelKey: null,
+            activeModelFileUrl: null,
             modelConfig: getDefaultModelConfig(),
-            envOverrides: getLastEnvOverrides(),
+            configOverrides: getLastConfigOverrides(),
         };
     }
 });
@@ -346,14 +417,56 @@ ipcMain.on('pet:isDevToolsOpenedSync', (event) => {
     }
 });
 
-ipcMain.handle('pet:getGlobalConfig', () => {
-    return getGlobalConfigCache();
+ipcMain.handle('pet:getLive2denvConfig', () => {
+    return getLive2denvConfigCache();
 });
 
-ipcMain.handle('pet:updateGlobalConfig', (_event, patch = {}) => {
-    const snapshot = applyGlobalConfigPatch(patch || {});
-    broadcastConfigSnapshot(snapshot, { global: true, model: true });
-    return snapshot.global;
+const sanitizeGlobalModelConfigPatch = (patch) => {
+    const safePatch = {};
+    if (!patch || typeof patch !== 'object') return safePatch;
+    if (typeof patch.showDragHandleOnHover === 'boolean') safePatch.showDragHandleOnHover = patch.showDragHandleOnHover;
+    if (typeof patch.autoLaunch === 'boolean') safePatch.autoLaunch = patch.autoLaunch;
+    if (typeof patch.ignoreMouse === 'boolean') safePatch.ignoreMouse = patch.ignoreMouse;
+    if (typeof patch.scale === 'number') safePatch.scale = patch.scale;
+    if (typeof patch.forcedFollow === 'boolean') safePatch.forcedFollow = patch.forcedFollow;
+    if (typeof patch.debugModeEnabled === 'boolean') safePatch.debugModeEnabled = patch.debugModeEnabled;
+    return safePatch;
+};
+
+const applyGlobalModelConfigPatch = (patch) => {
+    const safePatch = sanitizeGlobalModelConfigPatch(patch);
+    if (!Object.keys(safePatch).length) {
+        return ensureGlobalModelConfigLoaded();
+    }
+
+    const current = ensureGlobalModelConfigLoaded();
+    const next = { ...current, ...safePatch };
+    overrideGlobalModelConfigCache(next);
+    persistGlobalModelConfig(next);
+    invalidateGlobalModelConfigCache();
+
+    const snapshot = reloadLive2denvConfig();
+    broadcastGlobalModelConfig();
+    broadcastConfigSnapshot(snapshot, { live2denv: true, model: false });
+
+    if (Object.prototype.hasOwnProperty.call(safePatch, 'autoLaunch')) {
+        applyAutoLaunchSetting(safePatch.autoLaunch);
+    }
+
+    return { ...next };
+};
+
+ipcMain.handle('pet:updateLive2denvConfig', (_event, patch = {}) => {
+    if (!patch || typeof patch !== 'object' || !Object.keys(patch).length) {
+        return getLive2denvConfigCache();
+    }
+    const snapshot = applyLive2denvConfigPatch(patch);
+    broadcastConfigSnapshot(snapshot, { live2denv: true, model: true });
+    return snapshot.live2denvConfig;
+});
+
+ipcMain.handle('pet:updateGlobalModelConfig', (_event, patch = {}) => {
+    return applyGlobalModelConfigPatch(patch);
 });
 
 ipcMain.handle('pet:getModelConfig', (_event, modelPath) => {
@@ -367,13 +480,17 @@ ipcMain.handle('pet:updateModelConfig', (_event, payload = {}) => {
         return {
             modelPath: result.activeModelPath,
             config: result.modelConfig,
-            envOverrides: result.envOverrides,
+            configOverrides: result.configOverrides,
+            modelKey: result.modelKey ?? null,
+            activeModelFileUrl: result.activeModelFileUrl ?? null,
         };
     }
     return {
         modelPath: null,
         config: getDefaultModelConfig(),
-        envOverrides: getLastEnvOverrides(),
+        configOverrides: getLastConfigOverrides(),
+        modelKey: null,
+        activeModelFileUrl: null,
     };
 });
 
@@ -381,56 +498,18 @@ ipcMain.handle('pet:listModelPaths', () => {
     return listModelPaths();
 });
 
-// 方案 A：使用主进程原生对话框拿到真实文件路径。
+// 使用主进程原生对话框拿到真实文件路径。
 // 只允许选择 *.model3.json（UI 过滤只能做到 json，后缀校验在这里做）。
 // 返回值统一为“模型目录绝对路径”（符合 offset.md：VITE_MODEL_PATHS/CURRENT_PATH 存目录）。
 ipcMain.handle('pet:pickModelFile', async () => {
+    const parentWindow = BrowserWindow.getFocusedWindow()
+        ?? (controlPanelWindow && !controlPanelWindow.isDestroyed() ? controlPanelWindow : null)
+        ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
     try {
-        const parentWindow = BrowserWindow.getFocusedWindow()
-            ?? (controlPanelWindow && !controlPanelWindow.isDestroyed() ? controlPanelWindow : null)
-            ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
-
-        try {
-            parentWindow?.show();
-            parentWindow?.focus();
-        } catch {}
-
-        const options = {
-            title: '选择 Live2D 模型文件（*.model3.json）',
-            properties: ['openFile'],
-            filters: [
-                { name: 'Live2D 模型（*.model3.json）', extensions: ['json'] },
-                { name: '所有文件', extensions: ['*'] },
-            ],
-        };
-
-        const result = parentWindow
-            ? await dialog.showOpenDialog(parentWindow, options)
-            : await dialog.showOpenDialog(options);
-        if (result.canceled) return null;
-        const picked = result.filePaths?.[0] ?? null;
-        if (!picked) return null;
-
-        const hit = detectModelFilePath(picked);
-        if (!hit) {
-            try {
-                const messageBoxOptions = {
-                    type: 'warning',
-                    message: '请选择以 .model3.json 结尾的 Live2D 模型文件。',
-                };
-                if (parentWindow) {
-                    await dialog.showMessageBox(parentWindow, messageBoxOptions);
-                } else {
-                    await dialog.showMessageBox(messageBoxOptions);
-                }
-            } catch {}
-            return null;
-        }
-        return path.dirname(hit);
-    } catch (error) {
-        console.warn('[pet] pick model file failed', error);
-        return null;
-    }
+        parentWindow?.show();
+        parentWindow?.focus();
+    } catch {}
+    return pickModelDirViaDialog(parentWindow);
 });
 
 ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
@@ -550,66 +629,26 @@ ipcMain.handle('pet:getWindowBounds', (event) => {
     }
 });
 
-ipcMain.handle('pet:updateLive2denvGlobal', (_event, patch = {}) => {
-    const safePatch = {};
-    if (patch && typeof patch === 'object') {
-        if (typeof patch.showDragHandleOnHover === 'boolean') {
-            safePatch.showDragHandleOnHover = patch.showDragHandleOnHover;
-        }
-        if (typeof patch.autoLaunch === 'boolean') {
-            safePatch.autoLaunch = patch.autoLaunch;
-        }
-        if (typeof patch.ignoreMouse === 'boolean') {
-            safePatch.ignoreMouse = patch.ignoreMouse;
-        }
-        if (typeof patch.scale === 'number') {
-            safePatch.scale = patch.scale;
-        }
-        if (typeof patch.forcedFollow === 'boolean') {
-            safePatch.forcedFollow = patch.forcedFollow;
-        }
-        if (typeof patch.debugModeEnabled === 'boolean') {
-            safePatch.debugModeEnabled = patch.debugModeEnabled;
-        }
-    }
 
-    if (!Object.keys(safePatch).length) {
-        return ensureLive2denvGlobalLoaded();
-    }
-
-    const current = ensureLive2denvGlobalLoaded();
-    const next = { ...current, ...safePatch };
-    // 复写缓存
-    overrideLive2denvGlobalCache(next);
-    // 持久化到配置文件
-    persistLive2denvGlobal(next);
-    // 使缓存失效以便下次重新加载
-    invalidateLive2denvGlobalCache();
-    
-    const snapshot = reloadGlobalConfig();
-    broadcastLive2denvGlobal();
-    broadcastConfigSnapshot(snapshot, { global: true, model: false });
-
-    if (Object.prototype.hasOwnProperty.call(safePatch, 'autoLaunch')) {
-        applyAutoLaunchSetting(safePatch.autoLaunch);
-    }
-    return { ...next };
-});
 
 app.on('before-quit', () => {
     isQuitting = true;
 });
 
 app.whenReady().then(async () => {
-    const loadedSettings = ensureLive2denvGlobalLoaded();
-    applyAutoLaunchSetting(loadedSettings.autoLaunch);
+    const loadedConfig = ensureGlobalModelConfigLoaded();
+    applyAutoLaunchSetting(loadedConfig.autoLaunch);
     try {
         const snapshot = initializeRuntimeConfig();
-        console.log('[pet] global config loaded', snapshot.global);
+        console.log('[pet] config loaded', {
+            live2denvConfig: snapshot.live2denvConfig,
+            globalModelConfig: snapshot.globalModelConfig,
+        });
     } catch (error) {
         console.warn('[pet] failed to initialize config directories', error);
     }
     createMainWindow();
+    await ensureModelSelectedOnStartup();
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
             createMainWindow();

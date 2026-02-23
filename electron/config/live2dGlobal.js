@@ -1,55 +1,55 @@
 import { app } from 'electron';
 import {
-  loadGlobalSettings,
-  saveGlobalSettings,
+  loadGlobalModelConfig,
+  saveGlobalModelConfig,
 } from './configManager.js';
-import { normalizeLive2denvGlobal } from './globalConfig.js';
+import { normalizeGlobalModelConfig } from './globalConfig.js';
 
-let settingsCache = normalizeLive2denvGlobal();
+let globalModelConfigCache = normalizeGlobalModelConfig();
 let settingsLoaded = false;
 
-// 从全局配置文件中获取GLOBAL
-const loadLive2denvGlobalFromConfig = () => {
+// 从全局模型配置文件中读取 globalModelConfig
+const loadGlobalModelConfigFromDisk = () => {
   try {
-    return normalizeLive2denvGlobal(loadGlobalSettings());
+    return normalizeGlobalModelConfig(loadGlobalModelConfig());
   } catch (error) {
-    console.warn('[pet] load settings failed', error);
-    return normalizeLive2denvGlobal();
+    console.warn('[pet] load globalModelConfig failed', error);
+    return normalizeGlobalModelConfig();
   }
 };
 
-export const ensureLive2denvGlobalLoaded = () => {
+export const ensureGlobalModelConfigLoaded = () => {
   if (!settingsLoaded && app.isReady()) {
-    settingsCache = loadLive2denvGlobalFromConfig();
+    globalModelConfigCache = loadGlobalModelConfigFromDisk();
     settingsLoaded = true;
   }
-  return { ...settingsCache };
+  return { ...globalModelConfigCache };
 };
 
-export const overrideLive2denvGlobalCache = (next) => {
-  settingsCache = normalizeLive2denvGlobal(next || {});
+export const overrideGlobalModelConfigCache = (next) => {
+  globalModelConfigCache = normalizeGlobalModelConfig(next || {});
   settingsLoaded = true;
 };
 
-// 保存到全局配置文件中
-export const persistLive2denvGlobal = (settings) => {
+// 保存到全局模型配置文件中
+export const persistGlobalModelConfig = (config) => {
   if (!app.isReady()) {
     return;
   }
-  const normalized = normalizeLive2denvGlobal(settings);
-  settingsCache = normalized;
+  const normalized = normalizeGlobalModelConfig(config);
+  globalModelConfigCache = normalized;
   try {
-    saveGlobalSettings(normalized);
+    saveGlobalModelConfig(normalized);
   } catch (error) {
-    console.warn('[pet] save settings failed', error);
+    console.warn('[pet] save globalModelConfig failed', error);
   }
 };
 
-export const invalidateLive2denvGlobalCache = () => {
+export const invalidateGlobalModelConfigCache = () => {
   settingsLoaded = false;
 };
 
-export const getLive2denvGlobalSnapshot = () => ({ ...settingsCache });
+export const getGlobalModelConfigSnapshot = () => ({ ...globalModelConfigCache });
 
 export const applyAutoLaunchSetting = (enabled) => {
   try {

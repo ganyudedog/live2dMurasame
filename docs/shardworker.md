@@ -77,7 +77,7 @@ SharedWorker 是否共享取决于：
 
 后续（可选）：
 - electron/main.js
-	- 新增低频落盘 handler（或复用现有 updateLive2denvGlobal），从 renderer 侧定时提交
+	- 新增低频落盘 handler（或复用现有 updateGlobalModelConfig），从 renderer 侧定时提交
 
 ---
 
@@ -206,18 +206,18 @@ type PatchedMsg = {
 
 ---
 
-## 9. 与 live2denv.json（GLOBAL）对接策略（先实时，后持久化）
+## 9. 与 globalModelConfig.json 对接策略（先实时，后持久化）
 
 阶段 1（先跑通实时）：
 - Worker 的初始 `global` 从 renderer 默认值或从 main 拉取一次（二选一）。
 - 不写盘。
 
-阶段 2（接入真实 GLOBAL 并落盘，仍不影响实时）：
-- 启动时：renderer 调用 main 的 `getLive2denvGlobal` 取 `GLOBAL`，作为 worker 初始 state。
+阶段 2（接入真实 globalModelConfig 并落盘，仍不影响实时）：
+- 启动时：renderer 调用 main 的 `getGlobalModelConfig` 取全局模型设置，作为 worker 初始 state。
 - 实时变更：仍走 worker。
 - 落盘：控制面板（或任一窗口）监听 worker 的变更，做 800ms 左右的低频提交到 main：
-	- `updateLive2denvGlobal(fullOrPatch)`
-	- main 负责写入 `live2denv.json`
+	- `updateGlobalModelConfig(fullOrPatch)`
+	- main 负责写入 `globalModelConfig.json`
 
 说明：落盘慢一点不会影响模型实时预览。
 

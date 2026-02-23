@@ -1,7 +1,7 @@
 declare global {
   type PetModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
-  interface PetSettingsPayload {
+  interface PetGlobalModelConfigPayload {
     scale?: number;
     ignoreMouse?: boolean;
     showDragHandleOnHover?: boolean;
@@ -10,20 +10,20 @@ declare global {
     debugModeEnabled?: boolean;
   }
 
-  interface PetGlobalConfig {
+  interface PetLive2denvConfig {
     VITE_TOUCH_PRIORITY: string[];
     VITE_MODEL_PATHS: string[];
-    VITE_DEBUG: boolean;
     CURRENT_PATH: string | null;
-    GLOBAL: {
-      scale: number;
-      ignoreMouse: boolean;
-      autoLaunch: boolean;
-      showDragHandleOnHover: boolean;
-      forcedFollow: boolean;
-      debugModeEnabled: boolean;
-    };
     [key: string]: unknown;
+  }
+
+  interface PetGlobalModelConfig {
+    scale: number;
+    ignoreMouse: boolean;
+    autoLaunch: boolean;
+    showDragHandleOnHover: boolean;
+    forcedFollow: boolean;
+    debugModeEnabled: boolean;
   }
 
   interface PetVisualFrameConfig {
@@ -57,10 +57,13 @@ declare global {
   }
 
   interface PetConfigSnapshot {
-    global: PetGlobalConfig;
+    live2denvConfig: PetLive2denvConfig;
+    globalModelConfig: PetGlobalModelConfig;
     activeModelPath: string | null;
+    modelKey: string | null;
+    activeModelFileUrl: string | null;
     modelConfig: PetModelConfig | null;
-    envOverrides: Record<string, string>;
+    configOverrides: Record<string, string>;
   }
 
   type PetControlAction =
@@ -75,25 +78,26 @@ declare global {
 
   interface PetAPI {
     setSize?: (width: number,height:number) => Promise<void>;
-    getLive2denvGlobal?: () => Promise<PetSettingsPayload | undefined>;
-    updateLive2denvGlobal?: (patch: PetSettingsPayload) => Promise<PetSettingsPayload | undefined>;
-    onLive2denvGlobalUpdated?: (callback: (settings: PetSettingsPayload) => void) => (() => void) | void;
+    getGlobalModelConfig?: () => Promise<PetGlobalModelConfigPayload | undefined>;
+    updateGlobalModelConfig?: (patch: PetGlobalModelConfigPayload) => Promise<PetGlobalModelConfigPayload | undefined>;
+    onGlobalModelConfigUpdated?: (callback: (config: PetGlobalModelConfigPayload) => void) => (() => void) | void;
     
     getConfigSnapshot?: () => PetConfigSnapshot | undefined;
-    getGlobalConfig?: () => Promise<PetGlobalConfig | undefined>;
-    updateGlobalConfig?: (patch: Partial<PetGlobalConfig>) => Promise<PetGlobalConfig | undefined>;
-    getModelConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; config: PetModelConfig | null; envOverrides: Record<string, string> } | undefined>;
-    updateModelConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; config: PetModelConfig | null; envOverrides: Record<string, string> } | undefined>;
+
+    // Live2denvConfig：liv2denv.json（模型列表/当前模型等）。
+    getLive2denvConfig?: () => Promise<PetLive2denvConfig | undefined>;
+    updateLive2denvConfig?: (patch: Partial<PetLive2denvConfig>) => Promise<PetLive2denvConfig | undefined>;
+    onLive2denvConfigUpdated?: (callback: (payload: { live2denvConfig?: PetLive2denvConfig | null; globalModelConfig?: PetGlobalModelConfig | null; activeModelPath?: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
+    getModelConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
+    updateModelConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
     listModelPaths?: () => Promise<string[] | undefined>;
     pickModelFile?: () => Promise<string | null | undefined>;
-    onGlobalConfigUpdated?: (callback: (payload: { global?: PetGlobalConfig | null; activeModelPath?: string | null; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
-    onModelConfigUpdated?: (callback: (payload: { modelPath?: string | null; config?: PetModelConfig | null; envOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
+    onModelConfigUpdated?: (callback: (payload: { modelPath?: string | null; modelFileUrl?: string | null; modelKey?: string | null; config?: PetModelConfig | null; configOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
   }
 
   interface Window {
     petAPI?: PetAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
-    __PET_ENV__?: Record<string, string>;
   }
 }
 

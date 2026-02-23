@@ -78,8 +78,8 @@ UI 组件（DOM overlay）：
 - `MotionManager.getMotionMeta()`：给 `PetCanvas` 的气泡文本与音频路径
 
 与 IPC/控制面板耦合点（你要“移除干扰”的根源就在这里）：
-- `loadSettings()`：通过 `petAPI.getLive2denvGlobal()` 从主进程加载持久化设置（scale/ignoreMouse/...）
-- `setIgnoreMouse/setShowDragHandleOnHover/...`：调用 `petAPI.updateLive2denvGlobal()` 写回主进程
+- `loadSettings()`：通过 `petAPI.getGlobalModelConfig()` 从主进程加载持久化设置（scale/ignoreMouse/...）
+- `setIgnoreMouse/setShowDragHandleOnHover/...`：调用 `petAPI.updateGlobalModelConfig()` 写回主进程
 - `setScale()`：**不直接 IPC**，而是 `sharedStoreClient.dispatchPatch([{ path: 'global.scale', value }])`
 - `connectSharedWorkerScale()`：订阅 SharedWorker 的 scale 广播并写入 store
 
@@ -125,7 +125,7 @@ UI 组件（DOM overlay）：
 
 1) `usePetSettings(loadSettings)`
 - 触发 `usePetStore.loadSettings()`
-- 从主进程拉取 `live2denvGlobal`（若可用）
+- 从主进程拉取 `globalModelConfig`
 - 最终把 `settingsLoaded` 置为 true
 
 2) `connectSharedWorkerScale()`
@@ -426,7 +426,7 @@ ContextZone 的布局由纯函数 `computeContextZone()` 负责：
 - 这是“实时干扰”的主路径
 
 2) **Pet → petAPI(IPC) → 主进程**
-- 设置持久化（live2denvGlobal）
+- 设置持久化（globalModelConfig）
 - 鼠标穿透/光标轮询/窗口 bounds 等系统能力
 
 你说的“先移除干扰”，可以拆成两个不同目标：

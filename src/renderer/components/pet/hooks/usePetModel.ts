@@ -4,6 +4,7 @@ import { Application, Ticker } from 'pixi.js';
 import { loadModel } from '../live2dManage/loader';
 import { Live2DModel } from '../live2dManage/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2dManage/runtime';
+import { agg, debug as logDebug, error, sample, warn } from '../../../utils/log';
 
 export interface UsePetModelParams {
   settingsLoaded: boolean;
@@ -94,7 +95,14 @@ export const usePetModel = ({
 
     const onBoundsChanged = (bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
       try {
-        console.log('[PetCanvas] onBoundsChanged received', bounds);
+        agg({
+          level: 'debug',
+          ns: 'pet.window',
+          event: 'bounds.changed',
+          key: bounds?.requestId ?? 'noRid',
+          windowMs: 800,
+          data: bounds ? { ...bounds } : { missing: true },
+        });
         try {
           handleWindowBoundsAck?.(bounds);
         } catch {
@@ -104,7 +112,15 @@ export const usePetModel = ({
           const prev = windowBoundsRef.current;
           windowBoundsRef.current = bounds;
           alignWindowToCenterLine(bounds);
-          console.log('[PetCanvas] windowBoundsRef updated', windowBoundsRef.current);
+
+          agg({
+            level: 'debug',
+            ns: 'pet.window',
+            event: 'bounds.accepted',
+            key: bounds.requestId ?? 'noRid',
+            windowMs: 800,
+            data: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+          });
 
           const moveOnly = Boolean(prev)
             && Math.abs(bounds.x - (prev as any).x) > 0
@@ -112,12 +128,19 @@ export const usePetModel = ({
             && (Math.abs(bounds.height - (prev as any).height) <= 1);
           if (moveOnly) return;
         } else {
-          console.log('[PetCanvas] windowBoundsRef ignored due to invalid payload');
+          agg({
+            level: 'debug',
+            ns: 'pet.window',
+            event: 'bounds.ignored',
+            key: 'invalid',
+            windowMs: 2000,
+            data: bounds ? { ...bounds } : { missing: true },
+          });
         }
         updateBubblePosition(true);
         updateDragHandlePosition(true);
       } catch (e) {
-        console.log('[PetCanvas] onBoundsChanged error', e);
+        warn('pet.window', 'bounds.handlerError', { err: String(e) });
       }
     };
     try {
@@ -236,8 +259,10 @@ export const usePetModel = ({
             const ids: string[] = [];
             for (let i = 0; i < count; i++) ids.push(core.getParameterId?.(i));
             paramCacheRef.current = ids;
-            console.log('[EyeDebug] ids', ids);
-          } catch (e) { console.log('[EyeDebug] list ids failed', e); }
+            logDebug('pet.eye', 'paramIds.cached', { count: ids.length, preview: ids.slice(0, 10) });
+          } catch (e) {
+            logDebug('pet.eye', 'paramIds.cacheFailed', { err: String(e) });
+          }
         }
 
         const motionMgr = internal?.motionManager || internal?._motionManager || internal?.animator || internal?._animator;
@@ -277,7 +302,23 @@ export const usePetModel = ({
         core.setParameterValueById?.('ParamAngleY', clampedAngleY);
 
         if (debugMotion && frameCountRef.current % 60 === 0) {
-          console.log('[MotionDebug][blendTick]', { idle, blend, target: { x: targetX, y: targetY }, result: { newEyeX, newEyeY: clampedEyeY, newAngleX, newAngleY: clampedAngleY } });
+          sample({
+            level: 'debug',
+            ns: 'pet.eye',
+            event: 'blendTick',
+            key: 'blend',
+            intervalMs: 500,
+            data: {
+              idle,
+              blend,
+              targetX,
+              targetY,
+              eyeX: newEyeX,
+              eyeY: clampedEyeY,
+              angleX: newAngleX,
+              angleY: clampedAngleY,
+            },
+          });
         }
 
         updateBubblePosition();
@@ -340,7 +381,14 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamAngleX', writeAX);
               core.setParameterValueById?.('ParamAngleY', clampedAY);
               if (debug() && frameCountRef.current % 60 === 0) {
-                console.log('[EyeGuard][afterMotion]', { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
+                sample({
+                  level: 'debug',
+                  ns: 'pet.eye',
+                  event: 'guard.afterMotion',
+                  key: 'guard',
+                  intervalMs: 500,
+                  data: { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY },
+                });
               }
             } catch { /* swallow */ }
           }
@@ -351,7 +399,7 @@ export const usePetModel = ({
 
       const ok = wrap('updateMotion') || wrap('update');
       if (ok) (motionMgr as any).__eyeGuardPatched = true;
-      if (debug()) console.log('[EyeGuard] motion manager patched with', ok ? 'success' : 'no-op');
+      if (debug()) logDebug('pet.eye', 'guard.motionManagerPatched', { ok });
     };
 
     const installInternalAfterUpdatePatch = (modelInstance: Live2DModelType) => {
@@ -397,12 +445,19 @@ export const usePetModel = ({
           core.setParameterValueById?.('ParamAngleX', writeAX);
           core.setParameterValueById?.('ParamAngleY', clampedAY);
           if (((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) && frameCountRef.current % 60 === 0) {
-            console.log('[EyePatch][afterInternalUpdate]', { idleNow, blend, result: { writeX, writeY: clampedY, writeAX, writeAY: clampedAY } });
+            sample({
+              level: 'debug',
+              ns: 'pet.eye',
+              event: 'patch.afterInternalUpdate',
+              key: 'internal',
+              intervalMs: 500,
+              data: { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY },
+            });
           }
         } catch { /* swallow */ }
       };
       if ((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) {
-        console.log('[EyePatch] internal.update patched');
+        logDebug('pet.eye', 'patch.internalUpdatePatched');
       }
     };
 
@@ -468,7 +523,14 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamAngleX', writeAngleX);
               core.setParameterValueById?.('ParamAngleY', writeAngleY);
               if (debugEnabled && frameCountRef.current % 60 === 0) {
-                console.log('[MotionDebug][forceAfter]', { idleNow, blend, result: { writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY } });
+                sample({
+                  level: 'debug',
+                  ns: 'pet.eye',
+                  event: 'forceAfter',
+                  key: 'force',
+                  intervalMs: 500,
+                  data: { idleNow, blend, writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY },
+                });
               }
             }
             if (!debugEnabled || frameCountRef.current % 30 !== 0) return;
@@ -481,7 +543,7 @@ export const usePetModel = ({
                 isIdle: idleNow,
                 forceAlways,
               };
-              console.log('[MotionDebug][postUpdate]', {
+              logDebug('pet.motion', 'postUpdate', {
                 EyeBallX: core.getParameterValueById?.('ParamEyeBallX'),
                 EyeBallY: core.getParameterValueById?.('ParamEyeBallY'),
                 AngleX: core.getParameterValueById?.('ParamAngleX'),
@@ -492,7 +554,7 @@ export const usePetModel = ({
           });
         }
       } catch (err) {
-        console.error('Load model failed', err);
+        error('pet.model', 'load.failed', { modelPath, err: String(err) });
         setModelLoadStatus('error', (err as Error).message);
       }
     })();

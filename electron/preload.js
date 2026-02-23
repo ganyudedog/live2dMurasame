@@ -1,38 +1,45 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-const applyEnvOverrides = (overrides = {}) => {
-  Object.entries(overrides).forEach(([key, value]) => {
-    if (typeof value === 'string') {
-      process.env[key] = value;
-    }
-  });
-};
-
-
 // 类似一个缓存表，存储主进程中配置的快照，方便渲染进程快速访问
 const configSnapshot = {
-  global: null,
+  live2denvConfig: null,
+  globalModelConfig: null,
   activeModelPath: null,
+  modelKey: null,
+  activeModelFileUrl: null,
   modelConfig: null,
-  envOverrides: {},
+  configOverrides: {},
 };
 
 // 冻结渲染进程，即前端的启动
 try {
   const initial = ipcRenderer.sendSync('pet:config:getSnapshotSync');
   if (initial && typeof initial === 'object') {
-    configSnapshot.global = initial.global ?? null;
+    configSnapshot.live2denvConfig = initial.live2denvConfig ?? null;
+    configSnapshot.globalModelConfig = initial.globalModelConfig ?? null;
     configSnapshot.activeModelPath = initial.activeModelPath ?? null;
+    configSnapshot.modelKey = initial.modelKey ?? null;
+    configSnapshot.activeModelFileUrl = initial.activeModelFileUrl ?? null;
     configSnapshot.modelConfig = initial.modelConfig ?? null;
-    configSnapshot.envOverrides = initial.envOverrides ?? {};
-    applyEnvOverrides(configSnapshot.envOverrides);
+    configSnapshot.configOverrides = initial.configOverrides ?? {};
   }
 } catch (error) {
   console.warn('[petAPI] load config snapshot failed', error);
 }
 
-const globalConfigListeners = new Set();
+const live2denvConfigListeners = new Set();
 const modelConfigListeners = new Set();
+const getLive2denvConfigImpl = () => ipcRenderer.invoke('pet:getLive2denvConfig');
+
+const updateLive2denvConfigImpl = (patch) => ipcRenderer.invoke('pet:updateLive2denvConfig', patch);
+
+const onLive2denvConfigUpdatedImpl = (callback) => {
+  if (typeof callback !== 'function') return () => {};
+  live2denvConfigListeners.add(callback);
+  return () => {
+    live2denvConfigListeners.delete(callback);
+  };
+};
 
 // Whitelisted IPC events that renderers are allowed to subscribe to via petAPI.
 // Keep this list minimal to avoid exposing arbitrary ipcRenderer channels.
@@ -55,8 +62,12 @@ const getChannelRegistry = (channel) => {
 const dispatchSnapshotUpdate = (payload = {}) => {
   if (!payload || typeof payload !== 'object') return;
 
-  if (Object.prototype.hasOwnProperty.call(payload, 'global')) {
-    configSnapshot.global = payload.global ?? null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'live2denvConfig')) {
+    configSnapshot.live2denvConfig = payload.live2denvConfig ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'globalModelConfig')) {
+    configSnapshot.globalModelConfig = payload.globalModelConfig ?? null;
   }
 
   const nextModelConfig = Object.prototype.hasOwnProperty.call(payload, 'modelConfig')
@@ -75,30 +86,49 @@ const dispatchSnapshotUpdate = (payload = {}) => {
     configSnapshot.activeModelPath = nextModelPath ?? null;
   }
 
-  if (Object.prototype.hasOwnProperty.call(payload, 'envOverrides')) {
-    const overrides = payload.envOverrides && typeof payload.envOverrides === 'object'
-      ? { ...payload.envOverrides }
-      : {};
-    applyEnvOverrides(overrides);
-    configSnapshot.envOverrides = overrides;
+  const nextModelKey = Object.prototype.hasOwnProperty.call(payload, 'modelKey')
+    ? payload.modelKey
+    : payload.key;
+  if (Object.prototype.hasOwnProperty.call(payload, 'modelKey')
+    || Object.prototype.hasOwnProperty.call(payload, 'key')) {
+    configSnapshot.modelKey = nextModelKey ?? null;
+  }
+
+  const nextModelFileUrl = Object.prototype.hasOwnProperty.call(payload, 'activeModelFileUrl')
+    ? payload.activeModelFileUrl
+    : payload.modelFileUrl;
+  if (Object.prototype.hasOwnProperty.call(payload, 'activeModelFileUrl')
+    || Object.prototype.hasOwnProperty.call(payload, 'modelFileUrl')) {
+    configSnapshot.activeModelFileUrl = nextModelFileUrl ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'configOverrides')) {
+    const raw = payload.configOverrides;
+    configSnapshot.configOverrides = raw && typeof raw === 'object' ? { ...raw } : {};
   }
 
   const snapshotForListeners = {
-    global: configSnapshot.global,
+    live2denvConfig: configSnapshot.live2denvConfig,
+    globalModelConfig: configSnapshot.globalModelConfig,
     modelConfig: configSnapshot.modelConfig,
     activeModelPath: configSnapshot.activeModelPath,
-    envOverrides: configSnapshot.envOverrides,
+    modelKey: configSnapshot.modelKey,
+    activeModelFileUrl: configSnapshot.activeModelFileUrl,
+    configOverrides: configSnapshot.configOverrides,
   };
 
-  globalConfigListeners.forEach((listener) => {
+  live2denvConfigListeners.forEach((listener) => {
     try {
       listener({
-        global: snapshotForListeners.global,
+        live2denvConfig: snapshotForListeners.live2denvConfig,
+        globalModelConfig: snapshotForListeners.globalModelConfig,
         activeModelPath: snapshotForListeners.activeModelPath,
+        modelKey: snapshotForListeners.modelKey,
+        activeModelFileUrl: snapshotForListeners.activeModelFileUrl,
         snapshot: snapshotForListeners,
       });
     } catch (error) {
-      console.error('[petAPI] global config listener error', error);
+      console.error('[petAPI] live2denv config listener error', error);
     }
   });
 
@@ -106,8 +136,10 @@ const dispatchSnapshotUpdate = (payload = {}) => {
     try {
       listener({
         modelPath: snapshotForListeners.activeModelPath,
+        modelFileUrl: snapshotForListeners.activeModelFileUrl,
+        modelKey: snapshotForListeners.modelKey,
         config: snapshotForListeners.modelConfig,
-        envOverrides: snapshotForListeners.envOverrides,
+        configOverrides: snapshotForListeners.configOverrides,
         snapshot: snapshotForListeners,
       });
     } catch (error) {
@@ -120,7 +152,7 @@ ipcRenderer.on('pet:configSnapshotUpdated', (_event, payload) => {
   dispatchSnapshotUpdate(payload);
 });
 
-ipcRenderer.on('pet:globalConfigUpdated', (_event, payload) => {
+ipcRenderer.on('pet:live2denvConfigUpdated', (_event, payload) => {
   if (payload && typeof payload === 'object' && 'snapshot' in payload) return;
   dispatchSnapshotUpdate(payload);
 });
@@ -161,33 +193,27 @@ contextBridge.exposeInMainWorld('petAPI', {
 
   listModelPaths: () => ipcRenderer.invoke('pet:listModelPaths'),
   pickModelFile: () => ipcRenderer.invoke('pet:pickModelFile'),
-  
-  // 获取和设置live2denv中的GLOBAL
-  getLive2denvGlobal: () => ipcRenderer.invoke('pet:getLive2denvGlobal'),
-  updateLive2denvGlobal: (patch) => ipcRenderer.invoke('pet:updateLive2denvGlobal', patch),
-  onLive2denvGlobalUpdated: (callback) => {
-    const listener = (_event, settings) => {
+
+  // GlobalModelConfig（全局模型设置）：scale/ignoreMouse/autoLaunch/...
+  getGlobalModelConfig: () => ipcRenderer.invoke('pet:getGlobalModelConfig'),
+  updateGlobalModelConfig: (patch) => ipcRenderer.invoke('pet:updateGlobalModelConfig', patch),
+  onGlobalModelConfigUpdated: (callback) => {
+    const listener = (_event, config) => {
       try {
-        callback(settings);
+        callback(config);
       } catch (error) {
-        console.error('[petAPI] settings listener error', error);
+        console.error('[petAPI] globalModelConfig listener error', error);
       }
     };
-    ipcRenderer.on('pet:persistentSettingsUpdated', listener);
-    return () => ipcRenderer.removeListener('pet:persistentSettingsUpdated', listener);
+    ipcRenderer.on('pet:globalModelConfigUpdated', listener);
+    return () => ipcRenderer.removeListener('pet:globalModelConfigUpdated', listener);
   },
 
-  // 获取和设置全局配置(除了live2denv的GLOBAL)
+  // Live2denvConfig（模型列表、当前模型等，liv2denv.json）
   getConfigSnapshot: () => configSnapshot,
-  getGlobalConfig: () => ipcRenderer.invoke('pet:getGlobalConfig'),
-  updateGlobalConfig: (patch) => ipcRenderer.invoke('pet:updateGlobalConfig', patch),
-  onGlobalConfigUpdated: (callback) => {
-    if (typeof callback !== 'function') return () => { };
-    globalConfigListeners.add(callback);
-    return () => {
-      globalConfigListeners.delete(callback);
-    };
-  },
+  getLive2denvConfig: getLive2denvConfigImpl,
+  updateLive2denvConfig: updateLive2denvConfigImpl,
+  onLive2denvConfigUpdated: onLive2denvConfigUpdatedImpl,
 
   // 获取和设置模型配置
   getModelConfig: (modelPath) => ipcRenderer.invoke('pet:getModelConfig', modelPath),

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useEffect, type RefObject } from 'react';
 import { useCursorTracking } from './useCursorTracking';
+import { agg, warn } from '../../../utils/log';
 
 export interface UseMousePassthroughParams {
   ignoreMouse: boolean;
@@ -74,10 +75,20 @@ export const useMousePassthrough = ({
     if (typeof window === 'undefined') return;
     if (mousePassthroughRef.current === passthrough) return;
     mousePassthroughRef.current = passthrough;
+
+    agg({
+      level: 'debug',
+      ns: 'pet.passthrough',
+      event: 'state',
+      key: passthrough ? 'on' : 'off',
+      windowMs: 800,
+      data: { passthrough },
+    });
+
     const bridge = (window as any).petAPI?.setMousePassthrough?.(passthrough);
     if (bridge && typeof bridge.then === 'function') {
       bridge.then(() => { /* no-op */ }).catch((error: unknown) => {
-        console.warn('[PetCanvas] setMousePassthrough rejected', error);
+        warn('pet.passthrough', 'set.rejected', { passthrough, err: String(error) });
       });
     }
     if (passthrough) {

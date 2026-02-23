@@ -1,5 +1,4 @@
 import { clamp } from '../../../../utils/math';
-import { env } from '../../../../utils/env';
 
 export type Frame = { leftDom: number; rightDom: number; centerDomX: number; visualWidthDom: number };
 export type Container = { width: number; height: number; top: number; left: number };
@@ -12,6 +11,11 @@ export type PlacementInput = {
   modelTopDom: number;
   modelHeightDom: number;
   bubbleEl: HTMLElement;
+  bubbleSettings?: {
+    symmetric?: boolean;
+    headRatio?: number | null;
+    touchMap?: number[] | null;
+  };
   symmetry?: {
     centerDom: number;
     zoneWidth: number;
@@ -39,7 +43,7 @@ export type PlacementOutput = {
 };
 
 export function computeBubblePlacement(input: PlacementInput): PlacementOutput {
-  const { scale, baseFrame, visibleFrame, container, modelTopDom, modelHeightDom, bubbleEl, symmetry, constants } = input;
+  const { scale, baseFrame, visibleFrame, container, modelTopDom, modelHeightDom, bubbleEl, bubbleSettings, symmetry, constants } = input;
   const s = Math.max(0.8, Math.min(1.4, (scale || 1)));
   const {
     BUBBLE_ZONE_BASE_WIDTH,
@@ -131,10 +135,10 @@ export function computeBubblePlacement(input: PlacementInput): PlacementOutput {
   }
 
   let chosenZoneWidth = side === 'left' ? predictedLeftWidth : predictedRightWidth;
-  const symmetricEnabled = env('VITE_BUBBLE_SYMMETRIC');
+  const symmetricEnabled = bubbleSettings?.symmetric === true;
   if (symmetry && symmetricOverrideWidth !== null) {
     chosenZoneWidth = symmetricOverrideWidth;
-  } else if (symmetricEnabled === '1' && canLeft && canRight) {
+  } else if (symmetricEnabled && canLeft && canRight) {
     chosenZoneWidth = Math.min(predictedLeftWidth, predictedRightWidth);
   }
 
@@ -156,18 +160,14 @@ export function computeBubblePlacement(input: PlacementInput): PlacementOutput {
 
   // 垂直定位
   let headAnchorRatio = 0.085;
-  const DEFAULT_TOUCH_MAP_RAW = env('VITE_TOUCH_MAP');
-  if (DEFAULT_TOUCH_MAP_RAW) {
-    const ratios = DEFAULT_TOUCH_MAP_RAW.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
-    if (ratios.length > 0) {
-      const hairEnd = ratios[0];
-      if (Number.isFinite(hairEnd)) headAnchorRatio = clamp(hairEnd * 0.85, 0, 1);
-    }
+  const touchMap = bubbleSettings?.touchMap;
+  if (Array.isArray(touchMap) && touchMap.length > 0) {
+    const hairEnd = touchMap[0];
+    if (typeof hairEnd === 'number' && Number.isFinite(hairEnd)) headAnchorRatio = clamp(hairEnd * 0.85, 0, 1);
   }
-  const envHeadRatioRaw = env('VITE_BUBBLE_HEAD_RATIO');
-  if (envHeadRatioRaw) {
-    const parsed = parseFloat(envHeadRatioRaw);
-    if (Number.isFinite(parsed)) headAnchorRatio = clamp(parsed, 0, 1);
+  const headRatioOverride = bubbleSettings?.headRatio;
+  if (typeof headRatioOverride === 'number' && Number.isFinite(headRatioOverride)) {
+    headAnchorRatio = clamp(headRatioOverride, 0, 1);
   }
   const headAnchorDomY = modelTopDom + modelHeightDom * headAnchorRatio;
   let targetY = headAnchorDomY - container.top - bubbleWidth /* placeholder */ - BUBBLE_HEAD_SAFE_GAP;
@@ -183,18 +183,14 @@ export function computeBubblePlacement(input: PlacementInput): PlacementOutput {
   const tailY = clamp(unscaledTailY, tailSize, unscaledHeight - tailSize);
 
   // 头部遮挡调整（简化版）
-  const DEFAULT_TOUCH_MAP_RAW2 = env('VITE_TOUCH_MAP');
   let headTopRatio = headAnchorRatio;
   let headBottomRatio = headAnchorRatio + 0.09;
-  if (DEFAULT_TOUCH_MAP_RAW2) {
-    const ratios = DEFAULT_TOUCH_MAP_RAW2.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
-    if (ratios.length > 1) {
-      const hairEnd = ratios[0];
-      const faceEnd = ratios[1];
-      if (Number.isFinite(hairEnd)) headTopRatio = clamp(hairEnd * 0.85, 0, 1);
-      if (Number.isFinite(faceEnd)) headBottomRatio = clamp(faceEnd, headTopRatio + 0.02, 1);
-      else headBottomRatio = clamp(hairEnd * 1.35, headTopRatio + 0.02, 1);
-    }
+  if (Array.isArray(touchMap) && touchMap.length > 1) {
+    const hairEnd = touchMap[0];
+    const faceEnd = touchMap[1];
+    if (typeof hairEnd === 'number' && Number.isFinite(hairEnd)) headTopRatio = clamp(hairEnd * 0.85, 0, 1);
+    if (typeof faceEnd === 'number' && Number.isFinite(faceEnd)) headBottomRatio = clamp(faceEnd, headTopRatio + 0.02, 1);
+    else if (typeof hairEnd === 'number' && Number.isFinite(hairEnd)) headBottomRatio = clamp(hairEnd * 1.35, headTopRatio + 0.02, 1);
   }
   const headTopDom = modelTopDom + modelHeightDom * headTopRatio;
   const bubbleTopDom = targetY + container.top;

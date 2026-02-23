@@ -1,4 +1,5 @@
 import { useCallback, type RefObject } from 'react';
+import { agg } from '../../../utils/log';
 
 export interface UseCursorTrackingParams {
   mousePassthroughRef: RefObject<boolean | null>;
@@ -81,7 +82,16 @@ export const useCursorTracking = ({
         updateDragHandlePositionRef.current?.(true);
         recomputeWindowPassthroughRef.current?.();
       })
-      .catch(() => { /* 忽略桌面指针轮询错误 */ })
+      .catch((e) => {
+        agg({
+          level: 'debug',
+          ns: 'pet.cursor',
+          event: 'poll.failed',
+          key: 'poll',
+          windowMs: 2000,
+          data: { err: String(e) },
+        });
+      })
       .finally(() => {
         if (!mousePassthroughRef.current || typeof window === 'undefined') {
           cursorPollRafRef.current = null;

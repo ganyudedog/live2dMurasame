@@ -1,5 +1,4 @@
 import { useCallback, type RefObject } from 'react';
-import { log as debugLog } from '../../../utils/env';
 
 export interface ContextZoneData {
   alignment: 'left' | 'right';
@@ -87,7 +86,6 @@ export const useContextZoneController = ({
       || Math.abs(prevStyle.top - nextStyle.top) > 0.5
       || Math.abs(prevStyle.width - nextStyle.width) > 0.5
       || Math.abs(prevStyle.height - nextStyle.height) > 0.5) {
-      debugLog('[PetCanvas] contextZone style update', { prev: prevStyle, next: nextStyle });
       contextZoneStyleRef.current = nextStyle;
       setContextZoneStyle(nextStyle);
     }

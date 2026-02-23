@@ -1,24 +1,39 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Live2DModel as Live2DModelType } from '../../live2dManage/runtime';
-import { env } from '../../../../utils/env';
 import { clamp } from '../../../../utils/math';
 
-const getVisualFrameEnv = () => {
-  const ratio = parseFloat(env('VITE_VISUAL_FRAME_RATIO') || '0.62');
-  const minPx = parseFloat(env('VITE_VISUAL_FRAME_MIN_PX') || '180');
-  const paddingPx = parseFloat(env('VITE_VISUAL_FRAME_PADDING_PX') || '0');
-  const centerMode = (env('VITE_VISUAL_FRAME_CENTER') || 'bounds').toLowerCase();
-  const offsetPx = parseFloat(env('VITE_VISUAL_FRAME_OFFSET_PX') || '0');
-  const offsetRatio = parseFloat(env('VITE_VISUAL_FRAME_OFFSET_RATIO') || '0');
-  const touchMapRaw = env('VITE_TOUCH_MAP');
+export type VisualFrameConfig = {
+  ratio: number;
+  minPx: number;
+  paddingPx: number;
+  center: string;
+  offsetPx: number;
+  offsetRatio: number;
+};
+
+const DEFAULT_VISUAL_FRAME_CONFIG: VisualFrameConfig = {
+  ratio: 0.62,
+  minPx: 180,
+  paddingPx: 0,
+  center: 'bounds',
+  offsetPx: 0,
+  offsetRatio: 0,
+};
+
+const resolveVisualFrameConfig = (cfg?: Partial<VisualFrameConfig> | null): VisualFrameConfig => {
+  const ratio = typeof cfg?.ratio === 'number' && Number.isFinite(cfg.ratio) ? cfg.ratio : DEFAULT_VISUAL_FRAME_CONFIG.ratio;
+  const minPx = typeof cfg?.minPx === 'number' && Number.isFinite(cfg.minPx) ? cfg.minPx : DEFAULT_VISUAL_FRAME_CONFIG.minPx;
+  const paddingPx = typeof cfg?.paddingPx === 'number' && Number.isFinite(cfg.paddingPx) ? cfg.paddingPx : DEFAULT_VISUAL_FRAME_CONFIG.paddingPx;
+  const center = typeof cfg?.center === 'string' && cfg.center.trim() ? cfg.center : DEFAULT_VISUAL_FRAME_CONFIG.center;
+  const offsetPx = typeof cfg?.offsetPx === 'number' && Number.isFinite(cfg.offsetPx) ? cfg.offsetPx : DEFAULT_VISUAL_FRAME_CONFIG.offsetPx;
+  const offsetRatio = typeof cfg?.offsetRatio === 'number' && Number.isFinite(cfg.offsetRatio) ? cfg.offsetRatio : DEFAULT_VISUAL_FRAME_CONFIG.offsetRatio;
   return {
     ratio,
     minPx,
     paddingPx,
-    centerMode,
+    center,
     offsetPx,
     offsetRatio,
-    touchMapRaw,
   };
 };
 
@@ -36,22 +51,28 @@ type FrameOptions = {
   model?: Live2DModelType | null;
   faceAreaId?: string | null;
   ignoreOffset?: boolean;
+  visualFrame?: Partial<VisualFrameConfig> | null;
+  touchMap?: number[] | null;
 };
 
 const resolveFaceCenter = (
   bounds: FrameBounds,
   model: Live2DModelType | null | undefined,
   faceAreaId: string | null | undefined,
+  opts: { centerMode: string; touchMap?: number[] | null },
 ): number | null => {
   if (!model || !faceAreaId) return null;
-  const { centerMode, touchMapRaw } = getVisualFrameEnv();
-  const preferFace = centerMode === 'face';
+  const preferFace = String(opts.centerMode || '').toLowerCase() === 'face';
   if (!preferFace) return null;
   try {
     const defaults = (() => {
-      if (touchMapRaw) {
-        const arr = touchMapRaw.split(',').map(v => parseFloat(v)).filter(n => Number.isFinite(n));
-        if (arr.length >= 2) return { hairEnd: arr[0], faceEnd: arr[1] };
+      const touchMap = opts.touchMap;
+      if (Array.isArray(touchMap) && touchMap.length >= 2) {
+        const hairEnd = touchMap[0];
+        const faceEnd = touchMap[1];
+        if (typeof hairEnd === 'number' && Number.isFinite(hairEnd) && typeof faceEnd === 'number' && Number.isFinite(faceEnd)) {
+          return { hairEnd, faceEnd };
+        }
       }
       return { hairEnd: 0.1, faceEnd: 0.19 };
     })();
@@ -82,31 +103,29 @@ export function getVisualFrameDom(
   canvasRect: DOMRect,
   opts?: FrameOptions,
 ): VisualFrame {
-  const {
-    ratio,
-    minPx,
-    paddingPx,
-    offsetPx,
-    offsetRatio,
-  } = getVisualFrameEnv();
+  const cfg = resolveVisualFrameConfig(opts?.visualFrame);
 
-  const safeRatio = Math.max(0.1, Math.min(1, Number.isFinite(ratio) ? ratio : 0.62));
-  const padding = Number.isFinite(paddingPx) ? paddingPx : 0;
+  const safeRatio = Math.max(0.1, Math.min(1, cfg.ratio));
+  const padding = cfg.paddingPx;
 
-  const faceCenter = resolveFaceCenter(bounds, opts?.model ?? null, opts?.faceAreaId ?? null);
+  const faceCenter = resolveFaceCenter(
+    bounds,
+    opts?.model ?? null,
+    opts?.faceAreaId ?? null,
+    { centerMode: cfg.center, touchMap: opts?.touchMap ?? null },
+  );
   const defaultCenter = bounds.x + bounds.width / 2;
   const centerFromBounds = faceCenter ?? defaultCenter;
 
   const rawWidthDom = (bounds.width / screen.width) * canvasRect.width;
   const visualWidthDom = Math.max(
-    Number.isFinite(minPx) ? minPx : 180,
+    cfg.minPx,
     rawWidthDom * safeRatio,
   ) + padding * 2;
 
   let centerDomX = canvasRect.left + ((centerFromBounds - screen.x) / screen.width) * canvasRect.width;
 
-  const extraOffsetPxRaw = (Number.isFinite(offsetPx) ? offsetPx : 0)
-    + (Number.isFinite(offsetRatio) ? (visualWidthDom * offsetRatio) : 0);
+  const extraOffsetPxRaw = cfg.offsetPx + (visualWidthDom * cfg.offsetRatio);
   const extraOffsetPx = opts?.ignoreOffset ? 0 : extraOffsetPxRaw;
   if (extraOffsetPx) {
     centerDomX += extraOffsetPx;

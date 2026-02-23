@@ -1,16 +1,17 @@
 import { clone } from '../utils/clone.js';
 import {
-  initializeGlobalConfig,
-  reloadGlobalConfigCache,
-  getGlobalConfigCache as getGlobalConfigCacheInternal,
-  applyGlobalConfigCachePatch,
+  initializeLive2denvConfig,
+  reloadLive2denvConfigCache,
+  getLive2denvConfigCache as getLive2denvConfigCacheInternal,
+  getGlobalModelConfig,
+  applyLive2denvConfigCachePatch,
   listModelPaths as listModelPathsInternal,
   getCurrentModelPath,
 } from '../live2denv/globalState.js';
 import {
-  buildEnvOverrides,
-  getLastEnvOverrides as getEnvOverrideCache,
-} from '../live2denv/envOverrides.js';
+  buildConfigOverrides,
+  getLastConfigOverrides as getConfigOverrideCache,
+} from '../live2denv/configOverrides.js';
 import { createConfigSnapshot } from '../live2denv/snapshot.js';
 import {
   clearModelConfigCache,
@@ -27,52 +28,62 @@ const loadActiveModelConfig = (preferredPath) => {
 };
 
 export const getConfigSnapshot = () => {
-  const globalConfig = getGlobalConfigCacheInternal();
+  const live2denvConfig = getLive2denvConfigCacheInternal();
+  const globalModelConfig = getGlobalModelConfig();
   const { modelPath, modelConfig } = loadActiveModelConfig();
-  return createConfigSnapshot(globalConfig, modelPath, modelConfig);
+  return createConfigSnapshot(live2denvConfig, globalModelConfig, modelPath, modelConfig);
 };
 
 export const initializeRuntimeConfig = () => {
-  const globalConfig = initializeGlobalConfig();
+  initializeLive2denvConfig();
   clearModelConfigCache();
   const { modelPath, modelConfig } = loadActiveModelConfig();
-  return createConfigSnapshot(globalConfig, modelPath, modelConfig);
+  const live2denvConfig = getLive2denvConfigCacheInternal();
+  const globalModelConfig = getGlobalModelConfig();
+  return createConfigSnapshot(live2denvConfig, globalModelConfig, modelPath, modelConfig);
 };
 
-export const reloadGlobalConfig = () => {
-  const globalConfig = reloadGlobalConfigCache();
+export const reloadLive2denvConfig = () => {
+  reloadLive2denvConfigCache();
   const { modelPath, modelConfig } = loadActiveModelConfig();
-  return createConfigSnapshot(globalConfig, modelPath, modelConfig);
+  const live2denvConfig = getLive2denvConfigCacheInternal();
+  const globalModelConfig = getGlobalModelConfig();
+  return createConfigSnapshot(live2denvConfig, globalModelConfig, modelPath, modelConfig);
 };
 
-export const getGlobalConfigCache = () => getGlobalConfigCacheInternal();
+export const getLive2denvConfigCache = () => getLive2denvConfigCacheInternal();
 
-export const applyGlobalConfigPatch = (patch = {}) => {
-  const globalConfig = applyGlobalConfigCachePatch(patch);
+export const applyLive2denvConfigPatch = (patch = {}) => {
+  applyLive2denvConfigCachePatch(patch);
   const { modelPath, modelConfig } = loadActiveModelConfig();
-  return createConfigSnapshot(globalConfig, modelPath, modelConfig);
+  const live2denvConfig = getLive2denvConfigCacheInternal();
+  const globalModelConfig = getGlobalModelConfig();
+  return createConfigSnapshot(live2denvConfig, globalModelConfig, modelPath, modelConfig);
 };
 
 export const getModelConfigState = (modelPath) => {
-  const globalConfig = getGlobalConfigCacheInternal();
+  const live2denvConfig = getLive2denvConfigCacheInternal();
   const { modelPath: resolvedPath, modelConfig } = loadActiveModelConfig(modelPath);
-  const envOverrides = buildEnvOverrides(globalConfig, resolvedPath, modelConfig);
+  const configOverrides = buildConfigOverrides(live2denvConfig, resolvedPath, modelConfig);
+  const snapshot = createConfigSnapshot(live2denvConfig, getGlobalModelConfig(), resolvedPath, modelConfig);
   return {
     modelPath: resolvedPath,
     modelConfig,
-    envOverrides,
+    configOverrides,
+    activeModelFileUrl: snapshot.activeModelFileUrl ?? null,
   };
 };
 
 export const applyModelConfigPatch = (payload = {}) => {
-  const globalConfig = getGlobalConfigCacheInternal();
-  const { modelPath, modelConfig } = applyModelConfigUpdate(globalConfig, payload);
-  return createConfigSnapshot(globalConfig, modelPath, modelConfig);
+  const live2denvConfig = getLive2denvConfigCacheInternal();
+  const { modelPath, modelConfig } = applyModelConfigUpdate(live2denvConfig, payload);
+  const globalModelConfig = getGlobalModelConfig();
+  return createConfigSnapshot(live2denvConfig, globalModelConfig, modelPath, modelConfig);
 };
 
 export const listModelPaths = () => listModelPathsInternal();
 
-export const getLastEnvOverrides = () => getEnvOverrideCache();
+export const getLastConfigOverrides = () => getConfigOverrideCache();
 
 export const cloneConfigValue = clone;
 

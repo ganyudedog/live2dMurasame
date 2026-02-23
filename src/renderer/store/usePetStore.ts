@@ -3,6 +3,7 @@ import type { Live2DModel } from '../components/pet/live2dManage/runtime';
 import { MotionManager } from '../components/pet/live2dManage/motionManager';
 import { sharedStoreClient } from '../shared/sharedStoreClient';
 import type { PatchOp } from '../shared/sharedStateTypes';
+import { info, warn } from '../utils/log';
 
 type ModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
@@ -82,8 +83,8 @@ export const usePetStore = create<PetStoreState>((set) => {
 
 			// Load settings from Electron main process
 			const api = getPetApi();
-			if (api?.getLive2denvGlobal) {
-				api.getLive2denvGlobal().then(remote => {
+			if (api?.getGlobalModelConfig) {
+				api.getGlobalModelConfig().then(remote => {
 					if (!remote || typeof remote !== 'object') return;
 					const patch: Partial<PetStoreState> = {};
 
@@ -106,16 +107,26 @@ export const usePetStore = create<PetStoreState>((set) => {
 						set(patch);
 					}
 				}).catch(error => {
-					console.warn('[PetStore] load remote settings failed', error);
+					warn('pet.store', 'settings.load.failed', { err: String(error) });
 				})
 				.finally(() => {
 					set({ settingsLoaded: true });
 				});
 			}
 			let off: (()=>void) | undefined;
-			if (api?.onLive2denvGlobalUpdated) {
-				off = api.onLive2denvGlobalUpdated((newSettings) => {
-					set({ ...newSettings });
+			if (api?.onGlobalModelConfigUpdated) {
+				off = api.onGlobalModelConfigUpdated((nextConfig) => {
+					if (!nextConfig || typeof nextConfig !== 'object') return;
+					const patch: Partial<PetStoreState> = {};
+					if (typeof nextConfig.scale === 'number') {
+						const clamped = clampScale(nextConfig.scale);
+						patch.scale = clamped;
+						sharedStoreClient.dispatchPatch([{ path: 'global.scale', value: clamped }]);
+					}
+					if (typeof nextConfig.ignoreMouse === 'boolean') patch.ignoreMouse = nextConfig.ignoreMouse;
+					if (typeof nextConfig.showDragHandleOnHover === 'boolean') patch.showDragHandleOnHover = nextConfig.showDragHandleOnHover;
+					if (typeof nextConfig.debugModeEnabled === 'boolean') patch.debugModeEnabled = nextConfig.debugModeEnabled;
+					if (Object.keys(patch).length) set(patch);
 				}) as (() => void) | undefined;
 			}
 			return off;
@@ -161,17 +172,17 @@ export const usePetStore = create<PetStoreState>((set) => {
 		setIgnoreMouse: (value) => {
 			set({ ignoreMouse: value });
 			const api = getPetApi();
-			console.log('[PetStore] update ignoreMouse', value);
-			api?.updateLive2denvGlobal?.({ ignoreMouse: value }).catch((error: unknown) => {
-				console.warn('[PetStore] update settings failed', error);
+			info('pet.store', 'ignoreMouse.set', { value });
+			api?.updateGlobalModelConfig?.({ ignoreMouse: value }).catch((error: unknown) => {
+				warn('pet.store', 'settings.persist.failed', { field: 'ignoreMouse', err: String(error) });
 			});
 		},
 
 		setShowDragHandleOnHover: (value) => {
 			set({ showDragHandleOnHover: value });
 			const api = getPetApi();
-			api?.updateLive2denvGlobal?.({ showDragHandleOnHover: value }).catch((error: unknown) => {
-				console.warn('[PetStore] update settings failed', error);
+			api?.updateGlobalModelConfig?.({ showDragHandleOnHover: value }).catch((error: unknown) => {
+				warn('pet.store', 'settings.persist.failed', { field: 'showDragHandleOnHover', err: String(error) });
 			});
 		},
 
@@ -179,8 +190,8 @@ export const usePetStore = create<PetStoreState>((set) => {
 		setDebugModeEnabled(value) {
 			set({ debugModeEnabled: value });
 			const api = getPetApi();
-			api?.updateLive2denvGlobal?.({ debugModeEnabled: value }).catch((error: unknown) => {
-				console.warn('[PetStore] sync debugModeEnabled failed', error);
+			api?.updateGlobalModelConfig?.({ debugModeEnabled: value }).catch((error: unknown) => {
+				warn('pet.store', 'settings.persist.failed', { field: 'debugModeEnabled', err: String(error) });
 			});
 		},
 

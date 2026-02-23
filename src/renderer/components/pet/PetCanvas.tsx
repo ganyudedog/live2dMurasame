@@ -17,10 +17,8 @@ import { useDragHandleController } from './hooks/useDragHandleController';
 import { usePointerTapHandler } from './hooks/usePointerTapHandler';
 import { useBubbleLifecycle } from './hooks/useBubbleLifecycle';
 import { useContextZoneController } from './hooks/useContextZoneController';
+import { debug } from '../../utils/log';
 import { useConfigStore } from '../../store/useConfigStore';
-
-// 环境变量读取助手
-import { env } from '../../utils/env';
 const BUBBLE_MAX_WIDTH = 260; // legacy cap (still used as hard ceiling)
 const BUBBLE_ZONE_BASE_WIDTH = 200; // scale=1 时单侧气泡区域目标宽度
 const BUBBLE_ZONE_MIN_WIDTH = 120; // 单侧最小可用宽度
@@ -31,22 +29,15 @@ const BUBBLE_PADDING = 12; // 窗口边缘内边距
 const RESIZE_THROTTLE_MS = 120;
 const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
 
-import { log as debugLog } from '../../utils/env';
-
 import { clamp, clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../../utils/math';
 
-const clampEyeBallY = (value: number): number => {
-  const windowOverride = typeof window !== 'undefined' ? (window as any).LIVE2D_EYE_MAX_UP : undefined;
-  const envLimit = Number.parseFloat(env('VITE_EYE_MAX_UP') || '0.5');
-  const limit = typeof windowOverride === 'number' ? windowOverride : envLimit;
-  return clampEyeBallYBase(value, limit);
-};
-
-const clampAngleY = (value: number): number => {
-  const windowOverride = typeof window !== 'undefined' ? (window as any).LIVE2D_ANGLE_MAX_UP : undefined;
-  const envLimit = Number.parseFloat(env('VITE_ANGLE_MAX_UP') || '20');
-  const limit = typeof windowOverride === 'number' ? windowOverride : envLimit;
-  return clampAngleYBase(value, limit);
+const toFiniteNumber = (raw: unknown, fallback: number): number => {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string') {
+    const parsed = Number.parseFloat(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 };
 
 const getWindowMetrics = () => {
@@ -111,10 +102,10 @@ const PetCanvas: React.FC = () => {
   useLayoutEffect(() => connectSharedWorkerScale(), [connectSharedWorkerScale]);
 
   // 来自主进程的配置快照（offset.md 数据流真值）
-  const globalConfig = useConfigStore((s) => s.globalConfig);
+  const live2denvConfig = useConfigStore((s) => s.live2denvConfig);
   const activeModelPath = useConfigStore((s) => s.activeModelPath);
+  const activeModelFileUrl = useConfigStore((s) => s.activeModelFileUrl);
   const persistedModelConfig = useConfigStore((s) => s.modelConfig);
-  const envOverrides = useConfigStore((s) => s.envOverrides);
   const hydrated = useConfigStore((s) => s.hydrated);
   const refreshConfigSnapshot = useConfigStore((s) => s.refresh);
 
@@ -126,31 +117,36 @@ const PetCanvas: React.FC = () => {
     });
   }, [hydrated, refreshConfigSnapshot]);
 
-  // 运行时 envOverrides 会由 preload 写入 process.env；这里每次渲染都重新读取。
-  // 订阅 activeModelPath/modelConfig 只是为了在切换模型或配置更新时触发重新渲染。
-  void activeModelPath;
-  void persistedModelConfig;
+  const eyeMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.VITE_EYE_MAX_UP, 0.5), [live2denvConfig]);
+  const angleMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.VITE_ANGLE_MAX_UP, 20), [live2denvConfig]);
+
+  const clampEyeBallY = useCallback((value: number): number => {
+    const windowOverride = typeof window !== 'undefined' ? (window as any).LIVE2D_EYE_MAX_UP : undefined;
+    const limit = typeof windowOverride === 'number' ? windowOverride : eyeMaxUpLimit;
+    return clampEyeBallYBase(value, limit);
+  }, [eyeMaxUpLimit]);
+
+  const clampAngleY = useCallback((value: number): number => {
+    const windowOverride = typeof window !== 'undefined' ? (window as any).LIVE2D_ANGLE_MAX_UP : undefined;
+    const limit = typeof windowOverride === 'number' ? windowOverride : angleMaxUpLimit;
+    return clampAngleYBase(value, limit);
+  }, [angleMaxUpLimit]);
 
   // 模型文件 URL 由主进程根据 CURRENT_PATH 解析并随快照下发（file://.../*.model3.json）。
   // 不再使用默认模型路径；若未选中模型则保持为空，等待用户先选择。
-  const modelPath = typeof (envOverrides as any)?.VITE_MODEL_PATH === 'string'
-    ? String((envOverrides as any).VITE_MODEL_PATH)
-    : '';
+  const modelPath = typeof activeModelFileUrl === 'string'
+    ? activeModelFileUrl
+    : (typeof activeModelPath === 'string' ? activeModelPath : '');
   const modelPathRef = useRef(modelPath);
   useEffect(() => {
     modelPathRef.current = modelPath;
   }, [modelPath]);
 
   const touchPriority = useMemo((): string[] => {
-    const fromConfig = globalConfig?.VITE_TOUCH_PRIORITY;
+    const fromConfig = live2denvConfig?.VITE_TOUCH_PRIORITY;
     if (Array.isArray(fromConfig) && fromConfig.length) return fromConfig;
-    const raw = env('VITE_TOUCH_PRIORITY');
-    if (raw) {
-      const arr = raw.split(',').map((s) => s.trim()).filter(Boolean);
-      if (arr.length) return arr;
-    }
     return ['hair', 'face', 'xiongbu', 'qunzi', 'leg'];
-  }, [globalConfig?.VITE_TOUCH_PRIORITY]);
+  }, [live2denvConfig?.VITE_TOUCH_PRIORITY]);
 
   const touchPriorityRef = useRef(touchPriority);
   useEffect(() => {
@@ -164,6 +160,18 @@ const PetCanvas: React.FC = () => {
       && raw.length === 5
       && raw.every((v: unknown) => typeof v === 'number' && Number.isFinite(v));
     touchMapRef.current = ok ? (raw as number[]) : null;
+  }, [persistedModelConfig]);
+
+  const visualFrameRef = useRef<any | null>(null);
+  useEffect(() => {
+    const raw = (persistedModelConfig as any)?.visualFrame;
+    visualFrameRef.current = raw && typeof raw === 'object' ? raw : null;
+  }, [persistedModelConfig]);
+
+  const bubbleSettingsRef = useRef<{ symmetric?: boolean; headRatio?: number | null } | null>(null);
+  useEffect(() => {
+    const raw = (persistedModelConfig as any)?.bubble;
+    bubbleSettingsRef.current = raw && typeof raw === 'object' ? (raw as { symmetric?: boolean; headRatio?: number | null }) : null;
   }, [persistedModelConfig]);
 
   const interactionZonesRef = useRef<Record<string, { heightRange?: [number, number]; motions?: string[] }> | null>(null);
@@ -458,10 +466,6 @@ const PetCanvas: React.FC = () => {
     // If a resize is already in flight, only record the latest desired.
     // We'll flush it when the in-flight request is ACK'ed via boundsChanged(requestId).
     if (resizeInFlightRequestIdRef.current) {
-      debugLog('[PetCanvas] requestResize merged (inFlight)', {
-        inFlight: resizeInFlightRequestIdRef.current,
-        desired,
-      });
       return;
     }
 
@@ -492,13 +496,6 @@ const PetCanvas: React.FC = () => {
         height: Number.isFinite(height) ? height : (existingBounds?.height ?? window.innerHeight),
       };
       pendingBoundsPredictionRef.current = predictedBounds;
-      debugLog('[PetCanvas] predict window bounds', {
-        anchorCenter,
-        predictedLeft,
-        width,
-        height,
-        previousBounds: existingBounds ?? null,
-      });
     } else {
       pendingBoundsPredictionRef.current = null;
     }
@@ -508,7 +505,6 @@ const PetCanvas: React.FC = () => {
       anchorCenter: anchorCenter ?? undefined,
       requestId,
     };
-    debugLog('[PetCanvas] requestResize', { width, height, anchorCenter, predictedLeft });
     try {
       const api = (window as any).petAPI;
       if (typeof api?.setSize === 'function') {
@@ -596,7 +592,6 @@ const PetCanvas: React.FC = () => {
         anchorCenter: latest.anchorCenter,
         requestId,
       };
-      debugLog('[PetCanvas] requestResize flushLatest', payload);
       const api = (window as any).petAPI;
       if (typeof api?.setSize === 'function') {
         api.setSize(payload);
@@ -609,7 +604,7 @@ const PetCanvas: React.FC = () => {
     }
   }, []);
 
-  const applyWindowWidth = useCallback((requiredWidth: number, reason: 'layout' | 'bubble-active') => {
+  const applyWindowWidth = useCallback((requiredWidth: number) => {
     if (typeof window === 'undefined') return;
     if (!Number.isFinite(requiredWidth)) return;
 
@@ -692,12 +687,6 @@ const PetCanvas: React.FC = () => {
     pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
-    debugLog('[PetCanvas] enforce symmetric window width', {
-      reason,
-      requiredWidth: normalizedWidth,
-      currentWidth,
-      desiredHeight,
-    });
 
     requestResize(normalizedWidth, desiredHeight, { preserveCenterLine: true });
   }, [requestResize]);
@@ -771,12 +760,6 @@ const PetCanvas: React.FC = () => {
     lastAlignAttemptRef.current = now;
 
     const targetX = Math.round(baseline - bounds.width / 2);
-    debugLog('[PetCanvas] align window center line', {
-      actualCenter,
-      baseline,
-      targetX,
-      width: bounds.width,
-    });
 
     try {
       const api = (window as any).petAPI;
@@ -831,9 +814,19 @@ const PetCanvas: React.FC = () => {
     // 使用“视觉矩形”作为对称边界，替代原始 bounds 左右边
     const faceEntry = hitAreasRef.current.find(a => /face|head/i.test(a.name) || /face|head/i.test(a.id));
     // 可视渲染使用偏移后的视觉矩形
-    const vfVisible = getVisibleFrame(bounds, screen, canvasRect, { model, faceAreaId: faceEntry?.id ?? null });
+    const vfVisible = getVisibleFrame(bounds, screen, canvasRect, {
+      model,
+      faceAreaId: faceEntry?.id ?? null,
+      visualFrame: visualFrameRef.current,
+      touchMap: touchMapRef.current,
+    });
     // 可用空间判定使用未偏移的视觉矩形，避免水平偏移影响左右可用性
-    const vfBase = getBaseFrame(bounds, screen, canvasRect, { model, faceAreaId: faceEntry?.id ?? null });
+    const vfBase = getBaseFrame(bounds, screen, canvasRect, {
+      model,
+      faceAreaId: faceEntry?.id ?? null,
+      visualFrame: visualFrameRef.current,
+      touchMap: touchMapRef.current,
+    });
     const modelHeightDom = (bounds.height / screen.height) * canvasRect.height;
 
     // 更新红线位置（与视觉中心对齐）
@@ -863,8 +856,6 @@ const PetCanvas: React.FC = () => {
     }
 
     const zoneTarget = BUBBLE_ZONE_BASE_WIDTH * s;
-    const modelLeftDomBase = vfBase.leftDom - containerRect.left;
-    const modelRightDomBase = vfBase.rightDom - containerRect.left;
     const centerDom = vfVisible.centerDomX - containerRect.left;
     const gapEffective = BUBBLE_GAP + BUBBLE_EXTRA_GAP * s;
 
@@ -876,7 +867,6 @@ const PetCanvas: React.FC = () => {
     const rightCapacity = Math.max(0, effectiveContainerWidth - (centerDom + gapEffective) - BUBBLE_PADDING);
     const baseFrameWidthDom = vfBase.visualWidthDom;
     const requiredWindowWidth = Math.ceil(baseFrameWidthDom + zoneTarget * 2 + gapEffective * 2 + BUBBLE_PADDING * 2);
-    const currentWindowWidth = effectiveContainerWidth;
     const leftShortfallPx = Math.max(0, zoneTarget - leftCapacity);
     const rightShortfallPx = Math.max(0, zoneTarget - rightCapacity);
     const capacityShortfall = leftShortfallPx > 0 || rightShortfallPx > 0;
@@ -896,7 +886,7 @@ const PetCanvas: React.FC = () => {
     // 仅当 scale 变化（或首次挂载）时，触发一次窗口宽度同步。
     if (resizeWindowOnNextLayoutRef.current) {
       resizeWindowOnNextLayoutRef.current = false;
-      applyWindowWidth(enforcedWindowWidth, 'layout');
+      applyWindowWidth(enforcedWindowWidth);
       suppressResizeForBubbleRef.current = false;
     }
 
@@ -908,11 +898,9 @@ const PetCanvas: React.FC = () => {
       if (force && typeof window !== 'undefined') {
         const immediate = getWindowCenter();
         centerBaselineRef.current = immediate;
-        debugLog('[PetCanvas] baseline after bubble dismissed', { immediate });
         window.setTimeout(() => {
           const delayed = getWindowCenter();
           centerBaselineRef.current = delayed;
-          debugLog('[PetCanvas] baseline delayed refresh', { delayed });
         }, 120);
       }
       return;
@@ -940,9 +928,6 @@ const PetCanvas: React.FC = () => {
     const zoneLeftWidth = Math.max(0, symmetricWidth);
     const zoneRightWidth = Math.max(0, symmetricWidth);
 
-    const leftAvailableBase = Math.max(0, modelLeftDomBase - BUBBLE_PADDING - gapEffective);
-    const rightAvailableBase = Math.max(0, containerRect.width - modelRightDomBase - BUBBLE_PADDING - gapEffective);
-
     // 先应用建议的最大宽度，确保测量一致
     bubbleEl.style.setProperty('--bubble-max-width', `${Math.round(Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.min(BUBBLE_MAX_WIDTH, BUBBLE_ZONE_BASE_WIDTH)))}px`);
 
@@ -955,6 +940,11 @@ const PetCanvas: React.FC = () => {
       modelTopDom,
       modelHeightDom,
       bubbleEl,
+      bubbleSettings: {
+        symmetric: bubbleSettingsRef.current?.symmetric === true,
+        headRatio: bubbleSettingsRef.current?.headRatio ?? null,
+        touchMap: touchMapRef.current,
+      },
       symmetry: {
         centerDom,
         zoneWidth: symmetricWidth,
@@ -1008,23 +998,6 @@ const PetCanvas: React.FC = () => {
     ) {
       bubbleZoneMetricsRef.current = nextZones;
       setBubbleZoneMetrics(nextZones);
-      debugLog('[PetCanvas] bubble zones', {
-        active: nextZones.active,
-        leftAvailableBase,
-        rightAvailableBase,
-        symmetricCapacity,
-        symmetricWidth,
-        widthShortfall,
-        awaitingResize,
-        requiredWindowWidth,
-        currentWindowWidth,
-        gapEffective,
-        centerDom,
-        leftZoneLeft,
-        rightZoneLeft,
-        zoneLeftWidth,
-        zoneRightWidth,
-      });
     }
 
     const nextBubbleSide: 'left' | 'right' = placement.side;
@@ -1040,21 +1013,17 @@ const PetCanvas: React.FC = () => {
     // 垂直定位：根据触摸比例头锚点（使用 hairEnd*0.85 回退）
     let headAnchorRatio = 0.085; // 默认回退
     {
-      const ratios = touchMapRef.current ?? (() => {
-        const raw = env('VITE_TOUCH_MAP');
-        if (!raw) return null;
-        const parsed = raw.split(',').map((v) => Number.parseFloat(v)).filter((n) => Number.isFinite(n));
-        return parsed.length ? parsed : null;
-      })();
+      const ratios = touchMapRef.current;
       if (ratios && ratios.length > 0) {
         const hairEnd = ratios[0];
         if (Number.isFinite(hairEnd)) headAnchorRatio = clamp(hairEnd * 0.85, 0, 1);
       }
     }
-    const envHeadRatioRaw = env('VITE_BUBBLE_HEAD_RATIO');
-    if (envHeadRatioRaw) {
-      const parsed = parseFloat(envHeadRatioRaw);
-      if (Number.isFinite(parsed)) headAnchorRatio = clamp(parsed, 0, 1);
+    {
+      const rawHeadRatio = bubbleSettingsRef.current?.headRatio;
+      if (typeof rawHeadRatio === 'number' && Number.isFinite(rawHeadRatio)) {
+        headAnchorRatio = clamp(rawHeadRatio, 0, 1);
+      }
     }
     const headAnchorDomY = modelTopDom + modelHeightDom * headAnchorRatio;
     const maxTop = containerRect.height - bubbleHeight - BUBBLE_PADDING;
@@ -1068,38 +1037,26 @@ const PetCanvas: React.FC = () => {
       setBubbleTailY(Math.round(nextTailY));
     }
 
-    // 头部区域定义与遮挡检测（使用 touch map 第二段作为脸底 / 或 hairEnd*1.35 回退）
+    // 头部区域定义与遮挡检测（使用 touch map 第一段作为头顶 / 或 hairEnd*0.85 回退）
     let headTopRatio = headAnchorRatio; // 近似头顶
-    let headBottomRatio = headAnchorRatio + 0.09; // 回退脸底估计
     {
-      const ratios = touchMapRef.current ?? (() => {
-        const raw = env('VITE_TOUCH_MAP');
-        if (!raw) return null;
-        const parsed = raw.split(',').map((v) => Number.parseFloat(v)).filter((n) => Number.isFinite(n));
-        return parsed.length ? parsed : null;
-      })();
+      const ratios = touchMapRef.current;
       if (ratios && ratios.length > 1) {
         const hairEnd = ratios[0];
-        const faceEnd = ratios[1];
         if (Number.isFinite(hairEnd)) headTopRatio = clamp(hairEnd * 0.85, 0, 1);
-        if (Number.isFinite(faceEnd)) headBottomRatio = clamp(faceEnd, headTopRatio + 0.02, 1);
-        else headBottomRatio = clamp(hairEnd * 1.35, headTopRatio + 0.02, 1);
       }
     }
     const headTopDom = modelTopDom + modelHeightDom * headTopRatio;
-    const headBottomDom = modelTopDom + modelHeightDom * headBottomRatio;
 
     // 根据头部上缘做一次上推，避免底边压住头部
     const bubbleTopDom = targetY + containerRect.top;
     const bubbleBottomDom = bubbleTopDom + bubbleHeight;
-    let overlapAdjusted = false;
     if (bubbleBottomDom > headTopDom - 4) {
       const desiredTopDom = headTopDom - BUBBLE_HEAD_SAFE_GAP - bubbleHeight;
       const desiredTop = desiredTopDom - containerRect.top;
       const clampedDesiredTop = clamp(desiredTop, BUBBLE_PADDING, maxTop);
       if (Math.abs(clampedDesiredTop - targetY) > 0.5) {
         targetY = clampedDesiredTop;
-        overlapAdjusted = true;
       }
     }
 
@@ -1114,7 +1071,6 @@ const PetCanvas: React.FC = () => {
         const shrinkWidth = Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.floor(currentMaxWidth * 0.85));
         if (shrinkWidth < currentMaxWidth - 4) {
           bubbleEl.style.setProperty('--bubble-max-width', `${shrinkWidth}px`);
-          debugLog('[PetCanvas] bubble severeOverlap shrink', { before: currentMaxWidth, after: shrinkWidth, bubbleHeight, headBottomDom, postBubbleBottomDom: (targetY + containerRect.top + bubbleHeight) });
           requestAnimationFrame(() => updateBubblePositionRef.current?.(true));
         }
       }
@@ -1131,19 +1087,6 @@ const PetCanvas: React.FC = () => {
       bubblePositionRef.current = nextPosition;
       setBubblePosition(nextPosition);
     }
-
-    // 新日志（移除未定义变量，保留关键信息）
-    debugLog('[PetCanvas] bubble place', {
-      side: nextBubbleSide,
-      bubbleWidth,
-      bubbleHeight,
-      targetX,
-      targetY,
-      modelLeftDom: (vfVisible.leftDom - containerRect.left),
-      modelRightDom: (vfVisible.rightDom - containerRect.left),
-    });
-    debugLog('[PetCanvas] head overlap', { headTopRatio, headBottomRatio, headTopDom, headBottomDom, overlapAdjusted, severeOverlap });
-
     commitBubbleReady(true);
   }, [scale, commitBubbleReady, applyWindowWidth]);
 
@@ -1312,10 +1255,6 @@ const PetCanvas: React.FC = () => {
       MAX_HEIGHT: 120,
     });
 
-    debugLog('[PetCanvas] context alignment decision', {
-      alignment: cz.alignment,
-      style: cz.style,
-    });
     applyContextZoneDecision({
       alignment: cz.alignment,
       style: cz.style,
@@ -1437,22 +1376,6 @@ const PetCanvas: React.FC = () => {
     const targetCenterLocal = clamp(Number.isFinite(rawCenterLocal) ? rawCenterLocal : winW / 2, minCenter, maxCenter);
     const targetX = targetCenterLocal;
     const targetY = winH - scaledH / 2 - marginBottom;
-    debugLog('[PetCanvas] applyLayout', {
-      winW,
-      winH,
-      targetX,
-      targetY,
-      scale,
-      devToolsOpened,
-      baselineScreen,
-      rawCenterLocal,
-      targetCenterLocal,
-      windowLeft,
-      liveWindowCenter,
-      usingPredictedBounds: !devToolsOpened && pendingBoundsPredictionRef.current ? Math.abs(winW - (pendingBoundsPredictionRef.current?.width ?? winW)) <= 2 : false,
-      predictedBounds: pendingBoundsPredictionRef.current,
-      broadcastBounds: windowBoundsRef.current,
-    });
     m.position.set(targetX, targetY);
     if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
       if (layoutBubbleMeasureRafRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
@@ -1543,19 +1466,10 @@ const PetCanvas: React.FC = () => {
 
     // 默认分层百分比，可通过：
     // 1) 模型配置 touchMap（offset.md）
-    // 2) envOverrides: VITE_TOUCH_MAP
-    // 3) window.LIVE2D_TOUCH_MAP（调试覆盖）
+    // 2) window.LIVE2D_TOUCH_MAP（调试覆盖）
     const DEFAULT_MAP = ((): number[] => {
       const fromModelConfig = touchMapRef.current;
       if (fromModelConfig) return fromModelConfig;
-      const raw = env('VITE_TOUCH_MAP');
-      if (raw) {
-        const parsed = raw
-          .split(',')
-          .map((v) => Number.parseFloat(v.trim()))
-          .filter((v) => Number.isFinite(v));
-        if (parsed.length === 5) return parsed;
-      }
       return [0.1, 0.19, 0.39, 0.53, 1];
     })();
     const customMap = Array.isArray((window as any).LIVE2D_TOUCH_MAP) && (window as any).LIVE2D_TOUCH_MAP.length === 5
@@ -1628,7 +1542,13 @@ const PetCanvas: React.FC = () => {
       dispatched = true;
     }
     if ((window as any).LIVE2D_MOTION_DEBUG === true) {
-      console.log('[TouchDispatch]', { nx: Number(nx.toFixed(3)), ny: Number(ny.toFixed(3)), group, preciseTried: !!areaObj, map: customMap });
+      debug('pet.interaction', 'tap.dispatch', {
+        nx: Number(nx.toFixed(3)),
+        ny: Number(ny.toFixed(3)),
+        group,
+        preciseTried: !!areaObj,
+        map: customMap,
+      });
     }
   }, [interruptMotion]);
 

@@ -28,8 +28,8 @@ export default function ControlPanelLayout({
 }) {
   return (
     <div className="h-full w-full grid grid-cols-[300px_1fr] bg-base-200 text-base-content">
-      <aside className="h-full w-[300px] border-r border-base-300 bg-base-100 flex flex-col">
-        <div className="w-full aspect-3/2 min-h-[200px] h-[clamp(200px,25vh,360px)] border-b border-base-300 flex items-center justify-center">
+      <aside className="h-full w-75 border-r border-base-300 bg-base-100 flex flex-col">
+        <div className="w-full aspect-3/2 min-h-50 h-[clamp(200px,25vh,360px)] border-b border-base-300 flex items-center justify-center">
           <div className="w-[92%] h-[86%] rounded-box border border-dashed border-base-300 bg-base-200 flex items-center justify-center">
             <span className="text-xs text-base-content/60">Logo Area</span>
           </div>

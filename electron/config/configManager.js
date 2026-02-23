@@ -1,16 +1,19 @@
 import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getModelKeyFromPath } from '../utils/modelKey.js';
 import {
-  DEFAULT_GLOBAL_CONFIG,
+  DEFAULT_LIVE2DENV_CONFIG,
   DEFAULT_MODEL_CONFIG,
   DEFAULT_TOUCH_PRIORITY,
-  normalizeGlobalConfig,
-  normalizeLive2denvGlobal,
+  DEFAULT_GLOBAL_MODEL_CONFIG,
+  normalizeLive2denvConfig,
+  normalizeGlobalModelConfig,
 } from './globalConfig.js';
 
 const CONFIG_DIR_NAME = 'config';
-const GLOBAL_CONFIG_FILENAME = 'liv2denv.json';
+const GLOBAL_CONFIG_FILENAME = 'live2denv.json';
+const GLOBAL_MODEL_CONFIG_FILENAME = 'globalModelConfig.json';
 const MODEL_CONFIG_DIR_NAME = 'models';
 
 const ensureAppReady = () => {
@@ -25,6 +28,8 @@ const getBaseConfigDir = () => {
 };
 
 const getGlobalConfigPath = () => path.join(getBaseConfigDir(), GLOBAL_CONFIG_FILENAME);
+
+const getGlobalModelConfigPath = () => path.join(getBaseConfigDir(), GLOBAL_MODEL_CONFIG_FILENAME);
 
 const getModelConfigDir = () => path.join(getBaseConfigDir(), MODEL_CONFIG_DIR_NAME);
 
@@ -49,21 +54,11 @@ const writeJsonFile = (filePath, data) => {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 };
 
-const sanitizeModelKey = (modelPath) => {
-  const baseName = path.basename(modelPath || '');
-  const safeName = baseName
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/gi, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  if (safeName) {
-    return safeName;
-  }
-  return `model-${Date.now().toString(36)}`;
-};
-
 export const getModelConfigPathFor = (modelDir) => {
-  const key = sanitizeModelKey(modelDir);
+  const key = getModelKeyFromPath(modelDir);
+  if (!key) {
+    return path.join(getModelConfigDir(), `model-${Date.now().toString(36)}.json`);
+  }
   return path.join(getModelConfigDir(), `${key}.json`);
 };
 
@@ -74,35 +69,42 @@ export const ensureConfigDirectories = () => {
   fs.mkdirSync(modelDir, { recursive: true });
 };
 
-export const loadGlobalConfig = () => {
+export const loadLive2denvConfig = () => {
   ensureConfigDirectories();
   const configPath = getGlobalConfigPath();
-  const config = readJsonFile(configPath, DEFAULT_GLOBAL_CONFIG);
-  const normalized = normalizeGlobalConfig(config);
+  const raw = readJsonFile(configPath, DEFAULT_LIVE2DENV_CONFIG);
+  const normalized = normalizeLive2denvConfig(raw);
   if (!fs.existsSync(configPath)) {
     writeJsonFile(configPath, normalized);
   }
   return normalized;
 };
 
-export const saveGlobalConfig = (config) => {
+export const saveLive2denvConfig = (config) => {
   ensureConfigDirectories();
-  const normalized = normalizeGlobalConfig(config);
+  const normalized = normalizeLive2denvConfig(config);
   const configPath = getGlobalConfigPath();
   writeJsonFile(configPath, normalized);
   return normalized;
 };
 
-export const loadGlobalSettings = () => {
-  const config = loadGlobalConfig();
-  return normalizeLive2denvGlobal(config.GLOBAL);
+export const loadGlobalModelConfig = () => {
+  ensureConfigDirectories();
+  const configPath = getGlobalModelConfigPath();
+  const raw = readJsonFile(configPath, DEFAULT_GLOBAL_MODEL_CONFIG);
+  const normalized = normalizeGlobalModelConfig(raw);
+  if (!fs.existsSync(configPath)) {
+    writeJsonFile(configPath, normalized);
+  }
+  return normalized;
 };
 
-export const saveGlobalSettings = (settings) => {
-  const config = loadGlobalConfig();
-  const normalized = normalizeLive2denvGlobal(settings);
-  const next = { ...config, GLOBAL: normalized };
-  return saveGlobalConfig(next);
+export const saveGlobalModelConfig = (settings) => {
+  ensureConfigDirectories();
+  const normalized = normalizeGlobalModelConfig(settings);
+  const configPath = getGlobalModelConfigPath();
+  writeJsonFile(configPath, normalized);
+  return normalized;
 };
 
 export const loadModelConfig = (modelDir) => {
@@ -143,9 +145,9 @@ export const listModelConfigs = () => {
 };
 
 export {
-  DEFAULT_GLOBAL_CONFIG,
+  DEFAULT_LIVE2DENV_CONFIG,
   DEFAULT_MODEL_CONFIG,
   DEFAULT_TOUCH_PRIORITY,
-  normalizeGlobalConfig,
-  normalizeLive2denvGlobal,
+  normalizeLive2denvConfig,
+  normalizeGlobalModelConfig,
 };

@@ -1,6 +1,6 @@
 export const DEFAULT_TOUCH_PRIORITY = ['hair', 'face', 'xiongbu', 'qunzi', 'leg'];
 
-export const DEFAULT_LIVE2D_GLOBAL_SETTINGS = {
+export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   scale: 1.0,
   ignoreMouse: false,
   autoLaunch: false,
@@ -9,12 +9,11 @@ export const DEFAULT_LIVE2D_GLOBAL_SETTINGS = {
   debugModeEnabled: false,
 };
 
-export const DEFAULT_GLOBAL_CONFIG = {
+// Live2denvConfig: liv2denv.json（模型列表/当前模型等），不包含全局模型设置。
+export const DEFAULT_LIVE2DENV_CONFIG = {
   VITE_TOUCH_PRIORITY: DEFAULT_TOUCH_PRIORITY,
   VITE_MODEL_PATHS: [],
-  VITE_DEBUG: false,
   CURRENT_PATH: null,
-  GLOBAL: { ...DEFAULT_LIVE2D_GLOBAL_SETTINGS },
 };
 
 export const DEFAULT_MODEL_CONFIG = {
@@ -34,8 +33,8 @@ export const DEFAULT_MODEL_CONFIG = {
   interactionZones: {},
 };
 
-export const normalizeLive2denvGlobal = (settings = {}) => {
-  const next = { ...DEFAULT_LIVE2D_GLOBAL_SETTINGS };
+export const normalizeGlobalModelConfig = (settings = {}) => {
+  const next = { ...DEFAULT_GLOBAL_MODEL_CONFIG };
   if (Number.isFinite(settings.scale)) {
     next.scale = settings.scale;
   }
@@ -57,9 +56,9 @@ export const normalizeLive2denvGlobal = (settings = {}) => {
   return next;
 };
 
-export const normalizeGlobalConfig = (input = {}) => {
+export const normalizeLive2denvConfig = (input = {}) => {
   const next = {
-    ...DEFAULT_GLOBAL_CONFIG,
+    ...DEFAULT_LIVE2DENV_CONFIG,
     ...(input || {}),
   };
   next.VITE_MODEL_PATHS = Array.isArray(next.VITE_MODEL_PATHS)
@@ -68,23 +67,11 @@ export const normalizeGlobalConfig = (input = {}) => {
   next.VITE_TOUCH_PRIORITY = Array.isArray(next.VITE_TOUCH_PRIORITY)
     ? next.VITE_TOUCH_PRIORITY.filter(Boolean)
     : DEFAULT_TOUCH_PRIORITY;
-  if (typeof next.VITE_DEBUG !== 'boolean') {
-    next.VITE_DEBUG = Boolean(next.VITE_DEBUG);
-  }
   if (next.CURRENT_PATH && typeof next.CURRENT_PATH !== 'string') {
     next.CURRENT_PATH = null;
   }
-  const legacySettings = {
-    scale: input?.scale,
-    ignoreMouse: input?.ignoreMouse,
-    autoLaunch: input?.autoLaunch,
-    showDragHandleOnHover: input?.showDragHandleOnHover,
-    forcedFollow: input?.forcedFollow,
-    debugModeEnabled: input?.debugModeEnabled,
-  };
-  next.GLOBAL = normalizeLive2denvGlobal({
-    ...(input?.GLOBAL || {}),
-    ...legacySettings,
-  });
+
+  // 兼容旧配置文件：如果存在 GLOBAL/legacy 字段，读取时会由 configManager 迁移到 globalModelConfig.json。
+  // normalizeLive2denvConfig 本身不再生成/持久化这些字段。
   return next;
 };

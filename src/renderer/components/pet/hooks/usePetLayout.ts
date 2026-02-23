@@ -1,5 +1,4 @@
 import { useEffect, type RefObject } from 'react';
-import { log as debugLog } from '../../../utils/env';
 
 export interface UsePetLayoutParams {
   scale: number | null | undefined;
@@ -23,12 +22,10 @@ export const usePetLayout = ({
     // don't overwrite it here. Overwriting can cause the first resize/scale
     // to jitter because the anchor center shifts mid-flight.
     if (typeof centerBaselineRef.current === 'number' && Number.isFinite(centerBaselineRef.current)) {
-      debugLog('[usePetLayout] baseline init skipped (already set)', { baseline: centerBaselineRef.current });
       return;
     }
     const initialCenter = getWindowCenter();
     centerBaselineRef.current = initialCenter;
-    debugLog('[usePetLayout] baseline init', { initialCenter });
   }, [getWindowCenter, centerBaselineRef]);
 
   useEffect(() => {

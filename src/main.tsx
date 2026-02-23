@@ -5,12 +5,50 @@ import ControlPanel from './renderer/components/controlPanel/ControlPanel.tsx';;
 import DemoRoot from './demo/DemoRoot';
 import './app.css';
 
+import { info, setContextProvider, setEnabledProvider } from './renderer/utils/log';
+import { usePetStore } from './renderer/store/usePetStore';
+import { useConfigStore } from './renderer/store/useConfigStore';
+
 const searchParams = typeof window !== 'undefined'
   ? new URLSearchParams(window.location.search)
   : new URLSearchParams();
 
 const isControlPanelView = searchParams.get('window') === 'control-panel';
 const isDemoView = searchParams.get('window') === 'demo';
+
+const windowType: 'pet' | 'control-panel' | 'demo' = isDemoView
+  ? 'demo'
+  : (isControlPanelView ? 'control-panel' : 'pet');
+
+// Renderer logging bootstrap (DevTools-only).
+setEnabledProvider(() => {
+  try {
+    return usePetStore.getState().debugModeEnabled === true;
+  } catch {
+    return false;
+  }
+});
+
+setContextProvider(() => {
+  try {
+    const pet = usePetStore.getState();
+    const config = useConfigStore.getState();
+    return {
+      windowType,
+      scale: pet.scale,
+      modelKey: config.modelKey,
+      activeModelPath: config.activeModelPath,
+      activeModelFileUrl: config.activeModelFileUrl,
+    };
+  } catch {
+    return { windowType };
+  }
+});
+
+info('renderer', 'boot', {
+  windowType,
+  href: typeof window !== 'undefined' ? window.location.href : undefined,
+});
 
 export function Root() {
   return (

@@ -10,6 +10,7 @@ import type { ControlPanelTabKey, ModelConfig, ModelEntry, GlobalUiSettings } fr
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
 import { useConfigStore } from '../../store/useConfigStore';
+import { info, warn } from '../../utils/log';
 
 const buildInitialSegmentActions = (touchMap: number[], actions: string[]) => {
   const count = Array.isArray(touchMap) ? touchMap.length : 0;
@@ -22,7 +23,14 @@ const ControlPanel: React.FC = () => {
   const { theme, toggle } = useThemeMode();
   const [activeTab, setActiveTab] = useState<ControlPanelTabKey>('home');
 
-  const { globalConfig, modelConfig: persistedModelConfig, activeModelPath, hydrated, refresh } = useConfigStore();
+  const {
+    live2denvConfig,
+    globalModelConfig,
+    modelConfig: persistedModelConfig,
+    activeModelPath,
+    hydrated,
+    refresh,
+  } = useConfigStore();
 
   // 首次挂载拉一次主进程快照（非必须，但能确保控制面板与主窗口一致）。
   useEffect(() => {
@@ -39,7 +47,7 @@ const ControlPanel: React.FC = () => {
   );
 
   const globalSettings: GlobalUiSettings = useMemo(() => {
-    const persisted = (globalConfig?.GLOBAL ?? {}) as Partial<GlobalUiSettings>;
+    const persisted = (globalModelConfig ?? {}) as Partial<GlobalUiSettings>;
     const baseScale = typeof persisted.scale === 'number' && Number.isFinite(persisted.scale)
       ? persisted.scale
       : DEFAULT_GLOBAL_UI_SETTINGS.scale;
@@ -49,7 +57,7 @@ const ControlPanel: React.FC = () => {
       ...persisted,
       scale: liveScale,
     };
-  }, [globalConfig?.GLOBAL, workerScale]);
+  }, [globalModelConfig, workerScale]);
 
   const modelConfig: ModelConfig = useMemo(() => {
     const persisted = (persistedModelConfig ?? {}) as unknown as Partial<ModelConfig>;
@@ -72,11 +80,11 @@ const ControlPanel: React.FC = () => {
   const pushedPersistedScaleRef = useRef(false);
   useEffect(() => {
     if (pushedPersistedScaleRef.current) return;
-    const persistedScale = globalConfig?.GLOBAL?.scale;
+    const persistedScale = globalModelConfig?.scale;
     if (typeof persistedScale !== 'number' || !Number.isFinite(persistedScale)) return;
     pushedPersistedScaleRef.current = true;
     sharedStoreClient.dispatchPatch([{ path: 'global.scale', value: persistedScale }]);
-  }, [globalConfig?.GLOBAL?.scale]);
+  }, [globalModelConfig?.scale]);
 
   const [actions, setActions] = useState<string[]>(() => [...DEFAULT_ACTIONS]);
   const [segmentActionsByModel, setSegmentActionsByModel] = useState<Record<string, string[]>>({});
@@ -89,13 +97,14 @@ const ControlPanel: React.FC = () => {
   });
 
   const modelPaths = useMemo(() => {
-    const list = globalConfig?.VITE_MODEL_PATHS;
+    const list = live2denvConfig?.VITE_MODEL_PATHS;
     return Array.isArray(list) ? list.filter(Boolean) : [];
-  }, [globalConfig?.VITE_MODEL_PATHS]);
+  }, [live2denvConfig?.VITE_MODEL_PATHS]);
 
-  const currentModelPath = activeModelPath ?? globalConfig?.CURRENT_PATH ?? null;
+  const currentModelPath = activeModelPath ?? live2denvConfig?.CURRENT_PATH ?? null;
   const segmentActionsKey = currentModelPath ?? '__no_model__';
 
+  // 交互设置
   const segmentActions = useMemo(() => {
     const desired = buildInitialSegmentActions(modelConfig.touchMap, actions);
     const stored = segmentActionsByModel[segmentActionsKey];
@@ -122,9 +131,16 @@ const ControlPanel: React.FC = () => {
 
   const persistGlobalSettings = (next: GlobalUiSettings) => {
     const api = window.petAPI;
-    api?.updateGlobalConfig?.({ GLOBAL: next }).catch(() => {
-      // ignore
-    });
+    // 这些字段属于 globalModelConfig：需要通过 updateGlobalModelConfig 才能
+    // 触发主进程广播并让主窗口（PetCanvas/usePetStore）实时生效。
+    if (api?.updateGlobalModelConfig) {
+      api.updateGlobalModelConfig(next).catch((e) => {
+        warn('controlPanel', 'globalSettings.persistFailed', { via: 'updateGlobalModelConfig', err: String(e) });
+      });
+      return;
+    }
+
+    warn('controlPanel', 'globalSettings.persistFailed', { via: 'missing.updateGlobalModelConfig' });
   };
 
   const persistModelConfig = (next: ModelConfig) => {
@@ -136,7 +152,7 @@ const ControlPanel: React.FC = () => {
 
   const handleSelectModelPath = (nextPath: string) => {
     const api = window.petAPI;
-    api?.updateGlobalConfig?.({
+    api?.updateLive2denvConfig?.({
       CURRENT_PATH: nextPath,
       LAST_SELECTED_AT: Date.now(),
     }).catch(() => {
@@ -146,8 +162,11 @@ const ControlPanel: React.FC = () => {
 
   const handleAddModel = async () => {
     const api = window.petAPI;
-    if (!api?.pickModelFile || !api.updateGlobalConfig) {
-      console.warn('[ModelImport] missing petAPI.pickModelFile/updateGlobalConfig (cannot add model).');
+    if (!api?.pickModelFile || !api.updateLive2denvConfig) {
+      warn('controlPanel', 'modelImport.capabilityMissing', {
+        hasPickModelFile: !!api?.pickModelFile,
+        hasUpdateLive2denvConfig: !!api?.updateLive2denvConfig,
+      });
       return;
     }
 
@@ -155,12 +174,15 @@ const ControlPanel: React.FC = () => {
     if (!modelDir) return;
     const nextPaths = Array.from(new Set([...(modelPaths ?? []), modelDir]));
 
-    api.updateGlobalConfig({
+    api.updateLive2denvConfig({
       VITE_MODEL_PATHS: nextPaths,
       CURRENT_PATH: modelDir,
       LAST_SELECTED_AT: Date.now(),
-    }).then(() => refresh()).catch((err) => {
-      console.warn('[ModelImport] updateGlobalConfig failed', err);
+    }).then(() => {
+      info('controlPanel', 'modelImport.ok', { modelDir, nextCount: nextPaths.length });
+      return refresh();
+    }).catch((err) => {
+      warn('controlPanel', 'modelImport.persistFailed', { err: String(err) });
     });
   };
 
@@ -169,7 +191,7 @@ const ControlPanel: React.FC = () => {
     const nextPaths = modelPaths.filter((p) => p !== removePath);
     const nextCurrent = currentModelPath === removePath ? (nextPaths[0] ?? null) : currentModelPath;
     const api = window.petAPI;
-    api?.updateGlobalConfig?.({
+    api?.updateLive2denvConfig?.({
       VITE_MODEL_PATHS: nextPaths,
       CURRENT_PATH: nextCurrent,
       LAST_SELECTED_AT: Date.now(),

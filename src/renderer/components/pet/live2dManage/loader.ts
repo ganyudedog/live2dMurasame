@@ -2,6 +2,8 @@
 // 先导入 Cubism4 运行时，再导入主类，避免顺序问题导致回退到 Cubism2
 import { Live2DModel } from './runtime';
 
+import { agg, debug, info } from '../../../utils/log';
+
 declare global {
   interface Window { Live2DCubismCore?: any }
 }
@@ -21,13 +23,23 @@ async function ensureCubismCore() {
       await new Promise<void>((resolve, reject) => {
         const s = document.createElement('script');
         s.src = url;
-        s.onload = () => { console.log('[CubismCore] dynamic loaded', url); resolve(); };
+        s.onload = () => {
+          info('pet.live2d', 'cubismCore.loaded', { url });
+          resolve();
+        };
         s.onerror = () => reject(new Error('failed loading ' + url));
         document.head.appendChild(s);
       });
       if (window.Live2DCubismCore) return;
     } catch (e) {
-      console.warn('[CubismCore] try failed', url, e);
+      agg({
+        level: 'warn',
+        ns: 'pet.live2d',
+        event: 'cubismCore.tryFailed',
+        key: url,
+        windowMs: 2000,
+        data: { url, err: String(e) },
+      });
     }
   }
   if (!window.Live2DCubismCore) {
@@ -36,7 +48,7 @@ async function ensureCubismCore() {
 }
 
 export async function loadModel(modelPath: string) {
-  console.log('[Live2D] loading model:', modelPath);
+  info('pet.live2d', 'model.load.start', { modelPath, isFileUrl: /^file:/i.test(modelPath) });
   await ensureCubismCore();
   if (!(Live2DModel as any)) {
     throw new Error('Live2DModel unavailable after runtime import');
@@ -52,6 +64,14 @@ export async function loadModel(modelPath: string) {
   }
   // 禁用自动交互注册，避免在 Pixi v7 上依赖 legacy interaction manager
   const model = await Live2DModel.from(modelPath, { autoInteract: false });
-  console.log('[Live2D] model loaded groups:', Object.keys((model as any).internalModel?.settings?.motions || {}));
+  try {
+    const groups = Object.keys((model as any).internalModel?.settings?.motions || {});
+    debug('pet.live2d', 'model.load.ok', {
+      motionGroupCount: groups.length,
+      motionGroupsPreview: groups.slice(0, 5),
+    });
+  } catch {
+    // ignore motion group inspection
+  }
   return model;
 }

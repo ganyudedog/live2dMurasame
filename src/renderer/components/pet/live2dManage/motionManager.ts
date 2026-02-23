@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Live2DModel } from './runtime';
+import { debug as logDebug } from '../../../utils/log';
 
 interface MotionManagerOptions {
   idleGroups?: string[]; // override idle groups
@@ -167,7 +168,16 @@ export class MotionManager {
 
   private log(...args: any[]) {
     if (this.debug) {
-      console.log('[MotionManager]', ...args);
+      try {
+        const [event, data] = args;
+        if (typeof event === 'string') {
+          logDebug('pet.motion', event, { data });
+          return;
+        }
+        logDebug('pet.motion', 'mm', { args });
+      } catch {
+        // ignore
+      }
     }
   }
 

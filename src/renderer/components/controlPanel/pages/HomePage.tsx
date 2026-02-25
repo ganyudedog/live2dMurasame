@@ -2,6 +2,9 @@ import { useEffect, useMemo, useReducer, useRef } from 'react';
 import type { GlobalUiSettings, ModelConfig, ModelEntry } from '../types';
 import { sharedStoreClient } from '../../../shared/sharedStoreClient';
 
+const BOOLEAN_COMMIT_DEBOUNCE_MS = 280;
+const SCALE_PERSIST_DEBOUNCE_MS = 250;
+
 const useOptimisticBoolean = (options: {
   remoteValue: boolean;
   onCommit: (next: boolean) => Promise<void>;
@@ -58,16 +61,37 @@ const useOptimisticBoolean = (options: {
   const remoteRef = useRef(remoteValue);
   const requestIdRef = useRef(0);
 
+  // 去抖合并：连续点击时只提交最后一次，避免 IPC/写盘/广播风暴导致卡顿。
+  const commitTimerRef = useRef<number | null>(null);
+  const latestCommitRef = useRef<{ next: boolean; requestId: number } | null>(null);
+
   useEffect(() => {
     remoteRef.current = remoteValue;
   }, [remoteValue]);
+
+  useEffect(() => {
+    return () => {
+      // 卸载时尽量把最后一次变更落盘。
+      if (commitTimerRef.current == null) return;
+
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+      const latest = latestCommitRef.current;
+      if (!latest) return;
+      latestCommitRef.current = null;
+      onCommit(latest.next).catch(() => {
+        // ignore
+      });
+    };
+  }, [onCommit]);
 
   useEffect(() => {
     if (!state.pending) return;
 
     // 只把“远端值 == 我期望值”当作 ACK；其他远端更新先不覆盖本地输入。
     if (remoteValue === state.desired) {
-      dispatch({ type: 'ack' });
+      // 用微任务调度，避免在 effect 中同步触发 reducer 更新导致级联渲染。
+      queueMicrotask(() => dispatch({ type: 'ack' }));
     }
   }, [remoteValue, state.desired, state.pending]);
 
@@ -75,12 +99,24 @@ const useOptimisticBoolean = (options: {
     const requestId = ++requestIdRef.current;
     dispatch({ type: 'commit', next, requestId });
 
-    onCommit(next).catch(() => {
-      // 只处理最新一次提交的失败；更旧的失败不回滚，避免乱序回弹。
-      if (requestIdRef.current !== requestId) return;
-      const rollback = remoteRef.current;
-      dispatch({ type: 'rollback', rollback, requestId });
-    });
+    latestCommitRef.current = { next, requestId };
+    if (commitTimerRef.current != null) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+
+    commitTimerRef.current = window.setTimeout(() => {
+      commitTimerRef.current = null;
+      const latest = latestCommitRef.current;
+      if (!latest) return;
+      latestCommitRef.current = null;
+      onCommit(latest.next).catch(() => {
+        // 只处理最新一次提交的失败；更旧的失败不回滚，避免乱序回弹。
+        if (requestIdRef.current !== latest.requestId) return;
+        const rollback = remoteRef.current;
+        dispatch({ type: 'rollback', rollback, requestId: latest.requestId });
+      });
+    }, BOOLEAN_COMMIT_DEBOUNCE_MS);
   };
 
   // pending 时展示本地 draft；否则展示远端值（避免 stale state 覆盖外部更新）。
@@ -105,6 +141,28 @@ export default function HomePage({
   }) {
   // 接入了sharedWorked，无需使用本地ref来防止ipc抖动
   const scaleLabel = useMemo(() => globalSettings.scale.toFixed(2), [globalSettings.scale]);
+
+  // scale 的实时联动走 SharedWorker；持久化走去抖，避免拖动时频繁 IPC。
+  const scalePersistTimerRef = useRef<number | null>(null);
+  const latestScaleRef = useRef(globalSettings.scale);
+
+  useEffect(() => {
+    latestScaleRef.current = globalSettings.scale;
+  }, [globalSettings.scale]);
+
+  useEffect(() => {
+    return () => {
+      // 没有 pending 的持久化任务则不需要 flush，避免切页/卸载时多余 IPC。
+      if (scalePersistTimerRef.current == null) return;
+
+      window.clearTimeout(scalePersistTimerRef.current);
+      scalePersistTimerRef.current = null;
+      const last = latestScaleRef.current;
+      onGlobalSettingsChange({ scale: last }).catch(() => {
+        // ignore
+      });
+    };
+  }, [onGlobalSettingsChange]);
 
   // 使用本地state来避免 ipc 抖动导致的输入体验不佳（并且避免远端回写覆盖本地输入）。
   const ignoreMouse = useOptimisticBoolean({
@@ -189,11 +247,21 @@ export default function HomePage({
               value={globalSettings.scale}
               onChange={(e) => {
                 const nextScale = Number.parseFloat(e.target.value);
-                onGlobalSettingsChange({ scale: nextScale }).catch(() => {
-                  // ignore
-                });
                 // 每次拖动都直接发 patch，模型窗口会实时响应。
                 sharedStoreClient.dispatchPatch([{ path: 'global.scale', value: nextScale }]);
+
+                // 持久化去抖：只写入最后一次 scale。
+                latestScaleRef.current = nextScale;
+                if (scalePersistTimerRef.current != null) {
+                  window.clearTimeout(scalePersistTimerRef.current);
+                  scalePersistTimerRef.current = null;
+                }
+                scalePersistTimerRef.current = window.setTimeout(() => {
+                  scalePersistTimerRef.current = null;
+                  onGlobalSettingsChange({ scale: latestScaleRef.current }).catch(() => {
+                    // ignore
+                  });
+                }, SCALE_PERSIST_DEBOUNCE_MS);
               }}
               className="range range-xs"
             />

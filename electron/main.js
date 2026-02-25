@@ -30,6 +30,47 @@ let mainWindow = null;
 let controlPanelWindow = null;
 let isQuitting = false;
 
+// autoLaunch 在 Windows 下通过 app.setLoginItemSettings 可能较慢；
+// 若在控制面板交互期间同步执行，会导致浏览器进程短暂阻塞，表现为控制面板无法点击。
+// 这里做“合并 + 延后 + 避开聚焦窗口”的调度：UI 先持久化与广播，系统层设置在空闲时再应用。
+const AUTO_LAUNCH_APPLY_DEBOUNCE_MS = 1200;
+let pendingAutoLaunchValue = null;
+let autoLaunchApplyTimer = null;
+
+const scheduleApplyAutoLaunchSetting = (enabled) => {
+    pendingAutoLaunchValue = Boolean(enabled);
+    if (autoLaunchApplyTimer !== null) {
+        try {
+            clearTimeout(autoLaunchApplyTimer);
+        } catch {}
+        autoLaunchApplyTimer = null;
+    }
+
+    const attempt = () => {
+        if (pendingAutoLaunchValue === null) return;
+
+        // 若控制面板正在聚焦交互，继续延后，避免卡住输入。
+        try {
+            const focused = BrowserWindow.getFocusedWindow();
+            const isControlPanelFocused = focused
+                && controlPanelWindow
+                && !controlPanelWindow.isDestroyed()
+                && focused.id === controlPanelWindow.id;
+            if (isControlPanelFocused) {
+                autoLaunchApplyTimer = setTimeout(attempt, AUTO_LAUNCH_APPLY_DEBOUNCE_MS);
+                return;
+            }
+        } catch {}
+
+        const value = pendingAutoLaunchValue;
+        pendingAutoLaunchValue = null;
+        autoLaunchApplyTimer = null;
+        applyAutoLaunchSetting(value);
+    };
+
+    autoLaunchApplyTimer = setTimeout(attempt, AUTO_LAUNCH_APPLY_DEBOUNCE_MS);
+};
+
 // 当渲染进程通过 IPC 主动触发一次 resize/setBounds 时，
 // 将本次请求的 requestId 附带在下一次 boundsChanged 广播中作为 ACK。
 // 用于渲染端抑制 resize 风暴（inFlight gating）。
@@ -325,6 +366,17 @@ const broadcastGlobalModelConfig = () => {
     });
 };
 
+// 广播一个“快照 patch”（仅包含变更字段），用于避免频繁发送大 payload（尤其是 modelConfig）。
+// preload 的 dispatchSnapshotUpdate 会按字段 merge，因此这里可以只发 globalModelConfig。
+const broadcastConfigSnapshotPatch = (patch = {}) => {
+    if (!patch || typeof patch !== 'object' || !Object.keys(patch).length) return;
+    const targets = BrowserWindow.getAllWindows();
+    targets.forEach((win) => {
+        if (!win || win.isDestroyed()) return;
+        win.webContents.send('pet:configSnapshotUpdated', patch);
+    });
+};
+
 const createMainWindow = () => {
     mainWindow = new BrowserWindow({
         width: 500,
@@ -444,13 +496,13 @@ const applyGlobalModelConfigPatch = (patch) => {
     overrideGlobalModelConfigCache(next);
     persistGlobalModelConfig(next);
     invalidateGlobalModelConfigCache();
-
-    const snapshot = reloadLive2denvConfig();
     broadcastGlobalModelConfig();
-    broadcastConfigSnapshot(snapshot, { live2denv: true, model: false });
+
+    // 只广播 globalModelConfig，避免把 modelConfig 等大对象一起发到渲染端。
+    broadcastConfigSnapshotPatch({ globalModelConfig: next });
 
     if (Object.prototype.hasOwnProperty.call(safePatch, 'autoLaunch')) {
-        applyAutoLaunchSetting(safePatch.autoLaunch);
+        scheduleApplyAutoLaunchSetting(safePatch.autoLaunch);
     }
 
     return { ...next };
@@ -633,6 +685,19 @@ ipcMain.handle('pet:getWindowBounds', (event) => {
 
 app.on('before-quit', () => {
     isQuitting = true;
+
+    // 退出前确保把最后一次 autoLaunch 落到系统设置里。
+    if (autoLaunchApplyTimer !== null) {
+        try {
+            clearTimeout(autoLaunchApplyTimer);
+        } catch {}
+        autoLaunchApplyTimer = null;
+    }
+    if (pendingAutoLaunchValue !== null) {
+        const value = pendingAutoLaunchValue;
+        pendingAutoLaunchValue = null;
+        applyAutoLaunchSetting(value);
+    }
 });
 
 app.whenReady().then(async () => {

@@ -42,7 +42,7 @@ const scheduleApplyAutoLaunchSetting = (enabled) => {
     if (autoLaunchApplyTimer !== null) {
         try {
             clearTimeout(autoLaunchApplyTimer);
-        } catch {}
+        } catch { }
         autoLaunchApplyTimer = null;
     }
 
@@ -60,7 +60,7 @@ const scheduleApplyAutoLaunchSetting = (enabled) => {
                 autoLaunchApplyTimer = setTimeout(attempt, AUTO_LAUNCH_APPLY_DEBOUNCE_MS);
                 return;
             }
-        } catch {}
+        } catch { }
 
         const value = pendingAutoLaunchValue;
         pendingAutoLaunchValue = null;
@@ -99,7 +99,7 @@ const emitMainWindowBoundsNow = () => {
         } else {
             mainWindow.webContents.send('pet:windowBoundsChanged', bounds);
         }
-    } catch {}
+    } catch { }
 };
 
 const scheduleEmitMainWindowBounds = () => {
@@ -120,7 +120,7 @@ const scheduleEmitMainWindowBounds = () => {
             lastBoundsEmitAt = Date.now();
             emitMainWindowBoundsNow();
         }, delay);
-    } catch {}
+    } catch { }
 };
 
 // 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
@@ -130,7 +130,7 @@ if (!enableGpu) {
         app.disableHardwareAcceleration();
         app.commandLine.appendSwitch('disable-gpu');
         app.commandLine.appendSwitch('disable-gpu-compositing');
-    } catch {}
+    } catch { }
 }
 
 const loadMainWindow = (target) => {
@@ -181,7 +181,7 @@ const pickModelDirViaDialog = async (parentWindow) => {
                 } else {
                     await dialog.showMessageBox(messageBoxOptions);
                 }
-            } catch {}
+            } catch { }
             return null;
         }
         return path.dirname(hit);
@@ -202,7 +202,7 @@ const ensureModelSelectedOnStartup = async () => {
         try {
             parentWindow?.show();
             parentWindow?.focus();
-        } catch {}
+        } catch { }
 
         const dir = await pickModelDirViaDialog(parentWindow);
         if (!dir) return;
@@ -248,7 +248,6 @@ const ensureControlPanelWindow = () => {
             preload: path.join(__dirname, 'preload.js'),
         },
     });
-    controlPanelWindow.openDevTools(true);
 
     loadControlPanelWindow(controlPanelWindow);
 
@@ -404,7 +403,7 @@ const createMainWindow = () => {
     if (!app.isPackaged && process.env.VITE_OPEN_DEVTOOLS === '1') {
         try {
             mainWindow.webContents.openDevTools({ mode: 'detach' });
-        } catch {}
+        } catch { }
     }
 
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
@@ -560,7 +559,7 @@ ipcMain.handle('pet:pickModelFile', async () => {
     try {
         parentWindow?.show();
         parentWindow?.focus();
-    } catch {}
+    } catch { }
     return pickModelDirViaDialog(parentWindow);
 });
 
@@ -649,16 +648,16 @@ ipcMain.handle('pet:setMainWindowBounds', (_event, bounds) => {
 });
 
 ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
-    // try {
-    //     const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
-    //     if (!target || target.isDestroyed()) return;
-    //     const enabled = Boolean(passthrough);
-    //     target.setIgnoreMouseEvents(enabled, { forward: true });
-    //     return enabled;
-    // } catch (error) {
-    //     console.warn('[pet] setMousePassthrough failed', error);
-    //     throw error;
-    // }
+    try {
+        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+        if (!target || target.isDestroyed()) return;
+        const enabled = Boolean(passthrough);
+        target.setIgnoreMouseEvents(enabled, { forward: true });
+        return enabled;
+    } catch (error) {
+        console.warn('[pet] setMousePassthrough failed', error);
+        throw error;
+    }
 });
 
 ipcMain.handle('pet:getCursorScreenPoint', () => {
@@ -690,7 +689,7 @@ app.on('before-quit', () => {
     if (autoLaunchApplyTimer !== null) {
         try {
             clearTimeout(autoLaunchApplyTimer);
-        } catch {}
+        } catch { }
         autoLaunchApplyTimer = null;
     }
     if (pendingAutoLaunchValue !== null) {

@@ -1,6 +1,92 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useReducer, useRef } from 'react';
 import type { GlobalUiSettings, ModelConfig, ModelEntry } from '../types';
 import { sharedStoreClient } from '../../../shared/sharedStoreClient';
+
+const useOptimisticBoolean = (options: {
+  remoteValue: boolean;
+  onCommit: (next: boolean) => Promise<void>;
+}) => {
+  const { remoteValue, onCommit } = options;
+
+  type State = {
+    draft: boolean;
+    desired: boolean;
+    pending: boolean;
+    pendingRequestId: number | null;
+  };
+
+  type Action =
+    | { type: 'commit'; next: boolean; requestId: number }
+    | { type: 'ack' }
+    | { type: 'rollback'; rollback: boolean; requestId: number };
+
+  const reducer = (state: State, action: Action): State => {
+    if (action.type === 'commit') {
+      return {
+        draft: action.next,
+        desired: action.next,
+        pending: true,
+        pendingRequestId: action.requestId,
+      };
+    }
+    if (action.type === 'ack') {
+      return {
+        ...state,
+        pending: false,
+        pendingRequestId: null,
+      };
+    }
+    if (action.type === 'rollback') {
+      if (state.pendingRequestId !== action.requestId) return state;
+      return {
+        draft: action.rollback,
+        desired: action.rollback,
+        pending: false,
+        pendingRequestId: null,
+      };
+    }
+    return state;
+  };
+
+  const [state, dispatch] = useReducer(reducer, remoteValue, (initial) => ({
+    draft: initial,
+    desired: initial,
+    pending: false,
+    pendingRequestId: null,
+  }));
+
+  const remoteRef = useRef(remoteValue);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    remoteRef.current = remoteValue;
+  }, [remoteValue]);
+
+  useEffect(() => {
+    if (!state.pending) return;
+
+    // 只把“远端值 == 我期望值”当作 ACK；其他远端更新先不覆盖本地输入。
+    if (remoteValue === state.desired) {
+      dispatch({ type: 'ack' });
+    }
+  }, [remoteValue, state.desired, state.pending]);
+
+  const commit = (next: boolean) => {
+    const requestId = ++requestIdRef.current;
+    dispatch({ type: 'commit', next, requestId });
+
+    onCommit(next).catch(() => {
+      // 只处理最新一次提交的失败；更旧的失败不回滚，避免乱序回弹。
+      if (requestIdRef.current !== requestId) return;
+      const rollback = remoteRef.current;
+      dispatch({ type: 'rollback', rollback, requestId });
+    });
+  };
+
+  // pending 时展示本地 draft；否则展示远端值（避免 stale state 覆盖外部更新）。
+  const draft = state.pending ? state.draft : remoteValue;
+  return { draft, commit };
+};
 
 export default function HomePage({
   model,
@@ -12,12 +98,36 @@ export default function HomePage({
 }: {
   model: ModelEntry;
   globalSettings: GlobalUiSettings;
-  onGlobalSettingsChange: (next: GlobalUiSettings) => void;
+  onGlobalSettingsChange: (patch: Partial<GlobalUiSettings>) => Promise<void>;
   modelConfig: ModelConfig;
   onModelConfigChange: (next: ModelConfig) => void;
   onGotoModels: () => void;
-}) {
+  }) {
+  // 接入了sharedWorked，无需使用本地ref来防止ipc抖动
   const scaleLabel = useMemo(() => globalSettings.scale.toFixed(2), [globalSettings.scale]);
+
+  // 使用本地state来避免 ipc 抖动导致的输入体验不佳（并且避免远端回写覆盖本地输入）。
+  const ignoreMouse = useOptimisticBoolean({
+    remoteValue: globalSettings.ignoreMouse,
+    onCommit: (next) => onGlobalSettingsChange({ ignoreMouse: next }),
+  });
+  const showDragHandleOnHover = useOptimisticBoolean({
+    remoteValue: globalSettings.showDragHandleOnHover,
+    onCommit: (next) => onGlobalSettingsChange({ showDragHandleOnHover: next }),
+  });
+  const autoLaunch = useOptimisticBoolean({
+    remoteValue: globalSettings.autoLaunch,
+    onCommit: (next) => onGlobalSettingsChange({ autoLaunch: next }),
+  });
+  const debugModeEnabled = useOptimisticBoolean({
+    remoteValue: globalSettings.debugModeEnabled,
+    onCommit: (next) => onGlobalSettingsChange({ debugModeEnabled: next }),
+  });
+  const forcedFollow = useOptimisticBoolean({
+    remoteValue: globalSettings.forcedFollow,
+    onCommit: (next) => onGlobalSettingsChange({ forcedFollow: next }),
+  });
+
   const touchMapKey = useMemo(() => modelConfig.touchMap.join(', '), [modelConfig.touchMap]);
   const touchMapDraftRef = useRef(touchMapKey);
   useEffect(() => {
@@ -79,11 +189,10 @@ export default function HomePage({
               value={globalSettings.scale}
               onChange={(e) => {
                 const nextScale = Number.parseFloat(e.target.value);
-                onGlobalSettingsChange({
-                  ...globalSettings,
-                  scale: nextScale,
+                onGlobalSettingsChange({ scale: nextScale }).catch(() => {
+                  // ignore
                 });
-                // 阶段 1：每次拖动都直接发 patch，模型窗口会实时响应。
+                // 每次拖动都直接发 patch，模型窗口会实时响应。
                 sharedStoreClient.dispatchPatch([{ path: 'global.scale', value: nextScale }]);
               }}
               className="range range-xs"
@@ -96,8 +205,10 @@ export default function HomePage({
               <input
                 type="checkbox"
                 className="toggle toggle-sm"
-                checked={globalSettings.ignoreMouse}
-                onChange={(e) => onGlobalSettingsChange({ ...globalSettings, ignoreMouse: e.target.checked })}
+                checked={ignoreMouse.draft}
+                onChange={(e) => {
+                  ignoreMouse.commit(e.target.checked);
+                }}
               />
             </label>
             <label className="label cursor-pointer justify-between p-0">
@@ -105,10 +216,10 @@ export default function HomePage({
               <input
                 type="checkbox"
                 className="toggle toggle-sm"
-                checked={globalSettings.showDragHandleOnHover}
-                onChange={(e) =>
-                  onGlobalSettingsChange({ ...globalSettings, showDragHandleOnHover: e.target.checked })
-                }
+                checked={showDragHandleOnHover.draft}
+                onChange={(e) => {
+                  showDragHandleOnHover.commit(e.target.checked);
+                }}
               />
             </label>
             <label className="label cursor-pointer justify-between p-0">
@@ -116,8 +227,10 @@ export default function HomePage({
               <input
                 type="checkbox"
                 className="toggle toggle-sm"
-                checked={globalSettings.autoLaunch}
-                onChange={(e) => onGlobalSettingsChange({ ...globalSettings, autoLaunch: e.target.checked })}
+                checked={autoLaunch.draft}
+                onChange={(e) => {
+                  autoLaunch.commit(e.target.checked);
+                }}
               />
             </label>
             <label className="label cursor-pointer justify-between p-0">
@@ -125,10 +238,10 @@ export default function HomePage({
               <input
                 type="checkbox"
                 className="toggle toggle-sm"
-                checked={globalSettings.debugModeEnabled}
-                onChange={(e) =>
-                  onGlobalSettingsChange({ ...globalSettings, debugModeEnabled: e.target.checked })
-                }
+                checked={debugModeEnabled.draft}
+                onChange={(e) => {
+                  debugModeEnabled.commit(e.target.checked);
+                }}
               />
             </label>
             <label className="label cursor-pointer justify-between p-0">
@@ -136,8 +249,10 @@ export default function HomePage({
               <input
                 type="checkbox"
                 className="toggle toggle-sm"
-                checked={globalSettings.forcedFollow}
-                onChange={(e) => onGlobalSettingsChange({ ...globalSettings, forcedFollow: e.target.checked })}
+                checked={forcedFollow.draft}
+                onChange={(e) => {
+                  forcedFollow.commit(e.target.checked);
+                }}
               />
             </label>
           </div>

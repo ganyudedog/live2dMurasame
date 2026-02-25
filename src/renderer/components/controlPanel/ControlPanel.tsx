@@ -129,18 +129,22 @@ const ControlPanel: React.FC = () => {
     };
   }, [currentModelPath, modelPaths]);
 
-  const persistGlobalSettings = (next: GlobalUiSettings) => {
+  const persistGlobalSettings = async (patch: Partial<GlobalUiSettings>) => {
     const api = window.petAPI;
     // 这些字段属于 globalModelConfig：需要通过 updateGlobalModelConfig 才能
     // 触发主进程广播并让主窗口（PetCanvas/usePetStore）实时生效。
     if (api?.updateGlobalModelConfig) {
-      api.updateGlobalModelConfig(next).catch((e) => {
+      try {
+        await api.updateGlobalModelConfig(patch);
+        return;
+      } catch (e) {
         warn('controlPanel', 'globalSettings.persistFailed', { via: 'updateGlobalModelConfig', err: String(e) });
-      });
-      return;
+        throw e;
+      }
     }
 
     warn('controlPanel', 'globalSettings.persistFailed', { via: 'missing.updateGlobalModelConfig' });
+    throw new Error('missing.updateGlobalModelConfig');
   };
 
   const persistModelConfig = (next: ModelConfig) => {
@@ -235,9 +239,7 @@ const ControlPanel: React.FC = () => {
         <HomePage
           model={selectedModel}
           globalSettings={globalSettings}
-          onGlobalSettingsChange={(next) => {
-            persistGlobalSettings(next);
-          }}
+          onGlobalSettingsChange={persistGlobalSettings}
           modelConfig={modelConfig}
           onModelConfigChange={(next) => {
             persistModelConfig(next);

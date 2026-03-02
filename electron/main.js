@@ -594,6 +594,7 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
             targetX,
             targetWidth,
             targetHeight,
+            trace: payload.trace,
         });
         if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setBounds({
@@ -611,6 +612,7 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
             targetX,
             targetWidth,
             targetHeight,
+            trace: payload.trace,
         });
         if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setBounds({
@@ -625,6 +627,7 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
             requestId,
             width: targetWidth,
             height: targetHeight,
+            trace: payload.trace,
         });
         if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setSize(targetWidth, targetHeight);

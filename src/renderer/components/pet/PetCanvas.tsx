@@ -27,6 +27,10 @@ const BUBBLE_GAP = 16; // 模型和气泡之间的距离
 const BUBBLE_EXTRA_GAP = 100; // 额外左右偏移量，按缩放比放大
 const BUBBLE_PADDING = 12; // 窗口边缘内边距
 const RESIZE_THROTTLE_MS = 120;
+const STARTUP_ENLARGE_BOUNDS_RATIO_GUARD = 1.6; // 启动期 bounds 异常膨胀防护阈值
+const STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD = 0.9; // baseFrame 接近容器宽度时视为可疑
+const ENLARGE_CONFIRM_DELTA_PX = 40; // 放大量两帧确认允许波动
+const ENLARGE_CONFIRM_WINDOW_MS = 260; // 两帧确认最大时间窗
 const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
 
 import { clamp, clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../../utils/math';
@@ -232,6 +236,7 @@ const PetCanvas: React.FC = () => {
   // 窗口宽度策略：只跟随 scale 变化。
   // 在 scale 变化时置位，下一次 updateBubblePosition 计算出目标宽度后只触发一次 resize。
   const resizeWindowOnNextLayoutRef = useRef(true);
+  const enlargeWidthConfirmRef = useRef<{ width: number; seenAt: number } | null>(null);
 
   // 鼠标穿透
   const mousePassthroughRef = useRef<boolean | null>(null); // 鼠标穿透状态
@@ -429,7 +434,7 @@ const PetCanvas: React.FC = () => {
     return soundPath;
   }, []);
 
-  const requestResize = useCallback((width: number, height: number, options?: { preserveCenterLine?: boolean }) => {
+  const requestResize = useCallback((width: number, height: number, options?: { preserveCenterLine?: boolean; trace?: Record<string, unknown> }) => {
     if (typeof window === 'undefined') return;
     const now = performance?.now ? performance.now() : Date.now();
     const prev = lastRequestedSizeRef.current;
@@ -505,6 +510,7 @@ const PetCanvas: React.FC = () => {
       height,
       anchorCenter: anchorCenter ?? undefined,
       requestId,
+      trace: options?.trace,
     };
     try {
       const api = (window as any).petAPI;
@@ -605,7 +611,7 @@ const PetCanvas: React.FC = () => {
     }
   }, []);
 
-  const applyWindowWidth = useCallback((requiredWidth: number) => {
+  const applyWindowWidth = useCallback((requiredWidth: number, traceMeta?: Record<string, unknown>) => {
     if (typeof window === 'undefined') return;
     if (!Number.isFinite(requiredWidth)) return;
 
@@ -689,7 +695,22 @@ const PetCanvas: React.FC = () => {
       ? performance.now()
       : Date.now();
 
-    requestResize(normalizedWidth, desiredHeight, { preserveCenterLine: true });
+    requestResize(normalizedWidth, desiredHeight, {
+      preserveCenterLine: true,
+      trace: {
+        source: 'applyWindowWidth',
+        requiredWidth,
+        normalizedWidth,
+        desiredHeight,
+        innerWidth: window.innerWidth,
+        boundsWidth: windowBoundsRef.current?.width ?? null,
+        targetWindowWidth: targetWindowWidthRef.current,
+        pendingWidth: pendingResizeRef.current?.width ?? null,
+        resizeInFlight: resizeInFlightRequestIdRef.current,
+        ...traceMeta,
+        ts: Date.now(),
+      },
+    });
   }, [requestResize]);
 
   const alignWindowToCenterLine = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
@@ -886,9 +907,50 @@ const PetCanvas: React.FC = () => {
     // 窗口宽度只跟随 scale：不要在拖动/动画/bounds 变化时持续触发 resize。
     // 仅当 scale 变化（或首次挂载）时，触发一次窗口宽度同步。
     if (resizeWindowOnNextLayoutRef.current) {
-      resizeWindowOnNextLayoutRef.current = false;
-      applyWindowWidth(enforcedWindowWidth);
-      suppressResizeForBubbleRef.current = false;
+      const currentWindowWidth = typeof window.innerWidth === 'number' ? window.innerWidth : 0;
+      const isEnlarge = enforcedWindowWidth > currentWindowWidth + 1;
+      const safeScreenWidth = Number.isFinite(screen.width) && screen.width > 0 ? screen.width : 0;
+      const boundsToScreenRatio = safeScreenWidth > 0 ? bounds.width / safeScreenWidth : 0;
+      const abnormalStartupEnlarge = isEnlarge && (
+        boundsToScreenRatio > STARTUP_ENLARGE_BOUNDS_RATIO_GUARD
+        || baseFrameWidthDom > canvasRect.width * STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD
+      );
+
+      const resizeTrace = {
+        requiredWindowWidth,
+        enforcedWindowWidth,
+        baseFrameWidthDom,
+        boundsWidthDom: bounds.width,
+        screenWidthDom: screen.width,
+        canvasRectWidthDom: canvasRect.width,
+        zoneTarget,
+        gapEffective,
+        isEnlarge,
+        boundsToScreenRatio,
+      };
+
+      if (abnormalStartupEnlarge) {
+        enlargeWidthConfirmRef.current = null;
+        suppressResizeForBubbleRef.current = false;
+      } else if (isEnlarge) {
+        const candidate = enlargeWidthConfirmRef.current;
+        const withinWindow = Boolean(candidate && (now - candidate.seenAt) <= ENLARGE_CONFIRM_WINDOW_MS);
+        const stableEnough = Boolean(candidate && Math.abs(candidate.width - enforcedWindowWidth) <= ENLARGE_CONFIRM_DELTA_PX);
+        if (!(withinWindow && stableEnough)) {
+          enlargeWidthConfirmRef.current = { width: enforcedWindowWidth, seenAt: now };
+          suppressResizeForBubbleRef.current = false;
+        } else {
+          enlargeWidthConfirmRef.current = null;
+          resizeWindowOnNextLayoutRef.current = false;
+          applyWindowWidth(enforcedWindowWidth, resizeTrace);
+          suppressResizeForBubbleRef.current = false;
+        }
+      } else {
+        enlargeWidthConfirmRef.current = null;
+        resizeWindowOnNextLayoutRef.current = false;
+        applyWindowWidth(enforcedWindowWidth, resizeTrace);
+        suppressResizeForBubbleRef.current = false;
+      }
     }
 
     if (!hasBubble) {
@@ -1092,6 +1154,7 @@ const PetCanvas: React.FC = () => {
   }, [scale, commitBubbleReady, applyWindowWidth]);
 
   useEffect(() => {
+    enlargeWidthConfirmRef.current = null;
     resizeWindowOnNextLayoutRef.current = true;
   }, [scale]);
 

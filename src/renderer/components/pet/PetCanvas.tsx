@@ -77,16 +77,17 @@ const isDevtoolsDockedLike = (params: {
 };
 
 const isDevToolsOpenedNow = (): boolean => {
-  try {
-    if (typeof window === 'undefined') return false;
-    const api = (window as any).petAPI;
-    if (typeof api?.isDevToolsOpened === 'function') {
-      return Boolean(api.isDevToolsOpened());
-    }
-    return false;
-  } catch {
-    return false;
-  }
+  // try {
+  //   if (typeof window === 'undefined') return false;
+  //   const api = (window as any).petAPI;
+  //   if (typeof api?.isDevToolsOpened === 'function') {
+  //     return Boolean(api.isDevToolsOpened());
+  //   }
+  //   return false;
+  // } catch {
+  //   return false;
+  // }
+  return false;
 };
 
 const PetCanvas: React.FC = () => {

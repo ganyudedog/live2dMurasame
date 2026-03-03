@@ -1,48 +1,56 @@
+interface MaskSegment {
+    left: number;
+    width: number;
+}
+
 interface SymmetricMasks {
-    left: { left: number; width: number };
-    center: { left: number; width: number };
-    right: { left: number; width: number };
+    left: MaskSegment;
+    center: MaskSegment;
+    right: MaskSegment;
     height: number;
 }
-export default function DebugSymmetricMasks({ symmetricMasks }: { symmetricMasks: SymmetricMasks }) {
+
+export default function DebugSymmetricMasks({
+    symmetricMasks,
+    active,
+}: {
+    symmetricMasks: SymmetricMasks;
+    active?: 'left' | 'right';
+}) {
+    const leftActive = active === 'left';
+    const rightActive = active === 'right';
     return (
         <>
-            <div
-                className="absolute"
-                style={{
-                    left: symmetricMasks.left.left,
-                    top: 0,
-                    width: symmetricMasks.left.width,
-                    height: symmetricMasks.height,
-                    backgroundColor: 'rgba(255, 0, 0, 0.5)',
-                    pointerEvents: 'none',
-                    zIndex: 5,
-                }}
-            />
-            <div
-                className="absolute"
-                style={{
-                    left: symmetricMasks.center.left,
-                    top: 0,
-                    width: symmetricMasks.center.width,
-                    height: symmetricMasks.height,
-                    backgroundColor: 'rgba(255, 255, 0, 0.5)',
-                    pointerEvents: 'none',
-                    zIndex: 5,
-                }}
-            />
-            <div
-                className="absolute"
-                style={{
-                    left: symmetricMasks.right.left,
-                    top: 0,
-                    width: symmetricMasks.right.width,
-                    height: symmetricMasks.height,
-                    backgroundColor: 'rgba(0, 102, 255, 0.5)',
-                    pointerEvents: 'none',
-                    zIndex: 5,
-                }}
-            />
+            {symmetricMasks.left.width > 0 && (
+                <div
+                    className={`absolute pointer-events-none top-0 z-9996 ${leftActive ? 'border-2 border-emerald-500/80' : 'border border-dashed border-emerald-500/50'} bg-emerald-500/0`}
+                    style={{
+                        left: symmetricMasks.left.left,
+                        width: symmetricMasks.left.width,
+                        height: symmetricMasks.height,
+                    }}
+                />
+            )}
+            {symmetricMasks.center.width > 0 && (
+                <div
+                    className="absolute pointer-events-none top-0 z-9995 border border-dashed border-slate-400/40 bg-slate-400/0"
+                    style={{
+                        left: symmetricMasks.center.left,
+                        width: symmetricMasks.center.width,
+                        height: symmetricMasks.height,
+                    }}
+                />
+            )}
+            {symmetricMasks.right.width > 0 && (
+                <div
+                    className={`absolute pointer-events-none top-0 z-9996 ${rightActive ? 'border-2 border-sky-500/80' : 'border border-dashed border-sky-500/50'} bg-sky-500/0`}
+                    style={{
+                        left: symmetricMasks.right.left,
+                        width: symmetricMasks.right.width,
+                        height: symmetricMasks.height,
+                    }}
+                />
+            )}
         </>
-    )
+    );
 }

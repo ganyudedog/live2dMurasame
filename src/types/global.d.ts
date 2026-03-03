@@ -76,8 +76,44 @@ declare global {
     | { type: 'playMotion'; group: string }
     | { type: 'interruptMotion'; group: string };
 
+  interface PetResizePayload {
+    width?: number;
+    height?: number;
+    requestId?: string;
+    anchorCenter?: number;
+    anchorRightEdge?: number;
+    [key: string]: unknown;
+  }
+
+  interface PetDebugTraceRequestGroup {
+    source?: string;
+    rid?: string;
+    requestId?: string;
+    phase?: string;
+    ts?: number;
+    [key: string]: unknown;
+  }
+
+  interface PetDebugTraceGroup {
+    [key: string]: string | number | boolean | null | undefined;
+  }
+
+  interface PetDebugTracePayload {
+    kind?: string;
+    profile?: string;
+    level?: 'debug' | 'info' | 'warn' | 'error';
+    request?: PetDebugTraceRequestGroup;
+    resizeCore?: PetDebugTraceGroup;
+    window?: PetDebugTraceGroup;
+    layout?: PetDebugTraceGroup;
+    model?: PetDebugTraceGroup;
+    perf?: PetDebugTraceGroup;
+    [key: string]: unknown;
+  }
+
   interface PetAPI {
-    setSize?: (width: number,height:number) => Promise<void>;
+    setSize?: (width: number | PetResizePayload, height?: number, options?: Record<string, unknown>) => Promise<void>;
+    debugTrace?: (payload: PetDebugTracePayload) => void;
     getGlobalModelConfig?: () => Promise<PetGlobalModelConfigPayload | undefined>;
     updateGlobalModelConfig?: (patch: PetGlobalModelConfigPayload) => Promise<PetGlobalModelConfigPayload | undefined>;
     onGlobalModelConfigUpdated?: (callback: (config: PetGlobalModelConfigPayload) => void) => (() => void) | void;

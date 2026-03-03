@@ -45,17 +45,11 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
     // 避免同时混用 padding 与 paddingLeft/Right 导致 React 警告：使用完全展开的 padding 属性
     const baseHorizPadding = 3;
     const bubbleStyle: React.CSSProperties = {
-        position: 'relative',
-        display: 'inline-block',
         maxWidth: resolvedMaxWidth,
-        background: '#0f172a', // 近似 DaisyUI dark bubble
-        color: '#fff',
-        borderRadius: 10,
         paddingTop: 10,
         paddingBottom: 10,
         paddingLeft: isLeft ? baseHorizPadding : baseHorizPadding + sidePadding,
         paddingRight: isLeft ? baseHorizPadding + sidePadding : baseHorizPadding,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
         // 为避免左右内部留白不一致，不做额外对齐，只由外层决定 side
     };
 
@@ -106,19 +100,12 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
 
     return (
         <div className={className} style={containerStyle} data-side={side}>
-            <div style={bubbleStyle}>
+            <div className="relative inline-block rounded-[10px] bg-slate-900 text-white shadow-[0_2px_8px_rgba(0,0,0,0.25)]" style={bubbleStyle}>
                 {/* 尾巴层：先高光后主体，保持与盒子完全对称 */}
                 <div style={tailHighlight} />
                 <div style={tailPrimary} />
                 {/* 文本内容 */}
-                <div
-                    style={{
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        lineHeight: 1.4,
-                        fontSize: 14,
-                    }}
-                >
+                <div className="whitespace-pre-wrap wrap-break-word leading-[1.4] text-sm">
                     {text}
                 </div>
             </div>

@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useRef, useCallback, useState, useLayoutEffect, useEffect, useMemo } from 'react';
 import { ChatBubble } from './UI/ChatBubble';
+import DebugRedLine from './UI/DebugRedLine';
+import DebugSymmetricMasks from './UI/DebugSymmetricMasks';
+import DebugVisualMasks from './UI/DebugVisualMasks';
+import OpenTheMenu from './UI/OpenTheMenu';
 import { Application } from 'pixi.js';
 import { computeContextZone } from './logic/contextZone/contextZoneEngine';
 import { computeDragHandlePosition } from './logic/dragHandle/dragHandleEngine';
@@ -17,21 +21,27 @@ import { useDragHandleController } from './hooks/useDragHandleController';
 import { usePointerTapHandler } from './hooks/usePointerTapHandler';
 import { useBubbleLifecycle } from './hooks/useBubbleLifecycle';
 import { useContextZoneController } from './hooks/useContextZoneController';
+import { usePetCanvasConfigRefs } from './hooks/usePetCanvasConfigRefs';
+import { usePetCanvasBootstrap } from './hooks/usePetCanvasBootstrap';
+import { useDebugMaskHeight } from './hooks/useDebugMaskHeight';
 import { debug } from '../../utils/log';
 import { useConfigStore } from '../../store/useConfigStore';
-const BUBBLE_MAX_WIDTH = 260; // legacy cap (still used as hard ceiling)
-const BUBBLE_ZONE_BASE_WIDTH = 200; // scale=1 时单侧气泡区域目标宽度
-const BUBBLE_ZONE_MIN_WIDTH = 120; // 单侧最小可用宽度
-const BUBBLE_HEAD_SAFE_GAP = 18; // 头部安全间距
-const BUBBLE_GAP = 16; // 模型和气泡之间的距离
-const BUBBLE_EXTRA_GAP = 100; // 额外左右偏移量，按缩放比放大
-const BUBBLE_PADDING = 12; // 窗口边缘内边距
-const RESIZE_THROTTLE_MS = 120;
-const STARTUP_ENLARGE_BOUNDS_RATIO_GUARD = 1.6; // 启动期 bounds 异常膨胀防护阈值
-const STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD = 0.9; // baseFrame 接近容器宽度时视为可疑
-const ENLARGE_CONFIRM_DELTA_PX = 40; // 放大量两帧确认允许波动
-const ENLARGE_CONFIRM_WINDOW_MS = 260; // 两帧确认最大时间窗
-const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
+import {
+  BUBBLE_MAX_WIDTH,
+  BUBBLE_ZONE_BASE_WIDTH,
+  BUBBLE_ZONE_MIN_WIDTH,
+  BUBBLE_HEAD_SAFE_GAP,
+  BUBBLE_GAP,
+  BUBBLE_EXTRA_GAP,
+  BUBBLE_PADDING,
+  RESIZE_THROTTLE_MS,
+  STARTUP_ENLARGE_BOUNDS_RATIO_GUARD,
+  STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD,
+  ENLARGE_CONFIRM_DELTA_PX,
+  ENLARGE_CONFIRM_WINDOW_MS,
+  CONTEXT_ZONE_LATCH_MS,
+  DEFAULT_TOUCH_PRIORITY,
+} from './const';
 
 import { clamp, clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../../utils/math';
 
@@ -114,14 +124,6 @@ const PetCanvas: React.FC = () => {
   const hydrated = useConfigStore((s) => s.hydrated);
   const refreshConfigSnapshot = useConfigStore((s) => s.refresh);
 
-  // 主窗口也需要在首次挂载时拉一次快照，避免 preload 同步快照缺失导致模型永远不加载。
-  useEffect(() => {
-    if (hydrated) return;
-    refreshConfigSnapshot().catch(() => {
-      // ignore
-    });
-  }, [hydrated, refreshConfigSnapshot]);
-
   const eyeMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.VITE_EYE_MAX_UP, 0.5), [live2denvConfig]);
   const angleMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.VITE_ANGLE_MAX_UP, 20), [live2denvConfig]);
 
@@ -143,51 +145,34 @@ const PetCanvas: React.FC = () => {
     ? activeModelFileUrl
     : (typeof activeModelPath === 'string' ? activeModelPath : '');
   const modelPathRef = useRef(modelPath);
-  useEffect(() => {
-    modelPathRef.current = modelPath;
-  }, [modelPath]);
 
   const touchPriority = useMemo((): string[] => {
     const fromConfig = live2denvConfig?.VITE_TOUCH_PRIORITY;
     if (Array.isArray(fromConfig) && fromConfig.length) return fromConfig;
-    return ['hair', 'face', 'xiongbu', 'qunzi', 'leg'];
+    return [...DEFAULT_TOUCH_PRIORITY];
   }, [live2denvConfig?.VITE_TOUCH_PRIORITY]);
 
   const touchPriorityRef = useRef(touchPriority);
-  useEffect(() => {
-    touchPriorityRef.current = touchPriority;
-  }, [touchPriority]);
 
   const touchMapRef = useRef<number[] | null>(null);
-  useEffect(() => {
-    const raw = (persistedModelConfig as any)?.touchMap;
-    const ok = Array.isArray(raw)
-      && raw.length === 5
-      && raw.every((v: unknown) => typeof v === 'number' && Number.isFinite(v));
-    touchMapRef.current = ok ? (raw as number[]) : null;
-  }, [persistedModelConfig]);
 
   const visualFrameRef = useRef<any | null>(null);
-  useEffect(() => {
-    const raw = (persistedModelConfig as any)?.visualFrame;
-    visualFrameRef.current = raw && typeof raw === 'object' ? raw : null;
-  }, [persistedModelConfig]);
 
   const bubbleSettingsRef = useRef<{ symmetric?: boolean; headRatio?: number | null } | null>(null);
-  useEffect(() => {
-    const raw = (persistedModelConfig as any)?.bubble;
-    bubbleSettingsRef.current = raw && typeof raw === 'object' ? (raw as { symmetric?: boolean; headRatio?: number | null }) : null;
-  }, [persistedModelConfig]);
 
   const interactionZonesRef = useRef<Record<string, { heightRange?: [number, number]; motions?: string[] }> | null>(null);
-  useEffect(() => {
-    const raw = (persistedModelConfig as any)?.interactionZones;
-    if (!raw || typeof raw !== 'object') {
-      interactionZonesRef.current = null;
-      return;
-    }
-    interactionZonesRef.current = raw as Record<string, { heightRange?: [number, number]; motions?: string[] }>;
-  }, [persistedModelConfig]);
+
+  usePetCanvasConfigRefs({
+    modelPath,
+    modelPathRef,
+    touchPriority,
+    touchPriorityRef,
+    persistedModelConfig,
+    touchMapRef,
+    visualFrameRef,
+    bubbleSettingsRef,
+    interactionZonesRef,
+  });
 
   // 辅助引用
   const hitAreasRef = useRef<Array<{ id: string; motion: string; name: string }>>([]); // 点击区域
@@ -216,6 +201,7 @@ const PetCanvas: React.FC = () => {
 
   // 鼠标相关
   const ignoreMouse = usePetStore(s => s.ignoreMouse);
+  const debugModeEnabled = usePetStore(s => Boolean(s.debugModeEnabled));
 
   const pointerX = useRef(0); // 鼠标 X 坐标
   const pointerY = useRef(0); // 鼠标 Y 坐标
@@ -267,10 +253,8 @@ const PetCanvas: React.FC = () => {
   const [bubbleTailY, setBubbleTailY] = useState<number | null>(null); // 气泡尾巴对齐 Y
 
   // 视觉中心红线（仅用于调试/对称对齐可视化）
-  const redLineRef = useRef<HTMLDivElement | null>(null);
   const redLineLeftRef = useRef<number | null>(null);
   const [redLineLeft, setRedLineLeft] = useState<number | null>(null);
-  const visibleFrameRef = useRef<HTMLDivElement | null>(null);
   const visibleFrameMetricsRef = useRef<{ left: number; width: number } | null>(null);
   const [visibleFrameMetrics, setVisibleFrameMetrics] = useState<{ left: number; width: number } | null>(null);
   const baseFrameMetricsRef = useRef<{ left: number; width: number } | null>(null);
@@ -330,35 +314,12 @@ const PetCanvas: React.FC = () => {
   const paramCacheRef = useRef<string[] | null>(null); // 参数缓存
   const detachEyeHandlerRef = useRef<(() => void) | null>(null); // 眼部追踪处理器解绑函数
 
-  // 启动时主动从主进程拉取一次 outer bounds，避免首次 resize/boundsChanged 之前 windowBoundsRef 为空。
-  // 这在 DevTools 停靠时尤为关键：outer bounds 与 innerWidth 差异很大，若无基线就会导致首次扩缩窗“猛跳/占满桌面”。
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const api = (window as any).petAPI;
-        if (typeof api?.getWindowBounds !== 'function') return;
-        const bounds = await api.getWindowBounds();
-        if (cancelled) return;
-        if (!bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
-          return;
-        }
-        windowBoundsRef.current = bounds;
-
-        // baseline 使用“内容区中心”的屏幕坐标：outerLeft + innerWidth/2。
-        // DevTools 停靠时不要用 outerWidth/2（会把面板宽度算进去）。
-        const innerWidth = typeof window.innerWidth === 'number' ? window.innerWidth : 0;
-        const baseline = bounds.x + innerWidth / 2;
-        if (Number.isFinite(baseline)) {
-          centerBaselineRef.current = baseline;
-        }
-      } catch { /* swallow */ }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  usePetCanvasBootstrap({
+    hydrated,
+    refreshConfigSnapshot,
+    windowBoundsRef,
+    centerBaselineRef,
+  });
 
 
   // 上下文区域
@@ -434,7 +395,18 @@ const PetCanvas: React.FC = () => {
     return soundPath;
   }, []);
 
-  const requestResize = useCallback((width: number, height: number, options?: { preserveCenterLine?: boolean; trace?: Record<string, unknown> }) => {
+  const emitDebugTrace = useCallback((payload: Record<string, unknown>) => {
+    try {
+      if (typeof window === 'undefined') return;
+      const api = (window as any).petAPI;
+      if (typeof api?.debugTrace !== 'function') return;
+      api.debugTrace(payload);
+    } catch {
+      // swallow debug trace bridge errors
+    }
+  }, []);
+
+  const requestResize = useCallback((width: number, height: number, options?: { preserveCenterLine?: boolean; source?: string }) => {
     if (typeof window === 'undefined') return;
     const now = performance?.now ? performance.now() : Date.now();
     const prev = lastRequestedSizeRef.current;
@@ -510,8 +482,33 @@ const PetCanvas: React.FC = () => {
       height,
       anchorCenter: anchorCenter ?? undefined,
       requestId,
-      trace: options?.trace,
     };
+
+    emitDebugTrace({
+      kind: 'resize',
+      profile: 'jitter',
+      level: 'debug',
+      request: {
+        source: options?.source ?? 'requestResize',
+        rid: requestId,
+        phase: 'send',
+        ts: Date.now(),
+      },
+      resizeCore: {
+        normalizedWidth: width,
+        targetWidth: width,
+        targetHeight: height,
+      },
+      window: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        boundsWidth: windowBoundsRef.current?.width ?? null,
+        boundsHeight: windowBoundsRef.current?.height ?? null,
+        boundsX: windowBoundsRef.current?.x ?? null,
+        boundsY: windowBoundsRef.current?.y ?? null,
+        anchorCenter: anchorCenter ?? null,
+      },
+    });
     try {
       const api = (window as any).petAPI;
       if (typeof api?.setSize === 'function') {
@@ -527,7 +524,7 @@ const PetCanvas: React.FC = () => {
         resizeInFlightRequestIdRef.current = null;
       }
     }
-  }, []);
+  }, [emitDebugTrace]);
 
   const handleWindowBoundsAck = useCallback((bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
     const ackId = bounds?.requestId;
@@ -611,7 +608,7 @@ const PetCanvas: React.FC = () => {
     }
   }, []);
 
-  const applyWindowWidth = useCallback((requiredWidth: number, traceMeta?: Record<string, unknown>) => {
+  const applyWindowWidth = useCallback((requiredWidth: number) => {
     if (typeof window === 'undefined') return;
     if (!Number.isFinite(requiredWidth)) return;
 
@@ -697,19 +694,7 @@ const PetCanvas: React.FC = () => {
 
     requestResize(normalizedWidth, desiredHeight, {
       preserveCenterLine: true,
-      trace: {
-        source: 'applyWindowWidth',
-        requiredWidth,
-        normalizedWidth,
-        desiredHeight,
-        innerWidth: window.innerWidth,
-        boundsWidth: windowBoundsRef.current?.width ?? null,
-        targetWindowWidth: targetWindowWidthRef.current,
-        pendingWidth: pendingResizeRef.current?.width ?? null,
-        resizeInFlight: resizeInFlightRequestIdRef.current,
-        ...traceMeta,
-        ts: Date.now(),
-      },
+      source: 'applyWindowWidth',
     });
   }, [requestResize]);
 
@@ -929,6 +914,33 @@ const PetCanvas: React.FC = () => {
         boundsToScreenRatio,
       };
 
+      emitDebugTrace({
+        kind: 'resize',
+        profile: 'jitter',
+        level: abnormalStartupEnlarge ? 'warn' : 'debug',
+        request: {
+          source: 'updateBubblePosition',
+          phase: 'calc',
+          ts: Date.now(),
+        },
+        resizeCore: {
+          requiredWidth: requiredWindowWidth,
+          enforcedWindowWidth,
+          isEnlarge,
+        },
+        window: {
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          boundsWidth: windowBoundsRef.current?.width ?? null,
+          boundsHeight: windowBoundsRef.current?.height ?? null,
+          boundsX: windowBoundsRef.current?.x ?? null,
+          boundsY: windowBoundsRef.current?.y ?? null,
+          targetWindowWidth: targetWindowWidthRef.current,
+          pendingWidth: pendingResizeRef.current?.width ?? null,
+        },
+        layout: resizeTrace,
+      });
+
       if (abnormalStartupEnlarge) {
         enlargeWidthConfirmRef.current = null;
         suppressResizeForBubbleRef.current = false;
@@ -942,13 +954,13 @@ const PetCanvas: React.FC = () => {
         } else {
           enlargeWidthConfirmRef.current = null;
           resizeWindowOnNextLayoutRef.current = false;
-          applyWindowWidth(enforcedWindowWidth, resizeTrace);
+          applyWindowWidth(enforcedWindowWidth);
           suppressResizeForBubbleRef.current = false;
         }
       } else {
         enlargeWidthConfirmRef.current = null;
         resizeWindowOnNextLayoutRef.current = false;
-        applyWindowWidth(enforcedWindowWidth, resizeTrace);
+        applyWindowWidth(enforcedWindowWidth);
         suppressResizeForBubbleRef.current = false;
       }
     }
@@ -1151,7 +1163,7 @@ const PetCanvas: React.FC = () => {
       setBubblePosition(nextPosition);
     }
     commitBubbleReady(true);
-  }, [scale, commitBubbleReady, applyWindowWidth]);
+  }, [scale, commitBubbleReady, applyWindowWidth, emitDebugTrace]);
 
   useEffect(() => {
     enlargeWidthConfirmRef.current = null;
@@ -1635,6 +1647,30 @@ const PetCanvas: React.FC = () => {
     commitBubbleReady,
   });
 
+  const debugMaskHeight = useDebugMaskHeight();
+
+  const visualMasks = useMemo(() => {
+    if (!baseFrameMetrics && !visibleFrameMetrics) return null;
+    return {
+      left: baseFrameMetrics ?? undefined,
+      center: visibleFrameMetrics ?? undefined,
+      right: undefined,
+      height: debugMaskHeight,
+    };
+  }, [baseFrameMetrics, visibleFrameMetrics, debugMaskHeight]);
+
+  const symmetricMasks = useMemo(() => {
+    if (!bubbleZoneMetrics) return null;
+    const centerLeft = bubbleZoneMetrics.left.left + bubbleZoneMetrics.left.width;
+    const centerWidth = Math.max(0, bubbleZoneMetrics.right.left - centerLeft);
+    return {
+      left: { left: bubbleZoneMetrics.left.left, width: bubbleZoneMetrics.left.width },
+      center: { left: centerLeft, width: centerWidth },
+      right: { left: bubbleZoneMetrics.right.left, width: bubbleZoneMetrics.right.width },
+      height: debugMaskHeight,
+    };
+  }, [bubbleZoneMetrics, debugMaskHeight]);
+
   return (
     <>
       {dragHandlePosition && (
@@ -1669,86 +1705,15 @@ const PetCanvas: React.FC = () => {
         ref={canvasRef}
         className="absolute inset-0 z-0 pointer-events-auto perspective-normal"
       >
-        {baseFrameMetrics && (
-          <div
-            className="absolute pointer-events-none"
-            style={{
-              left: baseFrameMetrics.left,
-              top: 0,
-              width: baseFrameMetrics.width,
-              bottom: 0,
-              border: '1px dashed rgba(59, 130, 246, 0.55)',
-              background: 'rgba(59, 130, 246, 0.08)',
-              zIndex: 9997,
-            }}
+        {debugModeEnabled && visualMasks && <DebugVisualMasks visualMasks={visualMasks} />}
+        {debugModeEnabled && symmetricMasks && (
+          <DebugSymmetricMasks
+            symmetricMasks={symmetricMasks}
+            active={bubbleZoneMetrics?.active}
           />
-        )}
-        {visibleFrameMetrics && (
-          <div
-            ref={visibleFrameRef}
-            className="absolute pointer-events-none"
-            style={{
-              left: visibleFrameMetrics.left,
-              top: 0,
-              width: visibleFrameMetrics.width,
-              bottom: 0,
-              border: '1px dashed rgba(239, 68, 68, 0.6)',
-              background: 'rgba(239, 68, 68, 0)',
-              zIndex: 9998,
-            }}
-          />
-        )}
-        {bubbleZoneMetrics && (
-          <>
-            {bubbleZoneMetrics.left.width > 0 && (
-              <div
-                className="absolute pointer-events-none"
-                style={{
-                  left: bubbleZoneMetrics.left.left,
-                  top: 0,
-                  width: bubbleZoneMetrics.left.width,
-                  bottom: 0,
-                  border: bubbleZoneMetrics.active === 'left'
-                    ? '2px solid rgba(16, 185, 129, 0.8)'
-                    : '1px dashed rgba(16, 185, 129, 0.5)',
-                  background: 'rgba(16, 185, 129, 0)',
-                  zIndex: 9996,
-                }}
-              />
-            )}
-            {bubbleZoneMetrics.right.width > 0 && (
-              <div
-                className="absolute pointer-events-none"
-                style={{
-                  left: bubbleZoneMetrics.right.left,
-                  top: 0,
-                  width: bubbleZoneMetrics.right.width,
-                  bottom: 0,
-                  border: bubbleZoneMetrics.active === 'right'
-                    ? '2px solid rgba(14, 165, 233, 0.8)'
-                    : '1px dashed rgba(14, 165, 233, 0.5)',
-                  background: 'rgba(14, 165, 233, 0)',
-                  zIndex: 9996,
-                }}
-              />
-            )}
-          </>
         )}
         {/* 视觉中心红线：位于最上层、无事件、始终显示 */}
-        {redLineLeft !== null && (
-          <div
-            ref={redLineRef}
-            className="absolute pointer-events-none"
-            style={{
-              left: redLineLeft,
-              top: 0,
-              bottom: 0,
-              width: 0,
-              borderLeft: '2px solid rgba(255, 0, 0, 0.95)',
-              zIndex: 9999,
-            }}
-          />
-        )}
+        {debugModeEnabled && redLineLeft !== null && <DebugRedLine redLineLeft={redLineLeft} />}
 
         {motionText && (
           <div
@@ -1775,31 +1740,11 @@ const PetCanvas: React.FC = () => {
           </div>
         )}
 
-        {ignoreMouse && contextZoneStyle && (
-          <div
-            className="absolute z-30 font-medium tracking-tight"
-            style={{
-              left: contextZoneStyle.left,
-              top: contextZoneStyle.top,
-              width: contextZoneStyle.width,
-              height: contextZoneStyle.height,
-              border: '1px dashed rgba(148, 163, 184, 0.6)',
-              borderRadius: '12px',
-              color: 'rgba(226, 232, 240, 0.9)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: contextZoneAlignment === 'left' ? 'flex-start' : 'flex-end',
-              fontSize: '0.75rem',
-              letterSpacing: '0.02em',
-              background: 'rgba(15, 23, 42, 0.18)',
-              backdropFilter: 'blur(6px)',
-              pointerEvents: 'none',
-              padding: '0 10px',
-              textAlign: contextZoneAlignment === 'left' ? 'left' : 'right',
-            }}
-          >
-            右键菜单
-          </div>
+        {debugModeEnabled && ignoreMouse && contextZoneStyle && (
+          <OpenTheMenu
+            contextZoneStyle={contextZoneStyle}
+            contextZoneAlignment={contextZoneAlignment}
+          />
         )}
       </div>
     </>

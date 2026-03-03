@@ -180,6 +180,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   setMousePassthrough: (enabled) => ipcRenderer.invoke('pet:setMousePassthrough', enabled),
   getCursorScreenPoint: () => ipcRenderer.invoke('pet:getCursorScreenPoint'),
   getWindowBounds: () => ipcRenderer.invoke('pet:getWindowBounds'),
+  debugTrace: (payload) => ipcRenderer.send('pet:debugTrace', payload),
 
   // 主进程真值：DevTools 是否打开。
   // 用于调试期间禁用自动扩缩窗，避免 DevTools 停靠/过渡导致 outer/inner 口径错配引发抖动与“占满桌面”。

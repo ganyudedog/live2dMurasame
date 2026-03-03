@@ -22,6 +22,7 @@ import {
     getGlobalModelConfigSnapshot,
 } from './config/live2dGlobal.js';
 import { detectModelFilePath } from './utils/path.js';
+import { logPetEvent, logDebugTrace } from './utils/log.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -588,13 +589,24 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
 
     if (anchorCenter !== null) {
         const targetX = Math.round(anchorCenter - targetWidth / 2);
-        console.log('[pet] resize using center anchor', {
-            requestId,
-            anchorCenter,
-            targetX,
-            targetWidth,
-            targetHeight,
-            trace: payload.trace,
+        logPetEvent('resize using center anchor', {
+            request: {
+                source: 'main.resizeMainWindow',
+                rid: requestId,
+                ts: Date.now(),
+            },
+            resizeCore: {
+                targetWidth,
+                targetHeight,
+                anchorCenter,
+            },
+            window: {
+                targetX,
+                boundsX: currentBounds.x,
+                boundsY: currentBounds.y,
+                boundsWidth: currentBounds.width,
+                boundsHeight: currentBounds.height,
+            },
         });
         if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setBounds({
@@ -606,13 +618,24 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
         scheduleEmitMainWindowBounds();
     } else if (anchorRight !== null) {
         const targetX = Math.round(anchorRight - targetWidth);
-        console.log('[pet] resize using right anchor', {
-            requestId,
-            anchorRight,
-            targetX,
-            targetWidth,
-            targetHeight,
-            trace: payload.trace,
+        logPetEvent('resize using right anchor', {
+            request: {
+                source: 'main.resizeMainWindow',
+                rid: requestId,
+                ts: Date.now(),
+            },
+            resizeCore: {
+                targetWidth,
+                targetHeight,
+                anchorRight,
+            },
+            window: {
+                targetX,
+                boundsX: currentBounds.x,
+                boundsY: currentBounds.y,
+                boundsWidth: currentBounds.width,
+                boundsHeight: currentBounds.height,
+            },
         });
         if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setBounds({
@@ -623,16 +646,33 @@ ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
         });
         scheduleEmitMainWindowBounds();
     } else {
-        console.log('[pet] resize using size only', {
-            requestId,
-            width: targetWidth,
-            height: targetHeight,
-            trace: payload.trace,
+        logPetEvent('resize using size only', {
+            request: {
+                source: 'main.resizeMainWindow',
+                rid: requestId,
+                ts: Date.now(),
+            },
+            resizeCore: {
+                targetWidth,
+                targetHeight,
+            },
+            window: {
+                boundsX: currentBounds.x,
+                boundsY: currentBounds.y,
+                boundsWidth: currentBounds.width,
+                boundsHeight: currentBounds.height,
+            },
         });
         if (requestId) pendingBoundsRequestId = requestId;
         mainWindow.setSize(targetWidth, targetHeight);
         scheduleEmitMainWindowBounds();
     }
+});
+
+ipcMain.on('pet:debugTrace', (_event, payload = {}) => {
+    try {
+        logDebugTrace(payload);
+    } catch { }
 });
 
 ipcMain.handle('pet:setMainWindowBounds', (_event, bounds) => {

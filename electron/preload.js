@@ -41,10 +41,12 @@ const onLive2denvConfigUpdatedImpl = (callback) => {
   };
 };
 
-// Whitelisted IPC events that renderers are allowed to subscribe to via petAPI.
-// Keep this list minimal to avoid exposing arbitrary ipcRenderer channels.
+// 允许渲染器通过petAPI订阅的白名单IPC事件
+// 保持此列表最小化以避免暴露任意ipcRenderer通道
 const allowedIpcEvents = new Set([
   'pet:windowBoundsChanged',
+  'pet:windowFact',
+  'pet:windowIntentAck',
 ]);
 
 // channel -> (callback -> wrappedListener)
@@ -164,19 +166,8 @@ ipcRenderer.on('pet:modelConfigUpdated', (_event, payload) => {
 
 // 暴露给渲染进程的API
 contextBridge.exposeInMainWorld('petAPI', {
-  // 放缩模型时用于调整窗口
-  setSize: (width, height, options = {}) => {
-    if (width && typeof width === 'object') {
-      return ipcRenderer.invoke('pet:resizeMainWindow', width);
-    }
-    const payload = {
-      width,
-      height,
-      ...options,
-    };
-    return ipcRenderer.invoke('pet:resizeMainWindow', payload);
-  },
-  setBounds: (bounds) => ipcRenderer.invoke('pet:setMainWindowBounds', bounds),
+  // 严格 single-writer：仅允许 intent 协议驱动窗口写入。
+  sendWindowIntent: (intent) => ipcRenderer.invoke('pet:windowIntent', intent),
   setMousePassthrough: (enabled) => ipcRenderer.invoke('pet:setMousePassthrough', enabled),
   getCursorScreenPoint: () => ipcRenderer.invoke('pet:getCursorScreenPoint'),
   getWindowBounds: () => ipcRenderer.invoke('pet:getWindowBounds'),

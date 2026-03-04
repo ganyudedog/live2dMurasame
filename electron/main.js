@@ -76,6 +76,22 @@ const scheduleApplyAutoLaunchSetting = (enabled) => {
 // 将本次请求的 requestId 附带在下一次 boundsChanged 广播中作为 ACK。
 // 用于渲染端抑制 resize 风暴（inFlight gating）。
 let pendingBoundsRequestId = null;
+let pendingBoundsSource = 'system';
+
+// Intent 单写入仲裁器状态（Main 为唯一执行者）：
+// - Renderer 仅上报 intent（position/size/bounds）
+// - Main 仲裁后执行窗口写入
+// - 回流事件仅做事实同步与 ACK，不再由回流驱动新写入
+const WINDOW_INTENT_SETTLE_MS = 120;
+const WINDOW_INTENT_DRAG_ACTIVE_MS = 220;
+const windowIntentState = {
+    epoch: 0,
+    mode: 'idle', // idle | dragging | settling
+    dragActiveUntil: 0,
+    settleUntil: 0,
+    settleApplied: false,
+    lastAppliedIntentId: null,
+};
 
 // 限制边界广播到渲染器。
 // 某些平台在程序化移动期间不会可靠地触发 BrowserWindow 的 'moved' 事件（例如拖动时重复调用 setBounds）。在这里广播可以防止渲染器端的过时基线（anchorCenter）导致窗口跳动。
@@ -94,7 +110,17 @@ const emitMainWindowBoundsNow = () => {
         if (!mainWindow || mainWindow.isDestroyed()) return;
         const bounds = mainWindow.getBounds();
         const requestId = pendingBoundsRequestId;
+        const source = requestId ? pendingBoundsSource : 'user';
+        const factPayload = {
+            epoch: windowIntentState.epoch,
+            source,
+            lastAppliedIntentId: windowIntentState.lastAppliedIntentId,
+            bounds,
+            ts: Date.now(),
+        };
+        mainWindow.webContents.send('pet:windowFact', factPayload);
         pendingBoundsRequestId = null;
+        pendingBoundsSource = 'system';
         if (typeof requestId === 'string' && requestId) {
             mainWindow.webContents.send('pet:windowBoundsChanged', { ...bounds, requestId });
         } else {
@@ -122,6 +148,261 @@ const scheduleEmitMainWindowBounds = () => {
             emitMainWindowBoundsNow();
         }, delay);
     } catch { }
+};
+
+const coerceIntentBounds = (currentBounds, intent = {}) => {
+    const payload = intent?.payload ?? {};
+    const kind = intent?.kind;
+    const next = {
+        x: currentBounds.x,
+        y: currentBounds.y,
+        width: currentBounds.width,
+        height: currentBounds.height,
+    };
+
+    if (kind === 'position' || kind === 'bounds') {
+        if (Number.isFinite(payload?.x)) next.x = Math.round(payload.x);
+        if (Number.isFinite(payload?.y)) next.y = Math.round(payload.y);
+    }
+    if (kind === 'size' || kind === 'bounds') {
+        if (Number.isFinite(payload?.width)) next.width = Math.max(75, Math.floor(payload.width));
+        if (Number.isFinite(payload?.height)) next.height = Math.max(250, Math.floor(payload.height));
+    }
+
+    if (kind === 'size' && Number.isFinite(payload?.anchorCenter)) {
+        next.x = Math.round(payload.anchorCenter - next.width / 2);
+    }
+
+    return next;
+};
+
+const emitWindowIntentAck = (ackPayload = {}) => {
+    try {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send('pet:windowIntentAck', ackPayload);
+    } catch { }
+};
+
+const handleWindowIntent = (intent = {}) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        return { status: 'rejected', reason: 'window-missing' };
+    }
+
+    const now = Date.now();
+    const epoch = Number.isFinite(intent?.epoch) ? Math.max(0, Math.floor(intent.epoch)) : windowIntentState.epoch;
+    const intentId = typeof intent?.intentId === 'string' && intent.intentId ? intent.intentId : `intent_${now}`;
+    const kind = typeof intent?.kind === 'string' ? intent.kind : 'bounds';
+    const source = typeof intent?.source === 'string' ? intent.source : 'unknown';
+
+    if (epoch < windowIntentState.epoch) {
+        const ack = { intentId, epoch, status: 'rejected', reason: 'stale-epoch', ts: now };
+        emitWindowIntentAck(ack);
+        return ack;
+    }
+
+    if (epoch > windowIntentState.epoch) {
+        windowIntentState.epoch = epoch;
+        windowIntentState.mode = 'idle';
+        windowIntentState.dragActiveUntil = 0;
+        windowIntentState.settleUntil = 0;
+        windowIntentState.settleApplied = false;
+    }
+
+    if (kind === 'drag-state') {
+        const phase = typeof intent?.payload?.phase === 'string' ? intent.payload.phase : 'move';
+        if (phase === 'start' || phase === 'move') {
+            windowIntentState.mode = 'dragging';
+            windowIntentState.dragActiveUntil = now + WINDOW_INTENT_DRAG_ACTIVE_MS;
+            windowIntentState.settleApplied = false;
+        } else if (phase === 'end') {
+            windowIntentState.mode = 'settling';
+            windowIntentState.dragActiveUntil = 0;
+            windowIntentState.settleUntil = now + WINDOW_INTENT_SETTLE_MS;
+            windowIntentState.settleApplied = false;
+        }
+        const ack = { intentId, epoch: windowIntentState.epoch, status: 'applied', reason: `drag-state-${phase}`, ts: now };
+        emitWindowIntentAck(ack);
+        logDebugTrace({
+            kind: 'windowIntent',
+            profile: 'single-writer',
+            level: 'debug',
+            request: {
+                source: `main.intent.${source}`,
+                rid: intentId,
+                phase: 'state',
+                ts: now,
+            },
+            window: {
+                mode: windowIntentState.mode,
+                epoch: windowIntentState.epoch,
+            },
+            layout: {
+                kind,
+                reason: `drag-state-${phase}`,
+            },
+        });
+        return ack;
+    }
+
+    // 只要有 drag 位置意图持续到达，就维持 dragging 模式，避免长拖期间误降级到 settling。
+    if (source === 'drag' && kind === 'position') {
+        windowIntentState.mode = 'dragging';
+        windowIntentState.dragActiveUntil = now + WINDOW_INTENT_DRAG_ACTIVE_MS;
+        windowIntentState.settleApplied = false;
+    }
+
+    if (windowIntentState.mode === 'dragging' && now > windowIntentState.dragActiveUntil) {
+        windowIntentState.mode = 'settling';
+        windowIntentState.settleUntil = now + WINDOW_INTENT_SETTLE_MS;
+        windowIntentState.settleApplied = false;
+    }
+
+    if (windowIntentState.mode === 'settling' && now > windowIntentState.settleUntil) {
+        windowIntentState.mode = 'idle';
+        windowIntentState.settleApplied = false;
+    }
+
+    if (windowIntentState.mode === 'dragging' && kind !== 'position' && source !== 'drag') {
+        const ack = { intentId, epoch: windowIntentState.epoch, status: 'rejected', reason: 'dragging-block-size', ts: now };
+        emitWindowIntentAck(ack);
+        logDebugTrace({
+            kind: 'windowIntent',
+            profile: 'single-writer',
+            level: 'debug',
+            request: {
+                source: `main.intent.${source}`,
+                rid: intentId,
+                phase: 'reject',
+                ts: now,
+            },
+            window: {
+                mode: windowIntentState.mode,
+                epoch: windowIntentState.epoch,
+            },
+            layout: {
+                kind,
+                reason: 'dragging-block-size',
+            },
+        });
+        return ack;
+    }
+
+    if (windowIntentState.mode === 'settling' && kind === 'size' && windowIntentState.settleApplied) {
+        const ack = { intentId, epoch: windowIntentState.epoch, status: 'rejected', reason: 'settling-size-already-applied', ts: now };
+        emitWindowIntentAck(ack);
+        logDebugTrace({
+            kind: 'windowIntent',
+            profile: 'single-writer',
+            level: 'debug',
+            request: {
+                source: `main.intent.${source}`,
+                rid: intentId,
+                phase: 'reject',
+                ts: now,
+            },
+            window: {
+                mode: windowIntentState.mode,
+                epoch: windowIntentState.epoch,
+            },
+            layout: {
+                kind,
+                reason: 'settling-size-already-applied',
+            },
+        });
+        return ack;
+    }
+
+    const currentBounds = mainWindow.getBounds();
+    const nextBounds = coerceIntentBounds(currentBounds, intent);
+    const changed = Math.abs(nextBounds.x - currentBounds.x) > 0
+        || Math.abs(nextBounds.y - currentBounds.y) > 0
+        || Math.abs(nextBounds.width - currentBounds.width) > 1
+        || Math.abs(nextBounds.height - currentBounds.height) > 1;
+
+    if (!changed) {
+        const ack = {
+            intentId,
+            epoch: windowIntentState.epoch,
+            status: 'rejected',
+            reason: 'below-threshold',
+            appliedBounds: currentBounds,
+            ts: now,
+        };
+        emitWindowIntentAck(ack);
+        logDebugTrace({
+            kind: 'windowIntent',
+            profile: 'single-writer',
+            level: 'debug',
+            request: {
+                source: `main.intent.${source}`,
+                rid: intentId,
+                phase: 'reject',
+                ts: now,
+            },
+            window: {
+                mode: windowIntentState.mode,
+                epoch: windowIntentState.epoch,
+            },
+            layout: {
+                kind,
+                reason: 'below-threshold',
+            },
+        });
+        return ack;
+    }
+
+    logDebugTrace({
+        kind: 'windowIntent',
+        profile: 'single-writer',
+        level: 'debug',
+        request: {
+            source: `main.intent.${source}`,
+            rid: intentId,
+            phase: 'apply',
+            ts: now,
+        },
+        window: {
+            mode: windowIntentState.mode,
+            currentX: currentBounds.x,
+            currentY: currentBounds.y,
+            currentWidth: currentBounds.width,
+            currentHeight: currentBounds.height,
+            nextX: nextBounds.x,
+            nextY: nextBounds.y,
+            nextWidth: nextBounds.width,
+            nextHeight: nextBounds.height,
+            epoch: windowIntentState.epoch,
+        },
+        layout: {
+            kind,
+            source,
+        },
+    });
+
+    windowIntentState.lastAppliedIntentId = intentId;
+    pendingBoundsRequestId = intentId;
+    pendingBoundsSource = source === 'drag' ? 'intent' : 'intent';
+    mainWindow.setBounds(nextBounds);
+    scheduleEmitMainWindowBounds();
+
+    if (windowIntentState.mode === 'dragging') {
+        windowIntentState.dragActiveUntil = now + WINDOW_INTENT_DRAG_ACTIVE_MS;
+    }
+    if (windowIntentState.mode === 'settling' && kind === 'size') {
+        windowIntentState.settleApplied = true;
+        windowIntentState.mode = 'idle';
+    }
+
+    const ack = {
+        intentId,
+        epoch: windowIntentState.epoch,
+        status: 'applied',
+        reason: 'ok',
+        appliedBounds: nextBounds,
+        ts: now,
+    };
+    emitWindowIntentAck(ack);
+    return ack;
 };
 
 // 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
@@ -564,130 +845,10 @@ ipcMain.handle('pet:pickModelFile', async () => {
     return pickModelDirViaDialog(parentWindow);
 });
 
-ipcMain.handle('pet:resizeMainWindow', (_event, width, height) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-        return;
-    }
-
-    let payload;
-    if (width && typeof width === 'object') {
-        payload = width;
-    } else {
-        payload = { width, height };
-    }
-
-    const currentBounds = mainWindow.getBounds();
-    const targetWidth = Math.max(75, Math.floor(Number.isFinite(payload.width) ? payload.width : currentBounds.width));
-    const targetHeight = Math.max(250, Math.floor(Number.isFinite(payload.height) ? payload.height : currentBounds.height));
-    const requestId = typeof payload.requestId === 'string' ? payload.requestId : null;
-    const anchorCenter = typeof payload.anchorCenter === 'number' && Number.isFinite(payload.anchorCenter)
-        ? payload.anchorCenter
-        : null;
-    const anchorRight = typeof payload.anchorRightEdge === 'number' && Number.isFinite(payload.anchorRightEdge)
-        ? payload.anchorRightEdge
-        : null;
-
-    if (anchorCenter !== null) {
-        const targetX = Math.round(anchorCenter - targetWidth / 2);
-        logPetEvent('resize using center anchor', {
-            request: {
-                source: 'main.resizeMainWindow',
-                rid: requestId,
-                ts: Date.now(),
-            },
-            resizeCore: {
-                targetWidth,
-                targetHeight,
-                anchorCenter,
-            },
-            window: {
-                targetX,
-                boundsX: currentBounds.x,
-                boundsY: currentBounds.y,
-                boundsWidth: currentBounds.width,
-                boundsHeight: currentBounds.height,
-            },
-        });
-        if (requestId) pendingBoundsRequestId = requestId;
-        mainWindow.setBounds({
-            x: targetX,
-            y: currentBounds.y,
-            width: targetWidth,
-            height: targetHeight,
-        });
-        scheduleEmitMainWindowBounds();
-    } else if (anchorRight !== null) {
-        const targetX = Math.round(anchorRight - targetWidth);
-        logPetEvent('resize using right anchor', {
-            request: {
-                source: 'main.resizeMainWindow',
-                rid: requestId,
-                ts: Date.now(),
-            },
-            resizeCore: {
-                targetWidth,
-                targetHeight,
-                anchorRight,
-            },
-            window: {
-                targetX,
-                boundsX: currentBounds.x,
-                boundsY: currentBounds.y,
-                boundsWidth: currentBounds.width,
-                boundsHeight: currentBounds.height,
-            },
-        });
-        if (requestId) pendingBoundsRequestId = requestId;
-        mainWindow.setBounds({
-            x: targetX,
-            y: currentBounds.y,
-            width: targetWidth,
-            height: targetHeight,
-        });
-        scheduleEmitMainWindowBounds();
-    } else {
-        logPetEvent('resize using size only', {
-            request: {
-                source: 'main.resizeMainWindow',
-                rid: requestId,
-                ts: Date.now(),
-            },
-            resizeCore: {
-                targetWidth,
-                targetHeight,
-            },
-            window: {
-                boundsX: currentBounds.x,
-                boundsY: currentBounds.y,
-                boundsWidth: currentBounds.width,
-                boundsHeight: currentBounds.height,
-            },
-        });
-        if (requestId) pendingBoundsRequestId = requestId;
-        mainWindow.setSize(targetWidth, targetHeight);
-        scheduleEmitMainWindowBounds();
-    }
-});
-
 ipcMain.on('pet:debugTrace', (_event, payload = {}) => {
     try {
         logDebugTrace(payload);
     } catch { }
-});
-
-ipcMain.handle('pet:setMainWindowBounds', (_event, bounds) => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-        return;
-    }
-    const currentBounds = mainWindow.getBounds();
-    const next = {
-        x: Number.isFinite(bounds?.x) ? Math.round(bounds.x) : currentBounds.x,
-        y: Number.isFinite(bounds?.y) ? Math.round(bounds.y) : currentBounds.y,
-        width: Number.isFinite(bounds?.width) ? Math.max(75, Math.floor(bounds.width)) : currentBounds.width,
-        height: Number.isFinite(bounds?.height) ? Math.max(250, Math.floor(bounds.height)) : currentBounds.height,
-    };
-    mainWindow.setBounds(next);
-    scheduleEmitMainWindowBounds();
 });
 
 ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
@@ -767,4 +928,8 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
     }
+});
+
+ipcMain.handle('pet:windowIntent', (_event, intent = {}) => {
+    return handleWindowIntent(intent);
 });

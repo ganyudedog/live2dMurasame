@@ -1,6 +1,11 @@
 declare global {
+  // 下面是一些全局类型声明，供整个项目使用。
+
+  // 模型的加载状态
   type PetModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
+  // 全局模型设置负载
+  // 此处对应配置文件GlobalModelConfig.json中的字段
   interface PetGlobalModelConfigPayload {
     scale?: number;
     ignoreMouse?: boolean;
@@ -10,6 +15,7 @@ declare global {
     debugModeEnabled?: boolean;
   }
 
+  // 此处对应live2denv.json中的字段
   interface PetLive2denvConfig {
     VITE_TOUCH_PRIORITY: string[];
     VITE_MODEL_PATHS: string[];
@@ -17,15 +23,7 @@ declare global {
     [key: string]: unknown;
   }
 
-  interface PetGlobalModelConfig {
-    scale: number;
-    ignoreMouse: boolean;
-    autoLaunch: boolean;
-    showDragHandleOnHover: boolean;
-    forcedFollow: boolean;
-    debugModeEnabled: boolean;
-  }
-
+  // 模型细节配置
   interface PetVisualFrameConfig {
     ratio?: number;
     minPx?: number;
@@ -36,18 +34,21 @@ declare global {
     [key: string]: unknown;
   }
 
+  // 气泡配置
   interface PetBubbleConfig {
     symmetric?: boolean;
     headRatio?: number | null;
     [key: string]: unknown;
   }
 
+  // 交互区配置
   interface PetInteractionZoneConfig {
     heightRange?: [number, number];
     motions?: string[];
     [key: string]: unknown;
   }
 
+   // 模型配置总览（包含所有字段，供内部使用）
   interface PetModelConfig {
     touchMap?: number[];
     visualFrame?: PetVisualFrameConfig;
@@ -56,6 +57,7 @@ declare global {
     [key: string]: unknown;
   }
 
+  // electron提供给前端的配置快照
   interface PetConfigSnapshot {
     live2denvConfig: PetLive2denvConfig;
     globalModelConfig: PetGlobalModelConfig;
@@ -66,16 +68,7 @@ declare global {
     configOverrides: Record<string, string>;
   }
 
-  type PetControlAction =
-    | { type: 'setScale'; value: number }
-    | { type: 'nudgeScale'; delta: number }
-    | { type: 'resetScale' }
-    | { type: 'setIgnoreMouse'; value: boolean }
-    | { type: 'toggleIgnoreMouse' }
-    | { type: 'refreshMotions' }
-    | { type: 'playMotion'; group: string }
-    | { type: 'interruptMotion'; group: string };
-
+  // 触发重新布局时的负载
   interface PetResizePayload {
     width?: number;
     height?: number;
@@ -85,6 +78,45 @@ declare global {
     [key: string]: unknown;
   }
 
+  // 状态机意图负载
+  interface PetWindowIntentPayload {
+    intentId: string;
+    epoch?: number;
+    source: string;
+    kind: 'position' | 'size' | 'bounds' | 'drag-state';
+    payload?: {
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
+      anchorCenter?: number;
+      phase?: 'start' | 'move' | 'end';
+      [key: string]: unknown;
+    };
+    priority?: number;
+    ts?: number;
+  }
+
+  // 状态机意图响应结构
+  interface PetWindowIntentAck {
+    intentId: string;
+    epoch: number;
+    status: 'applied' | 'rejected' | 'superseded';
+    reason?: string;
+    appliedBounds?: { x: number; y: number; width: number; height: number };
+    ts?: number;
+  }
+
+  // 窗口事实（状态机中的事件结构）
+  interface PetWindowFact {
+    epoch: number;
+    source: 'system' | 'intent' | 'user';
+    lastAppliedIntentId?: string | null;
+    bounds: { x: number; y: number; width: number; height: number };
+    ts?: number;
+  }
+
+  // debugTrace请求负载结构
   interface PetDebugTraceRequestGroup {
     source?: string;
     rid?: string;
@@ -94,10 +126,12 @@ declare global {
     [key: string]: unknown;
   }
 
+  // debugTrace中各个维度的负载结构
   interface PetDebugTraceGroup {
     [key: string]: string | number | boolean | null | undefined;
   }
 
+  // debugTrace负载结构
   interface PetDebugTracePayload {
     kind?: string;
     profile?: string;
@@ -112,7 +146,7 @@ declare global {
   }
 
   interface PetAPI {
-    setSize?: (width: number | PetResizePayload, height?: number, options?: Record<string, unknown>) => Promise<void>;
+    sendWindowIntent?: (intent: PetWindowIntentPayload) => Promise<PetWindowIntentAck | undefined>;
     debugTrace?: (payload: PetDebugTracePayload) => void;
     getGlobalModelConfig?: () => Promise<PetGlobalModelConfigPayload | undefined>;
     updateGlobalModelConfig?: (patch: PetGlobalModelConfigPayload) => Promise<PetGlobalModelConfigPayload | undefined>;
@@ -136,5 +170,3 @@ declare global {
     __PET_CONFIG__?: PetConfigSnapshot;
   }
 }
-
-export {};

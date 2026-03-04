@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useRef, useCallback, useState, useLayoutEffect, useEffect, useMemo } from 'react';
+import React, { useRef, useCallback, useState, useLayoutEffect, useMemo } from 'react';
 import { ChatBubble } from './UI/ChatBubble';
 import DebugRedLine from './UI/DebugRedLine';
 import DebugSymmetricMasks from './UI/DebugSymmetricMasks';
@@ -7,38 +7,24 @@ import DebugVisualMasks from './UI/DebugVisualMasks';
 import OpenTheMenu from './UI/OpenTheMenu';
 import { Application } from 'pixi.js';
 import { computeContextZone } from './logic/contextZone/contextZoneEngine';
-import { computeDragHandlePosition } from './logic/dragHandle/dragHandleEngine';
 import { usePetStore } from '../../store/usePetStore';
 import type { Live2DModel as Live2DModelType } from './live2dManage/runtime';
-import { getVisibleFrame, getBaseFrame } from './logic/visual/getVisualFrameDom';
-import { computeBubblePlacement } from './logic/bubble/placementEngine';
 import { usePetSettings } from './hooks/usePetSettings';
 import { usePetModel } from './hooks/usePetModel';
 import { usePetLayout } from './hooks/usePetLayout';
 import { useEyeReset } from './hooks/useEyeReset';
 import { useMousePassthrough } from './hooks/useMousePassthrough';
-import { useDragHandleController } from './hooks/useDragHandleController';
 import { usePointerTapHandler } from './hooks/usePointerTapHandler';
 import { useBubbleLifecycle } from './hooks/useBubbleLifecycle';
 import { useContextZoneController } from './hooks/useContextZoneController';
 import { usePetCanvasConfigRefs } from './hooks/usePetCanvasConfigRefs';
 import { usePetCanvasBootstrap } from './hooks/usePetCanvasBootstrap';
 import { useDebugMaskHeight } from './hooks/useDebugMaskHeight';
+import { usePetResizeOrchestrator } from './hooks/usePetResizeOrchestrator';
+import { useBubblePositionEngine } from './hooks/useBubblePositionEngine';
 import { debug } from '../../utils/log';
 import { useConfigStore } from '../../store/useConfigStore';
 import {
-  BUBBLE_MAX_WIDTH,
-  BUBBLE_ZONE_BASE_WIDTH,
-  BUBBLE_ZONE_MIN_WIDTH,
-  BUBBLE_HEAD_SAFE_GAP,
-  BUBBLE_GAP,
-  BUBBLE_EXTRA_GAP,
-  BUBBLE_PADDING,
-  RESIZE_THROTTLE_MS,
-  STARTUP_ENLARGE_BOUNDS_RATIO_GUARD,
-  STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD,
-  ENLARGE_CONFIRM_DELTA_PX,
-  ENLARGE_CONFIRM_WINDOW_MS,
   CONTEXT_ZONE_LATCH_MS,
   DEFAULT_TOUCH_PRIORITY,
 } from './const';
@@ -109,7 +95,7 @@ const PetCanvas: React.FC = () => {
   const settingsLoaded = usePetStore(s => s.settingsLoaded);
   const loadSettings = usePetStore(s => s.loadSettings);
 
-  // 阶段 1：在模型窗口订阅 SharedWorker 的 scale 广播。
+  // 在模型窗口订阅 SharedWorker 的 scale 广播。
   const connectSharedWorkerScale = usePetStore(s => s.connectSharedWorkerScale);
 
   usePetSettings(loadSettings);
@@ -228,15 +214,7 @@ const PetCanvas: React.FC = () => {
   const mousePassthroughRef = useRef<boolean | null>(null); // 鼠标穿透状态
   const recomputeWindowPassthroughRef = useRef<() => void>(() => { }); // 重新计算窗口穿透的函数引用
 
-  // 拖拽手柄相关
-  const dragHandleRef = useRef<HTMLDivElement | null>(null); // 拖拽手柄 DOM 引用
-  const showDragHandleOnHover = usePetStore(s => s.showDragHandleOnHover);
-  const dragHandlePositionRef = useRef<{ left: number; top: number; width: number } | null>(null); // 拖拽手柄位置
-  const lastDragHandleUpdateRef = useRef(0); // 上次拖拽手柄更新时间
-  const [dragHandlePosition, setDragHandlePosition] = useState<{ left: number; top: number; width: number } | null>(null); // 拖拽手柄位置状态
-  const [dragHandleVisible, setDragHandleVisible] = useState(false); // 拖拽手柄可见性
-  const dragHandleVisibleRef = useRef(false); // 拖拽手柄可见性引用
-  const dragHandleHideTimerRef = useRef<number | null>(null); // 拖拽手柄隐藏定时器
+  const lastInteractiveZonesUpdateRef = useRef(0); // 上次交互区域更新时间
 
   // 气泡对话框
   const bubbleRef = useRef<HTMLDivElement | null>(null); // 气泡 DOM 引用
@@ -395,786 +373,74 @@ const PetCanvas: React.FC = () => {
     return soundPath;
   }, []);
 
-  const emitDebugTrace = useCallback((payload: Record<string, unknown>) => {
-    try {
-      if (typeof window === 'undefined') return;
-      const api = (window as any).petAPI;
-      if (typeof api?.debugTrace !== 'function') return;
-      api.debugTrace(payload);
-    } catch {
-      // swallow debug trace bridge errors
-    }
-  }, []);
-
-  const requestResize = useCallback((width: number, height: number, options?: { preserveCenterLine?: boolean; source?: string }) => {
-    if (typeof window === 'undefined') return;
-    const now = performance?.now ? performance.now() : Date.now();
-    const prev = lastRequestedSizeRef.current;
-    if (prev && Math.abs(prev.w - width) < 2 && Math.abs(prev.h - height) < 2) return; // ignore tiny diff
-
-    // 若用户正在拖动/移动窗口，暂停自动 resize，避免与原生拖动互相“拉扯”造成抖动。
-    if (now < suppressAutoResizeUntilRef.current) {
-      lastRequestedSizeRef.current = { w: width, h: height };
-      return;
-    }
-
-    lastRequestedSizeRef.current = { w: width, h: height };
-    let anchorCenter: number | null = null;
-    if (options?.preserveCenterLine) {
-      const baseline = centerBaselineRef.current;
-      if (baseline == null) {
-        const currentCenter = getWindowCenter();
-        centerBaselineRef.current = currentCenter;
-        anchorCenter = currentCenter;
-      } else {
-        anchorCenter = baseline;
-      }
-    }
-    if (anchorCenter !== null) {
-      centerBaselineRef.current = anchorCenter;
-    }
-
-    const desired = {
-      width,
-      height,
-      anchorCenter: anchorCenter ?? undefined,
-    };
-    latestResizeDesiredRef.current = desired;
-
-    // If a resize is already in flight, only record the latest desired.
-    // We'll flush it when the in-flight request is ACK'ed via boundsChanged(requestId).
-    if (resizeInFlightRequestIdRef.current) {
-      return;
-    }
-
-    // Throttle only when actually issuing a new request (ACK flush bypasses this).
-    if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) return;
-    lastResizeAtRef.current = now;
-
-    const makeRequestId = () => {
-      const t = Date.now().toString(36);
-      const r = Math.random().toString(36).slice(2, 8);
-      return `rsz_${t}_${r}`;
-    };
-
-    const requestId = makeRequestId();
-    resizeInFlightRequestIdRef.current = requestId;
-    lastSentResizeDesiredRef.current = desired;
-
-    let predictedLeft: number | null = null;
-    if (anchorCenter !== null && Number.isFinite(anchorCenter)) {
-      predictedLeft = Math.round(anchorCenter - width / 2);
-      const existingBounds = windowBoundsRef.current;
-      const fallbackScreenLeft = window.screenX ?? window.screenLeft ?? 0;
-      const fallbackScreenTop = window.screenY ?? window.screenTop ?? 0;
-      const predictedBounds = {
-        x: Number.isFinite(predictedLeft) ? predictedLeft : fallbackScreenLeft,
-        y: Number.isFinite(existingBounds?.y) ? (existingBounds as { y: number }).y : fallbackScreenTop,
-        width: Number.isFinite(width) ? width : (existingBounds?.width ?? window.innerWidth),
-        height: Number.isFinite(height) ? height : (existingBounds?.height ?? window.innerHeight),
-      };
-      pendingBoundsPredictionRef.current = predictedBounds;
-    } else {
-      pendingBoundsPredictionRef.current = null;
-    }
-    const payload = {
-      width,
-      height,
-      anchorCenter: anchorCenter ?? undefined,
-      requestId,
-    };
-
-    emitDebugTrace({
-      kind: 'resize',
-      profile: 'jitter',
-      level: 'debug',
-      request: {
-        source: options?.source ?? 'requestResize',
-        rid: requestId,
-        phase: 'send',
-        ts: Date.now(),
-      },
-      resizeCore: {
-        normalizedWidth: width,
-        targetWidth: width,
-        targetHeight: height,
-      },
-      window: {
-        innerWidth: window.innerWidth,
-        innerHeight: window.innerHeight,
-        boundsWidth: windowBoundsRef.current?.width ?? null,
-        boundsHeight: windowBoundsRef.current?.height ?? null,
-        boundsX: windowBoundsRef.current?.x ?? null,
-        boundsY: windowBoundsRef.current?.y ?? null,
-        anchorCenter: anchorCenter ?? null,
-      },
-    });
-    try {
-      const api = (window as any).petAPI;
-      if (typeof api?.setSize === 'function') {
-        api.setSize(payload);
-      } else {
-        api?.invoke?.('pet:resizeMainWindow', payload);
-      }
-      // 主动 resize 会触发一系列 boundsChanged（含 x/y 变化），这里短暂忽略“用户拖动”检测。
-      ignoreUserMoveDetectUntilRef.current = now + 240;
-    } catch {
-      // If IPC fails, allow future attempts.
-      if (resizeInFlightRequestIdRef.current === requestId) {
-        resizeInFlightRequestIdRef.current = null;
-      }
-    }
-  }, [emitDebugTrace]);
-
-  const handleWindowBoundsAck = useCallback((bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
-    const ackId = bounds?.requestId;
-    if (!ackId) return;
-    const inFlight = resizeInFlightRequestIdRef.current;
-    if (!inFlight || inFlight !== ackId) return;
-
-    resizeInFlightRequestIdRef.current = null;
-
-    const latest = latestResizeDesiredRef.current;
-    const lastSent = lastSentResizeDesiredRef.current;
-    if (!latest) return;
-
-    const sameDesired = Boolean(
-      lastSent
-      && Math.abs(lastSent.width - latest.width) <= 1
-      && Math.abs(lastSent.height - latest.height) <= 1
-      && (lastSent.anchorCenter == null || latest.anchorCenter == null
-        ? lastSent.anchorCenter == null && latest.anchorCenter == null
-        : Math.abs(lastSent.anchorCenter - latest.anchorCenter) <= 0.5)
-    );
-    if (sameDesired) return;
-
-    // Flush latest desired immediately (latest-wins), bypassing throttle.
-    try {
-      const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-        ? performance.now()
-        : Date.now();
-
-      // Respect user-move suppression to avoid tug-of-war.
-      if (now < suppressAutoResizeUntilRef.current) return;
-
-      const makeRequestId = () => {
-        const t = Date.now().toString(36);
-        const r = Math.random().toString(36).slice(2, 8);
-        return `rsz_${t}_${r}`;
-      };
-      const requestId = makeRequestId();
-      resizeInFlightRequestIdRef.current = requestId;
-      lastSentResizeDesiredRef.current = latest;
-      lastResizeAtRef.current = now;
-
-      // Keep legacy refs in sync so other parts (prediction/layout) treat this as a programmatic resize.
-      pendingResizeRef.current = { width: latest.width, height: latest.height };
-      pendingResizeIssuedAtRef.current = now;
-      targetWindowWidthRef.current = latest.width;
-
-      const anchorCenter = typeof latest.anchorCenter === 'number' && Number.isFinite(latest.anchorCenter)
-        ? latest.anchorCenter
-        : null;
-      if (anchorCenter !== null) {
-        const predictedLeft = Math.round(anchorCenter - latest.width / 2);
-        const existingBounds = windowBoundsRef.current;
-        const fallbackScreenLeft = window.screenX ?? window.screenLeft ?? 0;
-        const fallbackScreenTop = window.screenY ?? window.screenTop ?? 0;
-        pendingBoundsPredictionRef.current = {
-          x: Number.isFinite(predictedLeft) ? predictedLeft : fallbackScreenLeft,
-          y: Number.isFinite(existingBounds?.y) ? (existingBounds as { y: number }).y : fallbackScreenTop,
-          width: Number.isFinite(latest.width) ? latest.width : (existingBounds?.width ?? window.innerWidth),
-          height: Number.isFinite(latest.height) ? latest.height : (existingBounds?.height ?? window.innerHeight),
-        };
-      } else {
-        pendingBoundsPredictionRef.current = null;
-      }
-
-      const payload = {
-        width: latest.width,
-        height: latest.height,
-        anchorCenter: latest.anchorCenter,
-        requestId,
-      };
-      const api = (window as any).petAPI;
-      if (typeof api?.setSize === 'function') {
-        api.setSize(payload);
-      } else {
-        api?.invoke?.('pet:resizeMainWindow', payload);
-      }
-      ignoreUserMoveDetectUntilRef.current = now + 240;
-    } catch {
-      resizeInFlightRequestIdRef.current = null;
-    }
-  }, []);
-
-  const applyWindowWidth = useCallback((requiredWidth: number) => {
-    if (typeof window === 'undefined') return;
-    if (!Number.isFinite(requiredWidth)) return;
-
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-
-    // 原生窗口拖动（WebkitAppRegion: drag）不会可靠触发 JS 的拖拽状态，
-    // 因此这里用“近期检测到用户移动窗口”的冷却窗口来抑制自动 resize。
-    if (now < suppressAutoResizeUntilRef.current) {
-      targetWindowWidthRef.current = window.innerWidth;
-      return;
-    }
-
-    // 在尚未获得主进程 outer bounds（windowBoundsRef 为空）之前，禁止自动扩缩窗。
-    // 否则首次（尤其是打开/停靠 DevTools 后）很容易在无基线情况下把窗口拉到错误位置/尺寸，出现剧烈抖动。
-    if (!windowBoundsRef.current) {
-      targetWindowWidthRef.current = window.innerWidth;
-      pendingResizeRef.current = null;
-      pendingBoundsPredictionRef.current = null;
-      return;
-    }
-
-    // 只要 DevTools 已打开（无论是否已稳定停靠），都禁用自动扩缩窗。
-    // 经验上 DevTools 打开/停靠的过渡阶段 outer/inner/bounds 会出现跳变，
-    // 若在此期间执行 preserveCenterLine 扩缩窗，最容易出现“占满桌面 + 强烈抖动”。
-    if (isDevToolsOpenedNow()) {
-      pendingResizeRef.current = null;
-      pendingBoundsPredictionRef.current = null;
-      targetWindowWidthRef.current = window.innerWidth;
-      suppressResizeForBubbleRef.current = false;
-      return;
-    }
-
-    // 方案 A：当 DevTools 停靠导致 outer bounds 与 innerWidth 差值很大时，禁用自动扩缩窗。
-    // 否则会把 DevTools 面板也一起算进“需要满足的宽度”，表现为窗口占满桌面并伴随抖动。
-    const dockedLike = isDevtoolsDockedLike({
-      boundsWidth: windowBoundsRef.current?.width ?? null,
-      innerWidth: typeof window.innerWidth === 'number' ? window.innerWidth : 0,
-      outerWidth: typeof window.outerWidth === 'number' ? window.outerWidth : null,
-    });
-    if (dockedLike) {
-      pendingResizeRef.current = null;
-      pendingBoundsPredictionRef.current = null;
-      targetWindowWidthRef.current = window.innerWidth;
-      suppressResizeForBubbleRef.current = false;
-      // 不触发 requestResize / setBounds，让调试时窗口保持用户尺寸。
-      return;
-    }
-
-    const normalizedWidth = Math.max(Math.round(requiredWidth), 320);
-    const desiredHeight = window.innerHeight;
-    const pending = pendingResizeRef.current;
-    const pendingMatches = pending && Math.abs(pending.width - normalizedWidth) <= 1 && Math.abs(pending.height - desiredHeight) <= 1;
-    if (pendingMatches) {
-      targetWindowWidthRef.current = normalizedWidth;
-      return;
-    }
-
-    const currentWidth = window.innerWidth;
-    if (Math.abs(currentWidth - normalizedWidth) <= 1) {
-      targetWindowWidthRef.current = normalizedWidth;
-      return;
-    }
-
-    if (targetWindowWidthRef.current !== null && Math.abs((targetWindowWidthRef.current as number) - normalizedWidth) <= 1 && !pending) {
-      targetWindowWidthRef.current = normalizedWidth;
-      return;
-    }
-
-    targetWindowWidthRef.current = normalizedWidth;
-    if (!pending) {
-      const baselineCenter = getWindowCenter();
-      if (Number.isFinite(baselineCenter)) {
-        // 先刷新基线，确保首次缩放时 anchorCenter 与当前窗口中心一致
-        centerBaselineRef.current = baselineCenter;
-      }
-    }
-    pendingResizeRef.current = { width: normalizedWidth, height: desiredHeight };
-    pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-
-    requestResize(normalizedWidth, desiredHeight, {
-      preserveCenterLine: true,
-      source: 'applyWindowWidth',
-    });
-  }, [requestResize]);
-
-  const alignWindowToCenterLine = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
-    if (typeof window === 'undefined') return;
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-
-    const actualCenter = bounds.x + bounds.width / 2;
-    const baseline = centerBaselineRef.current;
-    const programmaticResize = pendingResizeRef.current !== null;
-    const resizeInFlight = resizeInFlightRequestIdRef.current !== null;
-
-    // === 用户拖动/移动窗口检测 ===
-    // 原生拖动过程中会高频收到 boundsChanged（x/y 变化，width/height 基本不变）。
-    // 若我们在此时继续自动扩缩/对齐，会与原生拖动互相“拉扯”，表现为抖动/闪烁。
-    const prevObserved = lastObservedBoundsRef.current;
-    lastObservedBoundsRef.current = bounds;
-    if (prevObserved && now >= ignoreUserMoveDetectUntilRef.current) {
-      const moved = Math.abs(bounds.x - prevObserved.x) > 1 || Math.abs(bounds.y - prevObserved.y) > 1;
-      const sizeStable = Math.abs(bounds.width - prevObserved.width) <= 1 && Math.abs(bounds.height - prevObserved.height) <= 1;
-      if (moved && sizeStable) {
-        suppressAutoResizeUntilRef.current = now + 650;
-        centerBaselineRef.current = actualCenter;
-        pendingResizeRef.current = null;
-        pendingBoundsPredictionRef.current = null;
-        targetWindowWidthRef.current = bounds.width;
-        suppressResizeForBubbleRef.current = false;
-        return;
-      }
-    }
-
-    if (!programmaticResize) {
-      centerBaselineRef.current = actualCenter;
-      pendingBoundsPredictionRef.current = null;
-      targetWindowWidthRef.current = bounds.width;
-      return;
-    }
-
-    // During an in-flight programmatic resize we must not issue additional x-only moves.
-    // Otherwise we become a second writer and can cause the first-time scale change to jitter.
-    if (resizeInFlight) {
-      return;
-    }
-
-    const targetWidthSnapshot = targetWindowWidthRef.current;
-    const widthMatchesTarget = targetWidthSnapshot !== null && Math.abs(bounds.width - (targetWidthSnapshot as number)) <= 1;
-
-    if (baseline == null) {
-      centerBaselineRef.current = actualCenter;
-      pendingResizeRef.current = null;
-      pendingBoundsPredictionRef.current = null;
-      targetWindowWidthRef.current = bounds.width;
-      suppressResizeForBubbleRef.current = false;
-      return;
-    }
-
-    const diff = Math.abs(actualCenter - baseline);
-    if (diff <= 1.5 || (widthMatchesTarget && diff <= 2.4)) {
-      centerBaselineRef.current = actualCenter;
-      pendingResizeRef.current = null;
-      pendingBoundsPredictionRef.current = null;
-      targetWindowWidthRef.current = bounds.width;
-      suppressResizeForBubbleRef.current = false;
-      return;
-    }
-
-    if (now - lastAlignAttemptRef.current < 48) return;
-    lastAlignAttemptRef.current = now;
-
-    const targetX = Math.round(baseline - bounds.width / 2);
-
-    try {
-      const api = (window as any).petAPI;
-      const payload = { x: targetX, y: bounds.y, width: bounds.width, height: bounds.height };
-      if (typeof api?.setBounds === 'function') {
-        api.setBounds(payload);
-      } else {
-        api?.invoke?.('pet:setMainWindowBounds', payload);
-      }
-      // 这是我们自己发起的 x-only 对齐移动，避免被误判成用户拖动。
-      ignoreUserMoveDetectUntilRef.current = now + 180;
-    } catch { /* swallow */ }
-  }, []);
-
-  const updateBubblePosition = useCallback((force = false) => {
-    if (typeof window === 'undefined') return;
-
-    const hasBubble = Boolean(motionTextRef.current);
-
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    if (hasBubble && !force && now - lastBubbleUpdateRef.current < 32) return;
-    lastBubbleUpdateRef.current = now;
-
-    const model = modelRef.current;
-    const app = appRef.current;
-    const container = canvasRef.current;
-    const canvas = (app?.view as HTMLCanvasElement | undefined) ?? undefined;
-    if (!model || !app || !container || !canvas) {
-      commitBubbleReady(false);
-      return;
-    }
-
-    const bounds = model.getBounds?.();
-    if (!bounds) {
-      commitBubbleReady(false);
-      return;
-    }
-
-    const canvasRect = canvas.getBoundingClientRect();
-    const containerRect = container.getBoundingClientRect();
-    const screen = app.renderer?.screen;
-    if (!screen?.width || !screen?.height || canvasRect.width === 0 || canvasRect.height === 0) {
-      commitBubbleReady(false);
-      return;
-    }
-
-    // === 新布局：三分区（左气泡区 | 模型区 | 右气泡区） ===
-    const s = Math.max(0.8, Math.min(1.4, (scale || 1)));
-    const modelTopDom = canvasRect.top + ((bounds.y - screen.y) / screen.height) * canvasRect.height;
-    // 使用“视觉矩形”作为对称边界，替代原始 bounds 左右边
-    const faceEntry = hitAreasRef.current.find(a => /face|head/i.test(a.name) || /face|head/i.test(a.id));
-    // 可视渲染使用偏移后的视觉矩形
-    const vfVisible = getVisibleFrame(bounds, screen, canvasRect, {
-      model,
-      faceAreaId: faceEntry?.id ?? null,
-      visualFrame: visualFrameRef.current,
-      touchMap: touchMapRef.current,
-    });
-    // 可用空间判定使用未偏移的视觉矩形，避免水平偏移影响左右可用性
-    const vfBase = getBaseFrame(bounds, screen, canvasRect, {
-      model,
-      faceAreaId: faceEntry?.id ?? null,
-      visualFrame: visualFrameRef.current,
-      touchMap: touchMapRef.current,
-    });
-    const modelHeightDom = (bounds.height / screen.height) * canvasRect.height;
-
-    // 更新红线位置（与视觉中心对齐）
-    const nextRedLeft = vfVisible.centerDomX - containerRect.left;
-    const prevRed = redLineLeftRef.current;
-    if (prevRed == null || Math.abs(prevRed - nextRedLeft) > 0.5) {
-      redLineLeftRef.current = nextRedLeft;
-      setRedLineLeft(nextRedLeft);
-    }
-
-    const nextVisibleFrameLeft = vfVisible.leftDom - containerRect.left;
-    const nextVisibleFrameWidth = vfVisible.visualWidthDom;
-    const prevVisibleFrame = visibleFrameMetricsRef.current;
-    if (!prevVisibleFrame || Math.abs(prevVisibleFrame.left - nextVisibleFrameLeft) > 0.5 || Math.abs(prevVisibleFrame.width - nextVisibleFrameWidth) > 0.5) {
-      const metrics = { left: nextVisibleFrameLeft, width: nextVisibleFrameWidth };
-      visibleFrameMetricsRef.current = metrics;
-      setVisibleFrameMetrics(metrics);
-    }
-
-    const nextBaseFrameLeft = vfBase.leftDom - containerRect.left;
-    const nextBaseFrameWidth = vfBase.visualWidthDom;
-    const prevBaseFrame = baseFrameMetricsRef.current;
-    if (!prevBaseFrame || Math.abs(prevBaseFrame.left - nextBaseFrameLeft) > 0.5 || Math.abs(prevBaseFrame.width - nextBaseFrameWidth) > 0.5) {
-      const metrics = { left: nextBaseFrameLeft, width: nextBaseFrameWidth };
-      baseFrameMetricsRef.current = metrics;
-      setBaseFrameMetrics(metrics);
-    }
-
-    const zoneTarget = BUBBLE_ZONE_BASE_WIDTH * s;
-    const centerDom = vfVisible.centerDomX - containerRect.left;
-    const gapEffective = BUBBLE_GAP + BUBBLE_EXTRA_GAP * s;
-
-    const effectiveContainerWidth = pendingResizeRef.current?.width
-      ?? targetWindowWidthRef.current
-      ?? containerRect.width;
-
-    const leftCapacity = Math.max(0, centerDom - gapEffective - BUBBLE_PADDING);
-    const rightCapacity = Math.max(0, effectiveContainerWidth - (centerDom + gapEffective) - BUBBLE_PADDING);
-    const baseFrameWidthDom = vfBase.visualWidthDom;
-    const requiredWindowWidth = Math.ceil(baseFrameWidthDom + zoneTarget * 2 + gapEffective * 2 + BUBBLE_PADDING * 2);
-    const leftShortfallPx = Math.max(0, zoneTarget - leftCapacity);
-    const rightShortfallPx = Math.max(0, zoneTarget - rightCapacity);
-    const capacityShortfall = leftShortfallPx > 0 || rightShortfallPx > 0;
-
-    let enforcedWindowWidth = requiredWindowWidth;
-    const pendingGoalWidth = pendingResizeRef.current?.width ?? null;
-    const cachedGoalWidth = targetWindowWidthRef.current;
-    const lastGoalWidth = pendingGoalWidth ?? cachedGoalWidth;
-    if (pendingGoalWidth !== null && lastGoalWidth !== null) {
-      const normalizedGoal = Math.max(Math.round(lastGoalWidth), 320);
-      if (requiredWindowWidth < normalizedGoal - 2) {
-        enforcedWindowWidth = normalizedGoal;
-      }
-    }
-
-    // 窗口宽度只跟随 scale：不要在拖动/动画/bounds 变化时持续触发 resize。
-    // 仅当 scale 变化（或首次挂载）时，触发一次窗口宽度同步。
-    if (resizeWindowOnNextLayoutRef.current) {
-      const currentWindowWidth = typeof window.innerWidth === 'number' ? window.innerWidth : 0;
-      const isEnlarge = enforcedWindowWidth > currentWindowWidth + 1;
-      const safeScreenWidth = Number.isFinite(screen.width) && screen.width > 0 ? screen.width : 0;
-      const boundsToScreenRatio = safeScreenWidth > 0 ? bounds.width / safeScreenWidth : 0;
-      const abnormalStartupEnlarge = isEnlarge && (
-        boundsToScreenRatio > STARTUP_ENLARGE_BOUNDS_RATIO_GUARD
-        || baseFrameWidthDom > canvasRect.width * STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD
-      );
-
-      const resizeTrace = {
-        requiredWindowWidth,
-        enforcedWindowWidth,
-        baseFrameWidthDom,
-        boundsWidthDom: bounds.width,
-        screenWidthDom: screen.width,
-        canvasRectWidthDom: canvasRect.width,
-        zoneTarget,
-        gapEffective,
-        isEnlarge,
-        boundsToScreenRatio,
-      };
-
-      emitDebugTrace({
-        kind: 'resize',
-        profile: 'jitter',
-        level: abnormalStartupEnlarge ? 'warn' : 'debug',
-        request: {
-          source: 'updateBubblePosition',
-          phase: 'calc',
-          ts: Date.now(),
-        },
-        resizeCore: {
-          requiredWidth: requiredWindowWidth,
-          enforcedWindowWidth,
-          isEnlarge,
-        },
-        window: {
-          innerWidth: window.innerWidth,
-          innerHeight: window.innerHeight,
-          boundsWidth: windowBoundsRef.current?.width ?? null,
-          boundsHeight: windowBoundsRef.current?.height ?? null,
-          boundsX: windowBoundsRef.current?.x ?? null,
-          boundsY: windowBoundsRef.current?.y ?? null,
-          targetWindowWidth: targetWindowWidthRef.current,
-          pendingWidth: pendingResizeRef.current?.width ?? null,
-        },
-        layout: resizeTrace,
-      });
-
-      if (abnormalStartupEnlarge) {
-        enlargeWidthConfirmRef.current = null;
-        suppressResizeForBubbleRef.current = false;
-      } else if (isEnlarge) {
-        const candidate = enlargeWidthConfirmRef.current;
-        const withinWindow = Boolean(candidate && (now - candidate.seenAt) <= ENLARGE_CONFIRM_WINDOW_MS);
-        const stableEnough = Boolean(candidate && Math.abs(candidate.width - enforcedWindowWidth) <= ENLARGE_CONFIRM_DELTA_PX);
-        if (!(withinWindow && stableEnough)) {
-          enlargeWidthConfirmRef.current = { width: enforcedWindowWidth, seenAt: now };
-          suppressResizeForBubbleRef.current = false;
-        } else {
-          enlargeWidthConfirmRef.current = null;
-          resizeWindowOnNextLayoutRef.current = false;
-          applyWindowWidth(enforcedWindowWidth);
-          suppressResizeForBubbleRef.current = false;
-        }
-      } else {
-        enlargeWidthConfirmRef.current = null;
-        resizeWindowOnNextLayoutRef.current = false;
-        applyWindowWidth(enforcedWindowWidth);
-        suppressResizeForBubbleRef.current = false;
-      }
-    }
-
-    if (!hasBubble) {
-      bubblePositionRef.current = null;
-      setBubblePosition(null);
-      bubbleAlignmentRef.current = null;
-      commitBubbleReady(false);
-      if (force && typeof window !== 'undefined') {
-        const immediate = getWindowCenter();
-        centerBaselineRef.current = immediate;
-        window.setTimeout(() => {
-          const delayed = getWindowCenter();
-          centerBaselineRef.current = delayed;
-        }, 120);
-      }
-      return;
-    }
-
-    const bubbleEl = bubbleRef.current;
-    if (!bubbleEl) {
-      commitBubbleReady(false);
-      return;
-    }
-
-    const awaitingResize = Boolean(pendingResizeRef.current);
-
-    const symmetricCapacity = Math.min(leftCapacity, rightCapacity);
-    const unclampedSymmetric = Math.min(zoneTarget, symmetricCapacity);
-    const meetsMinimum = unclampedSymmetric >= BUBBLE_ZONE_MIN_WIDTH;
-    const symmetricWidth = meetsMinimum
-      ? unclampedSymmetric
-      : Math.max(0, symmetricCapacity);
-    const widthShortfall = !meetsMinimum || capacityShortfall || awaitingResize;
-
-    const leftZoneLeft = centerDom - gapEffective - symmetricWidth;
-    const rightZoneLeft = centerDom + gapEffective;
-
-    const zoneLeftWidth = Math.max(0, symmetricWidth);
-    const zoneRightWidth = Math.max(0, symmetricWidth);
-
-    // 先应用建议的最大宽度，确保测量一致
-    bubbleEl.style.setProperty('--bubble-max-width', `${Math.round(Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.min(BUBBLE_MAX_WIDTH, BUBBLE_ZONE_BASE_WIDTH)))}px`);
-
-    // 使用抽取的放置引擎进行决策与定位
-    const placement = computeBubblePlacement({
-      scale: s,
-      baseFrame: vfBase,
-      visibleFrame: vfVisible,
-      container: { width: containerRect.width, height: containerRect.height, top: containerRect.top, left: containerRect.left },
-      modelTopDom,
-      modelHeightDom,
-      bubbleEl,
-      bubbleSettings: {
-        symmetric: bubbleSettingsRef.current?.symmetric === true,
-        headRatio: bubbleSettingsRef.current?.headRatio ?? null,
-        touchMap: touchMapRef.current,
-      },
-      symmetry: {
-        centerDom,
-        zoneWidth: symmetricWidth,
-        capacity: symmetricCapacity,
-        widthShortfall,
-        gap: gapEffective,
-      },
-      constants: {
-        BUBBLE_ZONE_BASE_WIDTH,
-        BUBBLE_ZONE_MIN_WIDTH,
-        BUBBLE_MAX_WIDTH,
-        BUBBLE_PADDING,
-        BUBBLE_GAP,
-        BUBBLE_HEAD_SAFE_GAP,
-      },
-    });
-
-    const nextZones = {
-      left: {
-        left: leftZoneLeft,
-        width: zoneLeftWidth,
-        targetWidth: zoneTarget,
-      },
-      right: {
-        left: rightZoneLeft,
-        width: zoneRightWidth,
-        targetWidth: zoneTarget,
-      },
-      active: placement.side,
-      symmetricWidth,
-      symmetricCapacity,
-      widthShortfall,
-      awaitingResize,
-      requiredWindowWidth,
-    };
-    const prevZones = bubbleZoneMetricsRef.current;
-    if (
-      !prevZones ||
-      Math.abs(prevZones.left.left - nextZones.left.left) > 0.5 ||
-      Math.abs(prevZones.left.width - nextZones.left.width) > 0.5 ||
-      Math.abs(prevZones.left.targetWidth - nextZones.left.targetWidth) > 0.5 ||
-      Math.abs(prevZones.right.left - nextZones.right.left) > 0.5 ||
-      Math.abs(prevZones.right.width - nextZones.right.width) > 0.5 ||
-      Math.abs(prevZones.right.targetWidth - nextZones.right.targetWidth) > 0.5 ||
-      prevZones.active !== nextZones.active ||
-      Math.abs(prevZones.symmetricWidth - nextZones.symmetricWidth) > 0.5 ||
-      Math.abs(prevZones.symmetricCapacity - nextZones.symmetricCapacity) > 0.5 ||
-      prevZones.widthShortfall !== nextZones.widthShortfall ||
-      prevZones.awaitingResize !== nextZones.awaitingResize ||
-      Math.abs(prevZones.requiredWindowWidth - nextZones.requiredWindowWidth) > 0.5
-    ) {
-      bubbleZoneMetricsRef.current = nextZones;
-      setBubbleZoneMetrics(nextZones);
-    }
-
-    const nextBubbleSide: 'left' | 'right' = placement.side;
-    const bubbleWidth = placement.bubbleWidth;
-    const targetX = placement.targetX;
-    let targetY = placement.targetY;
-    const severeOverlap = placement.severeOverlap;
-
-    // 测量当前气泡高度（用于垂直定位与遮挡判断）
-    const measuredRect = bubbleEl.getBoundingClientRect?.();
-    const bubbleHeight = measuredRect && measuredRect.height > 0 ? measuredRect.height : 0;
-
-    // 垂直定位：根据触摸比例头锚点（使用 hairEnd*0.85 回退）
-    let headAnchorRatio = 0.085; // 默认回退
-    {
-      const ratios = touchMapRef.current;
-      if (ratios && ratios.length > 0) {
-        const hairEnd = ratios[0];
-        if (Number.isFinite(hairEnd)) headAnchorRatio = clamp(hairEnd * 0.85, 0, 1);
-      }
-    }
-    {
-      const rawHeadRatio = bubbleSettingsRef.current?.headRatio;
-      if (typeof rawHeadRatio === 'number' && Number.isFinite(rawHeadRatio)) {
-        headAnchorRatio = clamp(rawHeadRatio, 0, 1);
-      }
-    }
-    const headAnchorDomY = modelTopDom + modelHeightDom * headAnchorRatio;
-    const maxTop = containerRect.height - bubbleHeight - BUBBLE_PADDING;
-    targetY = clamp(headAnchorDomY - containerRect.top - bubbleHeight - BUBBLE_HEAD_SAFE_GAP, BUBBLE_PADDING, maxTop);
-    // 计算尾巴在气泡内部的 Y，使其指向头部锚点附近
-    const tailSize = 10; // 与 ChatBubble 默认尾巴大小一致
-    const unscaledHeight = bubbleHeight > 0 ? (bubbleHeight / s) : 0;
-    const unscaledTailY = bubbleHeight > 0 ? ((headAnchorDomY - containerRect.top - targetY) / s) : 0;
-    const nextTailY = bubbleHeight > 0 ? clamp(unscaledTailY, tailSize, Math.max(tailSize, unscaledHeight - tailSize)) : null;
-    if (nextTailY !== null) {
-      setBubbleTailY(Math.round(nextTailY));
-    }
-
-    // 头部区域定义与遮挡检测（使用 touch map 第一段作为头顶 / 或 hairEnd*0.85 回退）
-    let headTopRatio = headAnchorRatio; // 近似头顶
-    {
-      const ratios = touchMapRef.current;
-      if (ratios && ratios.length > 1) {
-        const hairEnd = ratios[0];
-        if (Number.isFinite(hairEnd)) headTopRatio = clamp(hairEnd * 0.85, 0, 1);
-      }
-    }
-    const headTopDom = modelTopDom + modelHeightDom * headTopRatio;
-
-    // 根据头部上缘做一次上推，避免底边压住头部
-    const bubbleTopDom = targetY + containerRect.top;
-    const bubbleBottomDom = bubbleTopDom + bubbleHeight;
-    if (bubbleBottomDom > headTopDom - 4) {
-      const desiredTopDom = headTopDom - BUBBLE_HEAD_SAFE_GAP - bubbleHeight;
-      const desiredTop = desiredTopDom - containerRect.top;
-      const clampedDesiredTop = clamp(desiredTop, BUBBLE_PADDING, maxTop);
-      if (Math.abs(clampedDesiredTop - targetY) > 0.5) {
-        targetY = clampedDesiredTop;
-      }
-    }
-
-    // pointer-events 保护：避免遮挡模型点击（后续可扩展悬停激活）
-    bubbleEl.style.pointerEvents = 'none';
-
-    // 严重遮挡回退：缩宽以减少高度（换行重新排版），然后下一帧重算一次位置
-    if (severeOverlap) {
-      const cssVar = bubbleEl.style.getPropertyValue('--bubble-max-width');
-      const currentMaxWidth = parseFloat(cssVar || `${bubbleWidth}`);
-      if (Number.isFinite(currentMaxWidth) && currentMaxWidth > BUBBLE_ZONE_MIN_WIDTH + 12) {
-        const shrinkWidth = Math.max(BUBBLE_ZONE_MIN_WIDTH, Math.floor(currentMaxWidth * 0.85));
-        if (shrinkWidth < currentMaxWidth - 4) {
-          bubbleEl.style.setProperty('--bubble-max-width', `${shrinkWidth}px`);
-          requestAnimationFrame(() => updateBubblePositionRef.current?.(true));
-        }
-      }
-    }
-
-    // 更新状态
-    const nextPosition = { left: targetX, top: targetY };
-    if (bubbleAlignmentRef.current !== nextBubbleSide) {
-      bubbleAlignmentRef.current = nextBubbleSide;
-      setBubbleAlignment(nextBubbleSide);
-    }
-    const prev = bubblePositionRef.current;
-    if (!prev || Math.abs(prev.left - nextPosition.left) > 0.5 || Math.abs(prev.top - nextPosition.top) > 0.5) {
-      bubblePositionRef.current = nextPosition;
-      setBubblePosition(nextPosition);
-    }
-    commitBubbleReady(true);
-  }, [scale, commitBubbleReady, applyWindowWidth, emitDebugTrace]);
-
-  useEffect(() => {
-    enlargeWidthConfirmRef.current = null;
-    resizeWindowOnNextLayoutRef.current = true;
-  }, [scale]);
-
-  useLayoutEffect(() => {
-    updateBubblePositionRef.current = updateBubblePosition;
-  }, [updateBubblePosition]);
-
-  const { recomputeWindowPassthrough } = useMousePassthrough({
+  const {
+    emitDebugTrace,
+    handleWindowBoundsAck,
+    applyWindowWidth,
+    alignWindowToCenterLine,
+  } = usePetResizeOrchestrator({
+    getWindowCenter,
+    isDevToolsOpenedNow,
+    isDevtoolsDockedLike,
+    lastResizeAtRef,
+    lastRequestedSizeRef,
+    resizeInFlightRequestIdRef,
+    latestResizeDesiredRef,
+    lastSentResizeDesiredRef,
+    targetWindowWidthRef,
+    pendingResizeRef,
+    pendingBoundsPredictionRef,
+    pendingResizeIssuedAtRef,
+    suppressResizeForBubbleRef,
+    centerBaselineRef,
+    lastAlignAttemptRef,
+    suppressAutoResizeUntilRef,
+    ignoreUserMoveDetectUntilRef,
+    lastObservedBoundsRef,
+    windowBoundsRef,
+  });
+
+  const { updateBubblePosition } = useBubblePositionEngine({
+    scale,
+    motionTextRef,
+    modelRef,
+    appRef,
+    canvasRef,
+    bubbleRef,
+    hitAreasRef,
+    visualFrameRef,
+    bubbleSettingsRef,
+    touchMapRef,
+    redLineLeftRef,
+    visibleFrameMetricsRef,
+    baseFrameMetricsRef,
+    bubbleZoneMetricsRef,
+    pendingResizeRef,
+    targetWindowWidthRef,
+    resizeWindowOnNextLayoutRef,
+    enlargeWidthConfirmRef,
+    suppressResizeForBubbleRef,
+    centerBaselineRef,
+    pendingResizeIssuedAtRef,
+    windowBoundsRef,
+    lastBubbleUpdateRef,
+    bubbleAlignmentRef,
+    bubblePositionRef,
+    updateBubblePositionRef,
+    commitBubbleReady,
+    applyWindowWidth,
+    emitDebugTrace,
+    getWindowCenter,
+    setRedLineLeft,
+    setVisibleFrameMetrics,
+    setBaseFrameMetrics,
+    setBubbleZoneMetrics,
+    setBubblePosition,
+    setBubbleAlignment,
+    setBubbleTailY,
+  });
+
+  useMousePassthrough({
     ignoreMouse,
     ignoreMouseRef,
     mousePassthroughRef,
@@ -1198,24 +464,6 @@ const PetCanvas: React.FC = () => {
   });
 
   const {
-    setDragHandleVisibility,
-    cancelDragHandleHide,
-    scheduleDragHandleHide,
-    triggerDragHandleReveal,
-  } = useDragHandleController({
-    showDragHandleOnHover,
-    dragHandleRef,
-    dragHandleVisibleRef,
-    dragHandleHideTimerRef,
-    dragHandleActiveRef,
-    dragHandleHoverRef,
-    setDragHandleVisibleState: setDragHandleVisible,
-    recomputeWindowPassthrough,
-    updateBubblePosition,
-    dragHandlePosition,
-  });
-
-  const {
     applyContextZoneDecision,
     updateInteractiveZones,
   } = useContextZoneController({
@@ -1227,21 +475,13 @@ const PetCanvas: React.FC = () => {
     pointerInsideBubbleRef,
     pointerInsideHandleRef,
     pointerInsideModelRef,
-    dragHandleHoverRef,
-    dragHandleActiveRef,
-    dragHandleVisibleRef,
     pointerX,
     pointerY,
     setContextZoneStyle,
     setContextZoneAlignment,
     recomputeWindowPassthroughRef,
-    showDragHandleOnHover,
     scheduleContextZoneLatchCheck,
     clearContextZoneLatchTimer,
-    triggerDragHandleReveal,
-    scheduleDragHandleHide,
-    cancelDragHandleHide,
-    setDragHandleVisibility,
     latchDurationMs: CONTEXT_ZONE_LATCH_MS,
   });
 
@@ -1257,8 +497,8 @@ const PetCanvas: React.FC = () => {
     const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
-    if (!force && now - lastDragHandleUpdateRef.current < 32) return;
-    lastDragHandleUpdateRef.current = now;
+    if (!force && now - lastInteractiveZonesUpdateRef.current < 32) return;
+    lastInteractiveZonesUpdateRef.current = now;
 
     const bounds = model.getBounds?.();
     if (!bounds) return;
@@ -1273,23 +513,6 @@ const PetCanvas: React.FC = () => {
     const clampedTopTmp = Math.max(0, Math.min(1, Number.isFinite(topRatioTmp) ? topRatioTmp : 0));
     const topDomY = canvasRect.top + clampedTopTmp * canvasRect.height;
 
-    // 使用 dragHandleEngine 计算手柄位置（纯函数）
-    const offsetConfig = (window as any)?.LIVE2D_DRAG_HANDLE_OFFSET;
-    const dh = computeDragHandlePosition({
-      canvasWidth: canvasRect.width,
-      canvasHeight: canvasRect.height,
-      bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
-      screen: { width: screen.width, height: screen.height, x: screen.x as number, y: screen.y as number },
-      offsetX: typeof offsetConfig?.x === 'number' ? offsetConfig.x : -48,
-      offsetY: typeof offsetConfig?.y === 'number' ? offsetConfig.y : -96,
-    });
-    const nextPosition = dh.position;
-
-    const prev = dragHandlePositionRef.current;
-    if (!prev || Math.abs(prev.left - nextPosition.left) > 0.5 || Math.abs(prev.top - nextPosition.top) > 0.5 || Math.abs(prev.width - nextPosition.width) > 0.5) {
-      dragHandlePositionRef.current = nextPosition;
-      setDragHandlePosition(nextPosition);
-    }
     let pointerInsideModel = false;
     let pointerWithinCanvas = false;
     if (canvasRect.width > 0 && canvasRect.height > 0) {
@@ -1338,13 +561,11 @@ const PetCanvas: React.FC = () => {
     });
 
     const bubbleEl = bubbleRef.current;
-    const handleEl = dragHandleRef.current;
     updateInteractiveZones({
       bubbleEl,
-      handleEl,
       pointerInsideModel,
     });
-  }, [setDragHandlePosition, applyContextZoneDecision, updateInteractiveZones]);
+  }, [applyContextZoneDecision, updateInteractiveZones]);
 
   useLayoutEffect(() => {
     updateDragHandlePositionRef.current = updateDragHandlePosition;
@@ -1521,6 +742,25 @@ const PetCanvas: React.FC = () => {
   // 忽略鼠标时重置模型朝向参数
   useEyeReset({ ignoreMouse, modelRef });
 
+  const canStartModelDrag = useCallback((clientX: number, clientY: number): boolean => {
+    const model = modelRef.current;
+    const app = appRef.current;
+    if (!model || !app) return false;
+    const canvas = app.view as HTMLCanvasElement | undefined;
+    if (!canvas) return false;
+    const rect = canvas.getBoundingClientRect();
+    const withinX = clientX >= rect.left && clientX <= rect.right;
+    const withinY = clientY >= rect.top && clientY <= rect.bottom;
+    if (!withinX || !withinY) return false;
+    const x = ((clientX - rect.left) / rect.width) * app.renderer.screen.width;
+    const y = ((clientY - rect.top) / rect.height) * app.renderer.screen.height;
+    const bounds = model.getBounds?.();
+    if (!bounds) return false;
+    const nx = (x - bounds.x) / (bounds.width || 1);
+    const ny = (y - bounds.y) / (bounds.height || 1);
+    return nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1;
+  }, []);
+
   const handlePointerTap = useCallback((clientX: number, clientY: number) => {
     const model = modelRef.current;
     const app = appRef.current;
@@ -1628,7 +868,109 @@ const PetCanvas: React.FC = () => {
     }
   }, [interruptMotion]);
 
-  usePointerTapHandler({ handlePointerTap });
+  const onModelDragStart = useCallback(() => {
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    suppressAutoResizeUntilRef.current = now + 360;
+    ignoreUserMoveDetectUntilRef.current = now + 360;
+    dragHandleActiveRef.current = true;
+    pointerInsideHandleRef.current = false;
+    pointerInsideModelRef.current = true;
+    recomputeWindowPassthroughRef.current?.();
+
+    try {
+      const api = (window as any).petAPI;
+      api?.sendWindowIntent?.({
+        intentId: `drag_state_start_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        source: 'drag',
+        kind: 'drag-state',
+        payload: { phase: 'start' },
+        priority: 120,
+        ts: Date.now(),
+      });
+    } catch {
+      // swallow drag state intent errors
+    }
+
+    emitDebugTrace({
+      kind: 'drag',
+      profile: 'windowMove',
+      level: 'debug',
+      request: {
+        source: 'modelDrag',
+        phase: 'start',
+        ts: Date.now(),
+      },
+      window: {
+        boundsX: windowBoundsRef.current?.x ?? null,
+        boundsY: windowBoundsRef.current?.y ?? null,
+        boundsWidth: windowBoundsRef.current?.width ?? null,
+        boundsHeight: windowBoundsRef.current?.height ?? null,
+      },
+    });
+  }, [emitDebugTrace]);
+
+  const onModelDragMove = useCallback(() => {
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    suppressAutoResizeUntilRef.current = now + 220;
+    ignoreUserMoveDetectUntilRef.current = now + 220;
+  }, []);
+
+  const onModelDragEnd = useCallback(() => {
+    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+    suppressAutoResizeUntilRef.current = now + 180;
+    ignoreUserMoveDetectUntilRef.current = now + 180;
+    dragHandleActiveRef.current = false;
+    pointerInsideModelRef.current = false;
+    recomputeWindowPassthroughRef.current?.();
+
+    try {
+      const api = (window as any).petAPI;
+      api?.sendWindowIntent?.({
+        intentId: `drag_state_end_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        source: 'drag',
+        kind: 'drag-state',
+        payload: { phase: 'end' },
+        priority: 120,
+        ts: Date.now(),
+      });
+    } catch {
+      // swallow drag state intent errors
+    }
+
+    emitDebugTrace({
+      kind: 'drag',
+      profile: 'windowMove',
+      level: 'debug',
+      request: {
+        source: 'modelDrag',
+        phase: 'end',
+        ts: Date.now(),
+      },
+      window: {
+        boundsX: windowBoundsRef.current?.x ?? null,
+        boundsY: windowBoundsRef.current?.y ?? null,
+        boundsWidth: windowBoundsRef.current?.width ?? null,
+        boundsHeight: windowBoundsRef.current?.height ?? null,
+      },
+    });
+
+    updateBubblePosition(true);
+    updateDragHandlePosition(true);
+  }, [emitDebugTrace, updateBubblePosition, updateDragHandlePosition]);
+
+  usePointerTapHandler({
+    handlePointerTap,
+    canStartDrag: canStartModelDrag,
+    onDragStart: onModelDragStart,
+    onDragMove: onModelDragMove,
+    onDragEnd: onModelDragEnd,
+  });
 
   useBubbleLifecycle({
     motionText,
@@ -1673,33 +1015,6 @@ const PetCanvas: React.FC = () => {
 
   return (
     <>
-      {dragHandlePosition && (
-        <div
-          data-live2d-drag-handle="true"
-          ref={dragHandleRef}
-          className="absolute z-40 flex justify-center select-none cursor-grab active:cursor-grabbing"
-          style={{
-            left: dragHandlePosition.left,
-            top: dragHandlePosition.top,
-            width: dragHandlePosition.width,
-            WebkitAppRegion: 'drag',
-            WebkitUserSelect: 'none',
-            visibility: dragHandleVisible ? 'visible' : 'hidden',
-            opacity: dragHandleVisible ? 1 : 0,
-            pointerEvents: dragHandleVisible ? 'auto' : 'none',
-            transition: 'opacity 150ms ease, visibility 150ms ease',
-          }}
-        >
-          <div
-            data-live2d-drag-handle="true"
-            className="flex h-8 w-full items-center justify-center rounded-full bg-slate-800/75 px-4 text-xs text-slate-100 shadow-md backdrop-blur-sm"
-            style={{ WebkitAppRegion: 'drag', WebkitUserSelect: 'none' }}
-          >
-            拖动此区域移动窗口
-          </div>
-        </div>
-      )}
-
       {/* 主要内容区域 - 设置为 no-drag */}
       <div
         ref={canvasRef}

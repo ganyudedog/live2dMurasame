@@ -15,27 +15,18 @@ export interface UseContextZoneControllerParams {
   pointerInsideBubbleRef: RefObject<boolean>;
   pointerInsideHandleRef: RefObject<boolean>;
   pointerInsideModelRef: RefObject<boolean>;
-  dragHandleHoverRef: RefObject<boolean>;
-  dragHandleActiveRef: RefObject<boolean>;
-  dragHandleVisibleRef: RefObject<boolean>;
   pointerX: RefObject<number>;
   pointerY: RefObject<number>;
   setContextZoneStyle: (style: { left: number; top: number; width: number; height: number } | null) => void;
   setContextZoneAlignment: (alignment: 'left' | 'right') => void;
   recomputeWindowPassthroughRef: RefObject<() => void>;
-  showDragHandleOnHover: boolean;
   scheduleContextZoneLatchCheck: (targetTimestamp: number) => void;
   clearContextZoneLatchTimer: () => void;
-  triggerDragHandleReveal: () => void;
-  scheduleDragHandleHide: () => void;
-  cancelDragHandleHide: () => void;
-  setDragHandleVisibility: (visible: boolean) => void;
   latchDurationMs: number;
 }
 
 export interface UpdateInteractiveZonesArgs {
   bubbleEl: HTMLDivElement | null;
-  handleEl: HTMLDivElement | null;
   pointerInsideModel: boolean;
 }
 
@@ -56,21 +47,13 @@ export const useContextZoneController = ({
   pointerInsideBubbleRef,
   pointerInsideHandleRef,
   pointerInsideModelRef,
-  dragHandleHoverRef,
-  dragHandleActiveRef,
-  dragHandleVisibleRef,
   pointerX,
   pointerY,
   setContextZoneStyle,
   setContextZoneAlignment,
   recomputeWindowPassthroughRef,
-  showDragHandleOnHover,
   scheduleContextZoneLatchCheck,
   clearContextZoneLatchTimer,
-  triggerDragHandleReveal,
-  scheduleDragHandleHide,
-  cancelDragHandleHide,
-  setDragHandleVisibility,
   latchDurationMs,
 }: UseContextZoneControllerParams): UseContextZoneControllerResult => {
   const applyContextZoneDecision = useCallback((data: ContextZoneData) => {
@@ -140,7 +123,7 @@ export const useContextZoneController = ({
     setContextZoneStyle,
   ]);
 
-  const updateInteractiveZones = useCallback(({ bubbleEl, handleEl, pointerInsideModel }: UpdateInteractiveZonesArgs) => {
+  const updateInteractiveZones = useCallback(({ bubbleEl, pointerInsideModel }: UpdateInteractiveZonesArgs) => {
     let pointerInsideBubble = false;
     if (bubbleEl) {
       const bubbleRect = bubbleEl.getBoundingClientRect();
@@ -157,54 +140,20 @@ export const useContextZoneController = ({
 
     if (pointerInsideModelRef.current !== pointerInsideModel) {
       pointerInsideModelRef.current = pointerInsideModel;
-      if (pointerInsideModel && !dragHandleHoverRef.current && showDragHandleOnHover) {
-        triggerDragHandleReveal();
-      } else if (!pointerInsideModel && !dragHandleHoverRef.current && showDragHandleOnHover) {
-        scheduleDragHandleHide();
-      }
       recomputeWindowPassthroughRef.current();
     }
 
-    let pointerInsideHandle = false;
-    if (handleEl && (dragHandleVisibleRef.current || !showDragHandleOnHover)) {
-      const handleRect = handleEl.getBoundingClientRect();
-      pointerInsideHandle = pointerX.current >= handleRect.left
-        && pointerX.current <= handleRect.right
-        && pointerY.current >= handleRect.top
-        && pointerY.current <= handleRect.bottom;
-    }
-
-    if (pointerInsideHandleRef.current !== pointerInsideHandle) {
-      pointerInsideHandleRef.current = pointerInsideHandle;
-      if (pointerInsideHandle) {
-        dragHandleHoverRef.current = true;
-        if (showDragHandleOnHover) {
-          cancelDragHandleHide();
-          setDragHandleVisibility(true);
-        }
-      } else {
-        dragHandleHoverRef.current = false;
-        if (!dragHandleActiveRef.current && showDragHandleOnHover && !pointerInsideModelRef.current) {
-          scheduleDragHandleHide();
-        }
-      }
+    if (pointerInsideHandleRef.current) {
+      pointerInsideHandleRef.current = false;
       recomputeWindowPassthroughRef.current();
     }
   }, [
-    cancelDragHandleHide,
-    dragHandleActiveRef,
-    dragHandleHoverRef,
-    dragHandleVisibleRef,
     pointerInsideBubbleRef,
     pointerInsideHandleRef,
     pointerInsideModelRef,
     pointerX,
     pointerY,
     recomputeWindowPassthroughRef,
-    scheduleDragHandleHide,
-    setDragHandleVisibility,
-    showDragHandleOnHover,
-    triggerDragHandleReveal,
   ]);
 
   return {

@@ -143,8 +143,33 @@ export const usePetModel = ({
         warn('pet.window', 'bounds.handlerError', { err: String(e) });
       }
     };
+    const onWindowFact = (payload?: { bounds?: { x: number; y: number; width: number; height: number }; lastAppliedIntentId?: string | null }) => {
+      const bounds = payload?.bounds;
+      if (!bounds) return;
+      onBoundsChanged({
+        ...bounds,
+        requestId: typeof payload?.lastAppliedIntentId === 'string' ? payload.lastAppliedIntentId : undefined,
+      });
+    };
+    const onWindowIntentAck = (ack?: { intentId?: string; status?: string; appliedBounds?: { x: number; y: number; width: number; height: number } }) => {
+      const intentId = typeof ack?.intentId === 'string' ? ack.intentId : null;
+      if (!intentId) return;
+      if (ack?.status !== 'applied') return;
+      try {
+        handleWindowBoundsAck?.({
+          x: Number.isFinite(ack?.appliedBounds?.x) ? ack.appliedBounds.x : 0,
+          y: Number.isFinite(ack?.appliedBounds?.y) ? ack.appliedBounds.y : 0,
+          width: Number.isFinite(ack?.appliedBounds?.width) ? ack.appliedBounds.width : 0,
+          height: Number.isFinite(ack?.appliedBounds?.height) ? ack.appliedBounds.height : 0,
+          requestId: intentId,
+        });
+      } catch {
+        // swallow ack handler errors
+      }
+    };
     try {
-      (window as any).petAPI?.on?.('pet:windowBoundsChanged', onBoundsChanged);
+      (window as any).petAPI?.on?.('pet:windowFact', onWindowFact);
+      (window as any).petAPI?.on?.('pet:windowIntentAck', onWindowIntentAck);
     } catch { /* ignore */ }
 
     return () => {
@@ -155,6 +180,8 @@ export const usePetModel = ({
       } catch { /* ignore */ }
       try {
         (window as any).petAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
+        (window as any).petAPI?.off?.('pet:windowFact', onWindowFact);
+        (window as any).petAPI?.off?.('pet:windowIntentAck', onWindowIntentAck);
       } catch { /* ignore */ }
 
       // 清理模型与 ticker
@@ -320,7 +347,6 @@ export const usePetModel = ({
             },
           });
         }
-
         updateBubblePosition();
         updateDragHandlePosition();
       };

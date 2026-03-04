@@ -91,6 +91,7 @@ declare global {
       height?: number;
       anchorCenter?: number;
       phase?: 'start' | 'move' | 'end';
+      final?: boolean;
       [key: string]: unknown;
     };
     priority?: number;

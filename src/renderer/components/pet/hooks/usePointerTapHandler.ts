@@ -10,6 +10,9 @@ export interface UsePointerTapHandlerParams {
   longPressMs?: number;
 }
 
+const DRAG_SEND_INTERVAL_MS = 33;
+const DRAG_DEADZONE_PX = 2;
+
 /**
  * 设置一个全局手势侦听器：
  * - 小位移抬起 => 触发点击交互
@@ -42,15 +45,53 @@ export const usePointerTapHandler = ({
     let startScreenY = 0;
     let startWindowX = 0;
     let startWindowY = 0;
-    let rafId: number | null = null;
+    let moveTimer: number | null = null;
+    let moveInFlight = false;
+    let lastSentAt = 0;
+    let lastSentX: number | null = null;
+    let lastSentY: number | null = null;
     let nextWindowX = 0;
     let nextWindowY = 0;
 
-    const flushMove = async () => {
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
-        rafId = null;
+    const flushMove = async (force = false) => {
+      const targetX = Math.round(nextWindowX);
+      const targetY = Math.round(nextWindowY);
+      const hasLastSent = lastSentX !== null && lastSentY !== null;
+      const withinDeadzone = hasLastSent
+        && Math.abs(targetX - (lastSentX as number)) <= DRAG_DEADZONE_PX
+        && Math.abs(targetY - (lastSentY as number)) <= DRAG_DEADZONE_PX;
+
+      if (!force && withinDeadzone) {
+        return;
       }
+
+      const now = Date.now();
+      if (!force) {
+        const elapsed = now - lastSentAt;
+        if (elapsed < DRAG_SEND_INTERVAL_MS) {
+          const wait = DRAG_SEND_INTERVAL_MS - elapsed;
+          if (moveTimer === null) {
+            moveTimer = window.setTimeout(() => {
+              moveTimer = null;
+              void flushMove(false);
+            }, wait);
+          }
+          return;
+        }
+      }
+
+      if (moveInFlight) {
+        if (moveTimer === null) {
+          moveTimer = window.setTimeout(() => {
+            moveTimer = null;
+            void flushMove(false);
+          }, DRAG_SEND_INTERVAL_MS);
+        }
+        return;
+      }
+
+      moveInFlight = true;
+      lastSentAt = now;
       try {
         if (typeof api?.sendWindowIntent !== 'function') {
           throw new Error('petAPI.sendWindowIntent is not available');
@@ -59,21 +100,33 @@ export const usePointerTapHandler = ({
           intentId: `drag_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
           source: 'drag',
           kind: 'position',
-          payload: { x: Math.round(nextWindowX), y: Math.round(nextWindowY) },
+          payload: { x: targetX, y: targetY },
           priority: 100,
           ts: Date.now(),
         });
       } catch {
         // ignore drag move bridge errors
+      } finally {
+        moveInFlight = false;
+        lastSentX = targetX;
+        lastSentY = targetY;
+
+        const pendingX = Math.round(nextWindowX);
+        const pendingY = Math.round(nextWindowY);
+        const changedAfterSend = Math.abs(pendingX - targetX) > DRAG_DEADZONE_PX
+          || Math.abs(pendingY - targetY) > DRAG_DEADZONE_PX;
+        if (changedAfterSend && moveTimer === null) {
+          const tailWait = Math.max(0, DRAG_SEND_INTERVAL_MS - (Date.now() - lastSentAt));
+          moveTimer = window.setTimeout(() => {
+            moveTimer = null;
+            void flushMove(false);
+          }, tailWait);
+        }
       }
     };
 
     const scheduleMove = () => {
-      if (rafId !== null) return;
-      rafId = window.requestAnimationFrame(() => {
-        rafId = null;
-        void flushMove();
-      });
+      void flushMove(false);
     };
 
     const resetSession = () => {
@@ -81,10 +134,11 @@ export const usePointerTapHandler = ({
       pendingTap = false;
       dragging = false;
       startedOnModel = false;
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
-        rafId = null;
+      if (moveTimer !== null) {
+        window.clearTimeout(moveTimer);
+        moveTimer = null;
       }
+      moveInFlight = false;
     };
 
     const onPointerDown = (event: PointerEvent) => {
@@ -142,6 +196,7 @@ export const usePointerTapHandler = ({
       resetSession();
 
       if (wasDragging) {
+        void flushMove(true);
         onDragEnd?.();
         return;
       }
@@ -179,8 +234,8 @@ export const usePointerTapHandler = ({
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerCancel);
       window.removeEventListener('blur', onWindowBlur);
-      if (rafId !== null) {
-        window.cancelAnimationFrame(rafId);
+      if (moveTimer !== null) {
+        window.clearTimeout(moveTimer);
       }
     };
   }, [

@@ -166,7 +166,7 @@ ipcRenderer.on('pet:modelConfigUpdated', (_event, payload) => {
 
 // 暴露给渲染进程的API
 contextBridge.exposeInMainWorld('petAPI', {
-  // 严格 single-writer：仅允许 intent 协议驱动窗口写入。
+  // 严格 singleWriter：仅允许 intent 协议驱动窗口写入。
   sendWindowIntent: (intent) => ipcRenderer.invoke('pet:windowIntent', intent),
   setMousePassthrough: (enabled) => ipcRenderer.invoke('pet:setMousePassthrough', enabled),
   getCursorScreenPoint: () => ipcRenderer.invoke('pet:getCursorScreenPoint'),

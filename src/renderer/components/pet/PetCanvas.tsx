@@ -966,6 +966,11 @@ const PetCanvas: React.FC = () => {
 
   usePointerTapHandler({
     handlePointerTap,
+    getDragAnchorWindowPos: () => {
+      const bounds = windowBoundsRef.current;
+      if (!bounds) return null;
+      return { x: bounds.x, y: bounds.y };
+    },
     canStartDrag: canStartModelDrag,
     onDragStart: onModelDragStart,
     onDragMove: onModelDragMove,

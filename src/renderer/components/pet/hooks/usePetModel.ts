@@ -93,6 +93,16 @@ export const usePetModel = ({
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('resize', handleResize);
 
+    const emitDebugTrace = (payload: Record<string, unknown>) => {
+      try {
+        (window as any).petAPI?.debugTrace?.(payload);
+      } catch {
+        // swallow debug trace bridge errors
+      }
+    };
+    const recentAckBoundsByRid = new Map<string, { x: number; y: number; width: number; height: number; ts: number }>();
+    const RECENT_ACK_TTL_MS = 1500;
+
     const onBoundsChanged = (bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
       try {
         agg({
@@ -146,21 +156,97 @@ export const usePetModel = ({
     const onWindowFact = (payload?: { bounds?: { x: number; y: number; width: number; height: number }; lastAppliedIntentId?: string | null }) => {
       const bounds = payload?.bounds;
       if (!bounds) return;
+      const rid = typeof payload?.lastAppliedIntentId === 'string' ? payload.lastAppliedIntentId : null;
+      let effectiveBounds = bounds;
+      if (rid) {
+        const recentAck = recentAckBoundsByRid.get(rid);
+        if (recentAck && Date.now() - recentAck.ts <= RECENT_ACK_TTL_MS) {
+          effectiveBounds = {
+            x: recentAck.x,
+            y: recentAck.y,
+            width: recentAck.width,
+            height: recentAck.height,
+          };
+        }
+      }
+      emitDebugTrace({
+        kind: 'windowIntent',
+        profile: 'singleWriter',
+        level: 'debug',
+        request: {
+          source: 'renderer.windowFact',
+          rid: rid ?? 'fact-no-rid',
+          phase: 'fact',
+          ts: Date.now(),
+        },
+        window: {
+          boundsX: effectiveBounds.x,
+          boundsY: effectiveBounds.y,
+          boundsWidth: effectiveBounds.width,
+          boundsHeight: effectiveBounds.height,
+        },
+        layout: {
+          kind: 'fact',
+          source: 'windowFact',
+          reason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : undefined,
+        },
+      });
       onBoundsChanged({
-        ...bounds,
-        requestId: typeof payload?.lastAppliedIntentId === 'string' ? payload.lastAppliedIntentId : undefined,
+        ...effectiveBounds,
+        requestId: rid ?? undefined,
       });
     };
-    const onWindowIntentAck = (ack?: { intentId?: string; status?: string; appliedBounds?: { x: number; y: number; width: number; height: number } }) => {
+    const onWindowIntentAck = (ack?: { intentId?: string; status?: string; reason?: string; appliedBounds?: { x: number; y: number; width: number; height: number } }) => {
       const intentId = typeof ack?.intentId === 'string' ? ack.intentId : null;
       if (!intentId) return;
+      emitDebugTrace({
+        kind: 'windowIntent',
+        profile: 'singleWriter',
+        level: ack?.status === 'applied' ? 'debug' : 'warn',
+        request: {
+          source: 'renderer.windowIntentAck',
+          rid: intentId,
+          phase: 'ack',
+          ts: Date.now(),
+          status: typeof ack?.status === 'string' ? ack.status : undefined,
+          reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
+        },
+        window: {
+          boundsX: Number.isFinite(ack?.appliedBounds?.x) ? ack!.appliedBounds!.x : null,
+          boundsY: Number.isFinite(ack?.appliedBounds?.y) ? ack!.appliedBounds!.y : null,
+          boundsWidth: Number.isFinite(ack?.appliedBounds?.width) ? ack!.appliedBounds!.width : null,
+          boundsHeight: Number.isFinite(ack?.appliedBounds?.height) ? ack!.appliedBounds!.height : null,
+        },
+        layout: {
+          kind: 'ack',
+          source: 'windowIntentAck',
+          reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
+        },
+      });
       if (ack?.status !== 'applied') return;
+      const appliedX = Number.isFinite(ack?.appliedBounds?.x) ? ack.appliedBounds!.x : 0;
+      const appliedY = Number.isFinite(ack?.appliedBounds?.y) ? ack.appliedBounds!.y : 0;
+      const appliedWidth = Number.isFinite(ack?.appliedBounds?.width) ? ack.appliedBounds!.width : 0;
+      const appliedHeight = Number.isFinite(ack?.appliedBounds?.height) ? ack.appliedBounds!.height : 0;
+
+      recentAckBoundsByRid.set(intentId, {
+        x: appliedX,
+        y: appliedY,
+        width: appliedWidth,
+        height: appliedHeight,
+        ts: Date.now(),
+      });
+      for (const [key, value] of recentAckBoundsByRid.entries()) {
+        if (Date.now() - value.ts > RECENT_ACK_TTL_MS) {
+          recentAckBoundsByRid.delete(key);
+        }
+      }
       try {
         handleWindowBoundsAck?.({
-          x: Number.isFinite(ack?.appliedBounds?.x) ? ack.appliedBounds.x : 0,
-          y: Number.isFinite(ack?.appliedBounds?.y) ? ack.appliedBounds.y : 0,
-          width: Number.isFinite(ack?.appliedBounds?.width) ? ack.appliedBounds.width : 0,
-          height: Number.isFinite(ack?.appliedBounds?.height) ? ack.appliedBounds.height : 0,
+          x: appliedX,
+          y: appliedY,
+          width: appliedWidth,
+          height: appliedHeight,
           requestId: intentId,
         });
       } catch {

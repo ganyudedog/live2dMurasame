@@ -14,10 +14,10 @@ const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(v
 const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const ALLOWED_GROUP_FIELDS = {
-	request: ['source', 'rid', 'requestId', 'phase', 'ts'],
-	resizeCore: ['requiredWidth', 'requiredWindowWidth', 'enforcedWindowWidth', 'normalizedWidth', 'targetWidth', 'targetHeight', 'desiredHeight', 'isEnlarge', 'resizeInFlight'],
-	window: ['innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'screenX', 'screenY', 'boundsWidth', 'boundsHeight', 'boundsX', 'boundsY', 'targetWindowWidth', 'pendingWidth', 'predictedBoundsX', 'predictedBoundsY', 'predictedBoundsWidth', 'predictedBoundsHeight', 'anchorCenter', 'anchorRight', 'targetX'],
-	layout: ['baseFrameWidthDom', 'baseFrameLeftDom', 'visibleFrameWidthDom', 'visibleFrameCenterDomX', 'boundsWidthDom', 'boundsHeightDom', 'screenWidthDom', 'screenHeightDom', 'canvasRectWidthDom', 'canvasRectHeightDom', 'zoneTarget', 'gapEffective', 'effectiveContainerWidth', 'leftCapacity', 'rightCapacity', 'leftShortfallPx', 'rightShortfallPx', 'capacityShortfall', 'boundsToScreenRatio'],
+	request: ['source', 'rid', 'requestId', 'phase', 'ts', 'status', 'reason'],
+	resizeCore: ['requiredWidth', 'requiredWindowWidth', 'enforcedWindowWidth', 'normalizedWidth', 'targetWidth', 'targetHeight', 'desiredHeight', 'isEnlarge', 'resizeInFlight', 'priority', 'intentEpoch'],
+	window: ['innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'screenX', 'screenY', 'boundsWidth', 'boundsHeight', 'boundsX', 'boundsY', 'targetWindowWidth', 'pendingWidth', 'predictedBoundsX', 'predictedBoundsY', 'predictedBoundsWidth', 'predictedBoundsHeight', 'anchorCenter', 'anchorRight', 'targetX', 'targetY', 'mode', 'epoch', 'currentX', 'currentY', 'currentWidth', 'currentHeight', 'nextX', 'nextY', 'nextWidth', 'nextHeight', 'dragActiveUntil', 'settleUntil', 'settleApplied', 'lastAppliedIntentId'],
+	layout: ['baseFrameWidthDom', 'baseFrameLeftDom', 'visibleFrameWidthDom', 'visibleFrameCenterDomX', 'boundsWidthDom', 'boundsHeightDom', 'screenWidthDom', 'screenHeightDom', 'canvasRectWidthDom', 'canvasRectHeightDom', 'zoneTarget', 'gapEffective', 'effectiveContainerWidth', 'leftCapacity', 'rightCapacity', 'leftShortfallPx', 'rightShortfallPx', 'capacityShortfall', 'boundsToScreenRatio', 'kind', 'source', 'reason', 'stateFrom', 'stateTo'],
 	model: ['scaleUsed', 'modelHeightDom'],
 	perf: ['fps', 'frameId', 'costMs'],
 };
@@ -26,6 +26,8 @@ const TRACE_PROFILE_FIELDS = {
 	jitter: ['request', 'resizeCore', 'window', 'layout'],
 	align: ['request', 'resizeCore', 'window'],
 	layout: ['request', 'layout', 'resizeCore'],
+	singleWriter: ['request', 'window', 'layout', 'resizeCore'],
+	windowMove: ['request', 'window', 'layout'],
 	model: ['request', 'model', 'layout'],
 	perf: ['request', 'perf', 'model'],
 	default: ['request', 'resizeCore', 'window'],

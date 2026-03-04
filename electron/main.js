@@ -91,6 +91,8 @@ const windowIntentState = {
     settleUntil: 0,
     settleApplied: false,
     lastAppliedIntentId: null,
+    dragLockWidth: null,
+    dragLockHeight: null,
 };
 
 // 限制边界广播到渲染器。
@@ -183,6 +185,52 @@ const emitWindowIntentAck = (ackPayload = {}) => {
     } catch { }
 };
 
+const traceIntentStateTransition = ({ source, intentId, now, from, to, reason }) => {
+    if (from === to) return;
+    logDebugTrace({
+        kind: 'windowIntent',
+        profile: 'singleWriter',
+        level: 'debug',
+        request: {
+            source: `main.intent.${source}`,
+            rid: intentId,
+            phase: 'state',
+            ts: now,
+        },
+        window: {
+            mode: to,
+            epoch: windowIntentState.epoch,
+            dragActiveUntil: windowIntentState.dragActiveUntil,
+            settleUntil: windowIntentState.settleUntil,
+            settleApplied: windowIntentState.settleApplied,
+        },
+        layout: {
+            kind: 'state',
+            reason,
+            stateFrom: from,
+            stateTo: to,
+        },
+    });
+};
+
+const updateDragSizeLock = (phase) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        windowIntentState.dragLockWidth = null;
+        windowIntentState.dragLockHeight = null;
+        return;
+    }
+    if (phase === 'start') {
+        const current = mainWindow.getBounds();
+        windowIntentState.dragLockWidth = current.width;
+        windowIntentState.dragLockHeight = current.height;
+        return;
+    }
+    if (phase === 'clear') {
+        windowIntentState.dragLockWidth = null;
+        windowIntentState.dragLockHeight = null;
+    }
+};
+
 const handleWindowIntent = (intent = {}) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
         return { status: 'rejected', reason: 'window-missing' };
@@ -201,30 +249,51 @@ const handleWindowIntent = (intent = {}) => {
     }
 
     if (epoch > windowIntentState.epoch) {
+        const prevMode = windowIntentState.mode;
         windowIntentState.epoch = epoch;
         windowIntentState.mode = 'idle';
         windowIntentState.dragActiveUntil = 0;
         windowIntentState.settleUntil = 0;
         windowIntentState.settleApplied = false;
+        traceIntentStateTransition({
+            source,
+            intentId,
+            now,
+            from: prevMode,
+            to: windowIntentState.mode,
+            reason: 'epoch-advance-reset',
+        });
     }
 
     if (kind === 'drag-state') {
         const phase = typeof intent?.payload?.phase === 'string' ? intent.payload.phase : 'move';
+        const prevMode = windowIntentState.mode;
         if (phase === 'start' || phase === 'move') {
             windowIntentState.mode = 'dragging';
             windowIntentState.dragActiveUntil = now + WINDOW_INTENT_DRAG_ACTIVE_MS;
             windowIntentState.settleApplied = false;
+            if (phase === 'start') {
+                updateDragSizeLock('start');
+            }
         } else if (phase === 'end') {
             windowIntentState.mode = 'settling';
             windowIntentState.dragActiveUntil = 0;
             windowIntentState.settleUntil = now + WINDOW_INTENT_SETTLE_MS;
             windowIntentState.settleApplied = false;
         }
+        traceIntentStateTransition({
+            source,
+            intentId,
+            now,
+            from: prevMode,
+            to: windowIntentState.mode,
+            reason: `drag-state-${phase}`,
+        });
         const ack = { intentId, epoch: windowIntentState.epoch, status: 'applied', reason: `drag-state-${phase}`, ts: now };
         emitWindowIntentAck(ack);
         logDebugTrace({
             kind: 'windowIntent',
-            profile: 'single-writer',
+            profile: 'singleWriter',
             level: 'debug',
             request: {
                 source: `main.intent.${source}`,
@@ -252,14 +321,33 @@ const handleWindowIntent = (intent = {}) => {
     }
 
     if (windowIntentState.mode === 'dragging' && now > windowIntentState.dragActiveUntil) {
+        const prevMode = windowIntentState.mode;
         windowIntentState.mode = 'settling';
         windowIntentState.settleUntil = now + WINDOW_INTENT_SETTLE_MS;
         windowIntentState.settleApplied = false;
+        traceIntentStateTransition({
+            source,
+            intentId,
+            now,
+            from: prevMode,
+            to: windowIntentState.mode,
+            reason: 'drag-active-timeout',
+        });
     }
 
     if (windowIntentState.mode === 'settling' && now > windowIntentState.settleUntil) {
+        const prevMode = windowIntentState.mode;
         windowIntentState.mode = 'idle';
         windowIntentState.settleApplied = false;
+        updateDragSizeLock('clear');
+        traceIntentStateTransition({
+            source,
+            intentId,
+            now,
+            from: prevMode,
+            to: windowIntentState.mode,
+            reason: 'settling-timeout',
+        });
     }
 
     if (windowIntentState.mode === 'dragging' && kind !== 'position' && source !== 'drag') {
@@ -267,7 +355,7 @@ const handleWindowIntent = (intent = {}) => {
         emitWindowIntentAck(ack);
         logDebugTrace({
             kind: 'windowIntent',
-            profile: 'single-writer',
+            profile: 'singleWriter',
             level: 'debug',
             request: {
                 source: `main.intent.${source}`,
@@ -292,7 +380,7 @@ const handleWindowIntent = (intent = {}) => {
         emitWindowIntentAck(ack);
         logDebugTrace({
             kind: 'windowIntent',
-            profile: 'single-writer',
+            profile: 'singleWriter',
             level: 'debug',
             request: {
                 source: `main.intent.${source}`,
@@ -314,10 +402,22 @@ const handleWindowIntent = (intent = {}) => {
 
     const currentBounds = mainWindow.getBounds();
     const nextBounds = coerceIntentBounds(currentBounds, intent);
-    const changed = Math.abs(nextBounds.x - currentBounds.x) > 0
-        || Math.abs(nextBounds.y - currentBounds.y) > 0
-        || Math.abs(nextBounds.width - currentBounds.width) > 1
-        || Math.abs(nextBounds.height - currentBounds.height) > 1;
+    const isDragPositionIntent = source === 'drag' && kind === 'position';
+    if (isDragPositionIntent) {
+        if (Number.isFinite(windowIntentState.dragLockWidth)) {
+            nextBounds.width = Math.max(75, Math.floor(windowIntentState.dragLockWidth));
+        }
+        if (Number.isFinite(windowIntentState.dragLockHeight)) {
+            nextBounds.height = Math.max(250, Math.floor(windowIntentState.dragLockHeight));
+        }
+    }
+
+    const changed = isDragPositionIntent
+        ? (Math.abs(nextBounds.x - currentBounds.x) > 0 || Math.abs(nextBounds.y - currentBounds.y) > 0)
+        : (Math.abs(nextBounds.x - currentBounds.x) > 0
+            || Math.abs(nextBounds.y - currentBounds.y) > 0
+            || Math.abs(nextBounds.width - currentBounds.width) > 1
+            || Math.abs(nextBounds.height - currentBounds.height) > 1);
 
     if (!changed) {
         const ack = {
@@ -331,7 +431,7 @@ const handleWindowIntent = (intent = {}) => {
         emitWindowIntentAck(ack);
         logDebugTrace({
             kind: 'windowIntent',
-            profile: 'single-writer',
+            profile: 'singleWriter',
             level: 'debug',
             request: {
                 source: `main.intent.${source}`,
@@ -353,7 +453,7 @@ const handleWindowIntent = (intent = {}) => {
 
     logDebugTrace({
         kind: 'windowIntent',
-        profile: 'single-writer',
+        profile: 'singleWriter',
         level: 'debug',
         request: {
             source: `main.intent.${source}`,
@@ -382,7 +482,11 @@ const handleWindowIntent = (intent = {}) => {
     windowIntentState.lastAppliedIntentId = intentId;
     pendingBoundsRequestId = intentId;
     pendingBoundsSource = source === 'drag' ? 'intent' : 'intent';
-    mainWindow.setBounds(nextBounds);
+    if (isDragPositionIntent) {
+        mainWindow.setPosition(nextBounds.x, nextBounds.y);
+    } else {
+        mainWindow.setBounds(nextBounds);
+    }
     scheduleEmitMainWindowBounds();
 
     if (windowIntentState.mode === 'dragging') {
@@ -390,7 +494,17 @@ const handleWindowIntent = (intent = {}) => {
     }
     if (windowIntentState.mode === 'settling' && kind === 'size') {
         windowIntentState.settleApplied = true;
+        const prevMode = windowIntentState.mode;
         windowIntentState.mode = 'idle';
+        updateDragSizeLock('clear');
+        traceIntentStateTransition({
+            source,
+            intentId,
+            now,
+            from: prevMode,
+            to: windowIntentState.mode,
+            reason: 'settling-size-applied',
+        });
     }
 
     const ack = {

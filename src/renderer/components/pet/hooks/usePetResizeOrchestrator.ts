@@ -272,6 +272,37 @@ export const usePetResizeOrchestrator = ({
         anchorCenter: latest.anchorCenter,
         requestId,
       };
+      emitDebugTrace({
+        kind: 'windowIntent',
+        profile: 'single-writer',
+        level: 'debug',
+        request: {
+          source: 'handleWindowBoundsAck',
+          rid: requestId,
+          phase: 'send',
+          ts: Date.now(),
+        },
+        resizeCore: {
+          targetWidth: latest.width,
+          targetHeight: latest.height,
+          intentEpoch: 0,
+          priority: 38,
+        },
+        window: {
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          boundsWidth: windowBoundsRef.current?.width ?? null,
+          boundsHeight: windowBoundsRef.current?.height ?? null,
+          boundsX: windowBoundsRef.current?.x ?? null,
+          boundsY: windowBoundsRef.current?.y ?? null,
+          anchorCenter: latest.anchorCenter ?? null,
+        },
+        layout: {
+          kind: 'size',
+          source: 'handleWindowBoundsAck',
+          reason: 'followup-latest-desired',
+        },
+      });
       const api = (window as any).petAPI;
       if (typeof api?.sendWindowIntent !== 'function') {
         throw new Error('petAPI.sendWindowIntent is not available');
@@ -289,6 +320,7 @@ export const usePetResizeOrchestrator = ({
       resizeInFlightRequestIdRef.current = null;
     }
   }, [
+    emitDebugTrace,
     resizeInFlightRequestIdRef,
     latestResizeDesiredRef,
     lastSentResizeDesiredRef,

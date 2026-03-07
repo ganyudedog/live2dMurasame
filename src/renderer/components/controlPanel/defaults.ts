@@ -31,6 +31,9 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     knowledgeBasePath: '',
     embeddingModel: '',
     rerankerModel: '',
+    personal: '',
+    speakingStyle: '',
+    mustFollow: '',
   },
 };
 

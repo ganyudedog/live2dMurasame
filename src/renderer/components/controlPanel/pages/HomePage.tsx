@@ -186,24 +186,6 @@ export default function HomePage({
     onCommit: (next) => onGlobalSettingsChange({ forcedFollow: next }),
   });
 
-  const touchMapKey = useMemo(() => modelConfig.touchMap.join(', '), [modelConfig.touchMap]);
-  const touchMapDraftRef = useRef(touchMapKey);
-  useEffect(() => {
-    touchMapDraftRef.current = touchMapKey;
-  }, [touchMapKey]);
-
-  const commitTouchMap = () => {
-    const parts = touchMapDraftRef.current.split(/[\s,]+/).filter(Boolean);
-    const next = parts
-      .map((value) => Number.parseFloat(value))
-      .filter((value) => Number.isFinite(value));
-    if (!next.length) return;
-    onModelConfigChange({
-      ...modelConfig,
-      touchMap: next,
-    });
-  };
-
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-start justify-between gap-3">
@@ -221,7 +203,6 @@ export default function HomePage({
           <header className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium">当前模型</div>
-              <div className="text-xs text-base-content/60">缩放：SharedWorker 实时联动（阶段 1）</div>
             </div>
             <span className="badge badge-outline">{model.id}</span>
           </header>
@@ -328,26 +309,23 @@ export default function HomePage({
 
         <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
           <header className="flex items-center justify-between">
-            <div className="text-sm font-medium">模型参数（概览）</div>
-            <span className="badge badge-ghost">模型配置</span>
+            <div className="text-sm font-medium">RAG 与角色设定</div>
+            <span className="badge badge-ghost">阶段 3 预设</span>
           </header>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="form-control">
-              <div className="label py-0">
-                <span className="label-text text-xs">显示框比例</span>
-              </div>
+            <label className="label cursor-pointer justify-between p-0 sm:col-span-2">
+              <span className="label-text text-sm">启用 RAG</span>
               <input
-                className="input input-sm input-bordered"
-                type="number"
-                step={0.01}
-                value={modelConfig.visualFrame.ratio}
+                type="checkbox"
+                className="toggle toggle-sm"
+                checked={Boolean(modelConfig.rag.enabled)}
                 onChange={(e) =>
                   onModelConfigChange({
                     ...modelConfig,
-                    visualFrame: {
-                      ...modelConfig.visualFrame,
-                      ratio: Number.parseFloat(e.target.value || '0'),
+                    rag: {
+                      ...modelConfig.rag,
+                      enabled: e.target.checked,
                     },
                   })
                 }
@@ -356,19 +334,21 @@ export default function HomePage({
 
             <label className="form-control">
               <div className="label py-0">
-                <span className="label-text text-xs">显示框最小像素</span>
+                <span className="label-text text-xs">TopK</span>
               </div>
               <input
                 className="input input-sm input-bordered"
                 type="number"
                 step={1}
-                value={modelConfig.visualFrame.minPx}
+                min={1}
+                max={10}
+                value={modelConfig.rag.topK}
                 onChange={(e) =>
                   onModelConfigChange({
                     ...modelConfig,
-                    visualFrame: {
-                      ...modelConfig.visualFrame,
-                      minPx: Number.parseFloat(e.target.value || '0'),
+                    rag: {
+                      ...modelConfig.rag,
+                      topK: Number.parseInt(e.target.value || '3', 10),
                     },
                   })
                 }
@@ -377,149 +357,114 @@ export default function HomePage({
 
             <label className="form-control">
               <div className="label py-0">
-                <span className="label-text text-xs">显示框内边距像素</span>
+                <span className="label-text text-xs">阈值（0~1）</span>
               </div>
               <input
                 className="input input-sm input-bordered"
                 type="number"
-                step={1}
-                value={modelConfig.visualFrame.paddingPx}
+                step={0.05}
+                min={0}
+                max={1}
+                value={modelConfig.rag.threshold}
                 onChange={(e) =>
                   onModelConfigChange({
                     ...modelConfig,
-                    visualFrame: {
-                      ...modelConfig.visualFrame,
-                      paddingPx: Number.parseFloat(e.target.value || '0'),
+                    rag: {
+                      ...modelConfig.rag,
+                      threshold: Number.parseFloat(e.target.value || '0.6'),
                     },
                   })
                 }
-              />
-            </label>
-
-            <label className="form-control">
-              <div className="label py-0">
-                <span className="label-text text-xs">显示框中心点</span>
-              </div>
-              <input
-                className="input input-sm input-bordered"
-                value={modelConfig.visualFrame.center}
-                placeholder="face"
-                onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    visualFrame: {
-                      ...modelConfig.visualFrame,
-                      center: e.target.value,
-                    },
-                  })
-                }
-              />
-            </label>
-
-            <label className="form-control">
-              <div className="label py-0">
-                <span className="label-text text-xs">显示框偏移比例</span>
-              </div>
-              <input
-                className="input input-sm input-bordered"
-                type="number"
-                step={0.01}
-                value={modelConfig.visualFrame.offsetRatio}
-                onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    visualFrame: {
-                      ...modelConfig.visualFrame,
-                      offsetRatio: Number.parseFloat(e.target.value || '0'),
-                    },
-                  })
-                }
-              />
-            </label>
-
-            <label className="form-control">
-              <div className="label py-0">
-                <span className="label-text text-xs">显示框偏移像素</span>
-              </div>
-              <input
-                className="input input-sm input-bordered"
-                type="number"
-                step={1}
-                value={modelConfig.visualFrame.offsetPx}
-                onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    visualFrame: {
-                      ...modelConfig.visualFrame,
-                      offsetPx: Number.parseFloat(e.target.value || '0'),
-                    },
-                  })
-                }
-              />
-            </label>
-
-            <label className="form-control">
-              <div className="label py-0">
-                <span className="label-text text-xs">气泡左右对称</span>
-              </div>
-              <select
-                className="select select-sm select-bordered"
-                value={modelConfig.bubble.symmetric ? '1' : '0'}
-                onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    bubble: { ...modelConfig.bubble, symmetric: e.target.value === '1' },
-                  })
-                }
-              >
-                <option value="1">是</option>
-                <option value="0">否</option>
-              </select>
-            </label>
-
-            <label className="form-control">
-              <div className="label py-0">
-                <span className="label-text text-xs">气泡头部比例</span>
-              </div>
-              <input
-                className="input input-sm input-bordered"
-                type="number"
-                step={0.01}
-                value={modelConfig.bubble.headRatio ?? ''}
-                placeholder="null"
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  const nextValue = raw === '' ? null : Number.parseFloat(raw);
-                  onModelConfigChange({
-                    ...modelConfig,
-                    bubble: {
-                      ...modelConfig.bubble,
-                      headRatio: Number.isFinite(nextValue as number) ? (nextValue as number) : null,
-                    },
-                  });
-                }}
               />
             </label>
 
             <label className="form-control sm:col-span-2">
               <div className="label py-0">
-                <span className="label-text text-xs">触摸分段（touchMap）</span>
+                <span className="label-text text-xs">知识库路径（预留）</span>
+              </div>
+              <input
+                className="input input-sm input-bordered"
+                value={modelConfig.rag.knowledgeBasePath}
+                placeholder="例如：public/ai/knowledge/murasame.md"
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    rag: {
+                      ...modelConfig.rag,
+                      knowledgeBasePath: e.target.value,
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control sm:col-span-2">
+              <div className="label py-0">
+                <span className="label-text text-xs">角色个性（常改）</span>
+              </div>
+              <textarea
+                className="textarea textarea-sm textarea-bordered w-full"
+                rows={3}
+                value={modelConfig.rag.personal}
+                placeholder="例如：傲娇但礼貌，偏短句，喜欢吐槽"
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    rag: {
+                      ...modelConfig.rag,
+                      personal: e.target.value,
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control sm:col-span-2">
+              <div className="label py-0">
+                <span className="label-text text-xs">说话风格（常改）</span>
               </div>
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={2}
-                key={touchMapKey}
-                defaultValue={touchMapKey}
-                onChange={(e) => {
-                  touchMapDraftRef.current = e.target.value;
-                }}
-                onBlur={commitTouchMap}
-                placeholder="0.1, 0.19, 0.39, 0.53, 1"
+                value={modelConfig.rag.speakingStyle}
+                placeholder="例如：口语化、每句不超过25字、少用书面词"
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    rag: {
+                      ...modelConfig.rag,
+                      speakingStyle: e.target.value,
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control sm:col-span-2">
+              <div className="label py-0">
+                <span className="label-text text-xs">必须遵守（规则）</span>
+              </div>
+              <textarea
+                className="textarea textarea-sm textarea-bordered w-full"
+                rows={2}
+                value={modelConfig.rag.mustFollow}
+                placeholder="例如：不输出敏感信息，不虚构不存在的功能"
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    rag: {
+                      ...modelConfig.rag,
+                      mustFollow: e.target.value,
+                    },
+                  })
+                }
               />
             </label>
           </div>
 
-          <div className="text-xs text-base-content/60">分段数：{modelConfig.touchMap.length}（动作分配在「交互设置」中）</div>
+          <div className="text-xs text-base-content/60">
+            说明：当前先完成配置层，检索与文件读取在阶段 3 实装。
+          </div>
         </section>
       </div>
     </div>

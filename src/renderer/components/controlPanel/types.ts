@@ -43,5 +43,8 @@ export type ModelConfig = {
     knowledgeBasePath: string;
     embeddingModel: string;
     rerankerModel: string;
+    personal: string;
+    speakingStyle: string;
+    mustFollow: string;
   };
 };

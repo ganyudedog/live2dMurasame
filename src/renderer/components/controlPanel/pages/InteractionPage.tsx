@@ -33,7 +33,7 @@ function TouchMapVisualizer({
       <div className="text-xs text-base-content/60 mt-1">从上到下按 touchMap 分段（0~1）</div>
 
       <div className="mt-4 flex justify-center">
-        <div className="w-full max-w-[520px]">
+        <div className="w-full max-w-130">
             <div className="relative w-full aspect-3/4 rounded-box border border-base-300 bg-base-200 overflow-hidden">
             {segments.map((seg) => {
               const top = `${seg.start * 100}%`;
@@ -79,6 +79,7 @@ export default function InteractionPage({
   onActionsChange: (next: string[]) => void;
 }) {
   const segments = useMemo(() => buildSegments(modelConfig.touchMap), [modelConfig.touchMap]);
+  const showTouchMapVisualizer = false;
 
   return (
     <div className="p-4 space-y-4">
@@ -163,7 +164,14 @@ export default function InteractionPage({
         </section>
       </div>
 
-      <TouchMapVisualizer modelConfig={modelConfig} segmentActions={segmentActions} />
+      {showTouchMapVisualizer ? (
+        <TouchMapVisualizer modelConfig={modelConfig} segmentActions={segmentActions} />
+      ) : (
+        <section className="rounded-box border border-base-300 bg-base-100 p-4">
+          <div className="text-sm font-medium">交互区域可视化（暂未启用）</div>
+          <div className="text-xs text-base-content/60 mt-1">该功能将在后续交互阶段实装，当前先聚焦 RAG 与动作链路。</div>
+        </section>
+      )}
     </div>
   );
 }

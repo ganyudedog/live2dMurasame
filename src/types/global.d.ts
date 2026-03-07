@@ -37,6 +37,9 @@ declare global {
     knowledgeBasePath?: string;
     embeddingModel?: string;
     rerankerModel?: string;
+    personal?: string;
+    speakingStyle?: string;
+    mustFollow?: string;
     [key: string]: unknown;
   }
 

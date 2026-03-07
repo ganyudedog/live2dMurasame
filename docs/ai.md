@@ -636,7 +636,7 @@ Electron 侧建议：
 3. 参数缺失时动作安全跳过
 4. 连续触发无明显卡顿或堆积
 
-### 16.4 阶段 2（待实现）
+### 16.4 阶段 2（已实现）
 
 目标：
 
@@ -664,7 +664,7 @@ Electron 侧建议：
 
 1. `src/AI/rag/retriever.ts`（TopK 3~5）
 2. `src/AI/rag/contextBuilder.ts`（角色卡 + 最近摘要 + 能力表）
-3. SQLite + LanceDB 最小持久化链路
+3. SQLite + LanceDB 最小持久化链路(先采用文件存储)
 
 验收：
 

@@ -40,6 +40,9 @@ export const DEFAULT_MODEL_CONFIG = {
     knowledgeBasePath: '',
     embeddingModel: '',
     rerankerModel: '',
+    personal: '',
+    speakingStyle: '',
+    mustFollow: '',
   },
 };
 
@@ -52,6 +55,9 @@ const normalizeRagConfig = (input = {}) => {
   if (typeof input.knowledgeBasePath === 'string') next.knowledgeBasePath = input.knowledgeBasePath;
   if (typeof input.embeddingModel === 'string') next.embeddingModel = input.embeddingModel;
   if (typeof input.rerankerModel === 'string') next.rerankerModel = input.rerankerModel;
+  if (typeof input.personal === 'string') next.personal = input.personal;
+  if (typeof input.speakingStyle === 'string') next.speakingStyle = input.speakingStyle;
+  if (typeof input.mustFollow === 'string') next.mustFollow = input.mustFollow;
   return next;
 };
 

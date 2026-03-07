@@ -37,14 +37,20 @@ export type ModelConfig = {
   bubble: BubbleConfig;
   interactionZones: Record<string, { heightRange: [number, number]; motions: string[] }>;
   rag: {
-    enabled: boolean;
-    topK: number;
-    threshold: number;
-    knowledgeBasePath: string;
-    embeddingModel: string;
-    rerankerModel: string;
-    personal: string;
-    speakingStyle: string;
-    mustFollow: string;
+    profile: {
+      personal: string;
+      speakingStyle: string;
+      relation: string;
+      banned: string;
+      world: string;
+    };
+    retrieval: {
+      enabled: boolean;
+      topK: number;
+      threshold: number;
+      knowledgeBasePath: string;
+      embeddingModel: string;
+      rerankerModel: string;
+    };
   };
 };

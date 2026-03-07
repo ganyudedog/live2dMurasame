@@ -29,17 +29,29 @@ declare global {
     [key: string]: unknown;
   }
 
-  // 模型细节配置
-  interface PetRagConfig {
+  interface PetRagProfileConfig {
+    personal?: string;
+    speakingStyle?: string;
+    relation?: string;
+    banned?: string;
+    world?: string;
+    [key: string]: unknown;
+  }
+
+  interface PetRagRetrievalConfig {
     enabled?: boolean;
     topK?: number;
     threshold?: number;
     knowledgeBasePath?: string;
     embeddingModel?: string;
     rerankerModel?: string;
-    personal?: string;
-    speakingStyle?: string;
-    mustFollow?: string;
+    [key: string]: unknown;
+  }
+
+  // 模型细节配置
+  interface PetRagConfig {
+    profile?: PetRagProfileConfig;
+    retrieval?: PetRagRetrievalConfig;
     [key: string]: unknown;
   }
 

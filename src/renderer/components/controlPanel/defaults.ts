@@ -25,15 +25,21 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   },
   interactionZones: {},
   rag: {
-    enabled: false,
-    topK: 3,
-    threshold: 0.6,
-    knowledgeBasePath: '',
-    embeddingModel: '',
-    rerankerModel: '',
-    personal: '',
-    speakingStyle: '',
-    mustFollow: '',
+    profile: {
+      personal: '',
+      speakingStyle: '',
+      relation: '',
+      banned: '',
+      world: '',
+    },
+    retrieval: {
+      enabled: true,
+      topK: 3,
+      threshold: 0.6,
+      knowledgeBasePath: '',
+      embeddingModel: 'bge-m3',
+      rerankerModel: 'bge-reranker-v2-m3',
+    },
   },
 };
 

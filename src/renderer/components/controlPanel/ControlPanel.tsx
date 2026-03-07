@@ -19,6 +19,35 @@ const buildInitialSegmentActions = (touchMap: number[], actions: string[]) => {
   return Array.from({ length: count }, (_, idx) => actions[idx % actions.length] ?? '');
 };
 
+const isObjectRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null;
+};
+
+const buildRagConfig = (
+  persistedRag: unknown,
+  defaults: ModelConfig['rag'],
+): ModelConfig['rag'] => {
+  const ragSource = isObjectRecord(persistedRag) ? persistedRag : {};
+  const profileSource = isObjectRecord(ragSource.profile) ? ragSource.profile : ragSource;
+  const retrievalSource = isObjectRecord(ragSource.retrieval) ? ragSource.retrieval : ragSource;
+
+  const migratedBanned = typeof profileSource.banned === 'string'
+    ? profileSource.banned
+    : (typeof profileSource.mustFollow === 'string' ? profileSource.mustFollow : defaults.profile.banned);
+
+  return {
+    profile: {
+      ...defaults.profile,
+      ...profileSource,
+      banned: migratedBanned,
+    },
+    retrieval: {
+      ...defaults.retrieval,
+      ...retrievalSource,
+    },
+  };
+};
+
 const ControlPanel: React.FC = () => {
   const { theme, toggle } = useThemeMode();
   const [activeTab, setActiveTab] = useState<ControlPanelTabKey>('home');
@@ -77,10 +106,7 @@ const ControlPanel: React.FC = () => {
         ...(persisted.bubble as Partial<ModelConfig['bubble']>),
       },
       interactionZones: persisted.interactionZones ?? DEFAULT_MODEL_CONFIG.interactionZones,
-      rag: {
-        ...DEFAULT_MODEL_CONFIG.rag,
-        ...(persisted.rag as Partial<ModelConfig['rag']>),
-      },
+      rag: buildRagConfig(persisted.rag, DEFAULT_MODEL_CONFIG.rag),
     };
   }, [persistedModelConfig]);
 

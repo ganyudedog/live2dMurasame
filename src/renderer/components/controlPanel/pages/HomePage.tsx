@@ -314,90 +314,6 @@ export default function HomePage({
           </header>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="label cursor-pointer justify-between p-0 sm:col-span-2">
-              <span className="label-text text-sm">启用 RAG</span>
-              <input
-                type="checkbox"
-                className="toggle toggle-sm"
-                checked={Boolean(modelConfig.rag.enabled)}
-                onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      enabled: e.target.checked,
-                    },
-                  })
-                }
-              />
-            </label>
-
-            <label className="form-control">
-              <div className="label py-0">
-                <span className="label-text text-xs">TopK</span>
-              </div>
-              <input
-                className="input input-sm input-bordered"
-                type="number"
-                step={1}
-                min={1}
-                max={10}
-                value={modelConfig.rag.topK}
-                onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      topK: Number.parseInt(e.target.value || '3', 10),
-                    },
-                  })
-                }
-              />
-            </label>
-
-            <label className="form-control">
-              <div className="label py-0">
-                <span className="label-text text-xs">阈值（0~1）</span>
-              </div>
-              <input
-                className="input input-sm input-bordered"
-                type="number"
-                step={0.05}
-                min={0}
-                max={1}
-                value={modelConfig.rag.threshold}
-                onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      threshold: Number.parseFloat(e.target.value || '0.6'),
-                    },
-                  })
-                }
-              />
-            </label>
-
-            <label className="form-control sm:col-span-2">
-              <div className="label py-0">
-                <span className="label-text text-xs">知识库路径（预留）</span>
-              </div>
-              <input
-                className="input input-sm input-bordered"
-                value={modelConfig.rag.knowledgeBasePath}
-                placeholder="例如：public/ai/knowledge/murasame.md"
-                onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      knowledgeBasePath: e.target.value,
-                    },
-                  })
-                }
-              />
-            </label>
-
             <label className="form-control sm:col-span-2">
               <div className="label py-0">
                 <span className="label-text text-xs">角色个性（常改）</span>
@@ -405,14 +321,17 @@ export default function HomePage({
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={3}
-                value={modelConfig.rag.personal}
+                value={modelConfig.rag.profile.personal}
                 placeholder="例如：傲娇但礼貌，偏短句，喜欢吐槽"
                 onChange={(e) =>
                   onModelConfigChange({
                     ...modelConfig,
                     rag: {
                       ...modelConfig.rag,
-                      personal: e.target.value,
+                      profile: {
+                        ...modelConfig.rag.profile,
+                        personal: e.target.value,
+                      },
                     },
                   })
                 }
@@ -426,14 +345,17 @@ export default function HomePage({
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={2}
-                value={modelConfig.rag.speakingStyle}
+                value={modelConfig.rag.profile.speakingStyle}
                 placeholder="例如：口语化、每句不超过25字、少用书面词"
                 onChange={(e) =>
                   onModelConfigChange({
                     ...modelConfig,
                     rag: {
                       ...modelConfig.rag,
-                      speakingStyle: e.target.value,
+                      profile: {
+                        ...modelConfig.rag.profile,
+                        speakingStyle: e.target.value,
+                      },
                     },
                   })
                 }
@@ -442,19 +364,70 @@ export default function HomePage({
 
             <label className="form-control sm:col-span-2">
               <div className="label py-0">
-                <span className="label-text text-xs">必须遵守（规则）</span>
+                <span className="label-text text-xs">关系设定（relation）</span>
               </div>
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={2}
-                value={modelConfig.rag.mustFollow}
-                placeholder="例如：不输出敏感信息，不虚构不存在的功能"
+                value={modelConfig.rag.profile.relation}
+                placeholder="例如：青梅竹马、略傲娇但会照顾人"
                 onChange={(e) =>
                   onModelConfigChange({
                     ...modelConfig,
                     rag: {
                       ...modelConfig.rag,
-                      mustFollow: e.target.value,
+                      profile: {
+                        ...modelConfig.rag.profile,
+                        relation: e.target.value,
+                      },
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control sm:col-span-2">
+              <div className="label py-0">
+                <span className="label-text text-xs">禁忌/禁止内容（banned）</span>
+              </div>
+              <textarea
+                className="textarea textarea-sm textarea-bordered w-full"
+                rows={2}
+                value={modelConfig.rag.profile.banned}
+                placeholder="例如：禁止人身攻击、禁止编造事实"
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    rag: {
+                      ...modelConfig.rag,
+                      profile: {
+                        ...modelConfig.rag.profile,
+                        banned: e.target.value,
+                      },
+                    },
+                  })
+                }
+              />
+            </label>
+
+            <label className="form-control sm:col-span-2">
+              <div className="label py-0">
+                <span className="label-text text-xs">世界观（world）</span>
+              </div>
+              <textarea
+                className="textarea textarea-sm textarea-bordered w-full"
+                rows={3}
+                value={modelConfig.rag.profile.world}
+                placeholder="例如：故事发生在架空近未来学园都市"
+                onChange={(e) =>
+                  onModelConfigChange({
+                    ...modelConfig,
+                    rag: {
+                      ...modelConfig.rag,
+                      profile: {
+                        ...modelConfig.rag.profile,
+                        world: e.target.value,
+                      },
                     },
                   })
                 }

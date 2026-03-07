@@ -34,31 +34,80 @@ export const DEFAULT_MODEL_CONFIG = {
   },
   interactionZones: {},
   rag: {
-    enabled: false,
-    topK: 3,
-    threshold: 0.6,
-    knowledgeBasePath: '',
-    embeddingModel: '',
-    rerankerModel: '',
-    personal: '',
-    speakingStyle: '',
-    mustFollow: '',
+    profile: {
+      personal: '',
+      speakingStyle: '',
+      relation: '',
+      banned: '',
+      world: '',
+    },
+    retrieval: {
+      enabled: true,
+      topK: 3,
+      threshold: 0.6,
+      knowledgeBasePath: '',
+      embeddingModel: 'bge-m3',
+      rerankerModel: 'bge-reranker-v2-m3',
+    },
   },
 };
 
-const normalizeRagConfig = (input = {}) => {
-  const next = { ...DEFAULT_MODEL_CONFIG.rag };
-  if (!input || typeof input !== 'object') return next;
-  if (typeof input.enabled === 'boolean') next.enabled = input.enabled;
-  if (Number.isFinite(input.topK)) next.topK = input.topK;
-  if (Number.isFinite(input.threshold)) next.threshold = input.threshold;
-  if (typeof input.knowledgeBasePath === 'string') next.knowledgeBasePath = input.knowledgeBasePath;
-  if (typeof input.embeddingModel === 'string') next.embeddingModel = input.embeddingModel;
-  if (typeof input.rerankerModel === 'string') next.rerankerModel = input.rerankerModel;
-  if (typeof input.personal === 'string') next.personal = input.personal;
-  if (typeof input.speakingStyle === 'string') next.speakingStyle = input.speakingStyle;
-  if (typeof input.mustFollow === 'string') next.mustFollow = input.mustFollow;
+const normalizeTextField = (value) => {
+  return typeof value === 'string' ? value : '';
+};
+
+const toSafeObject = (value) => {
+  return value && typeof value === 'object' ? value : {};
+};
+
+const normalizeRagProfile = (input = {}) => {
+  const source = toSafeObject(input);
+  const next = { ...DEFAULT_MODEL_CONFIG.rag.profile };
+  next.personal = normalizeTextField(source.personal);
+  next.speakingStyle = normalizeTextField(source.speakingStyle);
+  next.relation = normalizeTextField(source.relation);
+  next.banned = normalizeTextField(source.banned);
+  next.world = normalizeTextField(source.world);
+
+  // 兼容旧字段：若历史配置里只有 mustFollow，则迁移到 banned。
+  if (!next.banned && typeof source.mustFollow === 'string') {
+    next.banned = source.mustFollow;
+  }
   return next;
+};
+
+const normalizeRagRetrieval = (input = {}) => {
+  const source = toSafeObject(input);
+  const next = { ...DEFAULT_MODEL_CONFIG.rag.retrieval };
+  if (typeof source.enabled === 'boolean') next.enabled = source.enabled;
+  if (Number.isFinite(source.topK)) next.topK = Math.max(1, Math.floor(source.topK));
+  if (Number.isFinite(source.threshold)) next.threshold = Math.max(0, Math.min(1, source.threshold));
+  if (typeof source.knowledgeBasePath === 'string') next.knowledgeBasePath = source.knowledgeBasePath;
+  if (typeof source.embeddingModel === 'string' && source.embeddingModel.trim()) {
+    next.embeddingModel = source.embeddingModel;
+  }
+  if (typeof source.rerankerModel === 'string' && source.rerankerModel.trim()) {
+    next.rerankerModel = source.rerankerModel;
+  }
+  return next;
+};
+
+const normalizeRagConfig = (input = {}) => {
+  if (!input || typeof input !== 'object') {
+    return {
+      profile: { ...DEFAULT_MODEL_CONFIG.rag.profile },
+      retrieval: { ...DEFAULT_MODEL_CONFIG.rag.retrieval },
+    };
+  }
+
+  const source = toSafeObject(input);
+  const profileSource = source.profile && typeof source.profile === 'object' ? source.profile : source;
+  const retrievalSource = source.retrieval && typeof source.retrieval === 'object' ? source.retrieval : source;
+
+  return {
+    profile: normalizeRagProfile(profileSource),
+    retrieval: normalizeRagRetrieval(retrievalSource),
+  };
 };
 
 export const normalizeModelConfig = (input = {}) => {

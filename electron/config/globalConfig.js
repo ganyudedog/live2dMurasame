@@ -8,6 +8,7 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   forcedFollow: false,
   debugModeEnabled: false,
   apiKey: '',
+  baseURL: '',
 };
 
 // Live2denvConfig: liv2denv.json（模型列表/当前模型等），不包含全局模型设置。
@@ -104,6 +105,9 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   }
   if (typeof settings.apiKey === 'string') {
     next.apiKey = settings.apiKey;
+  }
+  if (typeof settings.baseURL === 'string') {
+    next.baseURL = settings.baseURL;
   }
   return next;
 };

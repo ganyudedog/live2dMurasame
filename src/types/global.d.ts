@@ -16,6 +16,7 @@ declare global {
     forcedFollow?: boolean;
     debugModeEnabled?: boolean;
     apiKey?: string;
+    baseURL?: string;
   }
 
   type PetGlobalModelConfig = PetGlobalModelConfigPayload;

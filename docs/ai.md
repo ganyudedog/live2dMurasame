@@ -555,3 +555,183 @@ Electron 侧建议：
 4. 取消成功率 > 99%
 5. partial 误触发正式播报次数 = 0
 
+---
+
+## 16. 分步实施方案（可中断续做）
+
+本节用于记录“当前进度 + 下一步入口”，确保开发中断后可以快速恢复。
+
+### 16.1 执行原则
+
+1. 每个阶段独立可运行、可回滚
+2. 每个阶段完成后都做最小验收与日志留痕
+3. 先动作后语言，先稳定后复杂
+
+### 16.2 阶段总览
+
+1. 阶段 1：极简动作控制器（shake_head / blink / mouth）
+2. 阶段 2：LLM 结构化输出（Qwen）
+3. 阶段 3：RAG 最小版（角色卡 + 最近摘要 + 能力表）
+4. 阶段 4：TTS（GPT-SoVITS）并行动作
+5. 阶段 5：流式 ASR -> fast/commit 双通道
+6. 阶段 6：观测与压测收敛
+
+### 16.3 阶段 1（已实现）
+
+目标：
+
+- 不依赖新增美术资源，只用 Live2D 参数实现轻动作
+- 动作输入结构化、可校验、可仲裁、可安全降级
+
+已完成内容：
+
+1. 动作协议与类型
+
+- `src/AI/types/action.ts`
+- 定义 `shake_head | blink | mouth` 及归一化结构
+
+2. 运行时校验
+
+- `src/AI/types/action.schema.ts`
+- 使用 `zod` 对动作输入做范围校验（已移除 `finite()`）
+
+3. 归一化与默认策略
+
+- `src/AI/action/normalize.ts`
+- 默认值补齐、范围裁剪、时长/优先级/冷却标准化
+
+4. 模型能力探测
+
+- `src/AI/action/capability.ts`
+- 自动识别 `ParamAngleX`、眼睛开闭参数、嘴巴开合参数
+
+5. 动作执行器
+
+- `src/AI/action/executor.ts`
+- 参数驱动实现摇头、眨眼、张嘴
+
+6. 动作控制器
+
+- `src/AI/core/actionController.ts`
+- 串联：校验 -> 归一化 -> 去重/冷却 -> 优先级 -> 执行
+
+7. 渲染侧接入
+
+- `src/renderer/components/pet/hooks/usePetModel.ts`
+- 在 `model.on('update')` 每帧执行 `tick`
+- 模型销毁/切换时正确 `dispose`
+
+8. 调试入口（无 IPC）
+
+- `window.__PET_AI_ACTION__.dispatch(...)`
+- `window.__PET_AI_ACTION__.blink()`
+- `window.__PET_AI_ACTION__.mouth()`
+- `window.__PET_AI_ACTION__.shakeHead()`
+- `window.__PET_AI_ACTION__.capability()`
+
+阶段 1 验收建议：
+
+1. `capability()` 返回与模型参数一致
+2. 三个动作可触发且不会引发报错
+3. 参数缺失时动作安全跳过
+4. 连续触发无明显卡顿或堆积
+
+### 16.4 阶段 2（待实现）
+
+目标：
+
+- 接入 Qwen，输出严格 JSON：`reply_text + action_intent`
+
+任务清单：
+
+1. 新增 `src/AI/llm/client.ts`（OpenAI 兼容调用）
+2. 新增 `src/AI/llm/prompt.ts`（强约束 JSON 模板）
+3. 新增 `src/AI/llm/parse.ts`（`zod` 校验 + 降级策略）
+4. 将 `action_intent` 对接 `Live2DActionController.dispatch`
+
+验收：
+
+1. 解析失败不影响 UI 与动作循环
+2. 结构化输出成功率达到目标
+
+### 16.5 阶段 3（待实现）
+
+目标：
+
+- 接入轻量 RAG，提高角色稳定性
+
+任务清单：
+
+1. `src/AI/rag/retriever.ts`（TopK 3~5）
+2. `src/AI/rag/contextBuilder.ts`（角色卡 + 最近摘要 + 能力表）
+3. SQLite + LanceDB 最小持久化链路
+
+验收：
+
+1. 检索耗时可控
+2. 无上下文时自动回落
+
+### 16.6 阶段 4（待实现）
+
+目标：
+
+- 文本、动作、语音并行
+
+任务清单：
+
+1. `src/AI/voice/gptSovitsClient.ts`
+2. `voiceQueue` 串行与打断
+3. `voice.start/first_chunk/end` 生命周期钩子
+
+验收：
+
+1. 首音频包延迟达标
+2. 语音失败可降级为文本 + 静默动作
+
+### 16.7 阶段 5（待实现）
+
+目标：
+
+- 建立 fast lane（partial）与 commit lane（final）
+
+任务清单：
+
+1. `asr.partial` 只触发可撤销轻动作
+2. `asr.final` 触发正式文本/动作/语音
+3. 全链路取消（`task.cancel` + AbortSignal）
+
+验收：
+
+1. partial 误触发正式播报次数为 0
+2. 取消成功率达标
+
+### 16.8 阶段 6（待实现）
+
+目标：
+
+- 完整观测与压测闭环
+
+任务清单：
+
+1. 统一指标：`llm_first_token_ms`、`action_dispatch_ms`、`tts_first_packet_ms`
+2. 压测脚本：高频输入、打断风暴、超时降级
+3. 形成 `docs/ai-perf.md` 的基线数据
+
+### 16.9 中断恢复清单
+
+恢复开发时按以下顺序检查：
+
+1. 当前分支是否保留阶段 1 文件
+2. `window.__PET_AI_ACTION__.capability()` 是否可用
+3. 三动作手动触发是否正常
+4. 再进入下一阶段开发（从阶段 2 开始）
+
+推荐恢复命令（在控制台）：
+
+```js
+window.__PET_AI_ACTION__.capability()
+window.__PET_AI_ACTION__.blink()
+window.__PET_AI_ACTION__.mouth()
+window.__PET_AI_ACTION__.shakeHead()
+```
+

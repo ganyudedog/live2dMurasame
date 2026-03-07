@@ -384,7 +384,7 @@ const PetCanvas: React.FC = () => {
     const duration = typeof requestedMs === 'number' && Number.isFinite(requestedMs) && requestedMs > 0
       ? requestedMs
       : fallbackMs;
-    bubbleTimerRef.current = setTimeout(() => {
+    bubbleTimerRef.current = window.setTimeout(() => {
       setMotionText(null);
       bubbleTimerRef.current = null;
     }, duration);

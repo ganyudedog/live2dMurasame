@@ -878,6 +878,7 @@ const sanitizeGlobalModelConfigPatch = (patch) => {
     if (typeof patch.forcedFollow === 'boolean') safePatch.forcedFollow = patch.forcedFollow;
     if (typeof patch.debugModeEnabled === 'boolean') safePatch.debugModeEnabled = patch.debugModeEnabled;
     if (typeof patch.apiKey === 'string') safePatch.apiKey = patch.apiKey;
+    if (typeof patch.baseURL === 'string') safePatch.baseURL = patch.baseURL;
     return safePatch;
 };
 

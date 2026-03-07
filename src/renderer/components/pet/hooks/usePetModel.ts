@@ -5,6 +5,9 @@ import { loadModel } from '../live2dManage/loader';
 import { Live2DModel } from '../live2dManage/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2dManage/runtime';
 import { agg, debug as logDebug, error, sample, warn } from '../../../utils/log';
+import { createLive2DActionController, type Live2DActionController } from '../../../../AI/core/actionController';
+import { createStage2Runtime, type Stage2Runtime } from '../../../../AI/core/stage2Runtime';
+import type { ActionIntentInput } from '../../../../AI/types/action';
 
 export interface UsePetModelParams {
   settingsLoaded: boolean;
@@ -63,6 +66,8 @@ export const usePetModel = ({
   modelPath,
 }: UsePetModelParams): void => {
   const applyLayoutRef = useRef(scheduleApplyLayout);
+  const actionControllerRef = useRef<Live2DActionController | null>(null);
+  const stage2RuntimeRef = useRef<Stage2Runtime | null>(null);
   useEffect(() => {
     applyLayoutRef.current = scheduleApplyLayout;
   }, [scheduleApplyLayout]);
@@ -371,6 +376,39 @@ export const usePetModel = ({
     if (!app) return;
 
     const disposeCurrentModel = () => {
+      const globalObj = window as any;
+      const bridge = globalObj.__PET_AI_ACTION__;
+      if (bridge?.__from === 'stage1') {
+        try {
+          delete globalObj.__PET_AI_ACTION__;
+        } catch {
+          globalObj.__PET_AI_ACTION__ = undefined;
+        }
+      }
+      const stage2Bridge = globalObj.__PET_AI_STAGE2__;
+      if (stage2Bridge?.__from === 'stage2') {
+        try {
+          delete globalObj.__PET_AI_STAGE2__;
+        } catch {
+          globalObj.__PET_AI_STAGE2__ = undefined;
+        }
+      }
+      if (stage2RuntimeRef.current) {
+        try {
+          stage2RuntimeRef.current.dispose();
+        } catch {
+          // ignore stage2 runtime cleanup errors
+        }
+        stage2RuntimeRef.current = null;
+      }
+      if (actionControllerRef.current) {
+        try {
+          actionControllerRef.current.dispose();
+        } catch {
+          // ignore AI controller cleanup errors
+        }
+        actionControllerRef.current = null;
+      }
       try {
         if (detachEyeHandlerRef.current) {
           detachEyeHandlerRef.current();
@@ -684,6 +722,35 @@ export const usePetModel = ({
         setModel(model);
         setModelLoadStatus('loaded');
         updateHitAreas(model);
+
+        const actionController = createLive2DActionController();
+        actionControllerRef.current = actionController;
+        const stage2Runtime = createStage2Runtime({
+          dispatchAction: (input, source) => actionController.dispatch(input, source),
+        });
+        stage2RuntimeRef.current = stage2Runtime;
+
+        try {
+          const globalObj = window as any;
+          globalObj.__PET_AI_ACTION__ = {
+            __from: 'stage1',
+            dispatch: (input: ActionIntentInput) => actionController.dispatch(input, 'window.__PET_AI_ACTION__'),
+            blink: () => actionController.dispatch({ kind: 'blink', reason: 'manual-bridge' }, 'window.__PET_AI_ACTION__.blink'),
+            mouth: () => actionController.dispatch({ kind: 'mouth', reason: 'manual-bridge' }, 'window.__PET_AI_ACTION__.mouth'),
+            shakeHead: () => actionController.dispatch({ kind: 'shake_head', reason: 'manual-bridge' }, 'window.__PET_AI_ACTION__.shakeHead'),
+            capability: () => actionController.getCapability(),
+          };
+          globalObj.__PET_AI_STAGE2__ = {
+            __from: 'stage2',
+            ask: (text: string, options?: { model?: string; temperature?: number; apiKey?: string; baseURL?: string }) => stage2Runtime.ask(text, options),
+            setConfig: (patch: { apiKey?: string; baseURL?: string; model?: string; temperature?: number }) => stage2Runtime.setConfig(patch),
+            getConfig: () => stage2Runtime.getConfig(),
+            capability: () => actionController.getCapability(),
+          };
+        } catch {
+          // ignore bridge install failures
+        }
+
         attachEyeFollow(model);
         installMotionEyeGuard(model);
         installInternalAfterUpdatePatch(model);
@@ -733,6 +800,13 @@ export const usePetModel = ({
                 });
               }
             }
+
+            try {
+              actionControllerRef.current?.tick(core, performance.now());
+            } catch (e) {
+              warn('ai.action', 'tick.failed', { err: String(e) });
+            }
+
             if (!debugEnabled || frameCountRef.current % 30 !== 0) return;
             try {
               const state = {

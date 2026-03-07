@@ -103,11 +103,14 @@ const ControlPanel: React.FC = () => {
     ttsProvider: 'disabled',
     ttsVoice: '',
     apiKeyDirty: false,
+    apiBaseUrlDirty: false,
   });
 
   const apiKeyPersistTimerRef = useRef<number | null>(null);
 
   const remoteApiKey = typeof globalModelConfig?.apiKey === 'string' ? globalModelConfig.apiKey : '';
+  const remoteApiBaseUrl = typeof globalModelConfig?.baseURL === 'string' ? globalModelConfig.baseURL : '';
+  const displayApiBaseUrl = aiSettings.apiBaseUrlDirty ? aiSettings.apiBaseUrl : remoteApiBaseUrl;
   const displayApiKey = aiSettings.apiKeyDirty ? aiSettings.apiKey : remoteApiKey;
 
   useEffect(() => {
@@ -271,28 +274,31 @@ const ControlPanel: React.FC = () => {
 
       {activeTab === 'ai' && (
         <AiSettingsPage
-          apiBaseUrl={aiSettings.apiBaseUrl}
+          apiBaseUrl={displayApiBaseUrl}
           apiKey={displayApiKey}
           ttsProvider={aiSettings.ttsProvider}
           ttsVoice={aiSettings.ttsVoice}
           onChange={(next) => {
+            const baseUrlDirty = next.apiBaseUrl !== remoteApiBaseUrl;
+            const apiKeyDirty = next.apiKey !== remoteApiKey;
             setAiSettings((prev) => ({
               ...prev,
               apiBaseUrl: next.apiBaseUrl,
               apiKey: next.apiKey,
               ttsProvider: next.ttsProvider,
               ttsVoice: next.ttsVoice,
-              apiKeyDirty: next.apiKey !== remoteApiKey,
+              apiKeyDirty,
+              apiBaseUrlDirty: baseUrlDirty,
             }));
-            if (next.apiKey === remoteApiKey) return;
+            if (!apiKeyDirty && !baseUrlDirty) return;
             if (apiKeyPersistTimerRef.current != null) {
               window.clearTimeout(apiKeyPersistTimerRef.current);
               apiKeyPersistTimerRef.current = null;
             }
             apiKeyPersistTimerRef.current = window.setTimeout(() => {
               apiKeyPersistTimerRef.current = null;
-              updateGlobalModelConfig({ apiKey: next.apiKey }).catch((err) => {
-                warn('controlPanel', 'aiSettings.persistApiKeyFailed', { err: String(err) });
+              updateGlobalModelConfig({ apiKey: next.apiKey, baseURL: next.apiBaseUrl }).catch((err) => {
+                warn('controlPanel', 'aiSettings.persistGlobalFailed', { err: String(err) });
               });
             }, 250);
           }}

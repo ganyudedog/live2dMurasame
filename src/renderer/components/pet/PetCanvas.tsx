@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useRef, useCallback, useState, useLayoutEffect, useMemo } from 'react';
+import React, { useRef, useCallback, useState, useLayoutEffect, useMemo, useEffect, useSyncExternalStore } from 'react';
 import { ChatBubble } from './UI/ChatBubble';
 import DebugRedLine from './UI/DebugRedLine';
 import DebugSymmetricMasks from './UI/DebugSymmetricMasks';
@@ -9,7 +9,6 @@ import { Application } from 'pixi.js';
 import { computeContextZone } from './logic/contextZone/contextZoneEngine';
 import { usePetStore } from '../../store/usePetStore';
 import type { Live2DModel as Live2DModelType } from './live2dManage/runtime';
-import { usePetSettings } from './hooks/usePetSettings';
 import { usePetModel } from './hooks/usePetModel';
 import { usePetLayout } from './hooks/usePetLayout';
 import { useEyeReset } from './hooks/useEyeReset';
@@ -24,6 +23,8 @@ import { usePetResizeOrchestrator } from './hooks/usePetResizeOrchestrator';
 import { useBubblePositionEngine } from './hooks/useBubblePositionEngine';
 import { debug } from '../../utils/log';
 import { useConfigStore } from '../../store/useConfigStore';
+import { sharedStoreClient } from '../../shared/sharedStoreClient';
+import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
 import {
   CONTEXT_ZONE_LATCH_MS,
   DEFAULT_TOUCH_PRIORITY,
@@ -77,34 +78,22 @@ const isDevtoolsDockedLike = (params: {
 };
 
 const isDevToolsOpenedNow = (): boolean => {
-  // try {
-  //   if (typeof window === 'undefined') return false;
-  //   const api = (window as any).petAPI;
-  //   if (typeof api?.isDevToolsOpened === 'function') {
-  //     return Boolean(api.isDevToolsOpened());
-  //   }
-  //   return false;
-  // } catch {
-  //   return false;
-  // }
-  return false;
+  try {
+    if (typeof window === 'undefined') return false;
+    const api = (window as any).petAPI;
+    if (typeof api?.isDevToolsOpened === 'function') {
+      return Boolean(api.isDevToolsOpened());
+    }
+    return false;
+  } catch {
+    return false;
+  }
 };
 
 const PetCanvas: React.FC = () => {
-  // 延迟加载模型
-  const settingsLoaded = usePetStore(s => s.settingsLoaded);
-  const loadSettings = usePetStore(s => s.loadSettings);
-
-  // 在模型窗口订阅 SharedWorker 的 scale 广播。
-  const connectSharedWorkerScale = usePetStore(s => s.connectSharedWorkerScale);
-
-  usePetSettings(loadSettings);
-
-  useLayoutEffect(() => connectSharedWorkerScale(), [connectSharedWorkerScale]);
-
   // 来自主进程的配置快照（offset.md 数据流真值）
   const live2denvConfig = useConfigStore((s) => s.live2denvConfig);
-  const activeModelPath = useConfigStore((s) => s.activeModelPath);
+  const globalModelConfig = useConfigStore((s) => s.globalModelConfig);
   const activeModelFileUrl = useConfigStore((s) => s.activeModelFileUrl);
   const persistedModelConfig = useConfigStore((s) => s.modelConfig);
   const hydrated = useConfigStore((s) => s.hydrated);
@@ -126,10 +115,35 @@ const PetCanvas: React.FC = () => {
   }, [angleMaxUpLimit]);
 
   // 模型文件 URL 由主进程根据 CURRENT_PATH 解析并随快照下发（file://.../*.model3.json）。
-  // 不再使用默认模型路径；若未选中模型则保持为空，等待用户先选择。
-  const modelPath = typeof activeModelFileUrl === 'string'
+  // 注意：Live2D loader 只接受可读取的 *.model3.json URL。目录路径会导致 fetch/解析失败。
+  // 因此此处不再回退到目录路径，拿不到 file URL 时先等待下一次配置快照更新。
+  const modelPath = (typeof activeModelFileUrl === 'string' && activeModelFileUrl.trim().length > 0)
     ? activeModelFileUrl
-    : (typeof activeModelPath === 'string' ? activeModelPath : '');
+    : '';
+
+  useEffect(() => {
+    try {
+      window.petAPI?.debugTrace?.({
+        kind: 'modelLoadInput',
+        profile: 'modelLoad',
+        level: 'info',
+        request: {
+          source: 'renderer.petCanvas',
+          phase: 'model-path-resolve',
+          ts: Date.now(),
+        },
+        model: {
+          hydrated: Boolean(hydrated),
+          hasActiveModelFileUrl: Boolean(activeModelFileUrl),
+          activeModelFileUrl: typeof activeModelFileUrl === 'string' ? activeModelFileUrl : null,
+          currentPath: typeof live2denvConfig?.CURRENT_PATH === 'string' ? live2denvConfig.CURRENT_PATH : null,
+          resolvedModelPath: modelPath || null,
+        },
+      });
+    } catch {
+      // ignore debug trace errors
+    }
+  }, [hydrated, activeModelFileUrl, live2denvConfig?.CURRENT_PATH, modelPath]);
   const modelPathRef = useRef(modelPath);
 
   const touchPriority = useMemo((): string[] => {
@@ -174,8 +188,30 @@ const PetCanvas: React.FC = () => {
   const setModel = usePetStore(s => s.setModel);
   const setModelLoadStatus = usePetStore(s => s.setModelLoadStatus);
 
-  // 模型大小
-  const scale = usePetStore(s => s.scale);
+  const workerScale = useSyncExternalStore(
+    subscribeSharedWorkerScale,
+    getSharedWorkerScaleSnapshot,
+    getSharedWorkerScaleSnapshot,
+  );
+
+  const scale = useMemo(() => {
+    const fromWorker = workerScale;
+    if (typeof fromWorker === 'number' && Number.isFinite(fromWorker)) {
+      return Math.min(2, Math.max(0.3, fromWorker));
+    }
+    const fromGlobal = globalModelConfig?.scale;
+    if (typeof fromGlobal === 'number' && Number.isFinite(fromGlobal)) {
+      return Math.min(2, Math.max(0.3, fromGlobal));
+    }
+    return 1;
+  }, [workerScale, globalModelConfig?.scale]);
+
+  // 确保模型窗口启动时把持久化 scale 对齐到 SharedWorker 真值。
+  useEffect(() => {
+    if (typeof globalModelConfig?.scale !== 'number' || !Number.isFinite(globalModelConfig.scale)) return;
+    const clampedScale = Math.min(2, Math.max(0.3, globalModelConfig.scale));
+    sharedStoreClient.dispatchPatch([{ path: 'global.scale', value: clampedScale }]);
+  }, [globalModelConfig?.scale]);
 
 
   // 动作相关
@@ -186,8 +222,8 @@ const PetCanvas: React.FC = () => {
   const interruptMotion = usePetStore(s => s.interruptMotion);
 
   // 鼠标相关
-  const ignoreMouse = usePetStore(s => s.ignoreMouse);
-  const debugModeEnabled = usePetStore(s => Boolean(s.debugModeEnabled));
+  const ignoreMouse = Boolean(globalModelConfig?.ignoreMouse);
+  const debugModeEnabled = Boolean(globalModelConfig?.debugModeEnabled);
 
   const pointerX = useRef(0); // 鼠标 X 坐标
   const pointerY = useRef(0); // 鼠标 Y 坐标
@@ -713,7 +749,7 @@ const PetCanvas: React.FC = () => {
 
   // Live2D 模型生命周期（封装于自定义 Hook）
   usePetModel({
-    settingsLoaded,
+    settingsLoaded: hydrated,
     canvasRef: canvasRef as React.RefObject<HTMLDivElement>,
     appRef,
     modelRef,
@@ -966,11 +1002,6 @@ const PetCanvas: React.FC = () => {
 
   usePointerTapHandler({
     handlePointerTap,
-    getDragAnchorWindowPos: () => {
-      const bounds = windowBoundsRef.current;
-      if (!bounds) return null;
-      return { x: bounds.x, y: bounds.y };
-    },
     canStartDrag: canStartModelDrag,
     onDragStart: onModelDragStart,
     onDragMove: onModelDragMove,

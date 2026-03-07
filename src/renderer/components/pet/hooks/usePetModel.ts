@@ -70,40 +70,84 @@ export const usePetModel = ({
   // 1) Pixi Application 生命周期：只初始化一次，组件卸载时销毁。
   useEffect(() => {
     if (!settingsLoaded) return;
-    if (!canvasRef.current) return;
     if (appRef.current) return;
 
-    (Live2DModel as unknown as { registerTicker: (t: unknown) => void }).registerTicker(Ticker as unknown as object);
+    let rafId: number | null = null;
+    let initialized = false;
+    let appCleanup: (() => void) | undefined;
 
-    const container = canvasRef.current;
-    const app = new Application({ backgroundAlpha: 0, resizeTo: container, autoStart: true, antialias: true });
-    appRef.current = app;
-    container.appendChild(app.view as HTMLCanvasElement);
-    container.style.position = 'relative';
-    container.style.overflow = 'hidden';
+    const initApp = () => {
+      if (!settingsLoaded) return;
+      if (appRef.current) return;
 
-    const handleResize = () => { applyLayoutRef.current?.(); };
-    const handleMouseMove = (e: MouseEvent) => {
-      pointerX.current = e.clientX;
-      pointerY.current = e.clientY;
-      updateDragHandlePosition(true);
-    };
-    pointerX.current = window.innerWidth / 2;
-    pointerY.current = window.innerHeight / 2;
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('resize', handleResize);
-
-    const emitDebugTrace = (payload: Record<string, unknown>) => {
-      try {
-        (window as any).petAPI?.debugTrace?.(payload);
-      } catch {
-        // swallow debug trace bridge errors
+      const container = canvasRef.current;
+      if (!container) {
+        // 在 hydrated=true 且 ref 尚未绑定时继续等待，避免错过初始化。
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          rafId = window.requestAnimationFrame(initApp);
+        }
+        return;
       }
-    };
-    const recentAckBoundsByRid = new Map<string, { x: number; y: number; width: number; height: number; ts: number }>();
-    const RECENT_ACK_TTL_MS = 1500;
 
-    const onBoundsChanged = (bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
+      (Live2DModel as unknown as { registerTicker: (t: unknown) => void }).registerTicker(Ticker as unknown as object);
+
+      const app = new Application({ backgroundAlpha: 0, resizeTo: container, autoStart: true, antialias: true });
+      appRef.current = app;
+      const view = app.view as HTMLCanvasElement;
+      container.appendChild(view);
+      view.style.display = 'block';
+      view.style.width = '100%';
+      view.style.height = '100%';
+      container.style.position = 'relative';
+      container.style.overflow = 'hidden';
+
+      const syncRendererSize = () => {
+        const width = Math.max(1, container.clientWidth || window.innerWidth || 1);
+        const height = Math.max(1, container.clientHeight || window.innerHeight || 1);
+        try {
+          app.renderer.resize(width, height);
+        } catch {
+          // ignore renderer resize errors
+        }
+      };
+
+      syncRendererSize();
+
+      const handleResize = () => {
+        syncRendererSize();
+        applyLayoutRef.current?.();
+      };
+      const handleMouseMove = (e: MouseEvent) => {
+        pointerX.current = e.clientX;
+        pointerY.current = e.clientY;
+        updateDragHandlePosition(true);
+      };
+      const resizeObserver = typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+          syncRendererSize();
+          applyLayoutRef.current?.();
+        })
+        : null;
+      resizeObserver?.observe(container);
+
+      pointerX.current = window.innerWidth / 2;
+      pointerY.current = window.innerHeight / 2;
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('resize', handleResize);
+
+      initialized = true;
+
+      const emitDebugTrace = (payload: Record<string, unknown>) => {
+        try {
+          (window as any).petAPI?.debugTrace?.(payload);
+        } catch {
+          // swallow debug trace bridge errors
+        }
+      };
+      const recentAckBoundsByRid = new Map<string, { x: number; y: number; width: number; height: number; ts: number }>();
+      const RECENT_ACK_TTL_MS = 1500;
+
+      const onBoundsChanged = (bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
       try {
         agg({
           level: 'debug',
@@ -113,11 +157,6 @@ export const usePetModel = ({
           windowMs: 800,
           data: bounds ? { ...bounds } : { missing: true },
         });
-        try {
-          handleWindowBoundsAck?.(bounds);
-        } catch {
-          // ignore ack handler errors
-        }
         if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
           const prev = windowBoundsRef.current;
           windowBoundsRef.current = bounds;
@@ -153,7 +192,7 @@ export const usePetModel = ({
         warn('pet.window', 'bounds.handlerError', { err: String(e) });
       }
     };
-    const onWindowFact = (payload?: { bounds?: { x: number; y: number; width: number; height: number }; lastAppliedIntentId?: string | null }) => {
+      const onWindowFact = (payload?: { bounds?: { x: number; y: number; width: number; height: number }; lastAppliedIntentId?: string | null }) => {
       const bounds = payload?.bounds;
       if (!bounds) return;
       const rid = typeof payload?.lastAppliedIntentId === 'string' ? payload.lastAppliedIntentId : null;
@@ -196,7 +235,7 @@ export const usePetModel = ({
         requestId: rid ?? undefined,
       });
     };
-    const onWindowIntentAck = (ack?: { intentId?: string; status?: string; reason?: string; appliedBounds?: { x: number; y: number; width: number; height: number } }) => {
+      const onWindowIntentAck = (ack?: { intentId?: string; status?: string; reason?: string; appliedBounds?: { x: number; y: number; width: number; height: number } }) => {
       const intentId = typeof ack?.intentId === 'string' ? ack.intentId : null;
       if (!intentId) return;
       emitDebugTrace({
@@ -253,22 +292,23 @@ export const usePetModel = ({
         // swallow ack handler errors
       }
     };
-    try {
-      (window as any).petAPI?.on?.('pet:windowFact', onWindowFact);
-      (window as any).petAPI?.on?.('pet:windowIntentAck', onWindowIntentAck);
-    } catch { /* ignore */ }
+      try {
+        (window as any).petAPI?.on?.('pet:windowFact', onWindowFact);
+        (window as any).petAPI?.on?.('pet:windowIntentAck', onWindowIntentAck);
+      } catch { /* ignore */ }
 
-    return () => {
+      appCleanup = () => {
       // 清理 app 相关资源
-      try {
-        window.removeEventListener('resize', handleResize);
-        window.removeEventListener('mousemove', handleMouseMove);
-      } catch { /* ignore */ }
-      try {
-        (window as any).petAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
-        (window as any).petAPI?.off?.('pet:windowFact', onWindowFact);
-        (window as any).petAPI?.off?.('pet:windowIntentAck', onWindowIntentAck);
-      } catch { /* ignore */ }
+        try {
+          window.removeEventListener('resize', handleResize);
+          window.removeEventListener('mousemove', handleMouseMove);
+          resizeObserver?.disconnect();
+        } catch { /* ignore */ }
+        try {
+          (window as any).petAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
+          (window as any).petAPI?.off?.('pet:windowFact', onWindowFact);
+          (window as any).petAPI?.off?.('pet:windowIntentAck', onWindowIntentAck);
+        } catch { /* ignore */ }
 
       // 清理模型与 ticker
       try {
@@ -305,7 +345,21 @@ export const usePetModel = ({
       try {
         app.destroy(true);
       } catch { /* ignore */ }
-      appRef.current = null;
+        appRef.current = null;
+      };
+      return;
+    };
+
+    initApp();
+    return () => {
+      if (rafId !== null && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (!initialized) return;
+      if (typeof appCleanup === 'function') {
+        appCleanup();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded]);
@@ -593,6 +647,40 @@ export const usePetModel = ({
         (model as any).eventMode = 'none';
         app.stage.addChild(model as any);
         applyLayoutRef.current?.();
+        try {
+          const attachContainer = canvasRef.current;
+          const bounds = (model as any).getBounds?.();
+          const localBounds = (model as any).getLocalBounds?.();
+          (window as any).petAPI?.debugTrace?.({
+            kind: 'modelLoadAttached',
+            profile: 'modelLoad',
+            level: 'info',
+            request: {
+              source: 'renderer.usePetModel',
+              phase: 'model-attached',
+              ts: Date.now(),
+            },
+            model: {
+              settingsLoaded,
+              resolvedModelPath: modelPath,
+              stageChildren: Number.isFinite((app.stage as any)?.children?.length) ? (app.stage as any).children.length : null,
+              containerWidth: Number.isFinite(attachContainer?.clientWidth) ? attachContainer.clientWidth : null,
+              containerHeight: Number.isFinite(attachContainer?.clientHeight) ? attachContainer.clientHeight : null,
+              rendererWidth: Number.isFinite((app.renderer as any)?.screen?.width) ? (app.renderer as any).screen.width : null,
+              rendererHeight: Number.isFinite((app.renderer as any)?.screen?.height) ? (app.renderer as any).screen.height : null,
+              modelScaleX: Number.isFinite((model as any).scale?.x) ? (model as any).scale.x : null,
+              modelScaleY: Number.isFinite((model as any).scale?.y) ? (model as any).scale.y : null,
+              modelX: Number.isFinite((model as any).position?.x) ? (model as any).position.x : null,
+              modelY: Number.isFinite((model as any).position?.y) ? (model as any).position.y : null,
+              boundsWidth: Number.isFinite(bounds?.width) ? bounds.width : null,
+              boundsHeight: Number.isFinite(bounds?.height) ? bounds.height : null,
+              localBoundsWidth: Number.isFinite(localBounds?.width) ? localBounds.width : null,
+              localBoundsHeight: Number.isFinite(localBounds?.height) ? localBounds.height : null,
+            },
+          });
+        } catch {
+          // ignore debug trace bridge errors
+        }
         setModel(model);
         setModelLoadStatus('loaded');
         updateHitAreas(model);
@@ -666,6 +754,25 @@ export const usePetModel = ({
           });
         }
       } catch (err) {
+        try {
+          (window as any).petAPI?.debugTrace?.({
+            kind: 'modelLoadFailed',
+            profile: 'modelLoad',
+            level: 'warn',
+            request: {
+              source: 'renderer.usePetModel',
+              phase: 'load-failed',
+              ts: Date.now(),
+            },
+            model: {
+              settingsLoaded,
+              resolvedModelPath: modelPath,
+              error: String(err),
+            },
+          });
+        } catch {
+          // ignore debug trace bridge errors
+        }
         error('pet.model', 'load.failed', { modelPath, err: String(err) });
         setModelLoadStatus('error', (err as Error).message);
       }

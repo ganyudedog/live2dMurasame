@@ -15,7 +15,7 @@ export default function AiSettingsPage({
     <div className="p-4 space-y-4">
       <div>
         <h1 className="text-lg font-semibold">AI设置</h1>
-        <p className="text-xs text-base-content/60">仅 UI / 本地状态（后续再接入 TTS 与 API）</p>
+        <p className="text-xs text-base-content/60">apiKey 会写入 globalModelConfig，其余暂为本地状态</p>
       </div>
 
       <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">

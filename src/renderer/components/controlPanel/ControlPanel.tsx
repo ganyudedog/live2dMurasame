@@ -30,6 +30,10 @@ const ControlPanel: React.FC = () => {
     activeModelPath,
     hydrated,
     refresh,
+    updateGlobalModelConfig,
+    updateLive2denvConfig,
+    updateModelConfig,
+    pickModelFile,
   } = useConfigStore();
 
   // 首次挂载拉一次主进程快照（非必须，但能确保控制面板与主窗口一致）。
@@ -73,6 +77,10 @@ const ControlPanel: React.FC = () => {
         ...(persisted.bubble as Partial<ModelConfig['bubble']>),
       },
       interactionZones: persisted.interactionZones ?? DEFAULT_MODEL_CONFIG.interactionZones,
+      rag: {
+        ...DEFAULT_MODEL_CONFIG.rag,
+        ...(persisted.rag as Partial<ModelConfig['rag']>),
+      },
     };
   }, [persistedModelConfig]);
 
@@ -94,7 +102,21 @@ const ControlPanel: React.FC = () => {
     apiKey: '',
     ttsProvider: 'disabled',
     ttsVoice: '',
+    apiKeyDirty: false,
   });
+
+  const apiKeyPersistTimerRef = useRef<number | null>(null);
+
+  const remoteApiKey = typeof globalModelConfig?.apiKey === 'string' ? globalModelConfig.apiKey : '';
+  const displayApiKey = aiSettings.apiKeyDirty ? aiSettings.apiKey : remoteApiKey;
+
+  useEffect(() => {
+    return () => {
+      if (apiKeyPersistTimerRef.current == null) return;
+      window.clearTimeout(apiKeyPersistTimerRef.current);
+      apiKeyPersistTimerRef.current = null;
+    };
+  }, []);
 
   const modelPaths = useMemo(() => {
     const list = live2denvConfig?.VITE_MODEL_PATHS;
@@ -130,33 +152,22 @@ const ControlPanel: React.FC = () => {
   }, [currentModelPath, modelPaths]);
 
   const persistGlobalSettings = async (patch: Partial<GlobalUiSettings>) => {
-    const api = window.petAPI;
-    // 这些字段属于 globalModelConfig：需要通过 updateGlobalModelConfig 才能
-    // 触发主进程广播并让主窗口（PetCanvas/usePetStore）实时生效。
-    if (api?.updateGlobalModelConfig) {
-      try {
-        await api.updateGlobalModelConfig(patch);
-        return;
-      } catch (e) {
-        warn('controlPanel', 'globalSettings.persistFailed', { via: 'updateGlobalModelConfig', err: String(e) });
-        throw e;
-      }
+    try {
+      await updateGlobalModelConfig(patch);
+    } catch (e) {
+      warn('controlPanel', 'globalSettings.persistFailed', { via: 'configStore', err: String(e) });
+      throw e;
     }
-
-    warn('controlPanel', 'globalSettings.persistFailed', { via: 'missing.updateGlobalModelConfig' });
-    throw new Error('missing.updateGlobalModelConfig');
   };
 
   const persistModelConfig = (next: ModelConfig) => {
-    const api = window.petAPI;
-    api?.updateModelConfig?.({ modelPath: currentModelPath ?? undefined, patch: next }).catch(() => {
+    updateModelConfig({ modelPath: currentModelPath ?? undefined, patch: next }).catch(() => {
       // ignore
     });
   };
 
   const handleSelectModelPath = (nextPath: string) => {
-    const api = window.petAPI;
-    api?.updateLive2denvConfig?.({
+    updateLive2denvConfig({
       CURRENT_PATH: nextPath,
       LAST_SELECTED_AT: Date.now(),
     }).catch(() => {
@@ -165,20 +176,11 @@ const ControlPanel: React.FC = () => {
   };
 
   const handleAddModel = async () => {
-    const api = window.petAPI;
-    if (!api?.pickModelFile || !api.updateLive2denvConfig) {
-      warn('controlPanel', 'modelImport.capabilityMissing', {
-        hasPickModelFile: !!api?.pickModelFile,
-        hasUpdateLive2denvConfig: !!api?.updateLive2denvConfig,
-      });
-      return;
-    }
-
-    const modelDir = await api.pickModelFile();
+    const modelDir = await pickModelFile();
     if (!modelDir) return;
     const nextPaths = Array.from(new Set([...(modelPaths ?? []), modelDir]));
 
-    api.updateLive2denvConfig({
+    updateLive2denvConfig({
       VITE_MODEL_PATHS: nextPaths,
       CURRENT_PATH: modelDir,
       LAST_SELECTED_AT: Date.now(),
@@ -194,8 +196,7 @@ const ControlPanel: React.FC = () => {
     if (modelPaths.length <= 1) return;
     const nextPaths = modelPaths.filter((p) => p !== removePath);
     const nextCurrent = currentModelPath === removePath ? (nextPaths[0] ?? null) : currentModelPath;
-    const api = window.petAPI;
-    api?.updateLive2denvConfig?.({
+    updateLive2denvConfig({
       VITE_MODEL_PATHS: nextPaths,
       CURRENT_PATH: nextCurrent,
       LAST_SELECTED_AT: Date.now(),
@@ -271,10 +272,30 @@ const ControlPanel: React.FC = () => {
       {activeTab === 'ai' && (
         <AiSettingsPage
           apiBaseUrl={aiSettings.apiBaseUrl}
-          apiKey={aiSettings.apiKey}
+          apiKey={displayApiKey}
           ttsProvider={aiSettings.ttsProvider}
           ttsVoice={aiSettings.ttsVoice}
-          onChange={setAiSettings}
+          onChange={(next) => {
+            setAiSettings((prev) => ({
+              ...prev,
+              apiBaseUrl: next.apiBaseUrl,
+              apiKey: next.apiKey,
+              ttsProvider: next.ttsProvider,
+              ttsVoice: next.ttsVoice,
+              apiKeyDirty: next.apiKey !== remoteApiKey,
+            }));
+            if (next.apiKey === remoteApiKey) return;
+            if (apiKeyPersistTimerRef.current != null) {
+              window.clearTimeout(apiKeyPersistTimerRef.current);
+              apiKeyPersistTimerRef.current = null;
+            }
+            apiKeyPersistTimerRef.current = window.setTimeout(() => {
+              apiKeyPersistTimerRef.current = null;
+              updateGlobalModelConfig({ apiKey: next.apiKey }).catch((err) => {
+                warn('controlPanel', 'aiSettings.persistApiKeyFailed', { err: String(err) });
+              });
+            }, 250);
+          }}
         />
       )}
     </ControlPanelLayout>

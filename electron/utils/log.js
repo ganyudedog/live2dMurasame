@@ -1,14 +1,40 @@
 const TRACE_BUFFER_LIMIT = 800;
 const TRACE_SAMPLE_MIN_MS = 80;
 const TRACE_DEDUPE_WINDOW_MS = 450;
-const TRACE_RATE_LIMIT_PER_SEC = 35;
+const TRACE_RATE_LIMIT_PER_SEC = 28;
+
+const LEVEL_WEIGHT = {
+	debug: 10,
+	info: 20,
+	warn: 30,
+	error: 40,
+};
+
+const DEFAULT_TRACE_POLICY = {
+	//默认模式为“设计静音”：保持诊断关键信号，抑制拖动噪声。
+	minLevel: 'info',
+	enabledProfiles: ['default', 'layout', 'model', 'modelLoad', 'perf'],
+	quietProfiles: ['singleWriter', 'windowMove', 'jitter', 'align'],
+	// 不默认丢弃拖动主相位，改为走“静默档案 + 周期摘要”，避免“完全没输出”的错觉。
+	dropPhases: [],
+	summaryIntervalMs: 2500,
+};
 
 const traceBuffer = [];
 const sampleState = new Map();
 const dedupeState = new Map();
+const consoleSuppressedState = new Map();
 
 let rateWindowStart = Date.now();
 let rateCounter = 0;
+let lastSuppressedSummaryAt = 0;
+
+let tracePolicy = {
+	...DEFAULT_TRACE_POLICY,
+	enabledProfiles: new Set(DEFAULT_TRACE_POLICY.enabledProfiles),
+	quietProfiles: new Set(DEFAULT_TRACE_POLICY.quietProfiles),
+	dropPhases: new Set(DEFAULT_TRACE_POLICY.dropPhases),
+};
 
 const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
 const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -18,7 +44,30 @@ const ALLOWED_GROUP_FIELDS = {
 	resizeCore: ['requiredWidth', 'requiredWindowWidth', 'enforcedWindowWidth', 'normalizedWidth', 'targetWidth', 'targetHeight', 'desiredHeight', 'isEnlarge', 'resizeInFlight', 'priority', 'intentEpoch'],
 	window: ['innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'screenX', 'screenY', 'boundsWidth', 'boundsHeight', 'boundsX', 'boundsY', 'targetWindowWidth', 'pendingWidth', 'predictedBoundsX', 'predictedBoundsY', 'predictedBoundsWidth', 'predictedBoundsHeight', 'anchorCenter', 'anchorRight', 'targetX', 'targetY', 'mode', 'epoch', 'currentX', 'currentY', 'currentWidth', 'currentHeight', 'nextX', 'nextY', 'nextWidth', 'nextHeight', 'dragActiveUntil', 'settleUntil', 'settleApplied', 'lastAppliedIntentId'],
 	layout: ['baseFrameWidthDom', 'baseFrameLeftDom', 'visibleFrameWidthDom', 'visibleFrameCenterDomX', 'boundsWidthDom', 'boundsHeightDom', 'screenWidthDom', 'screenHeightDom', 'canvasRectWidthDom', 'canvasRectHeightDom', 'zoneTarget', 'gapEffective', 'effectiveContainerWidth', 'leftCapacity', 'rightCapacity', 'leftShortfallPx', 'rightShortfallPx', 'capacityShortfall', 'boundsToScreenRatio', 'kind', 'source', 'reason', 'stateFrom', 'stateTo'],
-	model: ['scaleUsed', 'modelHeightDom'],
+	model: [
+		'scaleUsed',
+		'modelHeightDom',
+		'hydrated',
+		'hasActiveModelFileUrl',
+		'activeModelFileUrl',
+		'currentPath',
+		'resolvedModelPath',
+		'settingsLoaded',
+		'error',
+		'stageChildren',
+		'modelScaleX',
+		'modelScaleY',
+		'modelX',
+		'modelY',
+		'boundsWidth',
+		'boundsHeight',
+		'localBoundsWidth',
+		'localBoundsHeight',
+		'containerWidth',
+		'containerHeight',
+		'rendererWidth',
+		'rendererHeight',
+	],
 	perf: ['fps', 'frameId', 'costMs'],
 };
 
@@ -29,6 +78,7 @@ const TRACE_PROFILE_FIELDS = {
 	singleWriter: ['request', 'window', 'layout', 'resizeCore'],
 	windowMove: ['request', 'window', 'layout'],
 	model: ['request', 'model', 'layout'],
+	modelLoad: ['request', 'model'],
 	perf: ['request', 'perf', 'model'],
 	default: ['request', 'resizeCore', 'window'],
 };
@@ -39,6 +89,41 @@ const pushTraceBuffer = (entry) => {
 		traceBuffer.splice(0, traceBuffer.length - TRACE_BUFFER_LIMIT);
 	}
 };
+
+const normalizeSetInput = (value) => {
+	if (Array.isArray(value)) return new Set(value.filter((v) => typeof v === 'string' && v));
+	if (value instanceof Set) return new Set(Array.from(value).filter((v) => typeof v === 'string' && v));
+	return null;
+};
+
+export const setDebugTracePolicy = (patch = {}) => {
+	//  运行时安全更新：只允许已知的标量/集合字段。
+	if (!isPlainObject(patch)) return getDebugTracePolicy();
+
+	if (typeof patch.minLevel === 'string' && LEVEL_WEIGHT[patch.minLevel]) {
+		tracePolicy.minLevel = patch.minLevel;
+	}
+	if (typeof patch.summaryIntervalMs === 'number' && Number.isFinite(patch.summaryIntervalMs) && patch.summaryIntervalMs >= 500) {
+		tracePolicy.summaryIntervalMs = Math.floor(patch.summaryIntervalMs);
+	}
+
+	const enabledProfiles = normalizeSetInput(patch.enabledProfiles);
+	if (enabledProfiles) tracePolicy.enabledProfiles = enabledProfiles;
+	const quietProfiles = normalizeSetInput(patch.quietProfiles);
+	if (quietProfiles) tracePolicy.quietProfiles = quietProfiles;
+	const dropPhases = normalizeSetInput(patch.dropPhases);
+	if (dropPhases) tracePolicy.dropPhases = dropPhases;
+
+	return getDebugTracePolicy();
+};
+
+export const getDebugTracePolicy = () => ({
+	minLevel: tracePolicy.minLevel,
+	summaryIntervalMs: tracePolicy.summaryIntervalMs,
+	enabledProfiles: Array.from(tracePolicy.enabledProfiles),
+	quietProfiles: Array.from(tracePolicy.quietProfiles),
+	dropPhases: Array.from(tracePolicy.dropPhases),
+});
 
 const pickGroup = (rawGroup, allowedFields) => {
 	if (!isPlainObject(rawGroup)) return undefined;
@@ -73,6 +158,7 @@ const normalizeTracePayload = (rawPayload = {}) => {
 	const model = pickGroup(rawPayload.model, ALLOWED_GROUP_FIELDS.model) ?? pickGroup(rawPayload, ALLOWED_GROUP_FIELDS.model);
 	const perf = pickGroup(rawPayload.perf, ALLOWED_GROUP_FIELDS.perf) ?? pickGroup(rawPayload, ALLOWED_GROUP_FIELDS.perf);
 
+	// 构建严格的形状，以便下游过滤器可以依赖于稳定的键。
 	const normalized = {
 		kind,
 		profile,
@@ -145,6 +231,68 @@ const selectFieldsByProfile = (normalized) => {
 	return output;
 };
 
+const shouldKeepTrace = (normalized) => {
+	// 第1道门：保留 warn/error；其余按 level/profile/phase 策略过滤。
+	const level = normalized?.level ?? 'debug';
+	if (level === 'warn' || level === 'error') return true;
+
+	const profile = normalized?.profile ?? 'default';
+	// quietProfiles 即使低于 minLevel 也会保留，用于缓冲与摘要统计。
+	if (tracePolicy.quietProfiles.has(profile)) return true;
+
+	const minLevelWeight = LEVEL_WEIGHT[tracePolicy.minLevel] ?? LEVEL_WEIGHT.info;
+	const levelWeight = LEVEL_WEIGHT[level] ?? LEVEL_WEIGHT.debug;
+	if (levelWeight < minLevelWeight) return false;
+
+	if (tracePolicy.enabledProfiles.size > 0 && !tracePolicy.enabledProfiles.has(profile)) return false;
+
+	const phase = normalized?.request?.phase;
+	if (typeof phase === 'string' && phase && tracePolicy.dropPhases.has(phase)) return false;
+
+	return true;
+};
+
+const shouldPrintToConsole = (normalized) => {
+	// 门2：控制台通道有意收窄跟踪缓冲通道。
+	const level = normalized?.level ?? 'debug';
+	if (level === 'warn' || level === 'error') return true;
+
+	const profile = normalized?.profile ?? 'default';
+	if (tracePolicy.quietProfiles.has(profile)) return false;
+
+	// 默认情况下仅为模型诊断保留信息;调试跟踪保留在缓冲区中。
+	if (level === 'info') return profile === 'modelLoad' || profile === 'model' || profile === 'perf';
+	return false;
+};
+
+const markConsoleSuppressed = (normalized) => {
+	// 定期发出抑制摘要，以便知道什么被折叠。
+	const profile = normalized?.profile ?? 'default';
+	const phase = normalized?.request?.phase ?? 'na';
+	const key = `${profile}|${phase}`;
+	const now = Date.now();
+	const existing = consoleSuppressedState.get(key) ?? { count: 0, profile, phase };
+	existing.count += 1;
+	consoleSuppressedState.set(key, existing);
+
+	if (now - lastSuppressedSummaryAt < tracePolicy.summaryIntervalMs) return;
+	lastSuppressedSummaryAt = now;
+
+	const top = Array.from(consoleSuppressedState.values())
+		.sort((a, b) => b.count - a.count)
+		.slice(0, 3)
+		.map((item) => `${item.profile}/${item.phase}:${item.count}`)
+		.join(', ');
+
+	if (!top) return;
+	if (typeof console.info === 'function') {
+		console.info('[pet][trace-summary]', { suppressed: top });
+	} else {
+		console.log('[pet][trace-summary]', { suppressed: top });
+	}
+	consoleSuppressedState.clear();
+};
+
 export const logPetEvent = (event, payload = {}, options = {}) => {
 	const level = options.level === 'warn' || options.level === 'error' || options.level === 'debug' ? options.level : 'info';
 	const entry = { t: Date.now(), ns: 'pet', event, payload };
@@ -167,8 +315,10 @@ export const logPetEvent = (event, payload = {}, options = {}) => {
 };
 
 export const logDebugTrace = (rawPayload = {}) => {
+	// 处理管道：标准化 -> 策略过滤 -> 全局限流/采样/去重 -> 输出分流。
 	const normalized = normalizeTracePayload(rawPayload);
 	if (!normalized) return;
+	if (!shouldKeepTrace(normalized)) return;
 	if (!shouldPassRateLimit()) return;
 	if (!shouldPassSample(normalized)) return;
 	const dedupeMeta = withDedupe(normalized);
@@ -182,18 +332,26 @@ export const logDebugTrace = (rawPayload = {}) => {
 		dedupe: dedupeMeta.suppressed > 0 ? { suppressed: dedupeMeta.suppressed } : undefined,
 	};
 
+	pushTraceBuffer({ t: Date.now(), ns: 'pet', event: 'trace', payload });
+
+	if (!shouldPrintToConsole(normalized)) {
+		markConsoleSuppressed(normalized);
+		return;
+	}
+
 	const level = normalized.level;
 	if (level === 'warn') {
 		console.warn('[pet][trace]', payload);
 	} else if (level === 'error') {
 		console.error('[pet][trace]', payload);
+	} else if (level === 'info') {
+		if (typeof console.info === 'function') console.info('[pet][trace]', payload);
+		else console.log('[pet][trace]', payload);
 	} else if (typeof console.debug === 'function') {
 		console.debug('[pet][trace]', payload);
 	} else {
 		console.log('[pet][trace]', payload);
 	}
-
-	pushTraceBuffer({ t: Date.now(), ns: 'pet', event: 'trace', payload });
 };
 
 export const getRecentPetLogs = () => traceBuffer.slice();

@@ -1,3 +1,5 @@
+export {};
+
 declare global {
   // 下面是一些全局类型声明，供整个项目使用。
 
@@ -13,7 +15,10 @@ declare global {
     autoLaunch?: boolean;
     forcedFollow?: boolean;
     debugModeEnabled?: boolean;
+    apiKey?: string;
   }
+
+  type PetGlobalModelConfig = PetGlobalModelConfigPayload;
 
   // 此处对应live2denv.json中的字段
   interface PetLive2denvConfig {
@@ -24,6 +29,16 @@ declare global {
   }
 
   // 模型细节配置
+  interface PetRagConfig {
+    enabled?: boolean;
+    topK?: number;
+    threshold?: number;
+    knowledgeBasePath?: string;
+    embeddingModel?: string;
+    rerankerModel?: string;
+    [key: string]: unknown;
+  }
+
   interface PetVisualFrameConfig {
     ratio?: number;
     minPx?: number;
@@ -54,6 +69,7 @@ declare global {
     visualFrame?: PetVisualFrameConfig;
     bubble?: PetBubbleConfig;
     interactionZones?: Record<string, PetInteractionZoneConfig>;
+    rag?: PetRagConfig;
     [key: string]: unknown;
   }
 
@@ -167,7 +183,7 @@ declare global {
   }
 
   interface Window {
-    petAPI?: PetAPI;
+    petAPI: PetAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
   }
 }

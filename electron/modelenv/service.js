@@ -47,6 +47,12 @@ const mergeModelConfig = (base, patch = {}) => {
       next.interactionZones[zoneKey] = clone(zoneValue);
     });
   }
+  if (patch.rag && typeof patch.rag === 'object') {
+    next.rag = {
+      ...(clone(base.rag) || {}),
+      ...clone(patch.rag),
+    };
+  }
   return next;
 };
 

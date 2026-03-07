@@ -9,6 +9,7 @@ import {
   DEFAULT_GLOBAL_MODEL_CONFIG,
   normalizeLive2denvConfig,
   normalizeGlobalModelConfig,
+  normalizeModelConfig,
 } from './globalConfig.js';
 
 const CONFIG_DIR_NAME = 'config';
@@ -110,17 +111,17 @@ export const saveGlobalModelConfig = (settings) => {
 export const loadModelConfig = (modelDir) => {
   ensureConfigDirectories();
   const configPath = getModelConfigPathFor(modelDir);
-  const config = readJsonFile(configPath, DEFAULT_MODEL_CONFIG);
+  const config = normalizeModelConfig(readJsonFile(configPath, DEFAULT_MODEL_CONFIG));
   if (!fs.existsSync(configPath)) {
     writeJsonFile(configPath, config);
   }
-  return { ...DEFAULT_MODEL_CONFIG, ...config };
+  return config;
 };
 
 export const saveModelConfig = (modelDir, config) => {
   ensureConfigDirectories();
   const configPath = getModelConfigPathFor(modelDir);
-  const merged = { ...DEFAULT_MODEL_CONFIG, ...config };
+  const merged = normalizeModelConfig(config);
   writeJsonFile(configPath, merged);
   return merged;
 };
@@ -150,4 +151,5 @@ export {
   DEFAULT_TOUCH_PRIORITY,
   normalizeLive2denvConfig,
   normalizeGlobalModelConfig,
+  normalizeModelConfig,
 };

@@ -12,7 +12,7 @@ import {
     listModelPaths,
     getLastConfigOverrides,
     getDefaultModelConfig,
-} from './runtime/index.js';
+} from './runtime/allEnv.js';
 import {
     ensureGlobalModelConfigLoaded,
     overrideGlobalModelConfigCache,
@@ -877,6 +877,7 @@ const sanitizeGlobalModelConfigPatch = (patch) => {
     if (typeof patch.scale === 'number') safePatch.scale = patch.scale;
     if (typeof patch.forcedFollow === 'boolean') safePatch.forcedFollow = patch.forcedFollow;
     if (typeof patch.debugModeEnabled === 'boolean') safePatch.debugModeEnabled = patch.debugModeEnabled;
+    if (typeof patch.apiKey === 'string') safePatch.apiKey = patch.apiKey;
     return safePatch;
 };
 

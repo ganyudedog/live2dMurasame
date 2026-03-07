@@ -24,6 +24,14 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     headRatio: null,
   },
   interactionZones: {},
+  rag: {
+    enabled: false,
+    topK: 3,
+    threshold: 0.6,
+    knowledgeBasePath: '',
+    embeddingModel: '',
+    rerankerModel: '',
+  },
 };
 
 export const DEFAULT_MODELS: ModelEntry[] = [

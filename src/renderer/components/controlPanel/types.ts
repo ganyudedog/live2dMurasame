@@ -36,4 +36,12 @@ export type ModelConfig = {
   visualFrame: VisualFrameConfig;
   bubble: BubbleConfig;
   interactionZones: Record<string, { heightRange: [number, number]; motions: string[] }>;
+  rag: {
+    enabled: boolean;
+    topK: number;
+    threshold: number;
+    knowledgeBasePath: string;
+    embeddingModel: string;
+    rerankerModel: string;
+  };
 };

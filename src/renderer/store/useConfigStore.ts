@@ -29,6 +29,16 @@ interface ConfigState {
   // 是否成功加载到初始快照
   hydrated: boolean;
   refresh: () => Promise<void>;
+  updateGlobalModelConfig: (patch: PetGlobalModelConfigPayload) => Promise<PetGlobalModelConfig | null>;
+  updateLive2denvConfig: (patch: Partial<PetLive2denvConfig>) => Promise<PetLive2denvConfig | null>;
+  updateModelConfig: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{
+    modelPath: string | null;
+    modelKey?: string | null;
+    activeModelFileUrl?: string | null;
+    config: PetModelConfig | null;
+    configOverrides: Record<string, string>;
+  } | null>;
+  pickModelFile: () => Promise<string | null>;
 }
 
 const getInitialSnapshot = (): PetConfigSnapshot | undefined => {
@@ -154,6 +164,80 @@ export const useConfigStore = create<ConfigState>((set) => {
         });
       } catch (e) {
         warn('config', 'refresh.failed', { err: String(e) });
+        throw e;
+      }
+    },
+    updateGlobalModelConfig: async (patch) => {
+      const api = window.petAPI;
+      if (!api?.updateGlobalModelConfig) {
+        warn('config', 'updateGlobalModelConfig.missingApi');
+        return null;
+      }
+      try {
+        const next = await api.updateGlobalModelConfig(patch);
+        set((state) => ({
+          globalModelConfig: (next as PetGlobalModelConfig | undefined) ?? state.globalModelConfig,
+        }));
+        return (next as PetGlobalModelConfig | undefined) ?? null;
+      } catch (e) {
+        warn('config', 'updateGlobalModelConfig.failed', { err: String(e) });
+        throw e;
+      }
+    },
+    updateLive2denvConfig: async (patch) => {
+      const api = window.petAPI;
+      if (!api?.updateLive2denvConfig) {
+        warn('config', 'updateLive2denvConfig.missingApi');
+        return null;
+      }
+      try {
+        const next = await api.updateLive2denvConfig(patch);
+        set((state) => {
+          const resolvedPath = next?.CURRENT_PATH ?? state.activeModelPath;
+          return {
+            live2denvConfig: next ?? state.live2denvConfig,
+            activeModelPath: typeof resolvedPath === 'string' ? resolvedPath : state.activeModelPath,
+          };
+        });
+        return next ?? null;
+      } catch (e) {
+        warn('config', 'updateLive2denvConfig.failed', { err: String(e) });
+        throw e;
+      }
+    },
+    updateModelConfig: async (options) => {
+      const api = window.petAPI;
+      if (!api?.updateModelConfig) {
+        warn('config', 'updateModelConfig.missingApi');
+        return null;
+      }
+      try {
+        const result = await api.updateModelConfig(options);
+        if (!result) return null;
+        set((state) => ({
+          modelConfig: result.config ?? state.modelConfig,
+          activeModelPath: result.modelPath ?? state.activeModelPath,
+          modelKey: result.modelKey ?? state.modelKey,
+          activeModelFileUrl: result.activeModelFileUrl ?? state.activeModelFileUrl,
+          configOverrides: result.configOverrides ?? state.configOverrides,
+        }));
+        return result;
+      } catch (e) {
+        warn('config', 'updateModelConfig.failed', { err: String(e) });
+        throw e;
+      }
+    },
+    pickModelFile: async () => {
+      const api = window.petAPI;
+      if (!api?.pickModelFile) {
+        warn('config', 'pickModelFile.missingApi');
+        return null;
+      }
+      try {
+        const modelDir = await api.pickModelFile();
+        return typeof modelDir === 'string' ? modelDir : null;
+      } catch (e) {
+        warn('config', 'pickModelFile.failed', { err: String(e) });
         throw e;
       }
     },

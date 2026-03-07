@@ -7,6 +7,7 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   showDragHandleOnHover: true,
   forcedFollow: false,
   debugModeEnabled: false,
+  apiKey: '',
 };
 
 // Live2denvConfig: liv2denv.json（模型列表/当前模型等），不包含全局模型设置。
@@ -31,6 +32,54 @@ export const DEFAULT_MODEL_CONFIG = {
     headRatio: null,
   },
   interactionZones: {},
+  rag: {
+    enabled: false,
+    topK: 3,
+    threshold: 0.6,
+    knowledgeBasePath: '',
+    embeddingModel: '',
+    rerankerModel: '',
+  },
+};
+
+const normalizeRagConfig = (input = {}) => {
+  const next = { ...DEFAULT_MODEL_CONFIG.rag };
+  if (!input || typeof input !== 'object') return next;
+  if (typeof input.enabled === 'boolean') next.enabled = input.enabled;
+  if (Number.isFinite(input.topK)) next.topK = input.topK;
+  if (Number.isFinite(input.threshold)) next.threshold = input.threshold;
+  if (typeof input.knowledgeBasePath === 'string') next.knowledgeBasePath = input.knowledgeBasePath;
+  if (typeof input.embeddingModel === 'string') next.embeddingModel = input.embeddingModel;
+  if (typeof input.rerankerModel === 'string') next.rerankerModel = input.rerankerModel;
+  return next;
+};
+
+export const normalizeModelConfig = (input = {}) => {
+  const next = {
+    ...DEFAULT_MODEL_CONFIG,
+    ...(input || {}),
+  };
+
+  next.touchMap = Array.isArray(next.touchMap)
+    ? next.touchMap.filter((v) => Number.isFinite(v))
+    : [...DEFAULT_MODEL_CONFIG.touchMap];
+
+  next.visualFrame = {
+    ...DEFAULT_MODEL_CONFIG.visualFrame,
+    ...((input && input.visualFrame) || {}),
+  };
+
+  next.bubble = {
+    ...DEFAULT_MODEL_CONFIG.bubble,
+    ...((input && input.bubble) || {}),
+  };
+
+  next.interactionZones = (input && input.interactionZones && typeof input.interactionZones === 'object')
+    ? input.interactionZones
+    : {};
+
+  next.rag = normalizeRagConfig(input && input.rag);
+  return next;
 };
 
 export const normalizeGlobalModelConfig = (settings = {}) => {
@@ -52,6 +101,9 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   }
   if (typeof settings.debugModeEnabled === 'boolean') {
     next.debugModeEnabled = settings.debugModeEnabled;
+  }
+  if (typeof settings.apiKey === 'string') {
+    next.apiKey = settings.apiKey;
   }
   return next;
 };

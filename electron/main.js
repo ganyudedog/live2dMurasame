@@ -3,7 +3,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
     initializeRuntimeConfig,
-    reloadLive2denvConfig,
     getConfigSnapshot,
     getLive2denvConfigCache,
     applyLive2denvConfigPatch,

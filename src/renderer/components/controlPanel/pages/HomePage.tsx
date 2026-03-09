@@ -1,127 +1,16 @@
-import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { GlobalUiSettings, ModelConfig, ModelEntry } from '../types';
 import { sharedStoreClient } from '../../../shared/sharedStoreClient';
+import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
 
-const BOOLEAN_COMMIT_DEBOUNCE_MS = 280;
 const SCALE_PERSIST_DEBOUNCE_MS = 250;
 
-const useOptimisticBoolean = (options: {
-  remoteValue: boolean;
-  onCommit: (next: boolean) => Promise<void>;
-}) => {
-  const { remoteValue, onCommit } = options;
-
-  type State = {
-    draft: boolean;
-    desired: boolean;
-    pending: boolean;
-    pendingRequestId: number | null;
-  };
-
-  type Action =
-    | { type: 'commit'; next: boolean; requestId: number }
-    | { type: 'ack' }
-    | { type: 'rollback'; rollback: boolean; requestId: number };
-
-  const reducer = (state: State, action: Action): State => {
-    if (action.type === 'commit') {
-      return {
-        draft: action.next,
-        desired: action.next,
-        pending: true,
-        pendingRequestId: action.requestId,
-      };
-    }
-    if (action.type === 'ack') {
-      return {
-        ...state,
-        pending: false,
-        pendingRequestId: null,
-      };
-    }
-    if (action.type === 'rollback') {
-      if (state.pendingRequestId !== action.requestId) return state;
-      return {
-        draft: action.rollback,
-        desired: action.rollback,
-        pending: false,
-        pendingRequestId: null,
-      };
-    }
-    return state;
-  };
-
-  const [state, dispatch] = useReducer(reducer, remoteValue, (initial) => ({
-    draft: initial,
-    desired: initial,
-    pending: false,
-    pendingRequestId: null,
-  }));
-
-  const remoteRef = useRef(remoteValue);
-  const requestIdRef = useRef(0);
-
-  // 去抖合并：连续点击时只提交最后一次，避免 IPC/写盘/广播风暴导致卡顿。
-  const commitTimerRef = useRef<number | null>(null);
-  const latestCommitRef = useRef<{ next: boolean; requestId: number } | null>(null);
-
-  useEffect(() => {
-    remoteRef.current = remoteValue;
-  }, [remoteValue]);
-
-  useEffect(() => {
-    return () => {
-      // 卸载时尽量把最后一次变更落盘。
-      if (commitTimerRef.current == null) return;
-
-      window.clearTimeout(commitTimerRef.current);
-      commitTimerRef.current = null;
-      const latest = latestCommitRef.current;
-      if (!latest) return;
-      latestCommitRef.current = null;
-      onCommit(latest.next).catch(() => {
-        // ignore
-      });
-    };
-  }, [onCommit]);
-
-  useEffect(() => {
-    if (!state.pending) return;
-
-    // 只把“远端值 == 我期望值”当作 ACK；其他远端更新先不覆盖本地输入。
-    if (remoteValue === state.desired) {
-      // 用微任务调度，避免在 effect 中同步触发 reducer 更新导致级联渲染。
-      queueMicrotask(() => dispatch({ type: 'ack' }));
-    }
-  }, [remoteValue, state.desired, state.pending]);
-
-  const commit = (next: boolean) => {
-    const requestId = ++requestIdRef.current;
-    dispatch({ type: 'commit', next, requestId });
-
-    latestCommitRef.current = { next, requestId };
-    if (commitTimerRef.current != null) {
-      window.clearTimeout(commitTimerRef.current);
-      commitTimerRef.current = null;
-    }
-
-    commitTimerRef.current = window.setTimeout(() => {
-      commitTimerRef.current = null;
-      const latest = latestCommitRef.current;
-      if (!latest) return;
-      latestCommitRef.current = null;
-      onCommit(latest.next).catch(() => {
-        // 只处理最新一次提交的失败；更旧的失败不回滚，避免乱序回弹。
-        if (requestIdRef.current !== latest.requestId) return;
-        const rollback = remoteRef.current;
-        dispatch({ type: 'rollback', rollback, requestId: latest.requestId });
-      });
-    }, BOOLEAN_COMMIT_DEBOUNCE_MS);
-  };
-
-  // pending 时展示本地 draft；否则展示远端值（避免 stale state 覆盖外部更新）。
-  const draft = state.pending ? state.draft : remoteValue;
-  return { draft, commit };
+const isSameRagProfile = (left: ModelConfig['rag']['profile'], right: ModelConfig['rag']['profile']) => {
+  return left.personal === right.personal
+    && left.speakingStyle === right.speakingStyle
+    && left.relation === right.relation
+    && left.banned === right.banned
+    && left.world === right.world;
 };
 
 export default function HomePage({
@@ -136,7 +25,7 @@ export default function HomePage({
   globalSettings: GlobalUiSettings;
   onGlobalSettingsChange: (patch: Partial<GlobalUiSettings>) => Promise<void>;
   modelConfig: ModelConfig;
-  onModelConfigChange: (next: ModelConfig) => void;
+  onModelConfigChange: (next: ModelConfig) => Promise<void>;
   onGotoModels: () => void;
   }) {
   // 接入了sharedWorked，无需使用本地ref来防止ipc抖动
@@ -149,6 +38,12 @@ export default function HomePage({
   useEffect(() => {
     latestScaleRef.current = globalSettings.scale;
   }, [globalSettings.scale]);
+
+  const modelConfigRef = useRef(modelConfig);
+
+  useEffect(() => {
+    modelConfigRef.current = modelConfig;
+  }, [modelConfig]);
 
   useEffect(() => {
     return () => {
@@ -165,25 +60,40 @@ export default function HomePage({
   }, [onGlobalSettingsChange]);
 
   // 使用本地state来避免 ipc 抖动导致的输入体验不佳（并且避免远端回写覆盖本地输入）。
-  const ignoreMouse = useOptimisticBoolean({
+  const ignoreMouse = useDebouncedRemoteDraft({
     remoteValue: globalSettings.ignoreMouse,
     onCommit: (next) => onGlobalSettingsChange({ ignoreMouse: next }),
   });
-  const showDragHandleOnHover = useOptimisticBoolean({
+  const showDragHandleOnHover = useDebouncedRemoteDraft({
     remoteValue: globalSettings.showDragHandleOnHover,
     onCommit: (next) => onGlobalSettingsChange({ showDragHandleOnHover: next }),
   });
-  const autoLaunch = useOptimisticBoolean({
+  const autoLaunch = useDebouncedRemoteDraft({
     remoteValue: globalSettings.autoLaunch,
     onCommit: (next) => onGlobalSettingsChange({ autoLaunch: next }),
   });
-  const debugModeEnabled = useOptimisticBoolean({
+  const debugModeEnabled = useDebouncedRemoteDraft({
     remoteValue: globalSettings.debugModeEnabled,
     onCommit: (next) => onGlobalSettingsChange({ debugModeEnabled: next }),
   });
-  const forcedFollow = useOptimisticBoolean({
+  const forcedFollow = useDebouncedRemoteDraft({
     remoteValue: globalSettings.forcedFollow,
     onCommit: (next) => onGlobalSettingsChange({ forcedFollow: next }),
+  });
+  const ragProfileDraft = useDebouncedRemoteDraft<ModelConfig['rag']['profile']>({
+    remoteValue: modelConfig.rag.profile,
+    debounceMs: 260,
+    isEqual: isSameRagProfile,
+    onCommit: (nextProfile) => {
+      const current = modelConfigRef.current;
+      return onModelConfigChange({
+        ...current,
+        rag: {
+          ...current.rag,
+          profile: nextProfile,
+        },
+      });
+    },
   });
 
   return (
@@ -321,18 +231,12 @@ export default function HomePage({
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={3}
-                value={modelConfig.rag.profile.personal}
+                value={ragProfileDraft.draft.personal}
                 placeholder="例如：傲娇但礼貌，偏短句，喜欢吐槽"
                 onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      profile: {
-                        ...modelConfig.rag.profile,
-                        personal: e.target.value,
-                      },
-                    },
+                  ragProfileDraft.commit({
+                    ...ragProfileDraft.draft,
+                    personal: e.target.value,
                   })
                 }
               />
@@ -345,18 +249,12 @@ export default function HomePage({
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={2}
-                value={modelConfig.rag.profile.speakingStyle}
+                value={ragProfileDraft.draft.speakingStyle}
                 placeholder="例如：口语化、每句不超过25字、少用书面词"
                 onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      profile: {
-                        ...modelConfig.rag.profile,
-                        speakingStyle: e.target.value,
-                      },
-                    },
+                  ragProfileDraft.commit({
+                    ...ragProfileDraft.draft,
+                    speakingStyle: e.target.value,
                   })
                 }
               />
@@ -369,18 +267,12 @@ export default function HomePage({
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={2}
-                value={modelConfig.rag.profile.relation}
+                value={ragProfileDraft.draft.relation}
                 placeholder="例如：青梅竹马、略傲娇但会照顾人"
                 onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      profile: {
-                        ...modelConfig.rag.profile,
-                        relation: e.target.value,
-                      },
-                    },
+                  ragProfileDraft.commit({
+                    ...ragProfileDraft.draft,
+                    relation: e.target.value,
                   })
                 }
               />
@@ -393,18 +285,12 @@ export default function HomePage({
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={2}
-                value={modelConfig.rag.profile.banned}
+                value={ragProfileDraft.draft.banned}
                 placeholder="例如：禁止人身攻击、禁止编造事实"
                 onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      profile: {
-                        ...modelConfig.rag.profile,
-                        banned: e.target.value,
-                      },
-                    },
+                  ragProfileDraft.commit({
+                    ...ragProfileDraft.draft,
+                    banned: e.target.value,
                   })
                 }
               />
@@ -417,18 +303,12 @@ export default function HomePage({
               <textarea
                 className="textarea textarea-sm textarea-bordered w-full"
                 rows={3}
-                value={modelConfig.rag.profile.world}
+                value={ragProfileDraft.draft.world}
                 placeholder="例如：故事发生在架空近未来学园都市"
                 onChange={(e) =>
-                  onModelConfigChange({
-                    ...modelConfig,
-                    rag: {
-                      ...modelConfig.rag,
-                      profile: {
-                        ...modelConfig.rag.profile,
-                        world: e.target.value,
-                      },
-                    },
+                  ragProfileDraft.commit({
+                    ...ragProfileDraft.draft,
+                    world: e.target.value,
                   })
                 }
               />

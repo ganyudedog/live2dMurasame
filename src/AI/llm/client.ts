@@ -43,7 +43,7 @@ export const requestStage2LLM = async (
       temperature: typeof req.temperature === 'number' ? req.temperature : (cfg.temperature ?? 0.4),
       messages: [
         { role: 'system', content: buildStage2SystemPrompt() },
-        { role: 'user', content: buildStage2UserPrompt({ userText: req.userText }) },
+        { role: 'user', content: buildStage2UserPrompt({ userText: req.userText, ragContext: req.ragContext }) },
       ],
       response_format: { type: 'json_object' },
     },

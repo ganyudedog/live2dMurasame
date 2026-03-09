@@ -193,6 +193,7 @@ declare global {
     onLive2denvConfigUpdated?: (callback: (payload: { live2denvConfig?: PetLive2denvConfig | null; globalModelConfig?: PetGlobalModelConfig | null; activeModelPath?: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
     getModelConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
     updateModelConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
+    readRagTextFile?: (payload: { knowledgeBasePath?: string; modelPath?: string }) => Promise<{ ok: boolean; path: string | null; content: string; error?: string } | undefined>;
     listModelPaths?: () => Promise<string[] | undefined>;
     pickModelFile?: () => Promise<string | null | undefined>;
     onModelConfigUpdated?: (callback: (payload: { modelPath?: string | null; modelFileUrl?: string | null; modelKey?: string | null; config?: PetModelConfig | null; configOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;

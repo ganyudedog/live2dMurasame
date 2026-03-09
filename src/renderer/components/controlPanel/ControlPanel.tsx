@@ -5,6 +5,7 @@ import HomePage from './pages/HomePage';
 import InteractionPage from './pages/InteractionPage';
 import AiSettingsPage from './pages/AiSettingsPage';
 import ModelSelectPage from './pages/ModelSelectPage';
+import { useDebouncedRemoteDraft } from './hooks/useDebouncedRemoteDraft';
 import { useThemeMode } from './theme';
 import type { ControlPanelTabKey, ModelConfig, ModelEntry, GlobalUiSettings } from './types';
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
@@ -46,6 +47,13 @@ const buildRagConfig = (
       ...retrievalSource,
     },
   };
+};
+
+const isSameGlobalAiDraft = (
+  left: { apiBaseUrl: string; apiKey: string },
+  right: { apiBaseUrl: string; apiKey: string },
+) => {
+  return left.apiBaseUrl === right.apiBaseUrl && left.apiKey === right.apiKey;
 };
 
 const ControlPanel: React.FC = () => {
@@ -124,28 +132,28 @@ const ControlPanel: React.FC = () => {
   const [segmentActionsByModel, setSegmentActionsByModel] = useState<Record<string, string[]>>({});
 
   const [aiSettings, setAiSettings] = useState({
-    apiBaseUrl: '',
-    apiKey: '',
     ttsProvider: 'disabled',
     ttsVoice: '',
-    apiKeyDirty: false,
-    apiBaseUrlDirty: false,
   });
-
-  const apiKeyPersistTimerRef = useRef<number | null>(null);
 
   const remoteApiKey = typeof globalModelConfig?.apiKey === 'string' ? globalModelConfig.apiKey : '';
   const remoteApiBaseUrl = typeof globalModelConfig?.baseURL === 'string' ? globalModelConfig.baseURL : '';
-  const displayApiBaseUrl = aiSettings.apiBaseUrlDirty ? aiSettings.apiBaseUrl : remoteApiBaseUrl;
-  const displayApiKey = aiSettings.apiKeyDirty ? aiSettings.apiKey : remoteApiKey;
-
-  useEffect(() => {
-    return () => {
-      if (apiKeyPersistTimerRef.current == null) return;
-      window.clearTimeout(apiKeyPersistTimerRef.current);
-      apiKeyPersistTimerRef.current = null;
-    };
-  }, []);
+  const globalAiDraft = useDebouncedRemoteDraft({
+    remoteValue: {
+      apiBaseUrl: remoteApiBaseUrl,
+      apiKey: remoteApiKey,
+    },
+    debounceMs: 250,
+    isEqual: isSameGlobalAiDraft,
+    onCommit: async (next) => {
+      try {
+        await updateGlobalModelConfig({ apiKey: next.apiKey, baseURL: next.apiBaseUrl });
+      } catch (e) {
+        warn('controlPanel', 'aiSettings.persistGlobalFailed', { err: String(e) });
+        throw e;
+      }
+    },
+  });
 
   const modelPaths = useMemo(() => {
     const list = live2denvConfig?.VITE_MODEL_PATHS;
@@ -189,10 +197,13 @@ const ControlPanel: React.FC = () => {
     }
   };
 
-  const persistModelConfig = (next: ModelConfig) => {
-    updateModelConfig({ modelPath: currentModelPath ?? undefined, patch: next }).catch(() => {
-      // ignore
-    });
+  const persistModelConfig = async (next: ModelConfig) => {
+    try {
+      await updateModelConfig({ modelPath: currentModelPath ?? undefined, patch: next });
+    } catch (e) {
+      warn('controlPanel', 'modelConfig.persistFailed', { err: String(e) });
+      throw e;
+    }
   };
 
   const handleSelectModelPath = (nextPath: string) => {
@@ -272,7 +283,7 @@ const ControlPanel: React.FC = () => {
           onGlobalSettingsChange={persistGlobalSettings}
           modelConfig={modelConfig}
           onModelConfigChange={(next) => {
-            persistModelConfig(next);
+            return persistModelConfig(next);
           }}
           onGotoModels={() => setActiveTab('models')}
         />
@@ -300,33 +311,23 @@ const ControlPanel: React.FC = () => {
 
       {activeTab === 'ai' && (
         <AiSettingsPage
-          apiBaseUrl={displayApiBaseUrl}
-          apiKey={displayApiKey}
+          apiBaseUrl={globalAiDraft.draft.apiBaseUrl}
+          apiKey={globalAiDraft.draft.apiKey}
           ttsProvider={aiSettings.ttsProvider}
           ttsVoice={aiSettings.ttsVoice}
           onChange={(next) => {
-            const baseUrlDirty = next.apiBaseUrl !== remoteApiBaseUrl;
-            const apiKeyDirty = next.apiKey !== remoteApiKey;
             setAiSettings((prev) => ({
               ...prev,
-              apiBaseUrl: next.apiBaseUrl,
-              apiKey: next.apiKey,
               ttsProvider: next.ttsProvider,
               ttsVoice: next.ttsVoice,
-              apiKeyDirty,
-              apiBaseUrlDirty: baseUrlDirty,
             }));
-            if (!apiKeyDirty && !baseUrlDirty) return;
-            if (apiKeyPersistTimerRef.current != null) {
-              window.clearTimeout(apiKeyPersistTimerRef.current);
-              apiKeyPersistTimerRef.current = null;
+            const nextGlobalDraft = {
+              apiBaseUrl: next.apiBaseUrl,
+              apiKey: next.apiKey,
+            };
+            if (!isSameGlobalAiDraft(globalAiDraft.draft, nextGlobalDraft)) {
+              globalAiDraft.commit(nextGlobalDraft);
             }
-            apiKeyPersistTimerRef.current = window.setTimeout(() => {
-              apiKeyPersistTimerRef.current = null;
-              updateGlobalModelConfig({ apiKey: next.apiKey, baseURL: next.apiBaseUrl }).catch((err) => {
-                warn('controlPanel', 'aiSettings.persistGlobalFailed', { err: String(err) });
-              });
-            }, 250);
           }}
         />
       )}

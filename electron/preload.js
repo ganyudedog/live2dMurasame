@@ -210,6 +210,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 获取和设置模型配置
   getModelConfig: (modelPath) => ipcRenderer.invoke('pet:getModelConfig', modelPath),
   updateModelConfig: (payload) => ipcRenderer.invoke('pet:updateModelConfig', payload), 
+  readRagTextFile: (payload) => ipcRenderer.invoke('pet:readRagTextFile', payload),
   onModelConfigUpdated: (callback) => {
     if (typeof callback !== 'function') return () => {};
     modelConfigListeners.add(callback);

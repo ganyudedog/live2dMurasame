@@ -1,7 +1,8 @@
 import { info, warn } from '../../renderer/utils/log';
 import { requestStage2LLM } from '../llm/client';
 import { parseStage2Reply } from '../llm/parse';
-import type { ActionDispatchResult, ActionIntentInput } from '../types/action';
+import { buildRagContext, normalizeRuntimeRagConfig, type RuntimeRagConfig } from '../rag/contextBuilder';
+import type { ActionCapability, ActionDispatchResult, ActionIntentInput } from '../types/action';
 import type { Stage2AskResult, Stage2LLMConfig } from '../types/llm';
 
 interface Stage2AskOptions {
@@ -13,6 +14,7 @@ interface Stage2AskOptions {
 
 interface Stage2RuntimeOptions {
   dispatchAction: (input: ActionIntentInput, source?: string) => ActionDispatchResult;
+  getActionCapability?: () => ActionCapability;
   defaultConfig?: Stage2LLMConfig;
 }
 
@@ -21,6 +23,13 @@ interface RuntimeBridgeConfig {
   baseURL: string;
   model: string;
   temperature: number;
+}
+
+interface RagTextFileResult {
+  ok: boolean;
+  path: string | null;
+  content: string;
+  error?: string;
 }
 
 const DEFAULT_MODEL = 'qwen-plus';
@@ -43,10 +52,13 @@ const readGlobalConfigFallback = (): { apiKey?: string; baseURL?: string } => {
 
 export class Stage2Runtime {
   private readonly dispatchAction: Stage2RuntimeOptions['dispatchAction'];
+  private readonly getActionCapability?: Stage2RuntimeOptions['getActionCapability'];
   private config: Stage2LLMConfig;
+  private knowledgeCache = new Map<string, string>();
 
   constructor(options: Stage2RuntimeOptions) {
     this.dispatchAction = options.dispatchAction;
+    this.getActionCapability = options.getActionCapability;
     this.config = options.defaultConfig ?? {};
   }
 
@@ -80,6 +92,7 @@ export class Stage2Runtime {
 
     try {
       const resolved = await this.resolveConfig(options);
+      const ragRuntime = await this.resolveRagRuntime(cleanText);
       const start = performance.now();
       const llmResult = await requestStage2LLM(
         {
@@ -92,6 +105,7 @@ export class Stage2Runtime {
           userText: cleanText,
           model: resolved.model,
           temperature: resolved.temperature,
+          ragContext: ragRuntime.contextText,
         },
       );
 
@@ -108,11 +122,16 @@ export class Stage2Runtime {
         latencyMs: reply.meta.latency_ms,
         actionState: actionResult.state,
         actionKind: reply.action_intent.kind,
+        ragChunks: ragRuntime.chunkCount,
       });
 
       return {
         ok: true,
         reply,
+        rag: {
+          contextText: ragRuntime.contextText,
+          chunkCount: ragRuntime.chunkCount,
+        },
         actionResult,
         rawText: llmResult.rawText,
       };
@@ -127,7 +146,62 @@ export class Stage2Runtime {
   }
 
   dispose(): void {
-    // reserved for future async resources
+    this.knowledgeCache.clear();
+  }
+
+  async previewRag(userText: string): Promise<{ contextText: string; chunkCount: number }> {
+    const cleanText = String(userText ?? '').trim();
+    if (!cleanText) {
+      return { contextText: '', chunkCount: 0 };
+    }
+    return this.resolveRagRuntime(cleanText);
+  }
+
+  private async resolveRagRuntime(userText: string): Promise<{ contextText: string; chunkCount: number }> {
+    try {
+      const snapshot = window.petAPI?.getConfigSnapshot?.();
+      const rawRag = snapshot?.modelConfig?.rag;
+      const ragConfig = normalizeRuntimeRagConfig(rawRag);
+      const knowledgeText = await this.loadKnowledgeBaseText(
+        ragConfig,
+        snapshot?.activeModelPath ?? undefined,
+      );
+      const context = buildRagContext({
+        userText,
+        ragConfig,
+        knowledgeText,
+        capability: this.getActionCapability?.(),
+      });
+      return {
+        contextText: context.text,
+        chunkCount: context.chunks.length,
+      };
+    } catch (e) {
+      warn('ai.stage3', 'rag.resolve.failed', { err: String(e) });
+      return { contextText: '', chunkCount: 0 };
+    }
+  }
+
+  private async loadKnowledgeBaseText(ragConfig: RuntimeRagConfig, modelPath?: string): Promise<string> {
+    const knowledgeBasePath = ragConfig.retrieval.knowledgeBasePath;
+    if (!ragConfig.retrieval.enabled || !isString(knowledgeBasePath)) {
+      return '';
+    }
+
+    const cacheKey = `${modelPath ?? ''}::${knowledgeBasePath}`;
+    const cached = this.knowledgeCache.get(cacheKey);
+    if (typeof cached === 'string') return cached;
+
+    const result = await window.petAPI?.readRagTextFile?.({ knowledgeBasePath, modelPath }) as RagTextFileResult | undefined;
+    if (!result?.ok || !result.content) {
+      if (result?.error) {
+        warn('ai.stage3', 'rag.file.readFailed', { path: result.path ?? knowledgeBasePath, err: result.error });
+      }
+      return '';
+    }
+
+    this.knowledgeCache.set(cacheKey, result.content);
+    return result.content;
   }
 
   private async resolveConfig(options: Stage2AskOptions): Promise<RuntimeBridgeConfig> {

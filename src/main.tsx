@@ -6,7 +6,6 @@ import DemoRoot from './demo/DemoRoot';
 import './app.css';
 
 import { info, setContextProvider, setEnabledProvider } from './renderer/utils/log';
-import { usePetStore } from './renderer/store/usePetStore';
 import { useConfigStore } from './renderer/store/useConfigStore';
 
 const searchParams = typeof window !== 'undefined'
@@ -23,7 +22,7 @@ const windowType: 'pet' | 'control-panel' | 'demo' = isDemoView
 // Renderer logging bootstrap (DevTools-only).
 setEnabledProvider(() => {
   try {
-    return usePetStore.getState().debugModeEnabled === true;
+    return useConfigStore.getState().globalModelConfig?.debugModeEnabled === true;
   } catch {
     return false;
   }
@@ -31,11 +30,10 @@ setEnabledProvider(() => {
 
 setContextProvider(() => {
   try {
-    const pet = usePetStore.getState();
     const config = useConfigStore.getState();
     return {
       windowType,
-      scale: pet.scale,
+      scale: config.globalModelConfig?.scale,
       modelKey: config.modelKey,
       activeModelPath: config.activeModelPath,
       activeModelFileUrl: config.activeModelFileUrl,

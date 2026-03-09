@@ -12,6 +12,7 @@ export interface Stage2LLMRequest {
   userText: string;
   model?: string;
   temperature?: number;
+  ragContext?: string;
 }
 
 export interface Stage2LLMReply {
@@ -29,6 +30,10 @@ export interface Stage2LLMReply {
 export interface Stage2AskResult {
   ok: boolean;
   reply?: Stage2LLMReply;
+  rag?: {
+    contextText: string;
+    chunkCount: number;
+  };
   actionResult?: {
     ok: boolean;
     state: 'started' | 'queued' | 'dropped';

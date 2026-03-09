@@ -8,6 +8,16 @@
 2. 动作控制：结构化意图 -> Live2D 动作执行
 3. 语音输出：GPT-SoVITS
 
+当前确认接入范围：
+
+- 对话 AI
+- ASR
+- TTS
+
+说明：
+
+- 视觉信号链路保留设计，但不作为当前实施重点。
+
 设计原则：
 
 - 动作响应优先：先保证交互稳定和低延迟，再追求复杂能力。
@@ -124,13 +134,9 @@ RAG 上下文建议：
 
 - 后续简单面部识别与关键点信号。
 
-5. `lancedb`
+5. `better-sqlite3`
 
-- 本地向量检索（RAG）。
-
-6. `better-sqlite3`
-
-- 本地会话、记忆、任务状态持久化。
+- 暂列为后续可选持久化方案，当前阶段不作为必选实现。
 
 ### 4.2 可选（V2）
 
@@ -297,7 +303,7 @@ Electron 侧建议：
 
 ### M4 RAG 与记忆
 
-- 向量检索 + SQLite 记忆
+- RAG 检索 + 轻量记忆分层
 - 上下文压缩与摘要
 
 ### M5 视觉信号
@@ -654,22 +660,151 @@ Electron 侧建议：
 1. 解析失败不影响 UI 与动作循环
 2. 结构化输出成功率达到目标
 
-### 16.5 阶段 3（待实现）
+### 16.5 阶段 3（已实现 V1）
 
 目标：
 
 - 接入轻量 RAG，提高角色稳定性
 
-任务清单：
+已完成内容：
 
-1. `src/AI/rag/retriever.ts`（TopK 3~5）
-2. `src/AI/rag/contextBuilder.ts`（角色卡 + 最近摘要 + 能力表）
-3. SQLite + LanceDB 最小持久化链路(先采用文件存储)
+1. `src/AI/rag/retriever.ts`
+
+- 轻量文本检索器，基于分段 + chunk + 词项覆盖率打分
+- 支持 `topK/threshold` 默认推荐值
+
+2. `src/AI/rag/contextBuilder.ts`
+
+- 统一拼装 `rag.profile + rag.retrieval + 动作能力表 + 知识片段`
+- profile 字段当前为：`personal/speakingStyle/relation/banned/world`
+
+3. `Stage2Runtime` 已接入 RAG
+
+- `ask()` 前自动读取当前模型 `rag` 配置
+- 若存在知识库文件，则通过 Electron 只读桥加载文本
+- 将命中的知识片段与角色设定一起并入 LLM prompt
+
+4. Electron 最小文件桥
+
+- 新增 `pet:readRagTextFile`
+- 支持绝对路径，以及相对当前模型目录 / app 路径 / public 目录的解析
+
+5. 调试入口
+
+- `window.__PET_AI_STAGE2__.previewRag(text)`：预览当前输入的 RAG 上下文
+- `window.__PET_AI_STAGE2__.ask(text)`：正式走 LLM + RAG + 动作链路
 
 验收：
 
-1. 检索耗时可控
-2. 无上下文时自动回落
+1. 无知识库文件时自动回落，仅使用 profile 与能力表
+2. 有知识库文件时可命中 TopK 片段并接入 LLM
+3. 解析或文件读取失败不影响阶段 2 基本回复链路
+
+### 16.5.1 阶段 3.5（设计已确认，方案 A）
+
+目标：
+
+- 将“最近对话”纳入 RAG，但不污染模型配置文件
+- 控制上下文体积，避免随会话增长导致响应变慢
+
+已确认方案：
+
+- 方案 A：文件存储 + 最近窗口 + 滚动摘要 + 内存缓存
+
+不采用的做法：
+
+- 不把最近对话直接写入 `config/models/<model>.json`
+- 不在当前阶段直接引入 SQLite/LanceDB 作为必选路径
+
+推荐目录：
+
+- `config/<modelKey>/<modelKey>.json`
+- `config/<modelKey>/memory/recent.json`
+- `config/<modelKey>/memory/summary.json`
+- `config/<modelKey>/memory/meta.json`
+
+职责划分：
+
+1. `config/<modelKey>/<modelKey>.json`
+
+- 保存该模型的静态配置
+- 包括 `rag.profile`、`rag.retrieval` 与其它模型级配置
+- 不写入高频会话数据
+
+2. `recent.json`
+
+- 保存最近窗口消息
+- 仅保留最近 6~10 条消息，用于短期上下文拼装
+
+3. `summary.json`
+
+- 保存滚动摘要
+- 仅保留对后续回复有价值的稳定信息
+
+4. `meta.json`
+
+- 保存消息计数、最后摘要位置、更新时间等元数据
+- 作为摘要触发与窗口裁剪的辅助状态
+
+上下文拼装顺序：
+
+1. `rag.profile`
+2. `conversation summary`
+3. `recent messages window`
+4. `knowledge retrieval chunks`
+5. `action capability`
+
+窗口与压缩策略（V1 建议）：
+
+- 最近窗口：保留最近 6~10 条消息
+- 未摘要消息超过 20~30 条时触发一次摘要
+- 摘要目标长度控制在约 120~300 字
+- 摘要硬上限不超过 400 字
+- Prompt 中不直接拼接完整历史对话
+
+摘要长度说明：
+
+- 300~800 字对当前桌宠场景偏长，会明显挤占 prompt 预算
+- 当前还有 `rag.profile`、最近窗口、知识片段与动作能力表共同参与上下文拼装
+- 因此摘要应优先追求信息密度，而不是长文本完整复述
+
+摘要保留内容：
+
+- 用户稳定偏好
+- 已确认事实
+- 关系变化
+- 当前长期话题
+- 未完成事项或承诺
+
+摘要不保留内容：
+
+- 普通寒暄
+- 重复情绪表达
+- 已失效上下文
+- 可由最近窗口直接覆盖的短期内容
+
+运行时策略：
+
+- 写入层：最近窗口与摘要分别写入 `recent.json` / `summary.json`
+- 缓存层：内存中保留最近窗口与当前摘要
+- 读取层：`ask()` 优先读取内存缓存，冷启动再读文件
+
+V1 精简原则：
+
+- 当前不额外引入 `history.jsonl`
+- 先用 `recent + summary + meta` 三文件满足最近对话接入
+- 若后续确实需要完整原始追溯，再追加历史日志文件
+
+当前阶段范围说明：
+
+- 当前只围绕三条链路推进：ASR、TTS、对话 AI
+- 视觉信号暂不进入阶段 3.5 的记忆设计
+
+后续升级路径：
+
+1. 先完成文件方案 A
+2. 再根据体量决定是否迁移到 SQLite
+3. 若长期记忆需要语义检索，再接入向量库
 
 ### 16.6 阶段 4（待实现）
 

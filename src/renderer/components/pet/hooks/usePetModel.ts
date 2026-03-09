@@ -727,6 +727,7 @@ export const usePetModel = ({
         actionControllerRef.current = actionController;
         const stage2Runtime = createStage2Runtime({
           dispatchAction: (input, source) => actionController.dispatch(input, source),
+          getActionCapability: () => actionController.getCapability(),
         });
         stage2RuntimeRef.current = stage2Runtime;
 
@@ -743,6 +744,7 @@ export const usePetModel = ({
           globalObj.__PET_AI_STAGE2__ = {
             __from: 'stage2',
             ask: (text: string, options?: { model?: string; temperature?: number; apiKey?: string; baseURL?: string }) => stage2Runtime.ask(text, options),
+            previewRag: (text: string) => stage2Runtime.previewRag(text),
             setConfig: (patch: { apiKey?: string; baseURL?: string; model?: string; temperature?: number }) => stage2Runtime.setConfig(patch),
             getConfig: () => stage2Runtime.getConfig(),
             capability: () => actionController.getCapability(),

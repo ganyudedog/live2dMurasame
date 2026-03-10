@@ -1,16 +1,42 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { ControlPanelTabKey, ThemeMode } from './types';
 
-type TabItem = {
+type MenuItem = {
   key: ControlPanelTabKey;
   label: string;
 };
 
-const TAB_ITEMS: TabItem[] = [
-  { key: 'home', label: '首页' },
-  { key: 'models', label: '模型选择' },
-  { key: 'interaction', label: '交互设置' },
-  { key: 'ai', label: 'AI设置' },
+type MenuGroup = {
+  title: string;
+  items: MenuItem[];
+  collapsible: boolean;
+};
+
+const MENU_STRUCTURE: MenuGroup[] = [
+  {
+    title: '主页',
+    collapsible: false,
+    items: [{ key: 'home', label: '主页' }],
+  },
+  {
+    title: '模型设置',
+    collapsible: true,
+    items: [
+      { key: 'model-manage', label: '模型管理' },
+      { key: 'model-params', label: '参数设置' },
+      { key: 'model-motions', label: '动作设置' },
+      { key: 'model-interaction', label: '交互设置' },
+    ],
+  },
+  {
+    title: 'AI 设置',
+    collapsible: true,
+    items: [
+      { key: 'ai-settings', label: 'AI 设置' },
+      { key: 'ai-rag', label: 'RAG 设置' },
+      { key: 'ai-rag-params', label: 'RAG 参数' },
+    ],
+  },
 ];
 
 export default function ControlPanelLayout({
@@ -26,6 +52,22 @@ export default function ControlPanelLayout({
   onToggleTheme: () => void;
   children: React.ReactNode;
 }) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    new Set(['模型设置', 'AI 设置'])
+  );
+
+  const toggleGroup = (title: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) {
+        next.delete(title);
+      } else {
+        next.add(title);
+      }
+      return next;
+    });
+  };
+
   return (
     <div className="h-full w-full grid grid-cols-[300px_1fr] bg-base-200 text-base-content">
       <aside className="h-full w-75 border-r border-base-300 bg-base-100 flex flex-col">
@@ -35,24 +77,66 @@ export default function ControlPanelLayout({
           </div>
         </div>
 
-        <nav className="flex-1 min-h-0 p-2 space-y-1 overflow-auto">
-          {TAB_ITEMS.map((item) => {
-            const active = item.key === activeTab;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                className={
-                  active
-                    ? 'btn btn-sm w-full justify-start btn-primary'
-                    : 'btn btn-sm w-full justify-start btn-ghost'
-                }
-                onClick={() => onTabChange(item.key)}
-              >
-                {item.label}
-              </button>
-            );
-          })}
+        <nav className="flex-1 min-h-0 p-2 overflow-auto">
+          <ul className="menu bg-base-100 rounded-box w-full">
+            {MENU_STRUCTURE.map((group) => {
+              if (!group.collapsible) {
+                // 主页作为普通 menu item
+                return group.items.map((item) => {
+                  const active = item.key === activeTab;
+                  return (
+                    <li key={item.key}>
+                      <a
+                        href="#"
+                        className={active ? 'active bg-primary text-primary-content' : ''}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onTabChange(item.key);
+                        }}
+                      >
+                        {item.label}
+                      </a>
+                    </li>
+                  );
+                });
+              }
+
+              const isExpanded = expandedGroups.has(group.title);
+              return (
+                <li key={group.title}>
+                  <details open={isExpanded}>
+                    <summary
+                      onClick={(e) => {
+                        e.preventDefault();
+                        toggleGroup(group.title);
+                      }}
+                    >
+                      {group.title}
+                    </summary>
+                    <ul>
+                      {group.items.map((item) => {
+                        const active = item.key === activeTab;
+                        return (
+                          <li key={item.key}>
+                            <a
+                              href="#"
+                              className={active ? 'active bg-primary text-primary-content' : ''}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                onTabChange(item.key);
+                              }}
+                            >
+                              {item.label}
+                            </a>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </details>
+                </li>
+              );
+            })}
+          </ul>
         </nav>
 
         <div className="p-3 border-t border-base-300">
@@ -67,7 +151,6 @@ export default function ControlPanelLayout({
               {theme === 'dark' ? '深色' : '亮色'}
             </button>
           </div>
-          <div className="text-xs text-base-content/60 mt-2">侧栏固定 300px</div>
         </div>
       </aside>
 

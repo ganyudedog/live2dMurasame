@@ -1,4 +1,12 @@
-export type ControlPanelTabKey = 'home' | 'models' | 'interaction' | 'ai';
+export type ControlPanelTabKey = 
+  | 'home'
+  | 'model-manage'
+  | 'model-params'
+  | 'model-motions'
+  | 'model-interaction'
+  | 'ai-settings'
+  | 'ai-rag'
+  | 'ai-rag-params';
 
 export type ThemeMode = 'light' | 'dark';
 

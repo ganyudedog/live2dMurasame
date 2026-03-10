@@ -4,6 +4,7 @@ export interface Stage2LLMConfig {
   apiKey?: string;
   baseURL?: string;
   model?: string;
+  // ai的发散程度，数值越大越发散，默认为0.4
   temperature?: number;
   timeoutMs?: number;
 }

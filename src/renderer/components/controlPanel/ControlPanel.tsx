@@ -5,6 +5,10 @@ import HomePage from './pages/HomePage';
 import InteractionPage from './pages/InteractionPage';
 import AiSettingsPage from './pages/AiSettingsPage';
 import ModelSelectPage from './pages/ModelSelectPage';
+import ModelParamsPage from './pages/ModelParamsPage';
+import MotionSettingsPage from './pages/MotionSettingsPage';
+import RagSettingsPage from './pages/RagSettingsPage';
+import RagParamsPage from './pages/RagParamsPage';
 import { useDebouncedRemoteDraft } from './hooks/useDebouncedRemoteDraft';
 import { useThemeMode } from './theme';
 import type { ControlPanelTabKey, ModelConfig, ModelEntry, GlobalUiSettings } from './types';
@@ -271,7 +275,7 @@ const ControlPanel: React.FC = () => {
 
   return (
     <ControlPanelLayout
-      activeTab={(hydrated && modelPaths.length === 0) ? 'models' : activeTab}
+      activeTab={(hydrated && modelPaths.length === 0) ? 'model-manage' : activeTab}
       onTabChange={setActiveTab}
       theme={theme}
       onToggleTheme={toggle}
@@ -281,15 +285,11 @@ const ControlPanel: React.FC = () => {
           model={selectedModel}
           globalSettings={globalSettings}
           onGlobalSettingsChange={persistGlobalSettings}
-          modelConfig={modelConfig}
-          onModelConfigChange={(next) => {
-            return persistModelConfig(next);
-          }}
-          onGotoModels={() => setActiveTab('models')}
+          onGotoModels={() => setActiveTab('model-manage')}
         />
       )}
 
-      {activeTab === 'models' && (
+      {activeTab === 'model-manage' && (
         <ModelSelectPage
           modelPaths={modelPaths}
           selectedPath={currentModelPath}
@@ -299,7 +299,16 @@ const ControlPanel: React.FC = () => {
         />
       )}
 
-      {activeTab === 'interaction' && (
+      {activeTab === 'model-params' && (
+        <ModelParamsPage
+          globalSettings={globalSettings}
+          onGlobalSettingsChange={persistGlobalSettings}
+        />
+      )}
+
+      {activeTab === 'model-motions' && <MotionSettingsPage />}
+
+      {activeTab === 'model-interaction' && (
         <InteractionPage
           modelConfig={modelConfig}
           segmentActions={segmentActions}
@@ -309,7 +318,7 @@ const ControlPanel: React.FC = () => {
         />
       )}
 
-      {activeTab === 'ai' && (
+      {activeTab === 'ai-settings' && (
         <AiSettingsPage
           apiBaseUrl={globalAiDraft.draft.apiBaseUrl}
           apiKey={globalAiDraft.draft.apiKey}
@@ -329,6 +338,20 @@ const ControlPanel: React.FC = () => {
               globalAiDraft.commit(nextGlobalDraft);
             }
           }}
+        />
+      )}
+
+      {activeTab === 'ai-rag' && (
+        <RagSettingsPage
+          modelConfig={modelConfig}
+          onModelConfigChange={persistModelConfig}
+        />
+      )}
+
+      {activeTab === 'ai-rag-params' && (
+        <RagParamsPage
+          modelConfig={modelConfig}
+          onModelConfigChange={persistModelConfig}
         />
       )}
     </ControlPanelLayout>

@@ -164,6 +164,7 @@ export class Stage2Runtime {
       const resolved = await this.resolveConfig(options);
       const ragRuntime = await this.resolveRagRuntime(cleanText);
       const start = performance.now();
+      // 发起对话
       const llmResult = await requestStage2LLM(
         {
           apiKey: resolved.apiKey,
@@ -179,6 +180,7 @@ export class Stage2Runtime {
         },
       );
 
+      // 解析回复
       const reply = parseStage2Reply(llmResult.rawText);
       if (!reply.meta) reply.meta = {};
       reply.meta.model = reply.meta.model ?? llmResult.usedModel;
@@ -232,6 +234,7 @@ export class Stage2Runtime {
 
   private async resolveRagRuntime(userText: string): Promise<ResolvedRagRuntime> {
     try {
+      // 获取总的配置，所以使用configAPI而非AIAPI，后者只包含AI相关的配置快照
       const snapshot = window.ConfigAPI?.getSnapshot?.();
       const modelPath = snapshot?.activeModelPath ?? null;
       const rawRag = snapshot?.modelConfig?.rag;

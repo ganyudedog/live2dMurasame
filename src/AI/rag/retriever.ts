@@ -15,16 +15,19 @@ export interface RagRetrieveOptions {
   threshold?: number;
 }
 
+// 统一清理文本中的空白字符，降低后续分词与匹配噪声。
 const normalizeWhitespace = (input: string): string => {
   return String(input ?? '').replace(/\r/g, '').replace(/\t/g, ' ').replace(/\u3000/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 };
 
+// 将文本转为去重 token 列表，兼容英文、数字与常见中文词片段。
 const tokenize = (input: string): string[] => {
   const normalized = normalizeWhitespace(input).toLowerCase();
   const wordTokens = normalized.match(/[a-z0-9_\-\u4e00-\u9fa5]{2,}/g) ?? [];
   return Array.from(new Set(wordTokens));
 };
 
+// 按空行将文档切分成段落，便于后续 chunk 切片和打分。
 const splitIntoParagraphs = (documentText: string): string[] => {
   const normalized = normalizeWhitespace(documentText);
   if (!normalized) return [];
@@ -34,6 +37,7 @@ const splitIntoParagraphs = (documentText: string): string[] => {
     .filter(Boolean);
 };
 
+// 将单段文本切成固定长度窗口，并保留 overlap 以减少跨片段信息丢失。
 const chunkParagraph = (text: string, maxChunkChars: number, overlap: number): string[] => {
   if (text.length <= maxChunkChars) return [text];
   const chunks: string[] = [];
@@ -47,6 +51,7 @@ const chunkParagraph = (text: string, maxChunkChars: number, overlap: number): s
   return chunks.filter(Boolean);
 };
 
+// 计算 query 与 chunk 的相关度分数：覆盖率为主，命中密度为辅。
 const scoreChunk = (queryTokens: string[], chunkText: string): number => {
   if (!queryTokens.length) return 0;
   const haystack = chunkText.toLowerCase();
@@ -63,6 +68,7 @@ const scoreChunk = (queryTokens: string[], chunkText: string): number => {
   return Number((coverage * 0.8 + density * 0.2).toFixed(4));
 };
 
+// RAG 检索入口：分词、切段、打分、过滤并返回 topK 高相关 chunk。
 export const retrieveRelevantChunks = (options: RagRetrieveOptions): RagChunk[] => {
   const query = String(options.query ?? '').trim();
   const documentText = String(options.documentText ?? '').trim();

@@ -43,7 +43,7 @@ interface ConfigState {
 
 const getInitialSnapshot = (): PetConfigSnapshot | undefined => {
   if (typeof window === 'undefined') return undefined;
-  return window.petAPI?.getConfigSnapshot?.();
+  return window.ConfigAPI?.getSnapshot?.();
 };
 
 let listenersAttached = false;
@@ -53,8 +53,9 @@ export const useConfigStore = create<ConfigState>((set) => {
 
   if (!listenersAttached && typeof window !== 'undefined') {
     listenersAttached = true;
-    const api = window.petAPI;
-    const detachLive2denv = api?.onLive2denvConfigUpdated?.((payload) => {
+    const configApi = window.ConfigAPI;
+    const modelApi = window.ModelAPI;
+    const detachLive2denv = configApi?.onLive2denvConfigUpdated?.((payload) => {
       agg({
         level: 'debug',
         ns: 'config',
@@ -77,7 +78,7 @@ export const useConfigStore = create<ConfigState>((set) => {
         activeModelFileUrl: payload?.activeModelFileUrl ?? state.activeModelFileUrl,
       }));
     });
-    const detachModel = api?.onModelConfigUpdated?.((payload) => {
+    const detachModel = modelApi?.onConfigUpdated?.((payload) => {
       const overrides = readOverrides(payload);
       const modelFileUrl = isRecord(payload) ? payload['modelFileUrl'] : undefined;
       agg({
@@ -124,12 +125,13 @@ export const useConfigStore = create<ConfigState>((set) => {
     hydrated: Boolean(snapshot),
     refresh: async () => {
       info('config', 'refresh.start');
-      const api = window.petAPI;
+      const configApi = window.ConfigAPI;
+      const modelApi = window.ModelAPI;
       try {
         const [live2denvConfig, globalModelConfig, modelBundle] = await Promise.all([
-          api?.getLive2denvConfig?.(),
-          api?.getGlobalModelConfig?.(),
-          api?.getModelConfig?.(),
+          configApi?.getLive2denvConfig?.(),
+          configApi?.getGlobalModelConfig?.(),
+          modelApi?.getConfig?.(),
         ]);
 
         const modelOverrides = readOverrides(modelBundle);
@@ -168,13 +170,13 @@ export const useConfigStore = create<ConfigState>((set) => {
       }
     },
     updateGlobalModelConfig: async (patch) => {
-      const api = window.petAPI;
-      if (!api?.updateGlobalModelConfig) {
+      const configApi = window.ConfigAPI;
+      if (!configApi?.updateGlobalModelConfig) {
         warn('config', 'updateGlobalModelConfig.missingApi');
         return null;
       }
       try {
-        const next = await api.updateGlobalModelConfig(patch);
+        const next = await configApi.updateGlobalModelConfig(patch);
         set((state) => ({
           globalModelConfig: (next as PetGlobalModelConfig | undefined) ?? state.globalModelConfig,
         }));
@@ -185,13 +187,13 @@ export const useConfigStore = create<ConfigState>((set) => {
       }
     },
     updateLive2denvConfig: async (patch) => {
-      const api = window.petAPI;
-      if (!api?.updateLive2denvConfig) {
+      const configApi = window.ConfigAPI;
+      if (!configApi?.updateLive2denvConfig) {
         warn('config', 'updateLive2denvConfig.missingApi');
         return null;
       }
       try {
-        const next = await api.updateLive2denvConfig(patch);
+        const next = await configApi.updateLive2denvConfig(patch);
         set((state) => {
           const resolvedPath = next?.CURRENT_PATH ?? state.activeModelPath;
           return {
@@ -206,13 +208,13 @@ export const useConfigStore = create<ConfigState>((set) => {
       }
     },
     updateModelConfig: async (options) => {
-      const api = window.petAPI;
-      if (!api?.updateModelConfig) {
+      const modelApi = window.ModelAPI;
+      if (!modelApi?.updateConfig) {
         warn('config', 'updateModelConfig.missingApi');
         return null;
       }
       try {
-        const result = await api.updateModelConfig(options);
+        const result = await modelApi.updateConfig(options);
         if (!result) return null;
         set((state) => ({
           modelConfig: result.config ?? state.modelConfig,
@@ -228,13 +230,13 @@ export const useConfigStore = create<ConfigState>((set) => {
       }
     },
     pickModelFile: async () => {
-      const api = window.petAPI;
-      if (!api?.pickModelFile) {
+      const modelApi = window.ModelAPI;
+      if (!modelApi?.pickModelFile) {
         warn('config', 'pickModelFile.missingApi');
         return null;
       }
       try {
-        const modelDir = await api.pickModelFile();
+        const modelDir = await modelApi.pickModelFile();
         return typeof modelDir === 'string' ? modelDir : null;
       } catch (e) {
         warn('config', 'pickModelFile.failed', { err: String(e) });

@@ -80,9 +80,8 @@ const isDevtoolsDockedLike = (params: {
 const isDevToolsOpenedNow = (): boolean => {
   try {
     if (typeof window === 'undefined') return false;
-    const api = (window as any).petAPI;
-    if (typeof api?.isDevToolsOpened === 'function') {
-      return Boolean(api.isDevToolsOpened());
+    if (typeof window.WindowAPI?.isDevToolsOpened === 'function') {
+      return Boolean(window.WindowAPI.isDevToolsOpened());
     }
     return false;
   } catch {
@@ -123,7 +122,7 @@ const PetCanvas: React.FC = () => {
 
   useEffect(() => {
     try {
-      window.petAPI?.debugTrace?.({
+      window.SystemAPI?.debugTrace?.({
         kind: 'modelLoadInput',
         profile: 'modelLoad',
         level: 'info',
@@ -916,8 +915,7 @@ const PetCanvas: React.FC = () => {
     recomputeWindowPassthroughRef.current?.();
 
     try {
-      const api = (window as any).petAPI;
-      api?.sendWindowIntent?.({
+      window.WindowAPI?.sendWindowIntent?.({
         intentId: `drag_state_start_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
         source: 'drag',
         kind: 'drag-state',
@@ -966,8 +964,7 @@ const PetCanvas: React.FC = () => {
     recomputeWindowPassthroughRef.current?.();
 
     try {
-      const api = (window as any).petAPI;
-      api?.sendWindowIntent?.({
+      window.WindowAPI?.sendWindowIntent?.({
         intentId: `drag_state_end_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
         source: 'drag',
         kind: 'drag-state',

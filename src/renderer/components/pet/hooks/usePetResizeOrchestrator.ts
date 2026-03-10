@@ -66,9 +66,8 @@ export const usePetResizeOrchestrator = ({
   const emitDebugTrace = useCallback((payload: Record<string, unknown>) => {
     try {
       if (typeof window === 'undefined') return;
-      const api = (window as any).petAPI;
-      if (typeof api?.debugTrace !== 'function') return;
-      api.debugTrace(payload);
+      if (typeof window.SystemAPI?.debugTrace !== 'function') return;
+      window.SystemAPI.debugTrace(payload);
     } catch {
       // swallow debug trace bridge errors
     }
@@ -172,11 +171,11 @@ export const usePetResizeOrchestrator = ({
     });
 
     try {
-      const api = (window as any).petAPI;
-      if (typeof api?.sendWindowIntent !== 'function') {
-        throw new Error('petAPI.sendWindowIntent is not available');
+      const windowApi = window.WindowAPI;
+      if (typeof windowApi?.sendWindowIntent !== 'function') {
+        throw new Error('WindowAPI.sendWindowIntent is not available');
       }
-      api.sendWindowIntent({
+      windowApi.sendWindowIntent({
         intentId: requestId,
         source: options?.source ?? 'requestResize',
         kind: 'size',
@@ -303,11 +302,11 @@ export const usePetResizeOrchestrator = ({
           reason: 'followup-latest-desired',
         },
       });
-      const api = (window as any).petAPI;
-      if (typeof api?.sendWindowIntent !== 'function') {
-        throw new Error('petAPI.sendWindowIntent is not available');
+      const windowApi = window.WindowAPI;
+      if (typeof windowApi?.sendWindowIntent !== 'function') {
+        throw new Error('WindowAPI.sendWindowIntent is not available');
       }
-      api.sendWindowIntent({
+      windowApi.sendWindowIntent({
         intentId: requestId,
         source: 'handleWindowBoundsAck',
         kind: 'size',
@@ -490,12 +489,12 @@ export const usePetResizeOrchestrator = ({
     const targetX = Math.round(baseline - bounds.width / 2);
 
     try {
-      const api = (window as any).petAPI;
-      if (typeof api?.sendWindowIntent !== 'function') {
-        throw new Error('petAPI.sendWindowIntent is not available');
+      const windowApi = window.WindowAPI;
+      if (typeof windowApi?.sendWindowIntent !== 'function') {
+        throw new Error('WindowAPI.sendWindowIntent is not available');
       }
       const intentId = `align_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      api.sendWindowIntent({
+      windowApi.sendWindowIntent({
         intentId,
         source: 'alignWindowToCenterLine',
         kind: 'position',

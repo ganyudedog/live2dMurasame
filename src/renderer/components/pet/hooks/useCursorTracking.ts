@@ -46,19 +46,18 @@ export const useCursorTracking = ({
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const api = (window as any).petAPI;
-    if (!api?.getCursorScreenPoint) {
+    const windowApi = window.WindowAPI;
+    if (!windowApi?.getCursorScreenPoint) {
       cursorPollRafRef.current = null;
       return;
     }
 
-    const boundsPromise = typeof api.getWindowBounds === 'function'
-      ? api.getWindowBounds()
+    const boundsPromise = typeof windowApi.getWindowBounds === 'function'
+      ? windowApi.getWindowBounds()
       : Promise.resolve(null);
 
-    Promise.all([api.getCursorScreenPoint(), boundsPromise])
-      .then(([point, bounds]: [{ x: number; y: number } | null, { x: number; y: number; width: number; height: number } | null]) => {
+    Promise.all([windowApi.getCursorScreenPoint(), boundsPromise])
+      .then(([point, bounds]) => {
         if (!point || !mousePassthroughRef.current) return;
 
         if (!motionTextRef.current && autoResizeBackupRef.current === null) {

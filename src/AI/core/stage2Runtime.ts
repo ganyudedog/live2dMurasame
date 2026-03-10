@@ -108,7 +108,7 @@ const buildMetaMemoryPatch = (
 
 const readGlobalConfigFallback = (): { apiKey?: string; baseURL?: string } => {
   try {
-    const snapshot = window.petAPI?.getConfigSnapshot?.();
+    const snapshot = window.ConfigAPI?.getSnapshot?.();
     const globalCfg = snapshot?.globalModelConfig;
     if (!globalCfg || typeof globalCfg !== 'object') return {};
     const out: { apiKey?: string; baseURL?: string } = {};
@@ -232,11 +232,11 @@ export class Stage2Runtime {
 
   private async resolveRagRuntime(userText: string): Promise<ResolvedRagRuntime> {
     try {
-      const snapshot = window.petAPI?.getConfigSnapshot?.();
+      const snapshot = window.ConfigAPI?.getSnapshot?.();
       const modelPath = snapshot?.activeModelPath ?? null;
       const rawRag = snapshot?.modelConfig?.rag;
       const ragConfig = normalizeRuntimeRagConfig(rawRag);
-      const memoryState = await window.petAPI?.getModelMemory?.({ modelPath: modelPath ?? undefined }) ?? null;
+      const memoryState = await window.MemoryAPI?.get?.({ modelPath: modelPath ?? undefined }) ?? null;
       const knowledgeText = await this.loadKnowledgeBaseText(
         ragConfig,
         modelPath ?? undefined,
@@ -311,7 +311,7 @@ export class Stage2Runtime {
     );
 
     try {
-      await window.petAPI?.updateModelMemory?.({
+      await window.MemoryAPI?.update?.({
         modelPath,
         recent: nextRecent,
         summary: nextSummaryResult.shouldUpdate ? nextSummaryResult.summary : undefined,
@@ -341,7 +341,7 @@ export class Stage2Runtime {
     const cached = this.knowledgeCache.get(cacheKey);
     if (typeof cached === 'string') return cached;
 
-    const result = await window.petAPI?.readRagTextFile?.({ knowledgeBasePath, modelPath }) as RagTextFileResult | undefined;
+    const result = await window.AIAPI?.readRagTextFile?.({ knowledgeBasePath, modelPath }) as RagTextFileResult | undefined;
     if (!result?.ok || !result.content) {
       if (result?.error) {
         warn('ai.stage3', 'rag.file.readFailed', { path: result.path ?? knowledgeBasePath, err: result.error });
@@ -361,7 +361,7 @@ export class Stage2Runtime {
 
     if (!isString(merged.apiKey)) {
       try {
-        const globalCfg = await window.petAPI?.getGlobalModelConfig?.();
+        const globalCfg = await window.AIAPI?.getConfig?.();
         if (isString(globalCfg?.apiKey)) {
           merged.apiKey = globalCfg.apiKey.trim();
         }

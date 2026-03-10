@@ -85,7 +85,7 @@ export const useMousePassthrough = ({
       data: { passthrough },
     });
 
-    const bridge = (window as any).petAPI?.setMousePassthrough?.(passthrough);
+    const bridge = window.WindowAPI?.setMousePassthrough?.(passthrough);
     if (bridge && typeof bridge.then === 'function') {
       bridge.then(() => { /* no-op */ }).catch((error: unknown) => {
         warn('pet.passthrough', 'set.rejected', { passthrough, err: String(error) });

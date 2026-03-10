@@ -32,8 +32,7 @@ export const usePointerTapHandler = ({
       return undefined;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const api = (window as any).petAPI;
+    const windowApi = window.WindowAPI;
     let pointerId: number | null = null;
     let pendingTap = false;
     let dragging = false;
@@ -93,10 +92,10 @@ export const usePointerTapHandler = ({
       moveInFlight = true;
       lastSentAt = now;
       try {
-        if (typeof api?.sendWindowIntent !== 'function') {
-          throw new Error('petAPI.sendWindowIntent is not available');
+        if (typeof windowApi?.sendWindowIntent !== 'function') {
+          throw new Error('WindowAPI.sendWindowIntent is not available');
         }
-        await api.sendWindowIntent({
+        await windowApi.sendWindowIntent({
           intentId: `drag_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
           source: 'drag',
           kind: 'position',

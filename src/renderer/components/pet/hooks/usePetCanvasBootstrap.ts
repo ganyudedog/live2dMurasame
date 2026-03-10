@@ -33,11 +33,9 @@ export const usePetCanvasBootstrap = ({
 
     (async () => {
       try {
-        const api = window.petAPI as (PetAPI & {
-          getWindowBounds?: () => Promise<{ x: number; y: number; width: number; height: number }>;
-        }) | undefined;
-        if (typeof api?.getWindowBounds !== 'function') return;
-        const bounds = await api.getWindowBounds();
+        const windowApi = window.WindowAPI;
+        if (typeof windowApi?.getWindowBounds !== 'function') return;
+        const bounds = await windowApi.getWindowBounds();
         if (cancelled) return;
         if (!bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) {
           return;

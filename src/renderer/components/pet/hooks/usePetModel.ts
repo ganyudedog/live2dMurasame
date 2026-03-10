@@ -144,7 +144,7 @@ export const usePetModel = ({
 
       const emitDebugTrace = (payload: Record<string, unknown>) => {
         try {
-          (window as any).petAPI?.debugTrace?.(payload);
+          window.SystemAPI?.debugTrace?.(payload);
         } catch {
           // swallow debug trace bridge errors
         }
@@ -298,8 +298,8 @@ export const usePetModel = ({
       }
     };
       try {
-        (window as any).petAPI?.on?.('pet:windowFact', onWindowFact);
-        (window as any).petAPI?.on?.('pet:windowIntentAck', onWindowIntentAck);
+        window.WindowAPI?.on?.('pet:windowFact', onWindowFact);
+        window.WindowAPI?.on?.('pet:windowIntentAck', onWindowIntentAck);
       } catch { /* ignore */ }
 
       appCleanup = () => {
@@ -310,9 +310,9 @@ export const usePetModel = ({
           resizeObserver?.disconnect();
         } catch { /* ignore */ }
         try {
-          (window as any).petAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
-          (window as any).petAPI?.off?.('pet:windowFact', onWindowFact);
-          (window as any).petAPI?.off?.('pet:windowIntentAck', onWindowIntentAck);
+          window.WindowAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
+          window.WindowAPI?.off?.('pet:windowFact', onWindowFact);
+          window.WindowAPI?.off?.('pet:windowIntentAck', onWindowIntentAck);
         } catch { /* ignore */ }
 
       // 清理模型与 ticker
@@ -689,7 +689,7 @@ export const usePetModel = ({
           const attachContainer = canvasRef.current;
           const bounds = (model as any).getBounds?.();
           const localBounds = (model as any).getLocalBounds?.();
-          (window as any).petAPI?.debugTrace?.({
+          window.SystemAPI?.debugTrace?.({
             kind: 'modelLoadAttached',
             profile: 'modelLoad',
             level: 'info',
@@ -831,7 +831,7 @@ export const usePetModel = ({
         }
       } catch (err) {
         try {
-          (window as any).petAPI?.debugTrace?.({
+          window.SystemAPI?.debugTrace?.({
             kind: 'modelLoadFailed',
             profile: 'modelLoad',
             level: 'warn',

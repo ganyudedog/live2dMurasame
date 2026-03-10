@@ -244,6 +244,41 @@ declare global {
     baseURL?: string;
   }
 
+  type PetChatInputSource = 'text' | 'asr';
+
+  interface PetChatSubmitPayload {
+    text: string;
+    source?: PetChatInputSource;
+    requestId?: string;
+  }
+
+  interface PetChatVoiceOutput {
+    displayText: string;
+    speakText: string;
+    provider?: string;
+    voice?: string;
+    enabled: boolean;
+  }
+
+  interface PetChatSubmitResult {
+    ok: boolean;
+    requestId: string;
+    source: PetChatInputSource;
+    replyText?: string;
+    error?: string;
+    actionResult?: {
+      ok: boolean;
+      state: 'started' | 'queued' | 'dropped';
+      reason?: string;
+    };
+    rag?: {
+      contextText: string;
+      chunkCount: number;
+    };
+    voice?: PetChatVoiceOutput;
+    rawText?: string;
+  }
+
   interface PetWindowAPI {
     sendWindowIntent?: (intent: PetWindowIntentPayload) => Promise<PetWindowIntentAck | undefined>;
     setMousePassthrough?: (enabled: boolean) => Promise<boolean | undefined>;
@@ -285,6 +320,10 @@ declare global {
     readRagTextFile?: (payload: { knowledgeBasePath?: string; modelPath?: string }) => Promise<{ ok: boolean; path: string | null; content: string; error?: string } | undefined>;
   }
 
+  interface PetChatAPI {
+    submit?: (payload: PetChatSubmitPayload) => Promise<PetChatSubmitResult | undefined>;
+  }
+
   interface PetSystemAPI {
     debugTrace?: (payload: PetDebugTracePayload) => void;
   }
@@ -295,6 +334,7 @@ declare global {
     ModelAPI?: PetModelAPI;
     MemoryAPI?: PetMemoryAPI;
     AIAPI?: PetAIAPI;
+    ChatAPI?: PetChatAPI;
     SystemAPI?: PetSystemAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
   }

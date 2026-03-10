@@ -228,6 +228,72 @@ const hideControlPanel = () => {
     }
 };
 
+const submitChatThroughMainRenderer = async (payload = {}) => {
+    const target = mainWindow;
+    if (!target || target.isDestroyed()) {
+        return {
+            ok: false,
+            requestId: typeof payload?.requestId === 'string' && payload.requestId ? payload.requestId : `chat_${Date.now()}`,
+            source: payload?.source === 'asr' ? 'asr' : 'text',
+            error: '主窗口未就绪，无法处理对话请求',
+        };
+    }
+
+    const requestId = typeof payload?.requestId === 'string' && payload.requestId ? payload.requestId : `chat_${Date.now()}`;
+    const source = payload?.source === 'asr' ? 'asr' : 'text';
+    const text = typeof payload?.text === 'string' ? payload.text.trim() : '';
+    if (!text) {
+        return {
+            ok: false,
+            requestId,
+            source,
+            error: '请输入有效文本',
+        };
+    }
+
+    const script = `(() => {
+        const api = globalThis.__PET_AI_STAGE2__;
+        if (!api || typeof api.ask !== 'function') {
+            throw new Error('主窗口 AI 运行时尚未准备完成');
+        }
+        return Promise.resolve(api.ask(${JSON.stringify(text)})).then((result) => result ?? null);
+    })()`;
+
+    try {
+        const result = await target.webContents.executeJavaScript(script, true);
+        if (!result?.ok || !result.reply?.reply_text) {
+            return {
+                ok: false,
+                requestId,
+                source,
+                error: result?.error || 'AI 返回为空',
+                rawText: result?.rawText,
+            };
+        }
+        return {
+            ok: true,
+            requestId,
+            source,
+            replyText: result.reply.reply_text,
+            actionResult: result.actionResult,
+            rag: result.rag,
+            voice: {
+                displayText: result.reply.reply_text,
+                speakText: result.reply.reply_text,
+                enabled: false,
+            },
+            rawText: result.rawText,
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            requestId,
+            source,
+            error: String(error instanceof Error ? error.message : error),
+        };
+    }
+};
+
 const showControlPanel = () => {
     const panel = ensureControlPanelWindow();
     if (!panel) return;
@@ -382,6 +448,10 @@ ipcMain.handle('pet:getWindowBounds', (event) => {
 
 ipcMain.handle('pet:readRagTextFile', (_event, payload = {}) => {
     return readRagTextFile(payload);
+});
+
+ipcMain.handle('pet:chatSubmit', async (_event, payload = {}) => {
+    return submitChatThroughMainRenderer(payload);
 });
 
 

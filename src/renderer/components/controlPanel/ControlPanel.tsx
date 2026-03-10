@@ -11,7 +11,8 @@ import RagSettingsPage from './pages/RagSettingsPage';
 import RagParamsPage from './pages/RagParamsPage';
 import { useDebouncedRemoteDraft } from './hooks/useDebouncedRemoteDraft';
 import { useThemeMode } from './theme';
-import type { ControlPanelTabKey, ModelConfig, ModelEntry, GlobalUiSettings } from './types';
+import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from './chatCache';
+import type { ChatMessage, ChatSessionCache, ControlPanelTabKey, ModelConfig, ModelEntry, GlobalUiSettings } from './types';
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
 import { useConfigStore } from '../../store/useConfigStore';
@@ -59,6 +60,14 @@ const isSameGlobalAiDraft = (
 ) => {
   return left.apiBaseUrl === right.apiBaseUrl && left.apiKey === right.apiKey;
 };
+
+const createChatMessageId = (): string => `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const createChatSessionCache = (patch?: Partial<ChatSessionCache>): ChatSessionCache => ({
+  draftText: patch?.draftText ?? '',
+  messages: patch?.messages ?? [],
+  updatedAt: patch?.updatedAt ?? Date.now(),
+});
 
 const ControlPanel: React.FC = () => {
   const { theme, toggle } = useThemeMode();
@@ -139,6 +148,10 @@ const ControlPanel: React.FC = () => {
     ttsProvider: 'disabled',
     ttsVoice: '',
   });
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
 
   const remoteApiKey = typeof globalModelConfig?.apiKey === 'string' ? globalModelConfig.apiKey : '';
   const remoteApiBaseUrl = typeof globalModelConfig?.baseURL === 'string' ? globalModelConfig.baseURL : '';
@@ -191,6 +204,23 @@ const ControlPanel: React.FC = () => {
       path: pick,
     };
   }, [currentModelPath, modelPaths]);
+
+  const chatCacheScope = useMemo(() => getChatCacheScope(currentModelPath), [currentModelPath]);
+
+  useEffect(() => {
+    const cached = readChatSessionCache(chatCacheScope);
+    setChatDraft(cached.draftText);
+    setChatMessages(cached.messages);
+    setChatSending(false);
+    setChatError(null);
+  }, [chatCacheScope]);
+
+  useEffect(() => {
+    writeChatSessionCache(chatCacheScope, createChatSessionCache({
+      draftText: chatDraft,
+      messages: chatMessages,
+    }));
+  }, [chatCacheScope, chatDraft, chatMessages]);
 
   const persistGlobalSettings = async (patch: Partial<GlobalUiSettings>) => {
     try {
@@ -273,6 +303,85 @@ const ControlPanel: React.FC = () => {
     });
   };
 
+  const handleClearChat = () => {
+    setChatMessages([]);
+    setChatDraft('');
+    setChatError(null);
+  };
+
+  const handleChatSubmit = async () => {
+    const text = chatDraft.trim();
+    if (!text || chatSending) return;
+
+    const requestId = createChatMessageId();
+    const now = Date.now();
+    const userMessage: ChatMessage = {
+      id: createChatMessageId(),
+      role: 'user',
+      text,
+      status: 'done',
+      source: 'text',
+      createdAt: now,
+      requestId,
+    };
+    const pendingMessage: ChatMessage = {
+      id: createChatMessageId(),
+      role: 'assistant',
+      text: '正在思考中...',
+      status: 'sending',
+      source: 'assistant',
+      createdAt: now + 1,
+      requestId,
+    };
+
+    setChatDraft('');
+    setChatError(null);
+    setChatSending(true);
+    setChatMessages((prev) => [...prev, userMessage, pendingMessage]);
+
+    try {
+      const result = await window.ChatAPI?.submit?.({ text, source: 'text', requestId });
+      if (!result?.ok || !result.replyText) {
+        const message = result?.error ?? '对话请求失败';
+        setChatError(message);
+        setChatMessages((prev) => prev.map((item) => {
+          if (item.requestId !== requestId || item.role !== 'assistant') return item;
+          return {
+            ...item,
+            text: message,
+            status: 'error',
+            error: message,
+          };
+        }));
+        return;
+      }
+
+      setChatMessages((prev) => prev.map((item) => {
+        if (item.requestId !== requestId || item.role !== 'assistant') return item;
+        return {
+          ...item,
+          text: result.replyText ?? item.text,
+          status: 'done',
+          error: undefined,
+        };
+      }));
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error);
+      setChatError(message);
+      setChatMessages((prev) => prev.map((item) => {
+        if (item.requestId !== requestId || item.role !== 'assistant') return item;
+        return {
+          ...item,
+          text: message,
+          status: 'error',
+          error: message,
+        };
+      }));
+    } finally {
+      setChatSending(false);
+    }
+  };
+
   return (
     <ControlPanelLayout
       activeTab={(hydrated && modelPaths.length === 0) ? 'model-manage' : activeTab}
@@ -286,6 +395,13 @@ const ControlPanel: React.FC = () => {
           globalSettings={globalSettings}
           onGlobalSettingsChange={persistGlobalSettings}
           onGotoModels={() => setActiveTab('model-manage')}
+          chatMessages={chatMessages}
+          chatDraft={chatDraft}
+          chatSending={chatSending}
+          chatError={chatError}
+          onChatDraftChange={setChatDraft}
+          onChatSubmit={handleChatSubmit}
+          onClearChat={handleClearChat}
         />
       )}
 

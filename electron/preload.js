@@ -92,6 +92,10 @@ const AIAPI = {
   readRagTextFile: (payload) => ipcRenderer.invoke('pet:readRagTextFile', payload),
 };
 
+const ChatAPI = {
+  submit: (payload) => ipcRenderer.invoke('pet:chatSubmit', payload),
+};
+
 const SystemAPI = {
   debugTrace: (payload) => ipcRenderer.send('pet:debugTrace', payload),
 };
@@ -120,4 +124,5 @@ contextBridge.exposeInMainWorld('ConfigAPI', ConfigAPI);
 contextBridge.exposeInMainWorld('ModelAPI', ModelAPI);
 contextBridge.exposeInMainWorld('MemoryAPI', MemoryAPI);
 contextBridge.exposeInMainWorld('AIAPI', AIAPI);
+contextBridge.exposeInMainWorld('ChatAPI', ChatAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);

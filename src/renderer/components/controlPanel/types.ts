@@ -10,6 +10,29 @@ export type ControlPanelTabKey =
 
 export type ThemeMode = 'light' | 'dark';
 
+export type ChatMessageRole = 'user' | 'assistant' | 'system';
+
+export type ChatMessageStatus = 'done' | 'sending' | 'error';
+
+export type ChatMessageSource = 'text' | 'asr' | 'assistant' | 'system';
+
+export type ChatMessage = {
+  id: string;
+  role: ChatMessageRole;
+  text: string;
+  status: ChatMessageStatus;
+  source: ChatMessageSource;
+  createdAt: number;
+  requestId?: string;
+  error?: string;
+};
+
+export type ChatSessionCache = {
+  draftText: string;
+  messages: ChatMessage[];
+  updatedAt: number;
+};
+
 export type ModelEntry = {
   id: string;
   name: string;

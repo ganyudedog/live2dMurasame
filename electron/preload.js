@@ -29,6 +29,7 @@ try {
 
 const live2denvConfigListeners = new Set();
 const modelConfigListeners = new Set();
+const modelMemoryListeners = new Set();
 const getLive2denvConfigImpl = () => ipcRenderer.invoke('pet:getLive2denvConfig');
 
 const updateLive2denvConfigImpl = (patch) => ipcRenderer.invoke('pet:updateLive2denvConfig', patch);
@@ -164,6 +165,16 @@ ipcRenderer.on('pet:modelConfigUpdated', (_event, payload) => {
   dispatchSnapshotUpdate(payload);
 });
 
+ipcRenderer.on('pet:modelMemoryUpdated', (_event, payload) => {
+  modelMemoryListeners.forEach((listener) => {
+    try {
+      listener(payload);
+    } catch (error) {
+      console.error('[petAPI] model memory listener error', error);
+    }
+  });
+});
+
 // 暴露给渲染进程的API
 contextBridge.exposeInMainWorld('petAPI', {
   // 严格 singleWriter：仅允许 intent 协议驱动窗口写入。
@@ -210,12 +221,21 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 获取和设置模型配置
   getModelConfig: (modelPath) => ipcRenderer.invoke('pet:getModelConfig', modelPath),
   updateModelConfig: (payload) => ipcRenderer.invoke('pet:updateModelConfig', payload), 
+  getModelMemory: (payload) => ipcRenderer.invoke('pet:getModelMemory', payload),
+  updateModelMemory: (payload) => ipcRenderer.invoke('pet:updateModelMemory', payload),
   readRagTextFile: (payload) => ipcRenderer.invoke('pet:readRagTextFile', payload),
   onModelConfigUpdated: (callback) => {
     if (typeof callback !== 'function') return () => {};
     modelConfigListeners.add(callback);
     return () => {
       modelConfigListeners.delete(callback);
+    };
+  },
+  onModelMemoryUpdated: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    modelMemoryListeners.add(callback);
+    return () => {
+      modelMemoryListeners.delete(callback);
     };
   },
 

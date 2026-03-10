@@ -178,6 +178,53 @@ declare global {
     [key: string]: unknown;
   }
 
+  interface PetModelMemoryMessage {
+    id?: string;
+    role?: string;
+    text?: string;
+    source?: string;
+    name?: string;
+    ts?: number;
+    meta?: Record<string, unknown>;
+  }
+
+  interface PetModelMemoryRecent {
+    version: number;
+    messages: PetModelMemoryMessage[];
+    updatedAt: number;
+  }
+
+  interface PetModelMemorySummary {
+    version: number;
+    summary: string;
+    facts: string[];
+    open_loops: string[];
+    updatedAt: number;
+  }
+
+  interface PetModelMemoryMeta {
+    version: number;
+    messageCount: number;
+    lastSummarizedCount: number;
+    lastMessageAt: number;
+    updatedAt: number;
+  }
+
+  interface PetModelMemoryState {
+    modelPath: string | null;
+    modelKey: string | null;
+    recent: PetModelMemoryRecent | null;
+    summary: PetModelMemorySummary | null;
+    meta: PetModelMemoryMeta | null;
+  }
+
+  interface PetModelMemoryUpdatePayload {
+    modelPath?: string;
+    recent?: Partial<PetModelMemoryRecent>;
+    summary?: Partial<PetModelMemorySummary>;
+    meta?: Partial<PetModelMemoryMeta>;
+  }
+
   interface PetAPI {
     sendWindowIntent?: (intent: PetWindowIntentPayload) => Promise<PetWindowIntentAck | undefined>;
     debugTrace?: (payload: PetDebugTracePayload) => void;
@@ -193,10 +240,13 @@ declare global {
     onLive2denvConfigUpdated?: (callback: (payload: { live2denvConfig?: PetLive2denvConfig | null; globalModelConfig?: PetGlobalModelConfig | null; activeModelPath?: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
     getModelConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
     updateModelConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
+    getModelMemory?: (payload?: { modelPath?: string }) => Promise<PetModelMemoryState | undefined>;
+    updateModelMemory?: (payload: PetModelMemoryUpdatePayload) => Promise<PetModelMemoryState | undefined>;
     readRagTextFile?: (payload: { knowledgeBasePath?: string; modelPath?: string }) => Promise<{ ok: boolean; path: string | null; content: string; error?: string } | undefined>;
     listModelPaths?: () => Promise<string[] | undefined>;
     pickModelFile?: () => Promise<string | null | undefined>;
     onModelConfigUpdated?: (callback: (payload: { modelPath?: string | null; modelFileUrl?: string | null; modelKey?: string | null; config?: PetModelConfig | null; configOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
+    onModelMemoryUpdated?: (callback: (payload: PetModelMemoryState) => void) => (() => void) | void;
   }
 
   interface Window {

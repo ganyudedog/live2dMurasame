@@ -28,6 +28,7 @@ export interface BuildRagContextOptions {
   ragConfig: RuntimeRagConfig;
   capability?: ActionCapability;
   knowledgeText?: string;
+  memory?: Pick<PetModelMemoryState, 'recent' | 'summary'> | null;
 }
 
 export interface RagContextResult {
@@ -110,6 +111,50 @@ const joinSection = (title: string, content: string): string => {
   return `[${title}]\n${text}`;
 };
 
+const RECENT_MEMORY_WINDOW = 6;
+
+const buildSummaryText = (summary?: PetModelMemorySummary | null): string => {
+  if (!summary) return '';
+  const lines: string[] = [];
+  const summaryText = asString(summary.summary);
+  if (summaryText) {
+    lines.push(`摘要：${summaryText}`);
+  }
+
+  const facts = Array.isArray(summary.facts)
+    ? summary.facts.map((item) => asString(item)).filter(Boolean)
+    : [];
+  if (facts.length) {
+    lines.push(`已知事实：${facts.join('；')}`);
+  }
+
+  const openLoops = Array.isArray(summary.open_loops)
+    ? summary.open_loops.map((item) => asString(item)).filter(Boolean)
+    : [];
+  if (openLoops.length) {
+    lines.push(`待继续话题：${openLoops.join('；')}`);
+  }
+
+  return lines.join('\n');
+};
+
+const buildRecentMemoryText = (recent?: PetModelMemoryRecent | null): string => {
+  if (!recent || !Array.isArray(recent.messages) || !recent.messages.length) return '';
+  const lines = recent.messages
+    .slice(-RECENT_MEMORY_WINDOW)
+    .map((message) => {
+      const role = asString(message?.role) || 'unknown';
+      const name = asString(message?.name);
+      const text = asString(message?.text);
+      if (!text) return '';
+      const label = name ? `${role}(${name})` : role;
+      return `${label}: ${text}`;
+    })
+    .filter(Boolean);
+
+  return lines.join('\n');
+};
+
 export const buildRagContext = (options: BuildRagContextOptions): RagContextResult => {
   const ragConfig = normalizeRuntimeRagConfig(options.ragConfig);
   const sections: string[] = [];
@@ -119,6 +164,8 @@ export const buildRagContext = (options: BuildRagContextOptions): RagContextResu
   sections.push(joinSection('关系设定', ragConfig.profile.relation));
   sections.push(joinSection('禁忌', ragConfig.profile.banned));
   sections.push(joinSection('世界观', ragConfig.profile.world));
+  sections.push(joinSection('最近对话摘要', buildSummaryText(options.memory?.summary ?? null)));
+  sections.push(joinSection('最近对话窗口', buildRecentMemoryText(options.memory?.recent ?? null)));
   sections.push(joinSection('动作能力表', buildCapabilityText(options.capability)));
 
   let chunks: Array<{ id: string; text: string; score: number }> = [];

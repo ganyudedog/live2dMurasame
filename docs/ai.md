@@ -700,7 +700,7 @@ Electron 侧建议：
 2. 有知识库文件时可命中 TopK 片段并接入 LLM
 3. 解析或文件读取失败不影响阶段 2 基本回复链路
 
-### 16.5.1 阶段 3.5（设计已确认，方案 A）
+### 16.5.1 阶段 3.5（V1 已形成最小闭环，方案 A）
 
 目标：
 
@@ -710,6 +710,16 @@ Electron 侧建议：
 已确认方案：
 
 - 方案 A：文件存储 + 最近窗口 + 滚动摘要 + 内存缓存
+
+当前实现状态：
+
+- 已完成：按模型拆分存储目录
+- 已完成：Electron memory 文件骨架、归一化、IPC 读写桥
+- 已完成：Stage2Runtime 在 `ask()` 前读取 memory，并将其拼入 RAG 上下文
+- 已完成：Stage2Runtime 在 LLM 成功返回后回写最近对话到 `recent.json`，并同步更新 `meta.json`
+- 已完成：`summary.json` 的最小自动摘要生成与滚动压缩
+- 未完成：渲染侧/控制面板的可视化管理入口
+- 未完成：独立的内存级缓存与更精细的摘要调度器
 
 不采用的做法：
 
@@ -734,17 +744,22 @@ Electron 侧建议：
 2. `recent.json`
 
 - 保存最近窗口消息
-- 仅保留最近 6~10 条消息，用于短期上下文拼装
+- 当前运行时写入上限：最近 12 条 message
+- 当前 prompt 拼装窗口：最近 6 条 message
+- 用于短期上下文拼装
 
 3. `summary.json`
 
 - 保存滚动摘要
 - 仅保留对后续回复有价值的稳定信息
+- 当前已支持在最近未摘要消息达到阈值时自动生成内容
 
 4. `meta.json`
 
 - 保存消息计数、最后摘要位置、更新时间等元数据
 - 作为摘要触发与窗口裁剪的辅助状态
+- 当前已实际写入：`messageCount`、`lastSummarizedCount`、`lastMessageAt`、`updatedAt`
+- `lastSummarizedCount` 现已用于判断是否触发下一轮滚动摘要
 
 上下文拼装顺序：
 
@@ -753,6 +768,23 @@ Electron 侧建议：
 3. `recent messages window`
 4. `knowledge retrieval chunks`
 5. `action capability`
+
+当前接入位置：
+
+1. `src/AI/core/stage2Runtime.ts`
+
+- `resolveRagRuntime()`：读取当前模型 `memory` 并传给 `buildRagContext`
+- `persistConversationMemory()`：在成功回复后回写 `recent/meta`
+
+2. `src/AI/rag/contextBuilder.ts`
+
+- 负责将 `summary + recent window` 与原有 `rag.profile/knowledge/capability` 一并拼装为 prompt 上下文
+
+3. Electron 桥
+
+- `pet:getModelMemory`
+- `pet:updateModelMemory`
+- 当前提供基础读写；摘要调度发生在 Stage2Runtime 成功回写 memory 时
 
 窗口与压缩策略（V1 建议）：
 
@@ -789,11 +821,27 @@ Electron 侧建议：
 - 缓存层：内存中保留最近窗口与当前摘要
 - 读取层：`ask()` 优先读取内存缓存，冷启动再读文件
 
+当前实际行为（截至本轮实现）：
+
+- 读取层：`ask()` 前从 Electron 读取当前模型的 `recent/summary/meta`
+- Prompt 层：把“最近对话摘要”和“最近对话窗口”拼进 RAG 上下文
+- 写入层：在 `ask()` 成功后回写 `recent.json` 与 `meta.json`
+- 摘要层：当最近未摘要消息达到阈值时，自动生成新的 `summary.json`，并推进 `lastSummarizedCount`
+- 缓存层：尚未建立独立 memory cache，当前以文件读取 + Runtime 临时使用为主
+
 V1 精简原则：
 
 - 当前不额外引入 `history.jsonl`
 - 先用 `recent + summary + meta` 三文件满足最近对话接入
 - 若后续确实需要完整原始追溯，再追加历史日志文件
+
+当前已验证：
+
+1. memory 不再写入模型静态配置文件
+2. 每个模型目录会自动创建 `memory/recent.json`、`summary.json`、`meta.json`
+3. AI 主链路已能读取 memory 参与回复，并在回复成功后写回最近对话
+4. 最近对话在达到阈值后会自动滚动生成摘要，形成 `recent -> summary -> prompt -> writeback` 的最小闭环
+5. 当前改动已通过项目构建验证
 
 当前阶段范围说明：
 

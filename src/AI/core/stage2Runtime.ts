@@ -1,6 +1,7 @@
 import { info, warn } from '../../renderer/utils/log';
 import { requestStage2LLM } from '../llm/client';
 import { parseStage2Reply } from '../llm/parse';
+import { buildRollingSummary } from '../memory/rollingSummary';
 import { buildRagContext, normalizeRuntimeRagConfig, type RuntimeRagConfig } from '../rag/contextBuilder';
 import type { ActionCapability, ActionDispatchResult, ActionIntentInput } from '../types/action';
 import type { Stage2AskResult, Stage2LLMConfig } from '../types/llm';
@@ -32,9 +33,78 @@ interface RagTextFileResult {
   error?: string;
 }
 
+interface ResolvedRagRuntime {
+  contextText: string;
+  chunkCount: number;
+  modelPath: string | null;
+  memoryState: PetModelMemoryState | null;
+}
+
 const DEFAULT_MODEL = 'qwen-plus';
+const RECENT_MEMORY_MAX_MESSAGES = 12;
 
 const isString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+const createMemoryMessageId = (): string => {
+  return `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+};
+
+const normalizeMemoryMessages = (messages: unknown): PetModelMemoryMessage[] => {
+  if (!Array.isArray(messages)) return [];
+  const normalized: PetModelMemoryMessage[] = [];
+  messages.forEach((item) => {
+      const source = item && typeof item === 'object' ? item as PetModelMemoryMessage : {};
+      const text = isString(source.text) ? source.text.trim() : '';
+      if (!text) return;
+      normalized.push({
+        id: isString(source.id) ? source.id : createMemoryMessageId(),
+        role: isString(source.role) ? source.role : 'user',
+        text,
+        source: isString(source.source) ? source.source : '',
+        name: isString(source.name) ? source.name : '',
+        ts: isFiniteNumber(source.ts) ? Math.max(0, Math.floor(source.ts)) : 0,
+        meta: source.meta && typeof source.meta === 'object' ? source.meta : {},
+      });
+    });
+  return normalized;
+};
+
+const buildRecentMemoryPatch = (
+  current: PetModelMemoryRecent | null | undefined,
+  messages: PetModelMemoryMessage[],
+  now: number,
+): PetModelMemoryRecent => {
+  const merged = [...normalizeMemoryMessages(current?.messages), ...messages]
+    .slice(-RECENT_MEMORY_MAX_MESSAGES);
+  return {
+    version: 1,
+    messages: merged,
+    updatedAt: now,
+  };
+};
+
+const buildMetaMemoryPatch = (
+  current: PetModelMemoryMeta | null | undefined,
+  appendedCount: number,
+  lastMessageAt: number,
+  lastSummarizedCount?: number,
+): PetModelMemoryMeta => {
+  const baseCount = isFiniteNumber(current?.messageCount) ? Math.max(0, Math.floor(current.messageCount)) : 0;
+  const baseSummarized = isFiniteNumber(current?.lastSummarizedCount)
+    ? Math.max(0, Math.floor(current.lastSummarizedCount))
+    : 0;
+  return {
+    version: 1,
+    messageCount: baseCount + appendedCount,
+    lastSummarizedCount: isFiniteNumber(lastSummarizedCount)
+      ? Math.max(0, Math.floor(lastSummarizedCount))
+      : baseSummarized,
+    lastMessageAt,
+    updatedAt: lastMessageAt,
+  };
+};
 
 const readGlobalConfigFallback = (): { apiKey?: string; baseURL?: string } => {
   try {
@@ -117,12 +187,15 @@ export class Stage2Runtime {
 
       const actionResult = this.dispatchAction(reply.action_intent, 'stage2.llm');
 
+      await this.persistConversationMemory(ragRuntime, cleanText, reply.reply_text);
+
       info('ai.stage2', 'ask.ok', {
         model: reply.meta.model,
         latencyMs: reply.meta.latency_ms,
         actionState: actionResult.state,
         actionKind: reply.action_intent.kind,
         ragChunks: ragRuntime.chunkCount,
+        memoryMessages: ragRuntime.memoryState?.recent?.messages?.length ?? 0,
       });
 
       return {
@@ -157,28 +230,104 @@ export class Stage2Runtime {
     return this.resolveRagRuntime(cleanText);
   }
 
-  private async resolveRagRuntime(userText: string): Promise<{ contextText: string; chunkCount: number }> {
+  private async resolveRagRuntime(userText: string): Promise<ResolvedRagRuntime> {
     try {
       const snapshot = window.petAPI?.getConfigSnapshot?.();
+      const modelPath = snapshot?.activeModelPath ?? null;
       const rawRag = snapshot?.modelConfig?.rag;
       const ragConfig = normalizeRuntimeRagConfig(rawRag);
+      const memoryState = await window.petAPI?.getModelMemory?.({ modelPath: modelPath ?? undefined }) ?? null;
       const knowledgeText = await this.loadKnowledgeBaseText(
         ragConfig,
-        snapshot?.activeModelPath ?? undefined,
+        modelPath ?? undefined,
       );
       const context = buildRagContext({
         userText,
         ragConfig,
         knowledgeText,
         capability: this.getActionCapability?.(),
+        memory: memoryState,
       });
       return {
         contextText: context.text,
         chunkCount: context.chunks.length,
+        modelPath,
+        memoryState,
       };
     } catch (e) {
       warn('ai.stage3', 'rag.resolve.failed', { err: String(e) });
-      return { contextText: '', chunkCount: 0 };
+      return { contextText: '', chunkCount: 0, modelPath: null, memoryState: null };
+    }
+  }
+
+  private async persistConversationMemory(
+    ragRuntime: ResolvedRagRuntime,
+    userText: string,
+    replyText: string,
+  ): Promise<void> {
+    const modelPath = ragRuntime.modelPath;
+    if (!isString(modelPath)) return;
+
+    const cleanUserText = String(userText ?? '').trim();
+    const cleanReplyText = String(replyText ?? '').trim();
+    if (!cleanUserText || !cleanReplyText) return;
+
+    const now = Date.now();
+    const appendedMessages: PetModelMemoryMessage[] = [
+      {
+        id: createMemoryMessageId(),
+        role: 'user',
+        text: cleanUserText,
+        source: 'chat',
+        name: 'user',
+        ts: now,
+        meta: {},
+      },
+      {
+        id: createMemoryMessageId(),
+        role: 'assistant',
+        text: cleanReplyText,
+        source: 'stage2',
+        name: 'pet',
+        ts: now,
+        meta: {},
+      },
+    ];
+
+    const nextRecent = buildRecentMemoryPatch(ragRuntime.memoryState?.recent, appendedMessages, now);
+    const nextMessageCount = (ragRuntime.memoryState?.meta?.messageCount ?? 0) + appendedMessages.length;
+    const nextSummaryResult = buildRollingSummary({
+      previousSummary: ragRuntime.memoryState?.summary,
+      recent: nextRecent,
+      currentMeta: ragRuntime.memoryState?.meta,
+      nextMessageCount,
+      now,
+    });
+    const nextMeta = buildMetaMemoryPatch(
+      ragRuntime.memoryState?.meta,
+      appendedMessages.length,
+      now,
+      nextSummaryResult.shouldUpdate ? nextSummaryResult.lastSummarizedCount : undefined,
+    );
+
+    try {
+      await window.petAPI?.updateModelMemory?.({
+        modelPath,
+        recent: nextRecent,
+        summary: nextSummaryResult.shouldUpdate ? nextSummaryResult.summary : undefined,
+        meta: nextMeta,
+      });
+      ragRuntime.memoryState = {
+        ...(ragRuntime.memoryState ?? { modelPath, modelKey: null, recent: null, summary: null, meta: null }),
+        modelPath,
+        recent: nextRecent,
+        summary: nextSummaryResult.shouldUpdate
+          ? nextSummaryResult.summary
+          : (ragRuntime.memoryState?.summary ?? null),
+        meta: nextMeta,
+      };
+    } catch (error) {
+      warn('ai.stage3', 'memory.persist.failed', { err: String(error) });
     }
   }
 

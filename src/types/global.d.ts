@@ -149,6 +149,12 @@ declare global {
     ts?: number;
   }
 
+  interface PetWindowDragPayload {
+    action: 'start' | 'move' | 'end';
+    screenX: number;
+    screenY: number;
+  }
+
   // debugTrace请求负载结构
   interface PetDebugTraceRequestGroup {
     source?: string;
@@ -281,6 +287,7 @@ declare global {
 
   interface PetWindowAPI {
     sendWindowIntent?: (intent: PetWindowIntentPayload) => Promise<PetWindowIntentAck | undefined>;
+    sendWindowDrag?: (payload: PetWindowDragPayload) => void;
     setMousePassthrough?: (enabled: boolean) => Promise<boolean | undefined>;
     getCursorScreenPoint?: () => Promise<{ x: number; y: number } | null | undefined>;
     getWindowBounds?: () => Promise<{ x: number; y: number; width: number; height: number } | null | undefined>;

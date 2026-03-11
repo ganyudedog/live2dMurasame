@@ -9,6 +9,7 @@ const updateLive2denvConfigImpl = (patch) => ipcRenderer.invoke('pet:updateLive2
 
 const WindowAPI = {
   sendWindowIntent: (intent) => ipcRenderer.invoke('pet:windowIntent', intent),
+  sendWindowDrag: (payload) => ipcRenderer.send('pet:windowDrag', payload),
   setMousePassthrough: (enabled) => ipcRenderer.invoke('pet:setMousePassthrough', enabled),
   getCursorScreenPoint: () => ipcRenderer.invoke('pet:getCursorScreenPoint'),
   getWindowBounds: () => ipcRenderer.invoke('pet:getWindowBounds'),

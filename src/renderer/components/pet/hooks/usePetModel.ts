@@ -21,6 +21,7 @@ export interface UsePetModelParams {
   pointerX: RefObject<number>;
   pointerY: RefObject<number>;
   ignoreMouseRef: RefObject<boolean>;
+  isWindowDragActiveRef: RefObject<boolean>;
   windowBoundsRef: RefObject<{ x: number; y: number; width: number; height: number } | null>;
   setModel: (model: Live2DModelType | null) => void;
   setModelLoadStatus: (status: 'idle' | 'loading' | 'loaded' | 'error', error?: string) => void;
@@ -51,6 +52,7 @@ export const usePetModel = ({
   pointerX,
   pointerY,
   ignoreMouseRef,
+  isWindowDragActiveRef,
   windowBoundsRef,
   setModel,
   setModelLoadStatus,
@@ -177,9 +179,10 @@ export const usePetModel = ({
           });
 
           const moveOnly = Boolean(prev)
-            && Math.abs(bounds.x - (prev as any).x) > 0
+            && (Math.abs(bounds.x - (prev as any).x) > 0 || Math.abs(bounds.y - (prev as any).y) > 0)
             && (Math.abs(bounds.width - (prev as any).width) <= 1)
             && (Math.abs(bounds.height - (prev as any).height) <= 1);
+          if (isWindowDragActiveRef.current && moveOnly) return;
           if (moveOnly) return;
         } else {
           agg({

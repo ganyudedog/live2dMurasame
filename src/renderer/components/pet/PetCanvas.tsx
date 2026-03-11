@@ -238,6 +238,7 @@ const PetCanvas: React.FC = () => {
   // 这里通过 boundsChanged 的“移动特征”来抑制拖动期间的自动扩缩窗。
   const suppressAutoResizeUntilRef = useRef(0);
   const ignoreUserMoveDetectUntilRef = useRef(0);
+  const isWindowDragActiveRef = useRef(false);
   const lastObservedBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   // 窗口宽度策略：只跟随 scale 变化。
@@ -431,6 +432,7 @@ const PetCanvas: React.FC = () => {
     lastAlignAttemptRef,
     suppressAutoResizeUntilRef,
     ignoreUserMoveDetectUntilRef,
+    isWindowDragActiveRef,
     lastObservedBoundsRef,
     windowBoundsRef,
   });
@@ -759,6 +761,7 @@ const PetCanvas: React.FC = () => {
     pointerX,
     pointerY,
     ignoreMouseRef,
+    isWindowDragActiveRef,
     windowBoundsRef,
     setModel,
     setModelLoadStatus,
@@ -907,6 +910,7 @@ const PetCanvas: React.FC = () => {
     const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
+    isWindowDragActiveRef.current = true;
     suppressAutoResizeUntilRef.current = now + 360;
     ignoreUserMoveDetectUntilRef.current = now + 360;
     dragHandleActiveRef.current = true;
@@ -949,6 +953,7 @@ const PetCanvas: React.FC = () => {
     const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
+    isWindowDragActiveRef.current = true;
     suppressAutoResizeUntilRef.current = now + 220;
     ignoreUserMoveDetectUntilRef.current = now + 220;
   }, []);
@@ -957,6 +962,7 @@ const PetCanvas: React.FC = () => {
     const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
+    isWindowDragActiveRef.current = false;
     suppressAutoResizeUntilRef.current = now + 180;
     ignoreUserMoveDetectUntilRef.current = now + 180;
     dragHandleActiveRef.current = false;

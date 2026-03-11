@@ -27,6 +27,7 @@ import { createAutoLaunchScheduler } from './main/autoLaunch.js';
 import { createRagFileService } from './main/ragFileService.js';
 import { registerModelMemoryIpc } from './main/modelMemoryIpc.js';
 import { registerConfigIpc } from './main/configIpc.js';
+import { createWindowDragController } from './main/windowDragController.js';
 import { createWindowIntentController } from './main/windowIntentController.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -193,6 +194,9 @@ const { scheduleApplyAutoLaunchSetting, flushPendingAutoLaunchSetting } = create
 const { handleWindowIntent, scheduleEmitMainWindowBounds } = createWindowIntentController({
     getMainWindow: () => mainWindow,
     logDebugTrace,
+});
+const { handleWindowDrag } = createWindowDragController({
+    BrowserWindow,
 });
 const { broadcastConfigSnapshot } = registerConfigIpc({
     ipcMain,
@@ -490,4 +494,8 @@ app.on('window-all-closed', () => {
 
 ipcMain.handle('pet:windowIntent', (_event, intent = {}) => {
     return handleWindowIntent(intent);
+});
+
+ipcMain.on('pet:windowDrag', (event, payload = {}) => {
+    handleWindowDrag(event, payload);
 });

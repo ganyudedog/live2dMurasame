@@ -114,7 +114,7 @@ export default function HomePage({
           </header>
           <div className="rounded-box border border-base-300 bg-base-200/40 p-3">
             <div className="flex h-[70vh] flex-col gap-3">
-              <div className="min-h-0 flex-1 rounded-box border border-base-300 bg-base-100/70 p-3">
+              <div className="min-h-0 flex-1 rounded-box border border-base-300 bg-base-300 p-3">
                 <div className="h-full space-y-3 overflow-y-scroll pr-1">
                   {chatMessages.length === 0 && (
                     <div className="rounded-box border border-dashed border-base-300 bg-base-100/70 p-3 text-xs text-base-content/60">
@@ -146,7 +146,7 @@ export default function HomePage({
               <div className="rounded-box border border-base-300 bg-base-100 p-3">
                 <div className="relative">
                   <textarea
-                    className="textarea textarea-bordered min-h-32 w-full resize-none pr-20"
+                    className="textarea textarea-bordered min-h-32 w-full resize-none pr-20 outline-0"
                     rows={4}
                     placeholder="在这里与 AI 对话，Shift+Enter 换行，Enter 发送"
                     value={chatDraft}

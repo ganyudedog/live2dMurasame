@@ -31,6 +31,7 @@ export interface UsePetResizeOrchestratorParams {
   lastAlignAttemptRef: RefObject<number>;
   suppressAutoResizeUntilRef: RefObject<number>;
   ignoreUserMoveDetectUntilRef: RefObject<number>;
+  isWindowDragActiveRef: RefObject<boolean>;
   lastObservedBoundsRef: RefObject<WindowBounds | null>;
   windowBoundsRef: RefObject<WindowBounds | null>;
 }
@@ -60,6 +61,7 @@ export const usePetResizeOrchestrator = ({
   lastAlignAttemptRef,
   suppressAutoResizeUntilRef,
   ignoreUserMoveDetectUntilRef,
+  isWindowDragActiveRef,
   lastObservedBoundsRef,
   windowBoundsRef,
 }: UsePetResizeOrchestratorParams) => {
@@ -346,6 +348,13 @@ export const usePetResizeOrchestrator = ({
       return;
     }
 
+    if (isWindowDragActiveRef.current) {
+      pendingResizeRef.current = null;
+      pendingBoundsPredictionRef.current = null;
+      targetWindowWidthRef.current = window.innerWidth;
+      return;
+    }
+
     if (!windowBoundsRef.current) {
       targetWindowWidthRef.current = window.innerWidth;
       pendingResizeRef.current = null;
@@ -432,6 +441,16 @@ export const usePetResizeOrchestrator = ({
       : Date.now();
 
     const actualCenter = bounds.x + bounds.width / 2;
+    if (isWindowDragActiveRef.current) {
+      centerBaselineRef.current = actualCenter;
+      pendingResizeRef.current = null;
+      pendingBoundsPredictionRef.current = null;
+      targetWindowWidthRef.current = bounds.width;
+      suppressResizeForBubbleRef.current = false;
+      lastObservedBoundsRef.current = bounds;
+      return;
+    }
+
     const baseline = centerBaselineRef.current;
     const programmaticResize = pendingResizeRef.current !== null;
     const resizeInFlight = resizeInFlightRequestIdRef.current !== null;
@@ -517,6 +536,7 @@ export const usePetResizeOrchestrator = ({
     targetWindowWidthRef,
     suppressResizeForBubbleRef,
     lastAlignAttemptRef,
+    isWindowDragActiveRef,
   ]);
 
   return {

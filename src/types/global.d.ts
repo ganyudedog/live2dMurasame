@@ -150,9 +150,11 @@ declare global {
   }
 
   interface PetWindowDragPayload {
-    action: 'start' | 'move' | 'end';
+    action: 'start' | 'end';
     screenX: number;
     screenY: number;
+    source?: 'renderer' | 'main';
+    reason?: string;
   }
 
   // debugTrace请求负载结构
@@ -240,6 +242,7 @@ declare global {
   }
 
   interface PetWindowEventMap {
+    'pet:windowDrag': PetWindowDragPayload;
     'pet:windowBoundsChanged': PetWindowBoundsChangedPayload;
     'pet:windowFact': PetWindowFact;
     'pet:windowIntentAck': PetWindowIntentAck;

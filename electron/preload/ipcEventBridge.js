@@ -1,5 +1,6 @@
 export const createIpcEventBridge = ({ ipcRenderer }) => {
   const allowedIpcEvents = new Set([
+    'pet:windowDrag',
     'pet:windowBoundsChanged',
     'pet:windowFact',
     'pet:windowIntentAck',

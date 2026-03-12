@@ -3,6 +3,9 @@ import { useCallback, useEffect, useLayoutEffect, type RefObject } from 'react';
 import { clamp } from '../../../utils/math';
 import { computeBubblePlacement } from '../logic/bubble/placementEngine';
 import { getBaseFrame, getVisibleFrame } from '../logic/visual/getVisualFrameDom';
+import type { DragSessionState } from '../runtime/geometry/DragSessionController';
+import { isWindowPolicySuppressed } from '../runtime/geometry/policy/WindowPolicyEngine';
+import { solveBubbleWindowRequirement } from '../runtime/geometry/solvers/BubbleLayoutSolver';
 import {
   BUBBLE_EXTRA_GAP,
   BUBBLE_GAP,
@@ -13,8 +16,6 @@ import {
   BUBBLE_ZONE_MIN_WIDTH,
   ENLARGE_CONFIRM_DELTA_PX,
   ENLARGE_CONFIRM_WINDOW_MS,
-  STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD,
-  STARTUP_ENLARGE_BOUNDS_RATIO_GUARD,
 } from '../const';
 
 interface BubbleZoneMetrics {
@@ -51,9 +52,9 @@ export interface UseBubblePositionEngineParams {
   resizeWindowOnNextLayoutRef: RefObject<boolean>;
   enlargeWidthConfirmRef: RefObject<{ width: number; seenAt: number } | null>;
   suppressResizeForBubbleRef: RefObject<boolean>;
-  centerBaselineRef: RefObject<number | null>;
   pendingResizeIssuedAtRef: RefObject<number | null>;
   windowBoundsRef: RefObject<{ x: number; y: number; width: number; height: number } | null>;
+  dragSessionStateRef: RefObject<DragSessionState>;
 
   lastBubbleUpdateRef: RefObject<number>;
   bubbleAlignmentRef: RefObject<'left' | 'right' | null>;
@@ -61,9 +62,8 @@ export interface UseBubblePositionEngineParams {
   updateBubblePositionRef: RefObject<(force?: boolean) => void>;
 
   commitBubbleReady: (next: boolean) => void;
-  applyWindowWidth: (requiredWidth: number) => void;
+  requestBubbleWindowWidth: (requiredWidth: number) => void;
   emitDebugTrace: (payload: Record<string, unknown>) => void;
-  getWindowCenter: () => number;
 
   setRedLineLeft: (value: number) => void;
   setVisibleFrameMetrics: (value: { left: number; width: number }) => void;
@@ -101,16 +101,15 @@ export const useBubblePositionEngine = ({
   resizeWindowOnNextLayoutRef,
   enlargeWidthConfirmRef,
   suppressResizeForBubbleRef,
-  centerBaselineRef,
   windowBoundsRef,
+  dragSessionStateRef,
   lastBubbleUpdateRef,
   bubbleAlignmentRef,
   bubblePositionRef,
   updateBubblePositionRef,
   commitBubbleReady,
-  applyWindowWidth,
+  requestBubbleWindowWidth,
   emitDebugTrace,
-  getWindowCenter,
   setRedLineLeft,
   setVisibleFrameMetrics,
   setBaseFrameMetrics,
@@ -201,40 +200,34 @@ export const useBubblePositionEngine = ({
     const zoneTarget = BUBBLE_ZONE_BASE_WIDTH * s;
     const centerDom = vfVisible.centerDomX - containerRect.left;
     const gapEffective = BUBBLE_GAP + BUBBLE_EXTRA_GAP * s;
-
-    const effectiveContainerWidth = pendingResizeRef.current?.width
-      ?? targetWindowWidthRef.current
-      ?? containerRect.width;
-
-    const leftCapacity = Math.max(0, centerDom - gapEffective - BUBBLE_PADDING);
-    const rightCapacity = Math.max(0, effectiveContainerWidth - (centerDom + gapEffective) - BUBBLE_PADDING);
     const baseFrameWidthDom = vfBase.visualWidthDom;
-    const requiredWindowWidth = Math.ceil(baseFrameWidthDom + zoneTarget * 2 + gapEffective * 2 + BUBBLE_PADDING * 2);
-    const leftShortfallPx = Math.max(0, zoneTarget - leftCapacity);
-    const rightShortfallPx = Math.max(0, zoneTarget - rightCapacity);
-    const capacityShortfall = leftShortfallPx > 0 || rightShortfallPx > 0;
+    const requirement = solveBubbleWindowRequirement({
+      pendingResizeWidth: pendingResizeRef.current?.width ?? null,
+      targetWindowWidth: targetWindowWidthRef.current,
+      containerWidth: containerRect.width,
+      centerDom,
+      zoneTarget,
+      gapEffective,
+      baseFrameWidthDom,
+      currentWindowWidth: typeof window.innerWidth === 'number' ? window.innerWidth : 0,
+      boundsWidthDom: bounds.width,
+      screenWidthDom: screen.width,
+      canvasRectWidthDom: canvasRect.width,
+    });
 
-    let enforcedWindowWidth = requiredWindowWidth;
-    const pendingGoalWidth = pendingResizeRef.current?.width ?? null;
-    const cachedGoalWidth = targetWindowWidthRef.current;
-    const lastGoalWidth = pendingGoalWidth ?? cachedGoalWidth;
-    if (pendingGoalWidth !== null && lastGoalWidth !== null) {
-      const normalizedGoal = Math.max(Math.round(lastGoalWidth), 320);
-      if (requiredWindowWidth < normalizedGoal - 2) {
-        enforcedWindowWidth = normalizedGoal;
-      }
-    }
+    const {
+      leftCapacity,
+      rightCapacity,
+      requiredWindowWidth,
+      enforcedWindowWidth,
+      capacityShortfall,
+      isEnlarge,
+      boundsToScreenRatio,
+      abnormalStartupEnlarge,
+    } = requirement;
+    const windowPolicySuppressed = isWindowPolicySuppressed(dragSessionStateRef.current);
 
     if (resizeWindowOnNextLayoutRef.current) {
-      const currentWindowWidth = typeof window.innerWidth === 'number' ? window.innerWidth : 0;
-      const isEnlarge = enforcedWindowWidth > currentWindowWidth + 1;
-      const safeScreenWidth = Number.isFinite(screen.width) && screen.width > 0 ? screen.width : 0;
-      const boundsToScreenRatio = safeScreenWidth > 0 ? bounds.width / safeScreenWidth : 0;
-      const abnormalStartupEnlarge = isEnlarge && (
-        boundsToScreenRatio > STARTUP_ENLARGE_BOUNDS_RATIO_GUARD
-        || baseFrameWidthDom > canvasRect.width * STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD
-      );
-
       const resizeTrace = {
         requiredWindowWidth,
         enforcedWindowWidth,
@@ -271,11 +264,15 @@ export const useBubblePositionEngine = ({
           boundsY: windowBoundsRef.current?.y ?? null,
           targetWindowWidth: targetWindowWidthRef.current,
           pendingWidth: pendingResizeRef.current?.width ?? null,
+          dragSessionState: dragSessionStateRef.current,
         },
         layout: resizeTrace,
       });
 
-      if (abnormalStartupEnlarge) {
+      if (windowPolicySuppressed) {
+        enlargeWidthConfirmRef.current = null;
+        suppressResizeForBubbleRef.current = false;
+      } else if (abnormalStartupEnlarge) {
         enlargeWidthConfirmRef.current = null;
         suppressResizeForBubbleRef.current = false;
       } else if (isEnlarge) {
@@ -288,13 +285,13 @@ export const useBubblePositionEngine = ({
         } else {
           enlargeWidthConfirmRef.current = null;
           resizeWindowOnNextLayoutRef.current = false;
-          applyWindowWidth(enforcedWindowWidth);
+          requestBubbleWindowWidth(enforcedWindowWidth);
           suppressResizeForBubbleRef.current = false;
         }
       } else {
         enlargeWidthConfirmRef.current = null;
         resizeWindowOnNextLayoutRef.current = false;
-        applyWindowWidth(enforcedWindowWidth);
+        requestBubbleWindowWidth(enforcedWindowWidth);
         suppressResizeForBubbleRef.current = false;
       }
     }
@@ -304,14 +301,6 @@ export const useBubblePositionEngine = ({
       setBubblePosition(null);
       bubbleAlignmentRef.current = null;
       commitBubbleReady(false);
-      if (force && typeof window !== 'undefined') {
-        const immediate = getWindowCenter();
-        centerBaselineRef.current = immediate;
-        window.setTimeout(() => {
-          const delayed = getWindowCenter();
-          centerBaselineRef.current = delayed;
-        }, 120);
-      }
       return;
     }
 
@@ -511,9 +500,10 @@ export const useBubblePositionEngine = ({
     resizeWindowOnNextLayoutRef,
     emitDebugTrace,
     windowBoundsRef,
+    dragSessionStateRef,
     enlargeWidthConfirmRef,
     suppressResizeForBubbleRef,
-    applyWindowWidth,
+    requestBubbleWindowWidth,
     bubbleRef,
     bubbleSettingsRef,
     bubbleZoneMetricsRef,
@@ -524,8 +514,6 @@ export const useBubblePositionEngine = ({
     setBubbleAlignment,
     bubblePositionRef,
     setBubblePosition,
-    getWindowCenter,
-    centerBaselineRef,
   ]);
 
   useEffect(() => {

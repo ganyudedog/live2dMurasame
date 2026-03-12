@@ -10,7 +10,8 @@ export interface UseCursorTrackingParams {
   autoResizeBackupRef: RefObject<{ width: number; height: number } | null>;
   updateDragHandlePositionRef: RefObject<((force?: boolean) => void) | null>;
   recomputeWindowPassthroughRef: RefObject<(() => void) | null>;
-  centerBaselineRef: RefObject<number | null>;
+  syncBaselineFromBounds: (bounds?: { x: number; width: number } | null) => number | null;
+  ensureBaseline: (fallbackCenter: number) => number;
   getWindowCenter: () => number;
 }
 
@@ -31,7 +32,8 @@ export const useCursorTracking = ({
   autoResizeBackupRef,
   updateDragHandlePositionRef,
   recomputeWindowPassthroughRef,
-  centerBaselineRef,
+  syncBaselineFromBounds,
+  ensureBaseline,
   getWindowCenter,
 }: UseCursorTrackingParams): UseCursorTrackingResult => {
   const pollCursorPosition = useCallback(function pollCursorPositionInternal() {
@@ -62,14 +64,9 @@ export const useCursorTracking = ({
 
         if (!motionTextRef.current && autoResizeBackupRef.current === null) {
           if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.width)) {
-            const newBaseline = bounds.x + bounds.width / 2;
-            if (Math.abs((centerBaselineRef.current ?? newBaseline) - newBaseline) > 0.5) {
-              centerBaselineRef.current = newBaseline;
-            } else {
-              centerBaselineRef.current = newBaseline;
-            }
+            syncBaselineFromBounds(bounds);
           } else {
-            centerBaselineRef.current = getWindowCenter();
+            ensureBaseline(getWindowCenter());
           }
         }
 
@@ -107,7 +104,8 @@ export const useCursorTracking = ({
     pointerX,
     pointerY,
     recomputeWindowPassthroughRef,
-    centerBaselineRef,
+    syncBaselineFromBounds,
+    ensureBaseline,
     updateDragHandlePositionRef,
   ]);
 

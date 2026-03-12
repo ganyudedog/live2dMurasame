@@ -4,7 +4,7 @@ import { Application, Ticker } from 'pixi.js';
 import { loadModel } from '../live2dManage/loader';
 import { Live2DModel } from '../live2dManage/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2dManage/runtime';
-import { agg, debug as logDebug, error, sample, warn } from '../../../utils/log';
+import { debug as logDebug, error, sample, warn } from '../../../utils/log';
 import { createLive2DActionController, type Live2DActionController } from '../../../../AI/core/actionController';
 import { createStage2Runtime, type Stage2Runtime } from '../../../../AI/core/stage2Runtime';
 import type { ActionIntentInput } from '../../../../AI/types/action';
@@ -21,16 +21,12 @@ export interface UsePetModelParams {
   pointerX: RefObject<number>;
   pointerY: RefObject<number>;
   ignoreMouseRef: RefObject<boolean>;
-  isWindowDragActiveRef: RefObject<boolean>;
-  windowBoundsRef: RefObject<{ x: number; y: number; width: number; height: number } | null>;
   setModel: (model: Live2DModelType | null) => void;
   setModelLoadStatus: (status: 'idle' | 'loading' | 'loaded' | 'error', error?: string) => void;
   updateHitAreas: (model: Live2DModelType) => void;
   updateBubblePosition: (force?: boolean) => void;
   updateDragHandlePosition: (force?: boolean) => void;
   scheduleApplyLayout: () => void;
-  handleWindowBoundsAck?: (bounds: { x: number; y: number; width: number; height: number; requestId?: string } | undefined) => void;
-  alignWindowToCenterLine: (bounds: { x: number; y: number; width: number; height: number }) => void;
   isIdleState: (motionManager: any) => boolean;
   clampEyeBallY: (value: number) => number;
   clampAngleY: (value: number) => number;
@@ -52,16 +48,12 @@ export const usePetModel = ({
   pointerX,
   pointerY,
   ignoreMouseRef,
-  isWindowDragActiveRef,
-  windowBoundsRef,
   setModel,
   setModelLoadStatus,
   updateHitAreas,
   updateBubblePosition,
   updateDragHandlePosition,
   scheduleApplyLayout,
-  handleWindowBoundsAck,
-  alignWindowToCenterLine,
   isIdleState,
   clampEyeBallY,
   clampAngleY,
@@ -144,178 +136,12 @@ export const usePetModel = ({
 
       initialized = true;
 
-      const emitDebugTrace = (payload: Record<string, unknown>) => {
-        try {
-          window.SystemAPI?.debugTrace?.(payload);
-        } catch {
-          // swallow debug trace bridge errors
-        }
-      };
-      const recentAckBoundsByRid = new Map<string, { x: number; y: number; width: number; height: number; ts: number }>();
-      const RECENT_ACK_TTL_MS = 1500;
-
-      const onBoundsChanged = (bounds?: { x: number; y: number; width: number; height: number; requestId?: string }) => {
-      try {
-        agg({
-          level: 'debug',
-          ns: 'pet.window',
-          event: 'bounds.changed',
-          key: bounds?.requestId ?? 'noRid',
-          windowMs: 800,
-          data: bounds ? { ...bounds } : { missing: true },
-        });
-        if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
-          const prev = windowBoundsRef.current;
-          windowBoundsRef.current = bounds;
-          alignWindowToCenterLine(bounds);
-
-          agg({
-            level: 'debug',
-            ns: 'pet.window',
-            event: 'bounds.accepted',
-            key: bounds.requestId ?? 'noRid',
-            windowMs: 800,
-            data: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
-          });
-
-          const moveOnly = Boolean(prev)
-            && (Math.abs(bounds.x - (prev as any).x) > 0 || Math.abs(bounds.y - (prev as any).y) > 0)
-            && (Math.abs(bounds.width - (prev as any).width) <= 1)
-            && (Math.abs(bounds.height - (prev as any).height) <= 1);
-          if (isWindowDragActiveRef.current && moveOnly) return;
-          if (moveOnly) return;
-        } else {
-          agg({
-            level: 'debug',
-            ns: 'pet.window',
-            event: 'bounds.ignored',
-            key: 'invalid',
-            windowMs: 2000,
-            data: bounds ? { ...bounds } : { missing: true },
-          });
-        }
-        updateBubblePosition(true);
-        updateDragHandlePosition(true);
-      } catch (e) {
-        warn('pet.window', 'bounds.handlerError', { err: String(e) });
-      }
-    };
-      const onWindowFact = (payload?: { bounds?: { x: number; y: number; width: number; height: number }; lastAppliedIntentId?: string | null }) => {
-      const bounds = payload?.bounds;
-      if (!bounds) return;
-      const rid = typeof payload?.lastAppliedIntentId === 'string' ? payload.lastAppliedIntentId : null;
-      let effectiveBounds = bounds;
-      if (rid) {
-        const recentAck = recentAckBoundsByRid.get(rid);
-        if (recentAck && Date.now() - recentAck.ts <= RECENT_ACK_TTL_MS) {
-          effectiveBounds = {
-            x: recentAck.x,
-            y: recentAck.y,
-            width: recentAck.width,
-            height: recentAck.height,
-          };
-        }
-      }
-      emitDebugTrace({
-        kind: 'windowIntent',
-        profile: 'singleWriter',
-        level: 'debug',
-        request: {
-          source: 'renderer.windowFact',
-          rid: rid ?? 'fact-no-rid',
-          phase: 'fact',
-          ts: Date.now(),
-        },
-        window: {
-          boundsX: effectiveBounds.x,
-          boundsY: effectiveBounds.y,
-          boundsWidth: effectiveBounds.width,
-          boundsHeight: effectiveBounds.height,
-        },
-        layout: {
-          kind: 'fact',
-          source: 'windowFact',
-          reason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : undefined,
-        },
-      });
-      onBoundsChanged({
-        ...effectiveBounds,
-        requestId: rid ?? undefined,
-      });
-    };
-      const onWindowIntentAck = (ack?: { intentId?: string; status?: string; reason?: string; appliedBounds?: { x: number; y: number; width: number; height: number } }) => {
-      const intentId = typeof ack?.intentId === 'string' ? ack.intentId : null;
-      if (!intentId) return;
-      emitDebugTrace({
-        kind: 'windowIntent',
-        profile: 'singleWriter',
-        level: ack?.status === 'applied' ? 'debug' : 'warn',
-        request: {
-          source: 'renderer.windowIntentAck',
-          rid: intentId,
-          phase: 'ack',
-          ts: Date.now(),
-          status: typeof ack?.status === 'string' ? ack.status : undefined,
-          reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
-        },
-        window: {
-          boundsX: Number.isFinite(ack?.appliedBounds?.x) ? ack!.appliedBounds!.x : null,
-          boundsY: Number.isFinite(ack?.appliedBounds?.y) ? ack!.appliedBounds!.y : null,
-          boundsWidth: Number.isFinite(ack?.appliedBounds?.width) ? ack!.appliedBounds!.width : null,
-          boundsHeight: Number.isFinite(ack?.appliedBounds?.height) ? ack!.appliedBounds!.height : null,
-        },
-        layout: {
-          kind: 'ack',
-          source: 'windowIntentAck',
-          reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
-        },
-      });
-      if (ack?.status !== 'applied') return;
-      const appliedX = Number.isFinite(ack?.appliedBounds?.x) ? ack.appliedBounds!.x : 0;
-      const appliedY = Number.isFinite(ack?.appliedBounds?.y) ? ack.appliedBounds!.y : 0;
-      const appliedWidth = Number.isFinite(ack?.appliedBounds?.width) ? ack.appliedBounds!.width : 0;
-      const appliedHeight = Number.isFinite(ack?.appliedBounds?.height) ? ack.appliedBounds!.height : 0;
-
-      recentAckBoundsByRid.set(intentId, {
-        x: appliedX,
-        y: appliedY,
-        width: appliedWidth,
-        height: appliedHeight,
-        ts: Date.now(),
-      });
-      for (const [key, value] of recentAckBoundsByRid.entries()) {
-        if (Date.now() - value.ts > RECENT_ACK_TTL_MS) {
-          recentAckBoundsByRid.delete(key);
-        }
-      }
-      try {
-        handleWindowBoundsAck?.({
-          x: appliedX,
-          y: appliedY,
-          width: appliedWidth,
-          height: appliedHeight,
-          requestId: intentId,
-        });
-      } catch {
-        // swallow ack handler errors
-      }
-    };
-      try {
-        window.WindowAPI?.on?.('pet:windowFact', onWindowFact);
-        window.WindowAPI?.on?.('pet:windowIntentAck', onWindowIntentAck);
-      } catch { /* ignore */ }
-
       appCleanup = () => {
       // 清理 app 相关资源
         try {
           window.removeEventListener('resize', handleResize);
           window.removeEventListener('mousemove', handleMouseMove);
           resizeObserver?.disconnect();
-        } catch { /* ignore */ }
-        try {
-          window.WindowAPI?.off?.('pet:windowBoundsChanged', onBoundsChanged);
-          window.WindowAPI?.off?.('pet:windowFact', onWindowFact);
-          window.WindowAPI?.off?.('pet:windowIntentAck', onWindowIntentAck);
         } catch { /* ignore */ }
 
       // 清理模型与 ticker

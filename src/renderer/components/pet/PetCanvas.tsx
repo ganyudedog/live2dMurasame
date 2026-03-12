@@ -6,7 +6,6 @@ import DebugSymmetricMasks from './UI/DebugSymmetricMasks';
 import DebugVisualMasks from './UI/DebugVisualMasks';
 import OpenTheMenu from './UI/OpenTheMenu';
 import { Application } from 'pixi.js';
-import { computeContextZone } from './logic/contextZone/contextZoneEngine';
 import { usePetStore } from '../../store/usePetStore';
 import type { Live2DModel as Live2DModelType } from './live2dManage/runtime';
 import { usePetModel } from './hooks/usePetModel';
@@ -21,6 +20,14 @@ import { usePetCanvasBootstrap } from './hooks/usePetCanvasBootstrap';
 import { useDebugMaskHeight } from './hooks/useDebugMaskHeight';
 import { usePetResizeOrchestrator } from './hooks/usePetResizeOrchestrator';
 import { useBubblePositionEngine } from './hooks/useBubblePositionEngine';
+import { useBaselineController } from './runtime/geometry/BaselineController';
+import { useDragSessionController } from './runtime/geometry/DragSessionController';
+import { useGeometryRuntime } from './runtime/geometry/GeometryRuntime';
+import { createWindowCommandGateway } from './runtime/geometry/WindowCommandGateway';
+import { solveContextZoneLayout } from './runtime/geometry/solvers/ContextZoneLayoutSolver';
+import { solveInteractivity } from './runtime/geometry/solvers/InteractivitySolver';
+import { solveContextZoneActivity } from './runtime/geometry/solvers/ContextZoneActivitySolver';
+import { solveModelLayout } from './runtime/geometry/solvers/ModelLayoutSolver';
 import { debug } from '../../utils/log';
 import { useConfigStore } from '../../store/useConfigStore';
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
@@ -30,7 +37,7 @@ import {
   DEFAULT_TOUCH_PRIORITY,
 } from './const';
 
-import { clamp, clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../../utils/math';
+import { clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../../utils/math';
 
 const toFiniteNumber = (raw: unknown, fallback: number): number => {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
@@ -238,7 +245,6 @@ const PetCanvas: React.FC = () => {
   // 这里通过 boundsChanged 的“移动特征”来抑制拖动期间的自动扩缩窗。
   const suppressAutoResizeUntilRef = useRef(0);
   const ignoreUserMoveDetectUntilRef = useRef(0);
-  const isWindowDragActiveRef = useRef(false);
   const lastObservedBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   // 窗口宽度策略：只跟随 scale 变化。
@@ -299,6 +305,8 @@ const PetCanvas: React.FC = () => {
 
   // 布局相关
   const baseWindowSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const pendingBubbleWindowWidthRef = useRef<number | null>(null);
+  const bubbleWindowPolicyRafRef = useRef<number | null>(null);
 
   const lastResizeAtRef = useRef(0); // 上次调整大小的时间戳
   const lastRequestedSizeRef = useRef<{ w: number; h: number } | null>(null); // 最后请求的尺寸
@@ -317,7 +325,12 @@ const PetCanvas: React.FC = () => {
 
   const suppressResizeForBubbleRef = useRef(false); // 是否抑制气泡引起的尺寸调整
 
-  const centerBaselineRef = useRef<number | null>(null); // 视觉中心基准线（全局坐标）
+  const {
+    getBaseline,
+    ensureBaseline,
+    commitBaseline,
+    commitBaselineFromBounds,
+  } = useBaselineController();
   const lastAlignAttemptRef = useRef(0); // 最近一次窗口对齐尝试时间戳
 
   // 动画与帧数
@@ -332,7 +345,7 @@ const PetCanvas: React.FC = () => {
     hydrated,
     refreshConfigSnapshot,
     windowBoundsRef,
-    centerBaselineRef,
+    initializeBaselineFromBounds: commitBaselineFromBounds,
   });
 
 
@@ -409,6 +422,38 @@ const PetCanvas: React.FC = () => {
     return soundPath;
   }, []);
 
+  const windowCommandGateway = useMemo(() => createWindowCommandGateway(), []);
+
+  const emitDragSessionDebugTrace = useCallback((payload: Record<string, unknown>) => {
+    try {
+      window.SystemAPI?.debugTrace?.(payload);
+    } catch {
+      // swallow drag session debug trace bridge errors
+    }
+  }, []);
+
+  const {
+    dragSessionStateRef,
+    isWindowDragActiveRef,
+    onPendingDragStart,
+    onPendingDragCancel,
+    onDragStart: onModelDragStart,
+    onDragMove: onModelDragMove,
+    onDragEnd: onModelDragEnd,
+  } = useDragSessionController({
+    sendWindowIntent: windowCommandGateway.sendWindowIntent,
+    emitDebugTrace: emitDragSessionDebugTrace,
+    recomputeWindowPassthroughRef,
+    dragHandleActiveRef,
+    pointerInsideHandleRef,
+    pointerInsideModelRef,
+    suppressAutoResizeUntilRef,
+    ignoreUserMoveDetectUntilRef,
+    windowBoundsRef,
+    updateBubblePosition: () => updateBubblePositionRef.current?.(true),
+    updateDragHandlePosition: () => updateDragHandlePositionRef.current?.(true),
+  });
+
   const {
     emitDebugTrace,
     handleWindowBoundsAck,
@@ -416,8 +461,13 @@ const PetCanvas: React.FC = () => {
     alignWindowToCenterLine,
   } = usePetResizeOrchestrator({
     getWindowCenter,
+    getBaseline,
+    ensureBaseline,
+    commitBaseline,
+    commitBaselineFromBounds,
     isDevToolsOpenedNow,
     isDevtoolsDockedLike,
+    sendWindowIntent: windowCommandGateway.sendWindowIntent,
     lastResizeAtRef,
     lastRequestedSizeRef,
     resizeInFlightRequestIdRef,
@@ -428,14 +478,37 @@ const PetCanvas: React.FC = () => {
     pendingBoundsPredictionRef,
     pendingResizeIssuedAtRef,
     suppressResizeForBubbleRef,
-    centerBaselineRef,
     lastAlignAttemptRef,
     suppressAutoResizeUntilRef,
     ignoreUserMoveDetectUntilRef,
     isWindowDragActiveRef,
+    dragSessionStateRef,
     lastObservedBoundsRef,
     windowBoundsRef,
   });
+
+  const flushPendingBubbleWindowWidth = useCallback(() => {
+    bubbleWindowPolicyRafRef.current = null;
+    const requiredWidth = pendingBubbleWindowWidthRef.current;
+    pendingBubbleWindowWidthRef.current = null;
+    if (typeof requiredWidth !== 'number' || !Number.isFinite(requiredWidth)) return;
+    applyWindowWidth(requiredWidth);
+  }, [applyWindowWidth]);
+
+  const requestBubbleWindowWidth = useCallback((requiredWidth: number) => {
+    if (!Number.isFinite(requiredWidth)) return;
+    pendingBubbleWindowWidthRef.current = requiredWidth;
+
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      flushPendingBubbleWindowWidth();
+      return;
+    }
+
+    if (bubbleWindowPolicyRafRef.current !== null) return;
+    bubbleWindowPolicyRafRef.current = window.requestAnimationFrame(() => {
+      flushPendingBubbleWindowWidth();
+    });
+  }, [flushPendingBubbleWindowWidth]);
 
   const { updateBubblePosition } = useBubblePositionEngine({
     scale,
@@ -457,17 +530,16 @@ const PetCanvas: React.FC = () => {
     resizeWindowOnNextLayoutRef,
     enlargeWidthConfirmRef,
     suppressResizeForBubbleRef,
-    centerBaselineRef,
     pendingResizeIssuedAtRef,
     windowBoundsRef,
+    dragSessionStateRef,
     lastBubbleUpdateRef,
     bubbleAlignmentRef,
     bubblePositionRef,
     updateBubblePositionRef,
     commitBubbleReady,
-    applyWindowWidth,
+    requestBubbleWindowWidth,
     emitDebugTrace,
-    getWindowCenter,
     setRedLineLeft,
     setVisibleFrameMetrics,
     setBaseFrameMetrics,
@@ -476,6 +548,16 @@ const PetCanvas: React.FC = () => {
     setBubbleAlignment,
     setBubbleTailY,
   });
+
+  useEffect(() => {
+    return () => {
+      if (typeof window === 'undefined' || typeof window.cancelAnimationFrame !== 'function') return;
+      if (bubbleWindowPolicyRafRef.current !== null) {
+        window.cancelAnimationFrame(bubbleWindowPolicyRafRef.current);
+        bubbleWindowPolicyRafRef.current = null;
+      }
+    };
+  }, []);
 
   useMousePassthrough({
     ignoreMouse,
@@ -494,7 +576,8 @@ const PetCanvas: React.FC = () => {
     motionTextRef,
     autoResizeBackupRef,
     updateDragHandlePositionRef,
-    centerBaselineRef,
+    syncBaselineFromBounds: commitBaselineFromBounds,
+    ensureBaseline,
     getWindowCenter,
     recomputeWindowPassthroughRef,
     clearContextZoneLatchTimer,
@@ -512,14 +595,11 @@ const PetCanvas: React.FC = () => {
     pointerInsideBubbleRef,
     pointerInsideHandleRef,
     pointerInsideModelRef,
-    pointerX,
-    pointerY,
     setContextZoneStyle,
     setContextZoneAlignment,
     recomputeWindowPassthroughRef,
     scheduleContextZoneLatchCheck,
     clearContextZoneLatchTimer,
-    latchDurationMs: CONTEXT_ZONE_LATCH_MS,
   });
 
   const updateDragHandlePosition = useCallback((force = false) => {
@@ -550,18 +630,7 @@ const PetCanvas: React.FC = () => {
     const clampedTopTmp = Math.max(0, Math.min(1, Number.isFinite(topRatioTmp) ? topRatioTmp : 0));
     const topDomY = canvasRect.top + clampedTopTmp * canvasRect.height;
 
-    let pointerInsideModel = false;
-    let pointerWithinCanvas = false;
-    if (canvasRect.width > 0 && canvasRect.height > 0) {
-      pointerWithinCanvas = pointerX.current >= canvasRect.left && pointerX.current <= canvasRect.right && pointerY.current >= canvasRect.top && pointerY.current <= canvasRect.bottom;
-      if (pointerWithinCanvas) {
-        const pointerCanvasX = ((pointerX.current - canvasRect.left) / canvasRect.width) * app.renderer.screen.width;
-        const pointerCanvasY = ((pointerY.current - canvasRect.top) / canvasRect.height) * app.renderer.screen.height;
-        pointerInsideModel = pointerCanvasX >= bounds.x && pointerCanvasX <= bounds.x + bounds.width && pointerCanvasY >= bounds.y && pointerCanvasY <= bounds.y + bounds.height;
-      }
-    }
-
-    // 使用 contextZoneEngine 计算上下文区对齐与样式（纯函数）
+    // 使用 geometry solver 计算上下文区布局（纯函数）
     const screenObj = window.screen as unknown as { availLeft?: number; availWidth?: number; width?: number };
     const screenAvailLeft = typeof screenObj?.availLeft === 'number' ? screenObj.availLeft : 0;
     const screenAvailWidth = typeof screenObj?.availWidth === 'number'
@@ -570,7 +639,7 @@ const PetCanvas: React.FC = () => {
     const windowGlobalLeft = window.screenX ?? window.screenLeft ?? 0;
     const windowGlobalWidth = window.outerWidth || containerRect.width;
 
-    const cz = computeContextZone({
+    const cz = solveContextZoneLayout({
       containerWidth: containerRect.width,
       containerHeight: containerRect.height,
       containerLeft: containerRect.left,
@@ -583,30 +652,92 @@ const PetCanvas: React.FC = () => {
       windowGlobalWidth,
       leftMargin: 14,
       rightMargin: 14,
-    }, {
-      EDGE_THRESHOLD: 48,
-      MIN_WIDTH: 56,
-      MAX_WIDTH: 104,
-      MIN_HEIGHT: 48,
-      MAX_HEIGHT: 120,
+      constants: {
+        EDGE_THRESHOLD: 48,
+        MIN_WIDTH: 56,
+        MAX_WIDTH: 104,
+        MIN_HEIGHT: 48,
+        MAX_HEIGHT: 120,
+      },
+    });
+
+    const contextZoneActivity = solveContextZoneActivity({
+      pointerX: pointerX.current,
+      pointerY: pointerY.current,
+      rectAbs: cz.rectAbs,
+      now,
+      latchDurationMs: CONTEXT_ZONE_LATCH_MS,
+      activeUntil: contextZoneActiveUntilRef.current,
+      hasReleaseTimer: contextZoneReleaseTimerRef.current !== null,
     });
 
     applyContextZoneDecision({
       alignment: cz.alignment,
       style: cz.style,
       rectAbs: cz.rectAbs,
+      pointerInsideContextZone: contextZoneActivity.pointerInsideContextZone,
+      nextActiveUntil: contextZoneActivity.nextActiveUntil,
+      shouldScheduleLatchCheck: contextZoneActivity.shouldScheduleLatchCheck,
+      shouldClearLatch: contextZoneActivity.shouldClearLatch,
     });
 
     const bubbleEl = bubbleRef.current;
+    const bubbleRect = bubbleEl?.getBoundingClientRect?.() ?? null;
+    const interactivity = solveInteractivity({
+      pointerX: pointerX.current,
+      pointerY: pointerY.current,
+      canvasRect: {
+        left: canvasRect.left,
+        top: canvasRect.top,
+        right: canvasRect.right,
+        bottom: canvasRect.bottom,
+      },
+      rendererWidth: app.renderer.screen.width,
+      rendererHeight: app.renderer.screen.height,
+      modelBounds: {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+      },
+      bubbleRect: bubbleRect
+        ? {
+          left: bubbleRect.left,
+          top: bubbleRect.top,
+          right: bubbleRect.right,
+          bottom: bubbleRect.bottom,
+        }
+        : null,
+      contextZoneRect: cz.rectAbs,
+      pointerInsideHandle: false,
+      dragHandleHover: dragHandleHoverRef.current,
+      dragHandleActive: dragHandleActiveRef.current,
+      ignoreMouse: ignoreMouseRef.current,
+    });
     updateInteractiveZones({
-      bubbleEl,
-      pointerInsideModel,
+      pointerInsideBubble: interactivity.pointerInsideBubble,
+      pointerInsideContextZone: interactivity.pointerInsideContextZone,
+      pointerInsideHandle: interactivity.pointerInsideHandle,
+      pointerInsideModel: interactivity.pointerInsideModel,
+      shouldCapture: interactivity.shouldCapture,
+      shouldPassthrough: interactivity.shouldPassthrough,
     });
   }, [applyContextZoneDecision, updateInteractiveZones]);
 
   useLayoutEffect(() => {
     updateDragHandlePositionRef.current = updateDragHandlePosition;
   }, [updateDragHandlePosition]);
+
+  useGeometryRuntime({
+    windowBoundsRef,
+    isWindowDragActiveRef,
+    dragSessionStateRef,
+    alignWindowToCenterLine,
+    updateBubblePosition,
+    updateDragHandlePosition,
+    handleWindowBoundsAck,
+    emitDebugTrace,
+  });
 
   const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
     const settings = (modelInstance as any).internalModel?.settings;
@@ -669,23 +800,9 @@ const PetCanvas: React.FC = () => {
       }
     }
     const reference = baseWindowSizeRef.current ?? { width: winW, height: winH };
-    const referenceHeight = Math.min(reference.height, winH);
     const lb = m.getLocalBounds();
-    const targetH = referenceHeight * 0.95;
-    const base = targetH / (lb.height || 1);
-    m.scale.set(base * (scale || 1));
-    m.pivot.set(lb.x + lb.width / 2, lb.y + lb.height / 2);
-    const scaledW = lb.width * m.scale.x;
-    const scaledH = lb.height * m.scale.y;
-    const horizontalMargin = 40;
-    const marginBottom = 40;
     const liveWindowCenter = getWindowCenter();
-    const baselineScreen = Number.isFinite(centerBaselineRef.current)
-      ? (centerBaselineRef.current as number)
-      : liveWindowCenter;
-    if (!Number.isFinite(centerBaselineRef.current)) {
-      centerBaselineRef.current = baselineScreen;
-    }
+    const baselineScreen = ensureBaseline(liveWindowCenter);
     const windowMetrics = getWindowMetrics();
     const boundsSnapshot = (() => {
       if (devToolsOpened) {
@@ -703,14 +820,20 @@ const PetCanvas: React.FC = () => {
     const windowLeft = Number.isFinite(boundsSnapshot?.x)
       ? (boundsSnapshot as { x: number }).x
       : windowMetrics.left;
-    const rawCenterLocal = baselineScreen - windowLeft;
-    const halfWidth = scaledW / 2;
-    const minCenter = halfWidth + horizontalMargin;
-    const maxCenter = Math.max(minCenter, winW - horizontalMargin - halfWidth);
-    const targetCenterLocal = clamp(Number.isFinite(rawCenterLocal) ? rawCenterLocal : winW / 2, minCenter, maxCenter);
-    const targetX = targetCenterLocal;
-    const targetY = winH - scaledH / 2 - marginBottom;
-    m.position.set(targetX, targetY);
+    const layout = solveModelLayout({
+      windowWidth: winW,
+      windowHeight: winH,
+      scale: scale || 1,
+      baselineScreen,
+      windowLeft,
+      localBounds: lb,
+      baseWindowSize: reference,
+    });
+
+    baseWindowSizeRef.current = layout.nextBaseWindowSize;
+    m.scale.set(layout.modelScale);
+    m.pivot.set(layout.pivotX, layout.pivotY);
+    m.position.set(layout.positionX, layout.positionY);
     if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
       if (layoutBubbleMeasureRafRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
         window.cancelAnimationFrame(layoutBubbleMeasureRafRef.current);
@@ -723,7 +846,7 @@ const PetCanvas: React.FC = () => {
       updateBubblePosition(true);
     }
     updateDragHandlePosition(true);
-  }, [scale, updateBubblePosition, updateDragHandlePosition]);
+  }, [scale, ensureBaseline, updateBubblePosition, updateDragHandlePosition]);
 
   // 合帧调度：同一帧内多次触发布局（scale/resize/bounds 等）只执行一次 applyLayout。
   const applyLayoutRafRef = useRef<number | null>(null);
@@ -744,7 +867,7 @@ const PetCanvas: React.FC = () => {
   usePetLayout({
     scale,
     scheduleApplyLayout,
-    centerBaselineRef,
+    ensureBaseline,
     getWindowCenter,
   });
 
@@ -761,16 +884,12 @@ const PetCanvas: React.FC = () => {
     pointerX,
     pointerY,
     ignoreMouseRef,
-    isWindowDragActiveRef,
-    windowBoundsRef,
     setModel,
     setModelLoadStatus,
     updateHitAreas,
     updateBubblePosition,
     updateDragHandlePosition,
     scheduleApplyLayout,
-    handleWindowBoundsAck,
-    alignWindowToCenterLine,
     isIdleState,
     clampEyeBallY,
     clampAngleY,
@@ -906,106 +1025,11 @@ const PetCanvas: React.FC = () => {
     }
   }, [interruptMotion]);
 
-  const onModelDragStart = useCallback(() => {
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    isWindowDragActiveRef.current = true;
-    suppressAutoResizeUntilRef.current = now + 360;
-    ignoreUserMoveDetectUntilRef.current = now + 360;
-    dragHandleActiveRef.current = true;
-    pointerInsideHandleRef.current = false;
-    pointerInsideModelRef.current = true;
-    recomputeWindowPassthroughRef.current?.();
-
-    try {
-      window.WindowAPI?.sendWindowIntent?.({
-        intentId: `drag_state_start_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-        source: 'drag',
-        kind: 'drag-state',
-        payload: { phase: 'start' },
-        priority: 120,
-        ts: Date.now(),
-      });
-    } catch {
-      // swallow drag state intent errors
-    }
-
-    emitDebugTrace({
-      kind: 'drag',
-      profile: 'windowMove',
-      level: 'debug',
-      request: {
-        source: 'modelDrag',
-        phase: 'start',
-        ts: Date.now(),
-      },
-      window: {
-        boundsX: windowBoundsRef.current?.x ?? null,
-        boundsY: windowBoundsRef.current?.y ?? null,
-        boundsWidth: windowBoundsRef.current?.width ?? null,
-        boundsHeight: windowBoundsRef.current?.height ?? null,
-      },
-    });
-  }, [emitDebugTrace]);
-
-  const onModelDragMove = useCallback(() => {
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    isWindowDragActiveRef.current = true;
-    suppressAutoResizeUntilRef.current = now + 220;
-    ignoreUserMoveDetectUntilRef.current = now + 220;
-  }, []);
-
-  const onModelDragEnd = useCallback(() => {
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    isWindowDragActiveRef.current = false;
-    suppressAutoResizeUntilRef.current = now + 180;
-    ignoreUserMoveDetectUntilRef.current = now + 180;
-    dragHandleActiveRef.current = false;
-    pointerInsideModelRef.current = false;
-    recomputeWindowPassthroughRef.current?.();
-
-    try {
-      window.WindowAPI?.sendWindowIntent?.({
-        intentId: `drag_state_end_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-        source: 'drag',
-        kind: 'drag-state',
-        payload: { phase: 'end' },
-        priority: 120,
-        ts: Date.now(),
-      });
-    } catch {
-      // swallow drag state intent errors
-    }
-
-    emitDebugTrace({
-      kind: 'drag',
-      profile: 'windowMove',
-      level: 'debug',
-      request: {
-        source: 'modelDrag',
-        phase: 'end',
-        ts: Date.now(),
-      },
-      window: {
-        boundsX: windowBoundsRef.current?.x ?? null,
-        boundsY: windowBoundsRef.current?.y ?? null,
-        boundsWidth: windowBoundsRef.current?.width ?? null,
-        boundsHeight: windowBoundsRef.current?.height ?? null,
-      },
-    });
-
-    updateBubblePosition(true);
-    updateDragHandlePosition(true);
-  }, [emitDebugTrace, updateBubblePosition, updateDragHandlePosition]);
-
   usePointerTapHandler({
     handlePointerTap,
     canStartDrag: canStartModelDrag,
+    onPendingDragStart,
+    onPendingDragCancel,
     onDragStart: onModelDragStart,
     onDragMove: onModelDragMove,
     onDragEnd: onModelDragEnd,

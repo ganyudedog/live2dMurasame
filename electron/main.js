@@ -22,7 +22,7 @@ import {
 import { loadModelMemory, saveModelMemory } from './config/configManager.js';
 import { detectModelFilePath } from './utils/path.js';
 import { getModelKeyFromPath } from './utils/modelKey.js';
-import { logDebugTrace } from './utils/log.js';
+import { logDebugTrace, logPetEvent } from './utils/log.js';
 import { createAutoLaunchScheduler } from './main/autoLaunch.js';
 import { createRagFileService } from './main/ragFileService.js';
 import { registerModelMemoryIpc } from './main/modelMemoryIpc.js';
@@ -197,6 +197,8 @@ const { handleWindowIntent, scheduleEmitMainWindowBounds } = createWindowIntentC
 });
 const { handleWindowDrag } = createWindowDragController({
     BrowserWindow,
+    screen,
+    logPetEvent,
 });
 const { broadcastConfigSnapshot } = registerConfigIpc({
     ipcMain,

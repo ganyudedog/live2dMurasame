@@ -2,6 +2,7 @@
 import { useCallback, useEffect, type RefObject } from 'react';
 import { useCursorTracking } from './useCursorTracking';
 import { agg, warn } from '../../../utils/log';
+import { resolveMousePassthroughPolicy } from '../runtime/geometry/policy/MousePassthroughPolicy';
 
 export interface UseMousePassthroughParams {
   ignoreMouse: boolean;
@@ -20,7 +21,8 @@ export interface UseMousePassthroughParams {
   motionTextRef: RefObject<string | null>;
   autoResizeBackupRef: RefObject<{ width: number; height: number } | null>;
   updateDragHandlePositionRef: RefObject<((force?: boolean) => void) | null>;
-  centerBaselineRef: RefObject<number | null>;
+  syncBaselineFromBounds: (bounds?: { x: number; width: number } | null) => number | null;
+  ensureBaseline: (fallbackCenter: number) => number;
   getWindowCenter: () => number;
   recomputeWindowPassthroughRef: RefObject<() => void>;
   clearContextZoneLatchTimer: () => void;
@@ -53,7 +55,8 @@ export const useMousePassthrough = ({
   motionTextRef,
   autoResizeBackupRef,
   updateDragHandlePositionRef,
-  centerBaselineRef,
+  syncBaselineFromBounds,
+  ensureBaseline,
   getWindowCenter,
   recomputeWindowPassthroughRef,
   clearContextZoneLatchTimer,
@@ -67,7 +70,8 @@ export const useMousePassthrough = ({
     autoResizeBackupRef,
     updateDragHandlePositionRef,
     recomputeWindowPassthroughRef,
-    centerBaselineRef,
+    syncBaselineFromBounds,
+    ensureBaseline,
     getWindowCenter,
   });
 
@@ -77,7 +81,7 @@ export const useMousePassthrough = ({
     mousePassthroughRef.current = passthrough;
 
     agg({
-      level: 'debug',
+      level: 'info',
       ns: 'pet.passthrough',
       event: 'state',
       key: passthrough ? 'on' : 'off',
@@ -107,14 +111,16 @@ export const useMousePassthrough = ({
       contextZoneActiveUntilRef.current = 0;
       clearContextZoneLatchTimer();
     }
-    const shouldCapture = contextZoneActive || (!ignoreMouseRef.current && (
-      pointerInsideModelRef.current ||
-      pointerInsideBubbleRef.current ||
-      pointerInsideHandleRef.current ||
-      dragHandleHoverRef.current ||
-      dragHandleActiveRef.current
-    ));
-    setWindowMousePassthrough(!shouldCapture);
+    const policy = resolveMousePassthroughPolicy({
+      contextZoneActive,
+      ignoreMouse: ignoreMouseRef.current,
+      pointerInsideModel: pointerInsideModelRef.current,
+      pointerInsideBubble: pointerInsideBubbleRef.current,
+      pointerInsideHandle: pointerInsideHandleRef.current,
+      dragHandleHover: dragHandleHoverRef.current,
+      dragHandleActive: dragHandleActiveRef.current,
+    });
+    setWindowMousePassthrough(policy.shouldPassthrough);
   }, [
     clearContextZoneLatchTimer,
     dragHandleActiveRef,

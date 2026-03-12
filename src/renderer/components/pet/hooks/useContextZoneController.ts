@@ -1,9 +1,14 @@
 import { useCallback, type RefObject } from 'react';
+import { agg } from '../../../utils/log';
 
 export interface ContextZoneData {
   alignment: 'left' | 'right';
   style: { left: number; top: number; width: number; height: number };
   rectAbs: { left: number; right: number; top: number; bottom: number };
+  pointerInsideContextZone: boolean;
+  nextActiveUntil: number;
+  shouldScheduleLatchCheck: boolean;
+  shouldClearLatch: boolean;
 }
 
 export interface UseContextZoneControllerParams {
@@ -15,19 +20,20 @@ export interface UseContextZoneControllerParams {
   pointerInsideBubbleRef: RefObject<boolean>;
   pointerInsideHandleRef: RefObject<boolean>;
   pointerInsideModelRef: RefObject<boolean>;
-  pointerX: RefObject<number>;
-  pointerY: RefObject<number>;
   setContextZoneStyle: (style: { left: number; top: number; width: number; height: number } | null) => void;
   setContextZoneAlignment: (alignment: 'left' | 'right') => void;
   recomputeWindowPassthroughRef: RefObject<() => void>;
   scheduleContextZoneLatchCheck: (targetTimestamp: number) => void;
   clearContextZoneLatchTimer: () => void;
-  latchDurationMs: number;
 }
 
 export interface UpdateInteractiveZonesArgs {
-  bubbleEl: HTMLDivElement | null;
+  pointerInsideBubble: boolean;
+  pointerInsideContextZone?: boolean;
+  pointerInsideHandle: boolean;
   pointerInsideModel: boolean;
+  shouldCapture?: boolean;
+  shouldPassthrough?: boolean;
 }
 
 export interface UseContextZoneControllerResult {
@@ -47,19 +53,24 @@ export const useContextZoneController = ({
   pointerInsideBubbleRef,
   pointerInsideHandleRef,
   pointerInsideModelRef,
-  pointerX,
-  pointerY,
   setContextZoneStyle,
   setContextZoneAlignment,
   recomputeWindowPassthroughRef,
   scheduleContextZoneLatchCheck,
   clearContextZoneLatchTimer,
-  latchDurationMs,
 }: UseContextZoneControllerParams): UseContextZoneControllerResult => {
   const applyContextZoneDecision = useCallback((data: ContextZoneData) => {
     if (contextZoneAlignmentRef.current !== data.alignment) {
       contextZoneAlignmentRef.current = data.alignment;
       setContextZoneAlignment(data.alignment);
+      agg({
+        level: 'debug',
+        ns: 'pet.contextZone',
+        event: 'alignment',
+        key: data.alignment,
+        windowMs: 800,
+        data: { alignment: data.alignment },
+      });
     }
 
     const nextStyle = data.style;
@@ -71,40 +82,26 @@ export const useContextZoneController = ({
       || Math.abs(prevStyle.height - nextStyle.height) > 0.5) {
       contextZoneStyleRef.current = nextStyle;
       setContextZoneStyle(nextStyle);
+      agg({
+        level: 'debug',
+        ns: 'pet.contextZone',
+        event: 'layout',
+        key: data.alignment,
+        windowMs: 800,
+        data: nextStyle,
+      });
     }
 
-    let pointerInsideContextZone = false;
-    if (Number.isFinite(pointerX.current) && Number.isFinite(pointerY.current)) {
-      pointerInsideContextZone = pointerX.current >= data.rectAbs.left
-        && pointerX.current <= data.rectAbs.right
-        && pointerY.current >= data.rectAbs.top
-        && pointerY.current <= data.rectAbs.bottom;
-    }
-
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    if (pointerInsideContextZone) {
-      const candidateExpiry = now + latchDurationMs;
-      const nextExpiry = candidateExpiry > contextZoneActiveUntilRef.current
-        ? candidateExpiry
-        : contextZoneActiveUntilRef.current;
-      const shouldReschedule = nextExpiry !== contextZoneActiveUntilRef.current || contextZoneReleaseTimerRef.current === null;
-      contextZoneActiveUntilRef.current = nextExpiry;
-      if (shouldReschedule) {
-        scheduleContextZoneLatchCheck(contextZoneActiveUntilRef.current);
-      }
-    } else if (contextZoneActiveUntilRef.current > now) {
-      if (contextZoneReleaseTimerRef.current === null) {
-        scheduleContextZoneLatchCheck(contextZoneActiveUntilRef.current);
-      }
-    } else if (contextZoneActiveUntilRef.current !== 0) {
+    contextZoneActiveUntilRef.current = data.nextActiveUntil;
+    if (data.shouldScheduleLatchCheck) {
+      scheduleContextZoneLatchCheck(contextZoneActiveUntilRef.current);
+    } else if (data.shouldClearLatch) {
       contextZoneActiveUntilRef.current = 0;
       clearContextZoneLatchTimer();
     }
 
-    if (pointerInsideContextZoneRef.current !== pointerInsideContextZone) {
-      pointerInsideContextZoneRef.current = pointerInsideContextZone;
+    if (pointerInsideContextZoneRef.current !== data.pointerInsideContextZone) {
+      pointerInsideContextZoneRef.current = data.pointerInsideContextZone;
       recomputeWindowPassthroughRef.current();
     }
   }, [
@@ -113,28 +110,28 @@ export const useContextZoneController = ({
     contextZoneAlignmentRef,
     contextZoneReleaseTimerRef,
     contextZoneStyleRef,
-    latchDurationMs,
     pointerInsideContextZoneRef,
-    pointerX,
-    pointerY,
     recomputeWindowPassthroughRef,
     scheduleContextZoneLatchCheck,
     setContextZoneAlignment,
     setContextZoneStyle,
   ]);
 
-  const updateInteractiveZones = useCallback(({ bubbleEl, pointerInsideModel }: UpdateInteractiveZonesArgs) => {
-    let pointerInsideBubble = false;
-    if (bubbleEl) {
-      const bubbleRect = bubbleEl.getBoundingClientRect();
-      pointerInsideBubble = pointerX.current >= bubbleRect.left
-        && pointerX.current <= bubbleRect.right
-        && pointerY.current >= bubbleRect.top
-        && pointerY.current <= bubbleRect.bottom;
-    }
-
+  const updateInteractiveZones = useCallback(({
+    pointerInsideBubble,
+    pointerInsideContextZone,
+    pointerInsideHandle,
+    pointerInsideModel,
+    shouldCapture,
+    shouldPassthrough,
+  }: UpdateInteractiveZonesArgs) => {
     if (pointerInsideBubbleRef.current !== pointerInsideBubble) {
       pointerInsideBubbleRef.current = pointerInsideBubble;
+      recomputeWindowPassthroughRef.current();
+    }
+
+    if (typeof pointerInsideContextZone === 'boolean' && pointerInsideContextZoneRef.current !== pointerInsideContextZone) {
+      pointerInsideContextZoneRef.current = pointerInsideContextZone;
       recomputeWindowPassthroughRef.current();
     }
 
@@ -143,16 +140,31 @@ export const useContextZoneController = ({
       recomputeWindowPassthroughRef.current();
     }
 
-    if (pointerInsideHandleRef.current) {
-      pointerInsideHandleRef.current = false;
+    if (pointerInsideHandleRef.current !== pointerInsideHandle) {
+      pointerInsideHandleRef.current = pointerInsideHandle;
       recomputeWindowPassthroughRef.current();
     }
+
+    agg({
+      level: 'debug',
+      ns: 'pet.interactivity',
+      event: 'snapshot',
+      key: [pointerInsideModel ? 'model' : 'none', pointerInsideBubble ? 'bubble' : 'none', pointerInsideHandle ? 'handle' : 'none', pointerInsideContextZone ? 'context' : 'none'].join(':'),
+      windowMs: 800,
+      data: {
+        pointerInsideModel,
+        pointerInsideBubble,
+        pointerInsideHandle,
+        pointerInsideContextZone: pointerInsideContextZone ?? pointerInsideContextZoneRef.current,
+        shouldCapture: shouldCapture ?? null,
+        shouldPassthrough: shouldPassthrough ?? null,
+      },
+    });
   }, [
     pointerInsideBubbleRef,
+    pointerInsideContextZoneRef,
     pointerInsideHandleRef,
     pointerInsideModelRef,
-    pointerX,
-    pointerY,
     recomputeWindowPassthroughRef,
   ]);
 

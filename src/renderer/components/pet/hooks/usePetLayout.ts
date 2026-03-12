@@ -1,9 +1,9 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect } from 'react';
 
 export interface UsePetLayoutParams {
   scale: number | null | undefined;
   scheduleApplyLayout: () => void;
-  centerBaselineRef: RefObject<number | null>;
+  ensureBaseline: (fallbackCenter: number) => number;
   getWindowCenter: () => number;
 }
 
@@ -13,20 +13,13 @@ export interface UsePetLayoutParams {
 export const usePetLayout = ({
   scale,
   scheduleApplyLayout,
-  centerBaselineRef,
+  ensureBaseline,
   getWindowCenter,
 }: UsePetLayoutParams): void => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    // If PetCanvas already initialized baseline from main-process bounds,
-    // don't overwrite it here. Overwriting can cause the first resize/scale
-    // to jitter because the anchor center shifts mid-flight.
-    if (typeof centerBaselineRef.current === 'number' && Number.isFinite(centerBaselineRef.current)) {
-      return;
-    }
-    const initialCenter = getWindowCenter();
-    centerBaselineRef.current = initialCenter;
-  }, [getWindowCenter, centerBaselineRef]);
+    ensureBaseline(getWindowCenter());
+  }, [ensureBaseline, getWindowCenter]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

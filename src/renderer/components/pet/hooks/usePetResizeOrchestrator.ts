@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, type RefObject } from 'react';
 import { RESIZE_THROTTLE_MS } from '../const';
+import type { DragSessionState } from '../runtime/geometry/DragSessionController';
+import {
+  isWindowPolicySuppressed as getWindowPolicySuppressed,
+  resolveBubbleResizePolicy,
+} from '../runtime/geometry/policy/WindowPolicyEngine';
 
 export interface WindowBounds {
   x: number;
@@ -14,8 +19,13 @@ type ResizeDesired = { width: number; height: number; anchorCenter?: number } | 
 
 export interface UsePetResizeOrchestratorParams {
   getWindowCenter: () => number;
+  getBaseline: () => number | null;
+  ensureBaseline: (fallbackCenter: number) => number;
+  commitBaseline: (nextCenter: number) => number;
+  commitBaselineFromBounds: (bounds?: { x: number; width: number } | null) => number | null;
   isDevToolsOpenedNow: () => boolean;
   isDevtoolsDockedLike: (params: { boundsWidth?: number | null; innerWidth: number; outerWidth?: number | null }) => boolean;
+  sendWindowIntent: (intent: PetWindowIntentPayload) => Promise<PetWindowIntentAck | undefined>;
 
   lastResizeAtRef: RefObject<number>;
   lastRequestedSizeRef: RefObject<{ w: number; h: number } | null>;
@@ -27,11 +37,11 @@ export interface UsePetResizeOrchestratorParams {
   pendingBoundsPredictionRef: RefObject<WindowBounds | null>;
   pendingResizeIssuedAtRef: RefObject<number | null>;
   suppressResizeForBubbleRef: RefObject<boolean>;
-  centerBaselineRef: RefObject<number | null>;
   lastAlignAttemptRef: RefObject<number>;
   suppressAutoResizeUntilRef: RefObject<number>;
   ignoreUserMoveDetectUntilRef: RefObject<number>;
   isWindowDragActiveRef: RefObject<boolean>;
+  dragSessionStateRef: RefObject<DragSessionState>;
   lastObservedBoundsRef: RefObject<WindowBounds | null>;
   windowBoundsRef: RefObject<WindowBounds | null>;
 }
@@ -45,8 +55,13 @@ export interface UsePetResizeOrchestratorParams {
  */
 export const usePetResizeOrchestrator = ({
   getWindowCenter,
+  getBaseline,
+  ensureBaseline,
+  commitBaseline,
+  commitBaselineFromBounds,
   isDevToolsOpenedNow,
   isDevtoolsDockedLike,
+  sendWindowIntent,
   lastResizeAtRef,
   lastRequestedSizeRef,
   resizeInFlightRequestIdRef,
@@ -57,14 +72,18 @@ export const usePetResizeOrchestrator = ({
   pendingBoundsPredictionRef,
   pendingResizeIssuedAtRef,
   suppressResizeForBubbleRef,
-  centerBaselineRef,
   lastAlignAttemptRef,
   suppressAutoResizeUntilRef,
   ignoreUserMoveDetectUntilRef,
   isWindowDragActiveRef,
+  dragSessionStateRef,
   lastObservedBoundsRef,
   windowBoundsRef,
 }: UsePetResizeOrchestratorParams) => {
+  const isWindowPolicySuppressed = useCallback(() => {
+    return getWindowPolicySuppressed(dragSessionStateRef.current);
+  }, [dragSessionStateRef]);
+
   const emitDebugTrace = useCallback((payload: Record<string, unknown>) => {
     try {
       if (typeof window === 'undefined') return;
@@ -86,20 +105,23 @@ export const usePetResizeOrchestrator = ({
       return;
     }
 
+    if (isWindowPolicySuppressed()) {
+      lastRequestedSizeRef.current = { w: width, h: height };
+      return;
+    }
+
     lastRequestedSizeRef.current = { w: width, h: height };
     let anchorCenter: number | null = null;
     if (options?.preserveCenterLine) {
-      const baseline = centerBaselineRef.current;
+      const baseline = getBaseline();
       if (baseline == null) {
-        const currentCenter = getWindowCenter();
-        centerBaselineRef.current = currentCenter;
-        anchorCenter = currentCenter;
+        anchorCenter = ensureBaseline(getWindowCenter());
       } else {
         anchorCenter = baseline;
       }
     }
     if (anchorCenter !== null) {
-      centerBaselineRef.current = anchorCenter;
+      commitBaseline(anchorCenter);
     }
 
     const desired = {
@@ -177,7 +199,7 @@ export const usePetResizeOrchestrator = ({
       if (typeof windowApi?.sendWindowIntent !== 'function') {
         throw new Error('WindowAPI.sendWindowIntent is not available');
       }
-      windowApi.sendWindowIntent({
+      void sendWindowIntent({
         intentId: requestId,
         source: options?.source ?? 'requestResize',
         kind: 'size',
@@ -191,20 +213,7 @@ export const usePetResizeOrchestrator = ({
         resizeInFlightRequestIdRef.current = null;
       }
     }
-  }, [
-    emitDebugTrace,
-    getWindowCenter,
-    lastRequestedSizeRef,
-    suppressAutoResizeUntilRef,
-    centerBaselineRef,
-    latestResizeDesiredRef,
-    resizeInFlightRequestIdRef,
-    lastResizeAtRef,
-    lastSentResizeDesiredRef,
-    windowBoundsRef,
-    pendingBoundsPredictionRef,
-    ignoreUserMoveDetectUntilRef,
-  ]);
+  }, [lastRequestedSizeRef, suppressAutoResizeUntilRef, isWindowPolicySuppressed, latestResizeDesiredRef, resizeInFlightRequestIdRef, lastResizeAtRef, lastSentResizeDesiredRef, emitDebugTrace, windowBoundsRef, getBaseline, ensureBaseline, getWindowCenter, commitBaseline, pendingBoundsPredictionRef, sendWindowIntent, ignoreUserMoveDetectUntilRef]);
 
   const handleWindowBoundsAck = useCallback((bounds?: WindowBounds) => {
     const ackId = bounds?.requestId;
@@ -308,7 +317,7 @@ export const usePetResizeOrchestrator = ({
       if (typeof windowApi?.sendWindowIntent !== 'function') {
         throw new Error('WindowAPI.sendWindowIntent is not available');
       }
-      windowApi.sendWindowIntent({
+      void sendWindowIntent({
         intentId: requestId,
         source: 'handleWindowBoundsAck',
         kind: 'size',
@@ -320,20 +329,7 @@ export const usePetResizeOrchestrator = ({
     } catch {
       resizeInFlightRequestIdRef.current = null;
     }
-  }, [
-    emitDebugTrace,
-    resizeInFlightRequestIdRef,
-    latestResizeDesiredRef,
-    lastSentResizeDesiredRef,
-    suppressAutoResizeUntilRef,
-    lastResizeAtRef,
-    pendingResizeRef,
-    pendingResizeIssuedAtRef,
-    targetWindowWidthRef,
-    windowBoundsRef,
-    pendingBoundsPredictionRef,
-    ignoreUserMoveDetectUntilRef,
-  ]);
+  }, [resizeInFlightRequestIdRef, latestResizeDesiredRef, lastSentResizeDesiredRef, suppressAutoResizeUntilRef, lastResizeAtRef, pendingResizeRef, pendingResizeIssuedAtRef, targetWindowWidthRef, emitDebugTrace, windowBoundsRef, sendWindowIntent, ignoreUserMoveDetectUntilRef, pendingBoundsPredictionRef]);
 
   const applyWindowWidth = useCallback((requiredWidth: number) => {
     if (typeof window === 'undefined') return;
@@ -343,96 +339,56 @@ export const usePetResizeOrchestrator = ({
       ? performance.now()
       : Date.now();
 
-    if (now < suppressAutoResizeUntilRef.current) {
-      targetWindowWidthRef.current = window.innerWidth;
-      return;
-    }
-
-    if (isWindowDragActiveRef.current) {
-      pendingResizeRef.current = null;
-      pendingBoundsPredictionRef.current = null;
-      targetWindowWidthRef.current = window.innerWidth;
-      return;
-    }
-
-    if (!windowBoundsRef.current) {
-      targetWindowWidthRef.current = window.innerWidth;
-      pendingResizeRef.current = null;
-      pendingBoundsPredictionRef.current = null;
-      return;
-    }
-
-    if (isDevToolsOpenedNow()) {
-      pendingResizeRef.current = null;
-      pendingBoundsPredictionRef.current = null;
-      targetWindowWidthRef.current = window.innerWidth;
-      suppressResizeForBubbleRef.current = false;
-      return;
-    }
-
     const dockedLike = isDevtoolsDockedLike({
       boundsWidth: windowBoundsRef.current?.width ?? null,
       innerWidth: typeof window.innerWidth === 'number' ? window.innerWidth : 0,
       outerWidth: typeof window.outerWidth === 'number' ? window.outerWidth : null,
     });
-    if (dockedLike) {
+
+    const decision = resolveBubbleResizePolicy({
+      now,
+      suppressAutoResizeUntil: suppressAutoResizeUntilRef.current,
+      isWindowDragActive: isWindowDragActiveRef.current,
+      dragSessionState: dragSessionStateRef.current,
+      hasWindowBounds: Boolean(windowBoundsRef.current),
+      devToolsOpened: isDevToolsOpenedNow(),
+      devtoolsDockedLike: dockedLike,
+      requiredWidth,
+      innerWidth: window.innerWidth,
+      desiredHeight: window.innerHeight,
+      targetWindowWidth: targetWindowWidthRef.current,
+      pendingResize: pendingResizeRef.current,
+    });
+
+    if (decision.action === 'skip') {
       pendingResizeRef.current = null;
       pendingBoundsPredictionRef.current = null;
-      targetWindowWidthRef.current = window.innerWidth;
+      targetWindowWidthRef.current = decision.fallbackWidth;
       suppressResizeForBubbleRef.current = false;
       return;
     }
 
-    const normalizedWidth = Math.max(Math.round(requiredWidth), 320);
-    const desiredHeight = window.innerHeight;
-    const pending = pendingResizeRef.current;
-    const pendingMatches = pending && Math.abs(pending.width - normalizedWidth) <= 1 && Math.abs(pending.height - desiredHeight) <= 1;
-    if (pendingMatches) {
-      targetWindowWidthRef.current = normalizedWidth;
+    targetWindowWidthRef.current = decision.normalizedWidth;
+    if (decision.action === 'noop') {
       return;
     }
 
-    const currentWidth = window.innerWidth;
-    if (Math.abs(currentWidth - normalizedWidth) <= 1) {
-      targetWindowWidthRef.current = normalizedWidth;
-      return;
-    }
-
-    if (targetWindowWidthRef.current !== null && Math.abs((targetWindowWidthRef.current as number) - normalizedWidth) <= 1 && !pending) {
-      targetWindowWidthRef.current = normalizedWidth;
-      return;
-    }
-
-    targetWindowWidthRef.current = normalizedWidth;
-    if (!pending) {
+    if (!pendingResizeRef.current) {
       const baselineCenter = getWindowCenter();
       if (Number.isFinite(baselineCenter)) {
-        centerBaselineRef.current = baselineCenter;
+        commitBaseline(baselineCenter);
       }
     }
-    pendingResizeRef.current = { width: normalizedWidth, height: desiredHeight };
+    pendingResizeRef.current = { width: decision.normalizedWidth, height: decision.desiredHeight };
     pendingResizeIssuedAtRef.current = typeof performance !== 'undefined' && typeof performance.now === 'function'
       ? performance.now()
       : Date.now();
 
-    requestResize(normalizedWidth, desiredHeight, {
+    requestResize(decision.normalizedWidth, decision.desiredHeight, {
       preserveCenterLine: true,
       source: 'applyWindowWidth',
     });
-  }, [
-    suppressAutoResizeUntilRef,
-    targetWindowWidthRef,
-    windowBoundsRef,
-    pendingResizeRef,
-    pendingBoundsPredictionRef,
-    isDevToolsOpenedNow,
-    suppressResizeForBubbleRef,
-    isDevtoolsDockedLike,
-    getWindowCenter,
-    centerBaselineRef,
-    pendingResizeIssuedAtRef,
-    requestResize,
-  ]);
+  }, [isDevtoolsDockedLike, windowBoundsRef, suppressAutoResizeUntilRef, isWindowDragActiveRef, dragSessionStateRef, isDevToolsOpenedNow, targetWindowWidthRef, pendingResizeRef, pendingResizeIssuedAtRef, requestResize, pendingBoundsPredictionRef, suppressResizeForBubbleRef, getWindowCenter, commitBaseline]);
 
   const alignWindowToCenterLine = useCallback((bounds: WindowBounds) => {
     if (typeof window === 'undefined') return;
@@ -441,8 +397,8 @@ export const usePetResizeOrchestrator = ({
       : Date.now();
 
     const actualCenter = bounds.x + bounds.width / 2;
-    if (isWindowDragActiveRef.current) {
-      centerBaselineRef.current = actualCenter;
+    if (isWindowDragActiveRef.current || isWindowPolicySuppressed()) {
+      commitBaseline(actualCenter);
       pendingResizeRef.current = null;
       pendingBoundsPredictionRef.current = null;
       targetWindowWidthRef.current = bounds.width;
@@ -451,7 +407,7 @@ export const usePetResizeOrchestrator = ({
       return;
     }
 
-    const baseline = centerBaselineRef.current;
+    const baseline = getBaseline();
     const programmaticResize = pendingResizeRef.current !== null;
     const resizeInFlight = resizeInFlightRequestIdRef.current !== null;
 
@@ -462,7 +418,7 @@ export const usePetResizeOrchestrator = ({
       const sizeStable = Math.abs(bounds.width - prevObserved.width) <= 1 && Math.abs(bounds.height - prevObserved.height) <= 1;
       if (moved && sizeStable) {
         suppressAutoResizeUntilRef.current = now + 650;
-        centerBaselineRef.current = actualCenter;
+        commitBaseline(actualCenter);
         pendingResizeRef.current = null;
         pendingBoundsPredictionRef.current = null;
         targetWindowWidthRef.current = bounds.width;
@@ -472,7 +428,7 @@ export const usePetResizeOrchestrator = ({
     }
 
     if (!programmaticResize) {
-      centerBaselineRef.current = actualCenter;
+      commitBaselineFromBounds(bounds);
       pendingBoundsPredictionRef.current = null;
       targetWindowWidthRef.current = bounds.width;
       return;
@@ -484,7 +440,7 @@ export const usePetResizeOrchestrator = ({
     const widthMatchesTarget = targetWidthSnapshot !== null && Math.abs(bounds.width - (targetWidthSnapshot as number)) <= 1;
 
     if (baseline == null) {
-      centerBaselineRef.current = actualCenter;
+      commitBaseline(actualCenter);
       pendingResizeRef.current = null;
       pendingBoundsPredictionRef.current = null;
       targetWindowWidthRef.current = bounds.width;
@@ -494,7 +450,7 @@ export const usePetResizeOrchestrator = ({
 
     const diff = Math.abs(actualCenter - baseline);
     if (diff <= 1.5 || (widthMatchesTarget && diff <= 2.4)) {
-      centerBaselineRef.current = actualCenter;
+      commitBaseline(actualCenter);
       pendingResizeRef.current = null;
       pendingBoundsPredictionRef.current = null;
       targetWindowWidthRef.current = bounds.width;
@@ -513,7 +469,7 @@ export const usePetResizeOrchestrator = ({
         throw new Error('WindowAPI.sendWindowIntent is not available');
       }
       const intentId = `align_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      windowApi.sendWindowIntent({
+      void sendWindowIntent({
         intentId,
         source: 'alignWindowToCenterLine',
         kind: 'position',
@@ -526,7 +482,9 @@ export const usePetResizeOrchestrator = ({
       // swallow
     }
   }, [
-    centerBaselineRef,
+    getBaseline,
+    commitBaseline,
+    commitBaselineFromBounds,
     pendingResizeRef,
     resizeInFlightRequestIdRef,
     lastObservedBoundsRef,
@@ -537,6 +495,8 @@ export const usePetResizeOrchestrator = ({
     suppressResizeForBubbleRef,
     lastAlignAttemptRef,
     isWindowDragActiveRef,
+    isWindowPolicySuppressed,
+    sendWindowIntent,
   ]);
 
   return {

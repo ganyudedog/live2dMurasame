@@ -1,6 +1,18 @@
-import { useEffect, type RefObject } from 'react';
+import { useCallback, useEffect, type RefObject } from 'react';
 import { agg, warn } from '../../../../utils/log';
 import type { DragSessionState } from './DragSessionController';
+import {
+  handleResizeFollowupAfterAck,
+  type ResizeFollowupOrchestratorDeps,
+} from './orchestrator/ResizeFollowupOrchestrator';
+import {
+  handleBubbleWindowWidth,
+  type BubbleResizeOrchestratorDeps,
+} from './orchestrator/BubbleResizeOrchestrator';
+import {
+  alignWindowToCenterLineByOrchestrator,
+  type CenterAlignOrchestratorDeps,
+} from './orchestrator/CenterAlignOrchestrator';
 
 export interface GeometryRuntimeWindowBounds {
   x: number;
@@ -10,15 +22,30 @@ export interface GeometryRuntimeWindowBounds {
   requestId?: string;
 }
 
+interface GeometryRuntimeLayoutSnapshot {
+  bounds: GeometryRuntimeWindowBounds;
+  prevBounds: GeometryRuntimeWindowBounds | null;
+  dragState: DragSessionState;
+  policySuppressed: boolean;
+  moveOnly: boolean;
+  widthChanged: boolean;
+  heightChanged: boolean;
+}
+
 export interface UseGeometryRuntimeParams {
   windowBoundsRef: RefObject<GeometryRuntimeWindowBounds | null>;
   isWindowDragActiveRef: RefObject<boolean>;
   dragSessionStateRef: RefObject<DragSessionState>;
-  alignWindowToCenterLine: (bounds: GeometryRuntimeWindowBounds) => void;
   updateBubblePosition: (force?: boolean) => void;
   updateDragHandlePosition: (force?: boolean) => void;
-  handleWindowBoundsAck?: (bounds: GeometryRuntimeWindowBounds | undefined) => void;
+  bubbleResizeOrchestratorDeps: BubbleResizeOrchestratorDeps;
+  centerAlignOrchestratorDeps: CenterAlignOrchestratorDeps;
+  ackFollowupOrchestratorDeps: ResizeFollowupOrchestratorDeps;
   emitDebugTrace: (payload: Record<string, unknown>) => void;
+}
+
+export interface UseGeometryRuntimeResult {
+  applyWindowWidthByRuntime: (requiredWidth: number) => void;
 }
 
 /**
@@ -31,17 +58,144 @@ export const useGeometryRuntime = ({
   windowBoundsRef,
   isWindowDragActiveRef,
   dragSessionStateRef,
-  alignWindowToCenterLine,
   updateBubblePosition,
   updateDragHandlePosition,
-  handleWindowBoundsAck,
+  bubbleResizeOrchestratorDeps,
+  centerAlignOrchestratorDeps,
+  ackFollowupOrchestratorDeps,
   emitDebugTrace,
-}: UseGeometryRuntimeParams): void => {
+}: UseGeometryRuntimeParams): UseGeometryRuntimeResult => {
+  const applyWindowWidthByRuntime = useCallback((requiredWidth: number) => {
+    handleBubbleWindowWidth(requiredWidth, bubbleResizeOrchestratorDeps);
+  }, [bubbleResizeOrchestratorDeps]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
 
     const recentAckBoundsByRid = new Map<string, { x: number; y: number; width: number; height: number; ts: number }>();
     const RECENT_ACK_TTL_MS = 1500;
+
+    const isValidBounds = (bounds?: GeometryRuntimeWindowBounds): bounds is GeometryRuntimeWindowBounds => {
+      return Boolean(
+        bounds
+        && Number.isFinite(bounds.x)
+        && Number.isFinite(bounds.y)
+        && Number.isFinite(bounds.width)
+        && Number.isFinite(bounds.height)
+      );
+    };
+
+    // 第一阶段快照骨架：先固化本轮输入，再统一提交到本地布局刷新链。
+    const buildLayoutSnapshot = (
+      bounds: GeometryRuntimeWindowBounds,
+      prevBounds: GeometryRuntimeWindowBounds | null,
+      dragState: DragSessionState,
+    ): GeometryRuntimeLayoutSnapshot => {
+      const moveOnly = prevBounds
+        ? (Math.abs(bounds.x - prevBounds.x) > 0 || Math.abs(bounds.y - prevBounds.y) > 0)
+          && (Math.abs(bounds.width - prevBounds.width) <= 1)
+          && (Math.abs(bounds.height - prevBounds.height) <= 1)
+        : false;
+      const widthChanged = prevBounds ? Math.abs(bounds.width - prevBounds.width) > 1 : false;
+      const heightChanged = prevBounds ? Math.abs(bounds.height - prevBounds.height) > 1 : false;
+      const policySuppressed = dragState === 'pending-drag' || dragState === 'dragging' || dragState === 'settling';
+      return {
+        bounds,
+        prevBounds,
+        dragState,
+        policySuppressed,
+        moveOnly,
+        widthChanged,
+        heightChanged,
+      };
+    };
+
+    const commitLayoutSnapshot = (snapshot: GeometryRuntimeLayoutSnapshot): void => {
+      alignWindowToCenterLineByOrchestrator(snapshot.bounds, centerAlignOrchestratorDeps);
+
+      agg({
+        level: 'debug',
+        ns: 'pet.window',
+        event: 'bounds.accepted',
+        key: snapshot.bounds.requestId ?? 'noRid',
+        windowMs: 800,
+        data: {
+          x: snapshot.bounds.x,
+          y: snapshot.bounds.y,
+          width: snapshot.bounds.width,
+          height: snapshot.bounds.height,
+        },
+      });
+
+      if (snapshot.prevBounds && (snapshot.widthChanged || snapshot.heightChanged)) {
+        emitDebugTrace({
+          kind: 'windowIntent',
+          profile: 'windowJump',
+          level: 'warn',
+          request: {
+            source: 'geometryRuntime.onBoundsChanged',
+            rid: snapshot.bounds.requestId ?? 'noRid',
+            phase: 'jump-check',
+            reason: snapshot.widthChanged && snapshot.heightChanged
+              ? 'size-jump'
+              : snapshot.widthChanged
+                ? 'width-jump'
+                : 'height-jump',
+            ts: Date.now(),
+          },
+          window: {
+            currentX: snapshot.prevBounds.x,
+            currentY: snapshot.prevBounds.y,
+            currentWidth: snapshot.prevBounds.width,
+            currentHeight: snapshot.prevBounds.height,
+            nextX: snapshot.bounds.x,
+            nextY: snapshot.bounds.y,
+            nextWidth: snapshot.bounds.width,
+            nextHeight: snapshot.bounds.height,
+            dragSessionState: snapshot.dragState,
+          },
+          layout: {
+            kind: 'fact-jump',
+            source: 'onBoundsChanged',
+            reason: snapshot.bounds.requestId ? 'ack-or-fact' : 'fact-without-rid',
+            moveOnly: snapshot.moveOnly ? 1 : 0,
+            policySuppressed: snapshot.policySuppressed ? 1 : 0,
+          },
+        });
+      }
+
+      emitDebugTrace({
+        kind: 'windowIntent',
+        profile: 'singleWriter',
+        level: 'warn',
+        request: {
+          source: 'geometryRuntime.onBoundsChanged',
+          rid: snapshot.bounds.requestId ?? 'noRid',
+          phase: 'evaluate',
+          ts: Date.now(),
+        },
+        window: {
+          boundsX: snapshot.bounds.x,
+          boundsY: snapshot.bounds.y,
+          boundsWidth: snapshot.bounds.width,
+          boundsHeight: snapshot.bounds.height,
+          dragSessionState: snapshot.dragState,
+        },
+        layout: {
+          kind: 'fact',
+          source: 'onBoundsChanged',
+          moveOnly: snapshot.moveOnly ? 1 : 0,
+          policySuppressed: snapshot.policySuppressed ? 1 : 0,
+        },
+      });
+
+      if (isWindowDragActiveRef.current && snapshot.moveOnly) return;
+      if (snapshot.policySuppressed && snapshot.moveOnly) return;
+      if (snapshot.moveOnly) return;
+
+      updateBubblePosition(true);
+      updateDragHandlePosition(true);
+    };
 
     const onBoundsChanged = (bounds?: GeometryRuntimeWindowBounds) => {
       try {
@@ -54,56 +208,34 @@ export const useGeometryRuntime = ({
           data: bounds ? { ...bounds } : { missing: true },
         });
 
-        if (bounds && Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)) {
+        if (isValidBounds(bounds)) {
           const prev = windowBoundsRef.current;
           windowBoundsRef.current = bounds;
-          const dragState = dragSessionStateRef.current;
-          const shouldSuppressWindowPolicy = dragState === 'pending-drag' || dragState === 'dragging' || dragState === 'settling';
-          // 即使在拖动抑制阶段，也要让 resize orchestrator 消费真实 bounds，
-          // 这样它才能清理旧的 resize 预测状态并用实际中心线刷新 baseline。
-          // 否则拖动期间会残留 programmatic resize 的预测几何，导致回弹或吸附到旧位置。
-          alignWindowToCenterLine(bounds);
 
-          agg({
-            level: 'debug',
-            ns: 'pet.window',
-            event: 'bounds.accepted',
-            key: bounds.requestId ?? 'noRid',
-            windowMs: 800,
-            data: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
-          });
-
-          const moveOnly = prev
-            ? (Math.abs(bounds.x - prev.x) > 0 || Math.abs(bounds.y - prev.y) > 0)
-              && (Math.abs(bounds.width - prev.width) <= 1)
-              && (Math.abs(bounds.height - prev.height) <= 1)
-            : false;
-          if (isWindowDragActiveRef.current && moveOnly) return;
-          if (shouldSuppressWindowPolicy && moveOnly) return;
-          if (moveOnly) return;
+          const snapshot = buildLayoutSnapshot(bounds, prev, dragSessionStateRef.current);
+          commitLayoutSnapshot(snapshot);
         } else {
           agg({
-            level: 'debug',
+            level: 'warn',
             ns: 'pet.window',
             event: 'bounds.ignored',
             key: 'invalid',
             windowMs: 2000,
-            data: bounds ? { ...bounds } : { missing: true },
+            data: { missing: true },
           });
+          return;
         }
-
-        updateBubblePosition(true);
-        updateDragHandlePosition(true);
       } catch (error) {
         warn('pet.window', 'bounds.handlerError', { err: String(error) });
       }
     };
 
-    const onWindowFact = (payload?: { bounds?: GeometryRuntimeWindowBounds; lastAppliedIntentId?: string | null }) => {
+    const onWindowFact = (payload?: { bounds?: GeometryRuntimeWindowBounds; lastAppliedIntentId?: string | null; source?: string | null; epoch?: number | null }) => {
       const bounds = payload?.bounds;
       if (!bounds) return;
 
       const rid = typeof payload?.lastAppliedIntentId === 'string' ? payload.lastAppliedIntentId : null;
+      const factSource = typeof payload?.source === 'string' ? payload.source : 'unknown';
       let effectiveBounds = bounds;
       if (rid) {
         const recentAck = recentAckBoundsByRid.get(rid);
@@ -116,6 +248,35 @@ export const useGeometryRuntime = ({
           };
         }
       }
+
+      emitDebugTrace({
+        kind: 'windowIntent',
+        profile: 'windowJump',
+        level: 'info',
+        request: {
+          source: 'renderer.windowFact',
+          rid: rid ?? 'fact-no-rid',
+          phase: 'consume',
+          reason: factSource,
+          ts: Date.now(),
+        },
+        window: {
+          factX: bounds.x,
+          factY: bounds.y,
+          factWidth: bounds.width,
+          factHeight: bounds.height,
+          effectiveX: effectiveBounds.x,
+          effectiveY: effectiveBounds.y,
+          effectiveWidth: effectiveBounds.width,
+          effectiveHeight: effectiveBounds.height,
+          lastAppliedIntentId: rid ?? null,
+        },
+        layout: {
+          kind: 'fact-consume',
+          source: 'windowFact',
+          reason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : factSource,
+        },
+      });
 
       emitDebugTrace({
         kind: 'windowIntent',
@@ -196,13 +357,15 @@ export const useGeometryRuntime = ({
       }
 
       try {
-        handleWindowBoundsAck?.({
+        const appliedBounds = {
           x: appliedX,
           y: appliedY,
           width: appliedWidth,
           height: appliedHeight,
           requestId: intentId,
-        });
+        };
+
+        handleResizeFollowupAfterAck(appliedBounds, ackFollowupOrchestratorDeps);
       } catch {
         // swallow ack handler errors
       }
@@ -224,13 +387,17 @@ export const useGeometryRuntime = ({
       }
     };
   }, [
-    alignWindowToCenterLine,
+    centerAlignOrchestratorDeps,
+    ackFollowupOrchestratorDeps,
     emitDebugTrace,
     dragSessionStateRef,
-    handleWindowBoundsAck,
     isWindowDragActiveRef,
     updateBubblePosition,
     updateDragHandlePosition,
     windowBoundsRef,
   ]);
+
+  return {
+    applyWindowWidthByRuntime,
+  };
 };

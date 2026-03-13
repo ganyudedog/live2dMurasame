@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect, useLayoutEffect, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import { clamp } from '../../../utils/math';
 import { computeBubblePlacement } from '../logic/bubble/placementEngine';
 import { getBaseFrame, getVisibleFrame } from '../logic/visual/getVisualFrameDom';
 import type { DragSessionState } from '../runtime/geometry/DragSessionController';
+import type { BubbleLayoutCommitter } from '../runtime/geometry/commit/BubbleLayoutCommitter';
 import { isWindowPolicySuppressed } from '../runtime/geometry/policy/WindowPolicyEngine';
 import { solveBubbleWindowRequirement } from '../runtime/geometry/solvers/BubbleLayoutSolver';
 import {
@@ -61,17 +62,10 @@ export interface UseBubblePositionEngineParams {
   bubblePositionRef: RefObject<{ left: number; top: number } | null>;
   updateBubblePositionRef: RefObject<(force?: boolean) => void>;
 
-  commitBubbleReady: (next: boolean) => void;
   requestBubbleWindowWidth: (requiredWidth: number) => void;
+  cancelPendingBubbleWindowWidth: () => void;
   emitDebugTrace: (payload: Record<string, unknown>) => void;
-
-  setRedLineLeft: (value: number) => void;
-  setVisibleFrameMetrics: (value: { left: number; width: number }) => void;
-  setBaseFrameMetrics: (value: { left: number; width: number }) => void;
-  setBubbleZoneMetrics: (value: BubbleZoneMetrics) => void;
-  setBubblePosition: (value: { left: number; top: number } | null) => void;
-  setBubbleAlignment: (value: 'left' | 'right') => void;
-  setBubbleTailY: (value: number | null) => void;
+  bubbleLayoutCommitter: BubbleLayoutCommitter;
 }
 
 /**
@@ -107,17 +101,14 @@ export const useBubblePositionEngine = ({
   bubbleAlignmentRef,
   bubblePositionRef,
   updateBubblePositionRef,
-  commitBubbleReady,
   requestBubbleWindowWidth,
+  cancelPendingBubbleWindowWidth,
   emitDebugTrace,
-  setRedLineLeft,
-  setVisibleFrameMetrics,
-  setBaseFrameMetrics,
-  setBubbleZoneMetrics,
-  setBubblePosition,
-  setBubbleAlignment,
-  setBubbleTailY,
+  bubbleLayoutCommitter,
 }: UseBubblePositionEngineParams) => {
+  const startupStableFramesRef = useRef(0);
+  const startupMeasurementReadyRef = useRef(false);
+
   const updateBubblePosition = useCallback((force = false) => {
     if (typeof window === 'undefined') return;
 
@@ -134,13 +125,13 @@ export const useBubblePositionEngine = ({
     const container = canvasRef.current;
     const canvas = (app?.view as HTMLCanvasElement | undefined) ?? undefined;
     if (!model || !app || !container || !canvas) {
-      commitBubbleReady(false);
+      bubbleLayoutCommitter.clearBubblePresentation();
       return;
     }
 
     const bounds = model.getBounds?.();
     if (!bounds) {
-      commitBubbleReady(false);
+      bubbleLayoutCommitter.clearBubblePresentation();
       return;
     }
 
@@ -148,7 +139,7 @@ export const useBubblePositionEngine = ({
     const containerRect = container.getBoundingClientRect();
     const screen = app.renderer?.screen;
     if (!screen?.width || !screen?.height || canvasRect.width === 0 || canvasRect.height === 0) {
-      commitBubbleReady(false);
+      bubbleLayoutCommitter.clearBubblePresentation();
       return;
     }
 
@@ -173,29 +164,15 @@ export const useBubblePositionEngine = ({
     const modelHeightDom = (bounds.height / screen.height) * canvasRect.height;
 
     const nextRedLeft = vfVisible.centerDomX - containerRect.left;
-    const prevRed = redLineLeftRef.current;
-    if (prevRed == null || Math.abs(prevRed - nextRedLeft) > 0.5) {
-      redLineLeftRef.current = nextRedLeft;
-      setRedLineLeft(nextRedLeft);
-    }
+    bubbleLayoutCommitter.commitRedLine(nextRedLeft);
 
     const nextVisibleFrameLeft = vfVisible.leftDom - containerRect.left;
     const nextVisibleFrameWidth = vfVisible.visualWidthDom;
-    const prevVisibleFrame = visibleFrameMetricsRef.current;
-    if (!prevVisibleFrame || Math.abs(prevVisibleFrame.left - nextVisibleFrameLeft) > 0.5 || Math.abs(prevVisibleFrame.width - nextVisibleFrameWidth) > 0.5) {
-      const metrics = { left: nextVisibleFrameLeft, width: nextVisibleFrameWidth };
-      visibleFrameMetricsRef.current = metrics;
-      setVisibleFrameMetrics(metrics);
-    }
+    bubbleLayoutCommitter.commitVisibleFrameMetrics({ left: nextVisibleFrameLeft, width: nextVisibleFrameWidth });
 
     const nextBaseFrameLeft = vfBase.leftDom - containerRect.left;
     const nextBaseFrameWidth = vfBase.visualWidthDom;
-    const prevBaseFrame = baseFrameMetricsRef.current;
-    if (!prevBaseFrame || Math.abs(prevBaseFrame.left - nextBaseFrameLeft) > 0.5 || Math.abs(prevBaseFrame.width - nextBaseFrameWidth) > 0.5) {
-      const metrics = { left: nextBaseFrameLeft, width: nextBaseFrameWidth };
-      baseFrameMetricsRef.current = metrics;
-      setBaseFrameMetrics(metrics);
-    }
+    bubbleLayoutCommitter.commitBaseFrameMetrics({ left: nextBaseFrameLeft, width: nextBaseFrameWidth });
 
     const zoneTarget = BUBBLE_ZONE_BASE_WIDTH * s;
     const centerDom = vfVisible.centerDomX - containerRect.left;
@@ -225,6 +202,23 @@ export const useBubblePositionEngine = ({
       boundsToScreenRatio,
       abnormalStartupEnlarge,
     } = requirement;
+
+    // 初始化阶段 DOM 与窗口坐标系尚未稳定时，先禁止 bubble 参与扩窗决策。
+    // 这类测量失真会把 requiredWidth 放大到远超当前窗口的值（例如 1710）。
+    const distortedBoundsRatio = screen.width > 0 && (bounds.width / screen.width) > 1.35;
+    const distortedBaseFrameRatio = canvasRect.width > 0 && (baseFrameWidthDom / canvasRect.width) > 1.15;
+    const startupMeasurementDistorted = distortedBoundsRatio || distortedBaseFrameRatio;
+    if (startupMeasurementDistorted) {
+      startupStableFramesRef.current = 0;
+      startupMeasurementReadyRef.current = false;
+    } else if (!startupMeasurementReadyRef.current) {
+      startupStableFramesRef.current += 1;
+      if (startupStableFramesRef.current >= 3) {
+        startupMeasurementReadyRef.current = true;
+      }
+    }
+    const startupMeasurementReady = startupMeasurementReadyRef.current;
+
     const windowPolicySuppressed = isWindowPolicySuppressed(dragSessionStateRef.current);
 
     if (resizeWindowOnNextLayoutRef.current) {
@@ -244,7 +238,7 @@ export const useBubblePositionEngine = ({
       emitDebugTrace({
         kind: 'resize',
         profile: 'jitter',
-        level: abnormalStartupEnlarge ? 'warn' : 'debug',
+        level: (abnormalStartupEnlarge || startupMeasurementDistorted) ? 'warn' : 'debug',
         request: {
           source: 'updateBubblePosition',
           phase: 'calc',
@@ -272,7 +266,10 @@ export const useBubblePositionEngine = ({
       if (windowPolicySuppressed) {
         enlargeWidthConfirmRef.current = null;
         suppressResizeForBubbleRef.current = false;
-      } else if (abnormalStartupEnlarge) {
+      } else if (abnormalStartupEnlarge || startupMeasurementDistorted || !startupMeasurementReady) {
+        // 启动期 DOM / bounds 测量失真时，必须一并清理已经排队的 bubble resize，
+        // 否则上一帧排进去的错误宽度会在后续 raf 中继续落到 applyWindowWidth。
+        cancelPendingBubbleWindowWidth();
         enlargeWidthConfirmRef.current = null;
         suppressResizeForBubbleRef.current = false;
       } else if (isEnlarge) {
@@ -297,16 +294,13 @@ export const useBubblePositionEngine = ({
     }
 
     if (!hasBubble) {
-      bubblePositionRef.current = null;
-      setBubblePosition(null);
-      bubbleAlignmentRef.current = null;
-      commitBubbleReady(false);
+      bubbleLayoutCommitter.clearBubblePresentation();
       return;
     }
 
     const bubbleEl = bubbleRef.current;
     if (!bubbleEl) {
-      commitBubbleReady(false);
+      bubbleLayoutCommitter.clearBubblePresentation();
       return;
     }
 
@@ -377,25 +371,7 @@ export const useBubblePositionEngine = ({
       requiredWindowWidth,
     };
 
-    const prevZones = bubbleZoneMetricsRef.current;
-    if (
-      !prevZones
-      || Math.abs(prevZones.left.left - nextZones.left.left) > 0.5
-      || Math.abs(prevZones.left.width - nextZones.left.width) > 0.5
-      || Math.abs(prevZones.left.targetWidth - nextZones.left.targetWidth) > 0.5
-      || Math.abs(prevZones.right.left - nextZones.right.left) > 0.5
-      || Math.abs(prevZones.right.width - nextZones.right.width) > 0.5
-      || Math.abs(prevZones.right.targetWidth - nextZones.right.targetWidth) > 0.5
-      || prevZones.active !== nextZones.active
-      || Math.abs(prevZones.symmetricWidth - nextZones.symmetricWidth) > 0.5
-      || Math.abs(prevZones.symmetricCapacity - nextZones.symmetricCapacity) > 0.5
-      || prevZones.widthShortfall !== nextZones.widthShortfall
-      || prevZones.awaitingResize !== nextZones.awaitingResize
-      || Math.abs(prevZones.requiredWindowWidth - nextZones.requiredWindowWidth) > 0.5
-    ) {
-      bubbleZoneMetricsRef.current = nextZones;
-      setBubbleZoneMetrics(nextZones);
-    }
+    bubbleLayoutCommitter.commitBubbleZoneMetrics(nextZones);
 
     const nextBubbleSide: 'left' | 'right' = placement.side;
     const bubbleWidth = placement.bubbleWidth;
@@ -428,9 +404,6 @@ export const useBubblePositionEngine = ({
     const unscaledHeight = bubbleHeight > 0 ? (bubbleHeight / s) : 0;
     const unscaledTailY = bubbleHeight > 0 ? ((headAnchorDomY - containerRect.top - targetY) / s) : 0;
     const nextTailY = bubbleHeight > 0 ? clamp(unscaledTailY, tailSize, Math.max(tailSize, unscaledHeight - tailSize)) : null;
-    if (nextTailY !== null) {
-      setBubbleTailY(Math.round(nextTailY));
-    }
 
     let headTopRatio = headAnchorRatio;
     {
@@ -468,16 +441,11 @@ export const useBubblePositionEngine = ({
     }
 
     const nextPosition = { left: targetX, top: targetY };
-    if (bubbleAlignmentRef.current !== nextBubbleSide) {
-      bubbleAlignmentRef.current = nextBubbleSide;
-      setBubbleAlignment(nextBubbleSide);
-    }
-    const prev = bubblePositionRef.current;
-    if (!prev || Math.abs(prev.left - nextPosition.left) > 0.5 || Math.abs(prev.top - nextPosition.top) > 0.5) {
-      bubblePositionRef.current = nextPosition;
-      setBubblePosition(nextPosition);
-    }
-    commitBubbleReady(true);
+    bubbleLayoutCommitter.commitBubblePlacement({
+      side: nextBubbleSide,
+      position: nextPosition,
+      tailY: nextTailY,
+    });
   }, [
     scale,
     motionTextRef,
@@ -485,16 +453,13 @@ export const useBubblePositionEngine = ({
     modelRef,
     appRef,
     canvasRef,
-    commitBubbleReady,
+    bubbleLayoutCommitter,
     hitAreasRef,
     visualFrameRef,
     touchMapRef,
     redLineLeftRef,
-    setRedLineLeft,
     visibleFrameMetricsRef,
-    setVisibleFrameMetrics,
     baseFrameMetricsRef,
-    setBaseFrameMetrics,
     pendingResizeRef,
     targetWindowWidthRef,
     resizeWindowOnNextLayoutRef,
@@ -504,19 +469,18 @@ export const useBubblePositionEngine = ({
     enlargeWidthConfirmRef,
     suppressResizeForBubbleRef,
     requestBubbleWindowWidth,
+    cancelPendingBubbleWindowWidth,
     bubbleRef,
     bubbleSettingsRef,
     bubbleZoneMetricsRef,
-    setBubbleZoneMetrics,
-    setBubbleTailY,
     updateBubblePositionRef,
     bubbleAlignmentRef,
-    setBubbleAlignment,
     bubblePositionRef,
-    setBubblePosition,
   ]);
 
   useEffect(() => {
+    startupStableFramesRef.current = 0;
+    startupMeasurementReadyRef.current = false;
     enlargeWidthConfirmRef.current = null;
     resizeWindowOnNextLayoutRef.current = true;
   }, [scale, enlargeWidthConfirmRef, resizeWindowOnNextLayoutRef]);

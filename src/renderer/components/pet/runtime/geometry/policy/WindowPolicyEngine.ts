@@ -27,6 +27,16 @@ export type BubbleResizePolicyResult =
   | { action: 'noop'; normalizedWidth: number }
   | { action: 'queue-resize'; normalizedWidth: number; desiredHeight: number };
 
+export interface AckFollowupPolicyInput {
+  now: number;
+  suppressAutoResizeUntil: number;
+  sameDesired: boolean;
+}
+
+export type AckFollowupPolicyResult =
+  | { action: 'skip'; reason: 'same-desired' | 'suppressed' }
+  | { action: 'send' };
+
 /**
  * 纯策略：根据当前运行时状态判断 bubble 宽度需求是否允许转为窗口 resize。
  */
@@ -85,4 +95,25 @@ export const resolveBubbleResizePolicy = ({
     normalizedWidth,
     desiredHeight,
   };
+};
+
+/**
+ * 纯策略：ack 回流后是否允许继续发送 follow-up resize。
+ *
+ * 说明：当前实现保持既有行为，只做策略位置收口，不在此处追加新的拖动门控。
+ */
+export const resolveAckFollowupPolicy = ({
+  now,
+  suppressAutoResizeUntil,
+  sameDesired,
+}: AckFollowupPolicyInput): AckFollowupPolicyResult => {
+  if (sameDesired) {
+    return { action: 'skip', reason: 'same-desired' };
+  }
+
+  if (now < suppressAutoResizeUntil) {
+    return { action: 'skip', reason: 'suppressed' };
+  }
+
+  return { action: 'send' };
 };

@@ -26,6 +26,35 @@ export const createWindowIntentController = ({ getMainWindow, logDebugTrace }) =
       const bounds = mainWindow.getBounds();
       const requestId = pendingBoundsRequestId;
       const source = requestId ? pendingBoundsSource : 'user';
+      logDebugTrace({
+        kind: 'windowIntent',
+        profile: 'windowJump',
+        level: 'info',
+        request: {
+          source: 'main.emitMainWindowBounds',
+          rid: requestId ?? 'fact-no-rid',
+          phase: 'emit',
+          reason: source,
+          ts: Date.now(),
+        },
+        window: {
+          boundsX: bounds.x,
+          boundsY: bounds.y,
+          boundsWidth: bounds.width,
+          boundsHeight: bounds.height,
+          mode: windowIntentState.mode,
+          epoch: windowIntentState.epoch,
+          dragActiveUntil: windowIntentState.dragActiveUntil,
+          settleUntil: windowIntentState.settleUntil,
+          settleApplied: windowIntentState.settleApplied ? 1 : 0,
+          lastAppliedIntentId: windowIntentState.lastAppliedIntentId ?? null,
+        },
+        layout: {
+          kind: 'fact-emit',
+          source: 'emitMainWindowBoundsNow',
+          reason: source,
+        },
+      });
       const factPayload = {
         epoch: windowIntentState.epoch,
         source,

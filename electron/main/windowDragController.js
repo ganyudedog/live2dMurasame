@@ -21,12 +21,54 @@ const WINDOWS_RELEASE_MESSAGES = [
   { code: 0x0247, name: 'WM_POINTERUP' },
 ];
 
-export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent }) => {
+export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent, logDebugTrace }) => {
   const dragStates = new Map();
 
   const debugDrag = (eventName, payload = {}, level = 'debug') => {
-    if (typeof logPetEvent !== 'function') return;
-    logPetEvent(eventName, payload, { level });
+    const phase = String(eventName || '').replace(/^windowDrag\./, '') || 'event';
+    const reason = typeof payload?.reason === 'string'
+      ? payload.reason
+      : typeof payload?.message === 'string'
+        ? payload.message
+        : undefined;
+
+    if (typeof logDebugTrace === 'function') {
+      logDebugTrace({
+        kind: 'drag',
+        profile: 'windowMove',
+        level,
+        request: {
+          source: typeof payload?.source === 'string' ? payload.source : 'windowDragController',
+          rid: phase === 'move' && Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)
+            ? `${payload.screenX}:${payload.screenY}`
+            : undefined,
+          phase,
+          reason,
+          ts: Date.now(),
+        },
+        window: {
+          senderId: Number.isFinite(payload?.senderId) ? payload.senderId : undefined,
+          moveCount: Number.isFinite(payload?.moveCount) ? payload.moveCount : undefined,
+          intervalMs: Number.isFinite(payload?.intervalMs) ? payload.intervalMs : undefined,
+          screenX: Number.isFinite(payload?.screenX) ? payload.screenX : undefined,
+          screenY: Number.isFinite(payload?.screenY) ? payload.screenY : undefined,
+          currentX: Number.isFinite(payload?.currentX) ? payload.currentX : undefined,
+          currentY: Number.isFinite(payload?.currentY) ? payload.currentY : undefined,
+          nextX: Number.isFinite(payload?.nextX) ? payload.nextX : undefined,
+          nextY: Number.isFinite(payload?.nextY) ? payload.nextY : undefined,
+        },
+        layout: {
+          kind: 'drag',
+          source: eventName,
+          reason,
+        },
+      });
+      return;
+    }
+
+    if (typeof logPetEvent === 'function') {
+      logPetEvent(eventName, payload, { level });
+    }
   };
 
   const stopPolling = (state) => {

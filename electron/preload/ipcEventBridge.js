@@ -10,10 +10,25 @@ export const createIpcEventBridge = ({ ipcRenderer }) => {
 
   const getChannelRegistry = (channel) => {
     let reg = ipcEventListenerRegistry.get(channel);
-    if (!reg) {
-      reg = new WeakMap();
-      ipcEventListenerRegistry.set(channel, reg);
-    }
+    if (reg) return reg;
+
+    const callbacks = new Set();
+    const dispatcher = (_event, ...args) => {
+      for (const callback of callbacks) {
+        try {
+          callback(...args);
+        } catch (error) {
+          console.error('[WindowAPI] ipc listener error', channel, error);
+        }
+      }
+    };
+
+    reg = {
+      callbacks,
+      dispatcher,
+    };
+    ipcEventListenerRegistry.set(channel, reg);
+    ipcRenderer.on(channel, dispatcher);
     return reg;
   };
 
@@ -22,27 +37,19 @@ export const createIpcEventBridge = ({ ipcRenderer }) => {
     if (typeof callback !== 'function') return;
 
     const reg = getChannelRegistry(channel);
-    if (reg.has(callback)) return;
-
-    const wrapped = (_event, ...args) => {
-      try {
-        callback(...args);
-      } catch (error) {
-        console.error('[WindowAPI] ipc listener error', channel, error);
-      }
-    };
-    reg.set(callback, wrapped);
-    ipcRenderer.on(channel, wrapped);
+    if (reg.callbacks.has(callback)) return;
+    reg.callbacks.add(callback);
   };
 
   const off = (channel, callback) => {
     if (!allowedIpcEvents.has(channel)) return;
     if (typeof callback !== 'function') return;
     const reg = ipcEventListenerRegistry.get(channel);
-    const wrapped = reg?.get(callback);
-    if (!wrapped) return;
-    ipcRenderer.removeListener(channel, wrapped);
-    reg.delete(callback);
+    if (!reg) return;
+    reg.callbacks.delete(callback);
+    if (reg.callbacks.size > 0) return;
+    ipcRenderer.removeListener(channel, reg.dispatcher);
+    ipcEventListenerRegistry.delete(channel);
   };
 
   return { on, off };

@@ -13,7 +13,7 @@ const LEVEL_WEIGHT = {
 const DEFAULT_TRACE_POLICY = {
 	//默认模式为“设计静音”：保持诊断关键信号，抑制拖动噪声。
 	minLevel: 'info',
-	enabledProfiles: ['default', 'layout', 'model', 'modelLoad', 'perf'],
+	enabledProfiles: ['default', 'layout', 'model', 'modelLoad', 'perf', 'windowJump'],
 	quietProfiles: ['singleWriter', 'windowMove', 'jitter', 'align'],
 	// 不默认丢弃拖动主相位，改为走“静默档案 + 周期摘要”，避免“完全没输出”的错觉。
 	dropPhases: [],
@@ -41,9 +41,9 @@ const isPlainObject = (value) => typeof value === 'object' && value !== null && 
 
 const ALLOWED_GROUP_FIELDS = {
 	request: ['source', 'rid', 'requestId', 'phase', 'ts', 'status', 'reason'],
-	resizeCore: ['requiredWidth', 'requiredWindowWidth', 'enforcedWindowWidth', 'normalizedWidth', 'targetWidth', 'targetHeight', 'desiredHeight', 'isEnlarge', 'resizeInFlight', 'priority', 'intentEpoch'],
-	window: ['innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'screenX', 'screenY', 'boundsWidth', 'boundsHeight', 'boundsX', 'boundsY', 'targetWindowWidth', 'pendingWidth', 'predictedBoundsX', 'predictedBoundsY', 'predictedBoundsWidth', 'predictedBoundsHeight', 'anchorCenter', 'anchorRight', 'targetX', 'targetY', 'mode', 'epoch', 'currentX', 'currentY', 'currentWidth', 'currentHeight', 'nextX', 'nextY', 'nextWidth', 'nextHeight', 'dragActiveUntil', 'settleUntil', 'settleApplied', 'lastAppliedIntentId'],
-	layout: ['baseFrameWidthDom', 'baseFrameLeftDom', 'visibleFrameWidthDom', 'visibleFrameCenterDomX', 'boundsWidthDom', 'boundsHeightDom', 'screenWidthDom', 'screenHeightDom', 'canvasRectWidthDom', 'canvasRectHeightDom', 'zoneTarget', 'gapEffective', 'effectiveContainerWidth', 'leftCapacity', 'rightCapacity', 'leftShortfallPx', 'rightShortfallPx', 'capacityShortfall', 'boundsToScreenRatio', 'kind', 'source', 'reason', 'stateFrom', 'stateTo'],
+	resizeCore: ['requiredWidth', 'requiredWindowWidth', 'enforcedWindowWidth', 'normalizedWidth', 'targetWidth', 'targetHeight', 'desiredHeight', 'stableHeight', 'isEnlarge', 'resizeInFlight', 'priority', 'intentEpoch'],
+	window: ['innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'screenX', 'screenY', 'boundsWidth', 'boundsHeight', 'boundsX', 'boundsY', 'targetWindowWidth', 'pendingWidth', 'predictedBoundsX', 'predictedBoundsY', 'predictedBoundsWidth', 'predictedBoundsHeight', 'anchorCenter', 'anchorRight', 'targetX', 'targetY', 'mode', 'epoch', 'currentX', 'currentY', 'currentWidth', 'currentHeight', 'nextX', 'nextY', 'nextWidth', 'nextHeight', 'factX', 'factY', 'factWidth', 'factHeight', 'effectiveX', 'effectiveY', 'effectiveWidth', 'effectiveHeight', 'dragActiveUntil', 'settleUntil', 'settleApplied', 'lastAppliedIntentId', 'dragSessionState'],
+	layout: ['baseFrameWidthDom', 'baseFrameLeftDom', 'visibleFrameWidthDom', 'visibleFrameCenterDomX', 'boundsWidthDom', 'boundsHeightDom', 'screenWidthDom', 'screenHeightDom', 'canvasRectWidthDom', 'canvasRectHeightDom', 'zoneTarget', 'gapEffective', 'effectiveContainerWidth', 'leftCapacity', 'rightCapacity', 'leftShortfallPx', 'rightShortfallPx', 'capacityShortfall', 'boundsToScreenRatio', 'kind', 'source', 'reason', 'stateFrom', 'stateTo', 'moveOnly', 'policySuppressed'],
 	model: [
 		'scaleUsed',
 		'modelHeightDom',
@@ -80,9 +80,11 @@ const TRACE_PROFILE_FIELDS = {
 	model: ['request', 'model', 'layout'],
 	modelLoad: ['request', 'model'],
 	perf: ['request', 'perf', 'model'],
+	windowJump: ['request', 'window', 'layout'],
 	default: ['request', 'resizeCore', 'window'],
 };
 
+// 当消息过多时，进行裁剪，保留最新的 TRACE_BUFFER_LIMIT 条记录。
 const pushTraceBuffer = (entry) => {
 	traceBuffer.push(entry);
 	if (traceBuffer.length > TRACE_BUFFER_LIMIT) {
@@ -201,7 +203,14 @@ const withDedupe = (normalized) => {
 	const phase = normalized?.request?.phase ?? 'na';
 	const rid = normalized?.request?.rid ?? normalized?.request?.requestId ?? 'no-rid';
 	const width = normalized?.resizeCore?.normalizedWidth ?? normalized?.resizeCore?.targetWidth ?? 'na';
-	const signature = `${profile}|${phase}|${rid}|${width}`;
+	const reason = normalized?.request?.reason ?? normalized?.layout?.reason ?? 'na';
+	const jumpX = normalized?.window?.nextX ?? normalized?.window?.effectiveX ?? normalized?.window?.factX ?? 'na';
+	const jumpY = normalized?.window?.nextY ?? normalized?.window?.effectiveY ?? normalized?.window?.factY ?? 'na';
+	const jumpWidth = normalized?.window?.nextWidth ?? normalized?.window?.effectiveWidth ?? normalized?.window?.factWidth ?? 'na';
+	const jumpHeight = normalized?.window?.nextHeight ?? normalized?.window?.effectiveHeight ?? normalized?.window?.factHeight ?? 'na';
+	const signature = profile === 'windowJump'
+		? `${profile}|${phase}|${reason}|${rid}|${jumpX}|${jumpY}|${jumpWidth}|${jumpHeight}`
+		: `${profile}|${phase}|${rid}|${width}`;
 	const now = Date.now();
 	const existing = dedupeState.get(signature);
 	if (!existing) {
@@ -261,7 +270,7 @@ const shouldPrintToConsole = (normalized) => {
 	if (tracePolicy.quietProfiles.has(profile)) return false;
 
 	// 默认情况下仅为模型诊断保留信息;调试跟踪保留在缓冲区中。
-	if (level === 'info') return profile === 'modelLoad' || profile === 'model' || profile === 'perf';
+	if (level === 'info') return profile === 'modelLoad' || profile === 'model' || profile === 'perf' || profile === 'windowJump';
 	return false;
 };
 
@@ -319,8 +328,8 @@ export const logDebugTrace = (rawPayload = {}) => {
 	const normalized = normalizeTracePayload(rawPayload);
 	if (!normalized) return;
 	if (!shouldKeepTrace(normalized)) return;
-	if (!shouldPassRateLimit()) return;
-	if (!shouldPassSample(normalized)) return;
+	// if (!shouldPassRateLimit()) return;
+	// if (!shouldPassSample(normalized)) return;
 	const dedupeMeta = withDedupe(normalized);
 	if (!dedupeMeta) return;
 

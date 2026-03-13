@@ -165,10 +165,33 @@ export const useDragSessionController = ({
     isWindowDragActiveRef.current = true;
     suppressAutoResizeUntilRef.current = now + 220;
     ignoreUserMoveDetectUntilRef.current = now + 220;
+    emitDebugTrace({
+      kind: 'drag',
+      profile: 'windowMove',
+      level: 'debug',
+      request: {
+        source: 'dragSession',
+        rid: `${windowBoundsRef.current?.x ?? 'na'}:${windowBoundsRef.current?.y ?? 'na'}`,
+        phase: 'move',
+        ts: Date.now(),
+      },
+      window: {
+        boundsX: windowBoundsRef.current?.x ?? null,
+        boundsY: windowBoundsRef.current?.y ?? null,
+        boundsWidth: windowBoundsRef.current?.width ?? null,
+        boundsHeight: windowBoundsRef.current?.height ?? null,
+        dragSessionState: dragSessionStateRef.current,
+      },
+      layout: {
+        kind: 'drag-move',
+        source: 'dragSessionController',
+        reason: 'renderer-pointer-move',
+      },
+    });
     if (dragSessionStateRef.current !== 'dragging') {
       setState('dragging', 'drag-move');
     }
-  }, [ignoreUserMoveDetectUntilRef, setState, suppressAutoResizeUntilRef]);
+  }, [emitDebugTrace, ignoreUserMoveDetectUntilRef, setState, suppressAutoResizeUntilRef, windowBoundsRef]);
 
   const onDragEnd = useCallback(() => {
     const now = typeof performance !== 'undefined' && typeof performance.now === 'function'

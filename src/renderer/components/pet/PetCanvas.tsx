@@ -14,7 +14,6 @@ import { useEyeReset } from './hooks/useEyeReset';
 import { useMousePassthrough } from './hooks/useMousePassthrough';
 import { usePointerTapHandler } from './hooks/usePointerTapHandler';
 import { useBubbleLifecycle } from './hooks/useBubbleLifecycle';
-import { useContextZoneController } from './hooks/useContextZoneController';
 import { usePetCanvasConfigRefs } from './hooks/usePetCanvasConfigRefs';
 import { usePetCanvasBootstrap } from './hooks/usePetCanvasBootstrap';
 import { useDebugMaskHeight } from './hooks/useDebugMaskHeight';
@@ -24,6 +23,9 @@ import { useBaselineController } from './runtime/geometry/BaselineController';
 import { useDragSessionController } from './runtime/geometry/DragSessionController';
 import { useGeometryRuntime } from './runtime/geometry/GeometryRuntime';
 import { createWindowCommandGateway } from './runtime/geometry/WindowCommandGateway';
+import { useLayoutCommitter } from './runtime/geometry/commit/LayoutCommitter';
+import { useBubbleLayoutCommitter } from './runtime/geometry/commit/BubbleLayoutCommitter';
+import { createModelLayoutCommitter } from './runtime/geometry/commit/ModelLayoutCommitter';
 import { solveContextZoneLayout } from './runtime/geometry/solvers/ContextZoneLayoutSolver';
 import { solveInteractivity } from './runtime/geometry/solvers/InteractivitySolver';
 import { solveContextZoneActivity } from './runtime/geometry/solvers/ContextZoneActivitySolver';
@@ -423,6 +425,7 @@ const PetCanvas: React.FC = () => {
   }, []);
 
   const windowCommandGateway = useMemo(() => createWindowCommandGateway(), []);
+  const modelLayoutCommitter = useMemo(() => createModelLayoutCommitter(), []);
 
   const emitDragSessionDebugTrace = useCallback((payload: Record<string, unknown>) => {
     try {
@@ -456,9 +459,9 @@ const PetCanvas: React.FC = () => {
 
   const {
     emitDebugTrace,
-    handleWindowBoundsAck,
-    applyWindowWidth,
-    alignWindowToCenterLine,
+    bubbleResizeOrchestratorDeps,
+    centerAlignOrchestratorDeps,
+    ackFollowupOrchestratorDeps,
   } = usePetResizeOrchestrator({
     getWindowCenter,
     getBaseline,
@@ -492,8 +495,18 @@ const PetCanvas: React.FC = () => {
     const requiredWidth = pendingBubbleWindowWidthRef.current;
     pendingBubbleWindowWidthRef.current = null;
     if (typeof requiredWidth !== 'number' || !Number.isFinite(requiredWidth)) return;
-    applyWindowWidth(requiredWidth);
-  }, [applyWindowWidth]);
+    applyWindowWidthByRuntimeRef.current?.(requiredWidth);
+  }, []);
+
+  const applyWindowWidthByRuntimeRef = useRef<((requiredWidth: number) => void) | null>(null);
+
+  const cancelPendingBubbleWindowWidth = useCallback(() => {
+    pendingBubbleWindowWidthRef.current = null;
+    if (typeof window === 'undefined' || typeof window.cancelAnimationFrame !== 'function') return;
+    if (bubbleWindowPolicyRafRef.current === null) return;
+    window.cancelAnimationFrame(bubbleWindowPolicyRafRef.current);
+    bubbleWindowPolicyRafRef.current = null;
+  }, []);
 
   const requestBubbleWindowWidth = useCallback((requiredWidth: number) => {
     if (!Number.isFinite(requiredWidth)) return;
@@ -509,6 +522,23 @@ const PetCanvas: React.FC = () => {
       flushPendingBubbleWindowWidth();
     });
   }, [flushPendingBubbleWindowWidth]);
+
+  const bubbleLayoutCommitter = useBubbleLayoutCommitter({
+    redLineLeftRef,
+    visibleFrameMetricsRef,
+    baseFrameMetricsRef,
+    bubbleZoneMetricsRef,
+    bubbleAlignmentRef,
+    bubblePositionRef,
+    setRedLineLeft,
+    setVisibleFrameMetrics,
+    setBaseFrameMetrics,
+    setBubbleZoneMetrics,
+    setBubblePosition,
+    setBubbleAlignment,
+    setBubbleTailY,
+    commitBubbleReady,
+  });
 
   const { updateBubblePosition } = useBubblePositionEngine({
     scale,
@@ -537,27 +567,17 @@ const PetCanvas: React.FC = () => {
     bubbleAlignmentRef,
     bubblePositionRef,
     updateBubblePositionRef,
-    commitBubbleReady,
     requestBubbleWindowWidth,
+    cancelPendingBubbleWindowWidth,
     emitDebugTrace,
-    setRedLineLeft,
-    setVisibleFrameMetrics,
-    setBaseFrameMetrics,
-    setBubbleZoneMetrics,
-    setBubblePosition,
-    setBubbleAlignment,
-    setBubbleTailY,
+    bubbleLayoutCommitter,
   });
 
   useEffect(() => {
     return () => {
-      if (typeof window === 'undefined' || typeof window.cancelAnimationFrame !== 'function') return;
-      if (bubbleWindowPolicyRafRef.current !== null) {
-        window.cancelAnimationFrame(bubbleWindowPolicyRafRef.current);
-        bubbleWindowPolicyRafRef.current = null;
-      }
+      cancelPendingBubbleWindowWidth();
     };
-  }, []);
+  }, [cancelPendingBubbleWindowWidth]);
 
   useMousePassthrough({
     ignoreMouse,
@@ -586,7 +606,7 @@ const PetCanvas: React.FC = () => {
   const {
     applyContextZoneDecision,
     updateInteractiveZones,
-  } = useContextZoneController({
+  } = useLayoutCommitter({
     contextZoneStyleRef,
     contextZoneAlignmentRef,
     contextZoneActiveUntilRef,
@@ -728,16 +748,21 @@ const PetCanvas: React.FC = () => {
     updateDragHandlePositionRef.current = updateDragHandlePosition;
   }, [updateDragHandlePosition]);
 
-  useGeometryRuntime({
+  const { applyWindowWidthByRuntime } = useGeometryRuntime({
     windowBoundsRef,
     isWindowDragActiveRef,
     dragSessionStateRef,
-    alignWindowToCenterLine,
     updateBubblePosition,
     updateDragHandlePosition,
-    handleWindowBoundsAck,
+    bubbleResizeOrchestratorDeps,
+    centerAlignOrchestratorDeps,
+    ackFollowupOrchestratorDeps,
     emitDebugTrace,
   });
+
+  useLayoutEffect(() => {
+    applyWindowWidthByRuntimeRef.current = applyWindowWidthByRuntime;
+  }, [applyWindowWidthByRuntime]);
 
   const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
     const settings = (modelInstance as any).internalModel?.settings;
@@ -817,6 +842,11 @@ const PetCanvas: React.FC = () => {
       }
       return windowBoundsRef.current;
     })();
+    const usedPredictedBounds = Boolean(
+      !devToolsOpened
+      && pendingBoundsPredictionRef.current
+      && (pendingResizeRef.current || resizeInFlightRequestIdRef.current)
+    );
     const windowLeft = Number.isFinite(boundsSnapshot?.x)
       ? (boundsSnapshot as { x: number }).x
       : windowMetrics.left;
@@ -831,9 +861,42 @@ const PetCanvas: React.FC = () => {
     });
 
     baseWindowSizeRef.current = layout.nextBaseWindowSize;
-    m.scale.set(layout.modelScale);
-    m.pivot.set(layout.pivotX, layout.pivotY);
-    m.position.set(layout.positionX, layout.positionY);
+    // Model transform writes are committed through the runtime commit layer.
+    modelLayoutCommitter.commitModelLayout(m, layout);
+    emitDebugTrace({
+      kind: 'layout',
+      profile: 'model',
+      level: 'debug',
+      request: {
+        source: 'PetCanvas.applyLayout',
+        phase: 'apply',
+        ts: Date.now(),
+      },
+      model: {
+        windowWidth: winW,
+        windowHeight: winH,
+        referenceWidth: reference.width,
+        referenceHeight: reference.height,
+        baselineScreen,
+        windowLeft,
+        usedPredictedBounds: usedPredictedBounds ? 1 : 0,
+        modelScaleX: layout.modelScale,
+        modelScaleY: layout.modelScale,
+        modelX: layout.positionX,
+        modelY: layout.positionY,
+        pivotX: layout.pivotX,
+        pivotY: layout.pivotY,
+        localBoundsWidth: lb.width,
+        localBoundsHeight: lb.height,
+        rendererWidth: app.renderer.screen.width,
+        rendererHeight: app.renderer.screen.height,
+      },
+      layout: {
+        kind: 'model-layout',
+        source: 'applyLayout',
+        usedPredictedBounds: usedPredictedBounds ? 1 : 0,
+      },
+    });
     if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
       if (layoutBubbleMeasureRafRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
         window.cancelAnimationFrame(layoutBubbleMeasureRafRef.current);
@@ -846,7 +909,7 @@ const PetCanvas: React.FC = () => {
       updateBubblePosition(true);
     }
     updateDragHandlePosition(true);
-  }, [scale, ensureBaseline, updateBubblePosition, updateDragHandlePosition]);
+  }, [ensureBaseline, scale, emitDebugTrace, updateDragHandlePosition, updateBubblePosition, modelLayoutCommitter]);
 
   // 合帧调度：同一帧内多次触发布局（scale/resize/bounds 等）只执行一次 applyLayout。
   const applyLayoutRafRef = useRef<number | null>(null);

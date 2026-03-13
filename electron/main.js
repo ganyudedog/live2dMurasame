@@ -199,6 +199,7 @@ const { handleWindowDrag } = createWindowDragController({
     BrowserWindow,
     screen,
     logPetEvent,
+    logDebugTrace,
 });
 const { broadcastConfigSnapshot } = registerConfigIpc({
     ipcMain,

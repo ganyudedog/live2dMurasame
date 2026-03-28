@@ -56,6 +56,9 @@ export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent,
           currentY: Number.isFinite(payload?.currentY) ? payload.currentY : undefined,
           nextX: Number.isFinite(payload?.nextX) ? payload.nextX : undefined,
           nextY: Number.isFinite(payload?.nextY) ? payload.nextY : undefined,
+          lockWidth: Number.isFinite(payload?.lockWidth) ? payload.lockWidth : undefined,
+          lockHeight: Number.isFinite(payload?.lockHeight) ? payload.lockHeight : undefined,
+          writeMode: typeof payload?.writeMode === 'string' ? payload.writeMode : undefined,
         },
         layout: {
           kind: 'drag',
@@ -175,6 +178,15 @@ export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent,
     if (!state || !targetWindow || targetWindow.isDestroyed?.()) return;
     const nextX = Math.round(state.windowX + screenX - state.cursorX);
     const nextY = Math.round(state.windowY + screenY - state.cursorY);
+    const lockWidth = Number.isFinite(state.lockWidth)
+      ? Math.max(75, Math.floor(state.lockWidth))
+      : null;
+    const lockHeight = Number.isFinite(state.lockHeight)
+      ? Math.max(250, Math.floor(state.lockHeight))
+      : null;
+    const canUseBoundsLock = Number.isFinite(lockWidth)
+      && Number.isFinite(lockHeight)
+      && typeof targetWindow.setBounds === 'function';
     state.moveCount += 1;
     state.lastScreenX = screenX;
     state.lastScreenY = screenY;
@@ -190,9 +202,23 @@ export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent,
       currentY: state.windowY,
       nextX,
       nextY,
+      lockWidth,
+      lockHeight,
+      writeMode: canUseBoundsLock ? 'bounds-lock' : 'position-fallback',
     });
 
-    targetWindow.setPosition(nextX, nextY);
+    // 拖拽主链路单写源：每一拍直接写入 x/y/width/height，
+    // 不再依赖后续纠偏链路回正尺寸，避免双写源抖动。
+    if (canUseBoundsLock) {
+      targetWindow.setBounds({
+        x: nextX,
+        y: nextY,
+        width: lockWidth,
+        height: lockHeight,
+      });
+    } else {
+      targetWindow.setPosition(nextX, nextY);
+    }
     state.windowX = nextX;
     state.windowY = nextY;
     state.cursorX = screenX;
@@ -274,11 +300,16 @@ export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent,
     if (normalized.action === 'start') {
       clearState(senderId);
       const [windowX, windowY] = targetWindow.getPosition();
+      const initialBounds = typeof targetWindow.getBounds === 'function'
+        ? targetWindow.getBounds()
+        : null;
       const state = {
         cursorX: normalized.screenX,
         cursorY: normalized.screenY,
         windowX,
         windowY,
+        lockWidth: Number.isFinite(initialBounds?.width) ? initialBounds.width : null,
+        lockHeight: Number.isFinite(initialBounds?.height) ? initialBounds.height : null,
         moveCount: 0,
         lastScreenX: normalized.screenX,
         lastScreenY: normalized.screenY,
@@ -294,6 +325,9 @@ export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent,
         screenY: normalized.screenY,
         currentX: windowX,
         currentY: windowY,
+        lockWidth: state.lockWidth,
+        lockHeight: state.lockHeight,
+        writeMode: 'bounds-lock',
       });
       attachReleaseHooks({ state, senderId, targetWindow });
       startPolling({ senderId, targetWindow, state });

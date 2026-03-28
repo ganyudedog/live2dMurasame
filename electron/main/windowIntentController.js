@@ -23,8 +23,8 @@ export const createWindowIntentController = ({ getMainWindow, logDebugTrace }) =
     dragLockHeight: null,
   };
 
-  // 拖拽会话中锁定外边框宽高：若 OS 在 move 期间偷偷改了 outer bounds，
-  // 这里会立即回正，避免“越拖越大”污染后续事实链路。
+  // 拖拽会话中锁定外边框宽高：拖拽主链路已经每帧写入 setBounds，
+  // 这里不再回写窗口，仅将事实尺寸稳定为锁定值并输出观测日志。
   const stabilizeOuterBoundsDuringDrag = (rawBounds, now, context = {}) => {
     if (!rawBounds) {
       return { bounds: rawBounds, corrected: false };
@@ -45,15 +45,6 @@ export const createWindowIntentController = ({ getMainWindow, logDebugTrace }) =
 
     const driftWidth = rawBounds.width - lockWidth;
     const driftHeight = rawBounds.height - lockHeight;
-    if (Math.abs(driftWidth) <= 1 && Math.abs(driftHeight) <= 1) {
-      return { bounds: rawBounds, corrected: false };
-    }
-
-    const mainWindow = getMainWindow();
-    if (!mainWindow || mainWindow.isDestroyed() || typeof mainWindow.setBounds !== 'function') {
-      return { bounds: rawBounds, corrected: false };
-    }
-
     const correctedBounds = {
       x: rawBounds.x,
       y: rawBounds.y,
@@ -61,17 +52,16 @@ export const createWindowIntentController = ({ getMainWindow, logDebugTrace }) =
       height: lockHeight,
     };
 
-    try {
-      mainWindow.setBounds(correctedBounds);
+    if (Math.abs(driftWidth) > 1 || Math.abs(driftHeight) > 1) {
       logDebugTrace({
         kind: 'windowIntent',
         profile: 'windowJump',
-        level: 'warn',
+        level: 'info',
         request: {
           source: 'main.emitMainWindowBounds',
           rid: typeof context?.requestId === 'string' && context.requestId ? context.requestId : 'fact-no-rid',
-          phase: 'correct',
-          reason: 'drag-outer-bounds-corrected',
+          phase: 'observe',
+          reason: 'drag-outer-bounds-drift-observed',
           ts: now,
         },
         window: {
@@ -91,15 +81,19 @@ export const createWindowIntentController = ({ getMainWindow, logDebugTrace }) =
           lastAppliedIntentId: windowIntentState.lastAppliedIntentId ?? null,
         },
         layout: {
-          kind: 'fact-correct',
+          kind: 'fact-observe',
           source: 'stabilizeOuterBoundsDuringDrag',
-          reason: 'drag-lock-enforced',
+          reason: 'drag-lock-fact-only',
         },
       });
-      return { bounds: correctedBounds, corrected: true, driftWidth, driftHeight };
-    } catch {
-      return { bounds: rawBounds, corrected: false };
     }
+
+    return {
+      bounds: correctedBounds,
+      corrected: Math.abs(driftWidth) > 0 || Math.abs(driftHeight) > 0,
+      driftWidth,
+      driftHeight,
+    };
   };
 
   const setNativeResizeGate = ({ enabled, reason, intentId, now }) => {
@@ -198,7 +192,7 @@ export const createWindowIntentController = ({ getMainWindow, logDebugTrace }) =
         logDebugTrace({
           kind: 'windowIntent',
           profile: 'windowJump',
-          level: 'warn',
+          level: 'info',
           request: {
             source: 'main.emitMainWindowBounds',
             rid: 'fact-no-rid',

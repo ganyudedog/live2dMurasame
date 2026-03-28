@@ -1,5 +1,6 @@
 import { useCallback, useMemo, type RefObject } from 'react';
 import { RESIZE_THROTTLE_MS } from '../const';
+import { traceResizeChain } from '../../../utils/log';
 import type { DragSessionState } from '../runtime/geometry/DragSessionController';
 import {
   isWindowPolicySuppressed as getWindowPolicySuppressed,
@@ -102,15 +103,40 @@ export const usePetResizeOrchestrator = ({
     if (typeof window === 'undefined') return;
     const now = performance?.now ? performance.now() : Date.now();
     const prev = lastRequestedSizeRef.current;
-    if (prev && Math.abs(prev.w - width) < 2 && Math.abs(prev.h - height) < 2) return;
+    if (prev && Math.abs(prev.w - width) < 2 && Math.abs(prev.h - height) < 2) {
+      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+        reason: 'same-last-requested',
+        source: options?.source ?? 'requestResize',
+        width,
+        height,
+        prevWidth: prev.w,
+        prevHeight: prev.h,
+      });
+      return;
+    }
 
     if (now < suppressAutoResizeUntilRef.current) {
       lastRequestedSizeRef.current = { w: width, h: height };
+      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+        reason: 'suppress-auto-resize',
+        source: options?.source ?? 'requestResize',
+        width,
+        height,
+        now,
+        suppressAutoResizeUntil: suppressAutoResizeUntilRef.current,
+      });
       return;
     }
 
     if (isWindowPolicySuppressed()) {
       lastRequestedSizeRef.current = { w: width, h: height };
+      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+        reason: 'window-policy-suppressed',
+        source: options?.source ?? 'requestResize',
+        width,
+        height,
+        dragSessionState: dragSessionStateRef.current,
+      });
       return;
     }
 
@@ -135,14 +161,47 @@ export const usePetResizeOrchestrator = ({
     };
     latestResizeDesiredRef.current = desired;
 
-    if (resizeInFlightRequestIdRef.current) return;
+    if (resizeInFlightRequestIdRef.current) {
+      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+        reason: 'in-flight-exists',
+        source: options?.source ?? 'requestResize',
+        width,
+        height,
+        inFlightRequestId: resizeInFlightRequestIdRef.current,
+      });
+      return;
+    }
 
-    if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) return;
+    if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) {
+      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+        reason: 'throttle',
+        source: options?.source ?? 'requestResize',
+        width,
+        height,
+        now,
+        lastResizeAt: lastResizeAtRef.current,
+        throttleMs: RESIZE_THROTTLE_MS,
+      });
+      return;
+    }
     lastResizeAtRef.current = now;
 
     const requestId = resizeCommandCommitter.createResizeRequestId();
     resizeInFlightRequestIdRef.current = requestId;
     lastSentResizeDesiredRef.current = desired;
+
+    traceResizeChain('resizeOrchestrator.requestResize.send', {
+      source: options?.source ?? 'requestResize',
+      requestId,
+      width,
+      height,
+      anchorCenter: anchorCenter ?? null,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      boundsWidth: windowBoundsRef.current?.width ?? null,
+      boundsHeight: windowBoundsRef.current?.height ?? null,
+      dragSessionState: dragSessionStateRef.current,
+    }, 'info');
 
     if (anchorCenter !== null && Number.isFinite(anchorCenter)) {
       const predictedLeft = Math.round(anchorCenter - width / 2);
@@ -200,7 +259,7 @@ export const usePetResizeOrchestrator = ({
         resizeInFlightRequestIdRef.current = null;
       }
     }
-  }, [lastRequestedSizeRef, suppressAutoResizeUntilRef, isWindowPolicySuppressed, latestResizeDesiredRef, resizeInFlightRequestIdRef, lastResizeAtRef, resizeCommandCommitter, lastSentResizeDesiredRef, emitDebugTrace, windowBoundsRef, getBaseline, ensureBaseline, getWindowCenter, commitBaseline, pendingBoundsPredictionRef, ignoreUserMoveDetectUntilRef]);
+  }, [lastRequestedSizeRef, suppressAutoResizeUntilRef, isWindowPolicySuppressed, latestResizeDesiredRef, resizeInFlightRequestIdRef, lastResizeAtRef, resizeCommandCommitter, lastSentResizeDesiredRef, windowBoundsRef, dragSessionStateRef, emitDebugTrace, getBaseline, ensureBaseline, getWindowCenter, commitBaseline, pendingBoundsPredictionRef, ignoreUserMoveDetectUntilRef]);
 
   const ackFollowupOrchestratorDeps = useMemo<ResizeFollowupOrchestratorDeps>(() => ({
       resizeInFlightRequestIdRef,

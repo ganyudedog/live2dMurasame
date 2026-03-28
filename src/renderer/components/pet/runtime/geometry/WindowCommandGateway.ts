@@ -1,3 +1,5 @@
+import { traceResizeChain } from '../../../../utils/log';
+
 interface WindowCommandIntentPayload {
   intentId: string;
   epoch?: number;
@@ -34,7 +36,40 @@ export const createWindowCommandGateway = (): WindowCommandGateway => {
     if (typeof bridge !== 'function') {
       throw new Error('WindowAPI.sendWindowIntent is not available');
     }
-    return bridge(intent);
+
+    traceResizeChain('gateway.intent.send', {
+      intentId: intent.intentId,
+      kind: intent.kind,
+      source: intent.source,
+      epoch: Number.isFinite(intent.epoch) ? intent.epoch : null,
+      priority: Number.isFinite(intent.priority) ? intent.priority : null,
+      x: Number.isFinite(intent.payload?.x) ? intent.payload?.x : null,
+      y: Number.isFinite(intent.payload?.y) ? intent.payload?.y : null,
+      width: Number.isFinite(intent.payload?.width) ? intent.payload?.width : null,
+      height: Number.isFinite(intent.payload?.height) ? intent.payload?.height : null,
+      anchorCenter: Number.isFinite(intent.payload?.anchorCenter) ? intent.payload?.anchorCenter : null,
+      dragPhase: typeof intent.payload?.phase === 'string' ? intent.payload.phase : null,
+    });
+
+    try {
+      const ack = await bridge(intent);
+      traceResizeChain('gateway.intent.ack', {
+        intentId: intent.intentId,
+        kind: intent.kind,
+        source: intent.source,
+        ackStatus: typeof ack?.status === 'string' ? ack.status : null,
+        ackReason: typeof ack?.reason === 'string' ? ack.reason : null,
+      });
+      return ack;
+    } catch (error) {
+      traceResizeChain('gateway.intent.error', {
+        intentId: intent.intentId,
+        kind: intent.kind,
+        source: intent.source,
+        error: String(error),
+      }, 'warn');
+      throw error;
+    }
   };
 
   return {

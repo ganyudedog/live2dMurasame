@@ -1,12 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { useCallback, useLayoutEffect, type RefObject } from 'react';
 import { clamp } from '../../../utils/math';
 import { computeBubblePlacement } from '../logic/bubble/placementEngine';
 import { getBaseFrame, getVisibleFrame } from '../logic/visual/getVisualFrameDom';
 import type { DragSessionState } from '../runtime/geometry/DragSessionController';
 import type { BubbleLayoutCommitter } from '../runtime/geometry/commit/BubbleLayoutCommitter';
-import { isWindowPolicySuppressed } from '../runtime/geometry/policy/WindowPolicyEngine';
-import { solveBubbleWindowRequirement } from '../runtime/geometry/solvers/BubbleLayoutSolver';
 import {
   BUBBLE_EXTRA_GAP,
   BUBBLE_GAP,
@@ -15,8 +13,6 @@ import {
   BUBBLE_PADDING,
   BUBBLE_ZONE_BASE_WIDTH,
   BUBBLE_ZONE_MIN_WIDTH,
-  ENLARGE_CONFIRM_DELTA_PX,
-  ENLARGE_CONFIRM_WINDOW_MS,
 } from '../const';
 
 interface BubbleZoneMetrics {
@@ -42,28 +38,11 @@ export interface UseBubblePositionEngineParams {
   visualFrameRef: RefObject<any | null>;
   bubbleSettingsRef: RefObject<{ symmetric?: boolean; headRatio?: number | null } | null>;
   touchMapRef: RefObject<number[] | null>;
-
-  redLineLeftRef: RefObject<number | null>;
-  visibleFrameMetricsRef: RefObject<{ left: number; width: number } | null>;
-  baseFrameMetricsRef: RefObject<{ left: number; width: number } | null>;
-  bubbleZoneMetricsRef: RefObject<BubbleZoneMetrics | null>;
-
-  pendingResizeRef: RefObject<{ width: number; height: number } | null>;
-  targetWindowWidthRef: RefObject<number | null>;
-  resizeWindowOnNextLayoutRef: RefObject<boolean>;
-  enlargeWidthConfirmRef: RefObject<{ width: number; seenAt: number } | null>;
-  suppressResizeForBubbleRef: RefObject<boolean>;
-  pendingResizeIssuedAtRef: RefObject<number | null>;
   windowBoundsRef: RefObject<{ x: number; y: number; width: number; height: number } | null>;
   dragSessionStateRef: RefObject<DragSessionState>;
 
   lastBubbleUpdateRef: RefObject<number>;
-  bubbleAlignmentRef: RefObject<'left' | 'right' | null>;
-  bubblePositionRef: RefObject<{ left: number; top: number } | null>;
   updateBubblePositionRef: RefObject<(force?: boolean) => void>;
-
-  requestBubbleWindowWidth: (requiredWidth: number) => void;
-  cancelPendingBubbleWindowWidth: () => void;
   emitDebugTrace: (payload: Record<string, unknown>) => void;
   bubbleLayoutCommitter: BubbleLayoutCommitter;
 }
@@ -86,29 +65,13 @@ export const useBubblePositionEngine = ({
   visualFrameRef,
   bubbleSettingsRef,
   touchMapRef,
-  redLineLeftRef,
-  visibleFrameMetricsRef,
-  baseFrameMetricsRef,
-  bubbleZoneMetricsRef,
-  pendingResizeRef,
-  targetWindowWidthRef,
-  resizeWindowOnNextLayoutRef,
-  enlargeWidthConfirmRef,
-  suppressResizeForBubbleRef,
   windowBoundsRef,
   dragSessionStateRef,
   lastBubbleUpdateRef,
-  bubbleAlignmentRef,
-  bubblePositionRef,
   updateBubblePositionRef,
-  requestBubbleWindowWidth,
-  cancelPendingBubbleWindowWidth,
   emitDebugTrace,
   bubbleLayoutCommitter,
 }: UseBubblePositionEngineParams) => {
-  const startupStableFramesRef = useRef(0);
-  const startupMeasurementReadyRef = useRef(false);
-
   const updateBubblePosition = useCallback((force = false) => {
     if (typeof window === 'undefined') return;
 
@@ -178,120 +141,51 @@ export const useBubblePositionEngine = ({
     const centerDom = vfVisible.centerDomX - containerRect.left;
     const gapEffective = BUBBLE_GAP + BUBBLE_EXTRA_GAP * s;
     const baseFrameWidthDom = vfBase.visualWidthDom;
-    const requirement = solveBubbleWindowRequirement({
-      pendingResizeWidth: pendingResizeRef.current?.width ?? null,
-      targetWindowWidth: targetWindowWidthRef.current,
-      containerWidth: containerRect.width,
-      centerDom,
-      zoneTarget,
-      gapEffective,
-      baseFrameWidthDom,
-      currentWindowWidth: typeof window.innerWidth === 'number' ? window.innerWidth : 0,
-      boundsWidthDom: bounds.width,
-      screenWidthDom: screen.width,
-      canvasRectWidthDom: canvasRect.width,
+    const leftCapacity = Math.max(0, centerDom - gapEffective - BUBBLE_PADDING);
+    const rightCapacity = Math.max(0, containerRect.width - (centerDom + gapEffective) - BUBBLE_PADDING);
+
+    // 中文注释：气泡引擎只负责位置，不再参与窗口尺寸治理。
+    // 这里保留 requiredWindowWidth 仅用于调试可视化与日志观察，不触发任何 resize intent。
+    const requiredWindowWidth = Math.ceil(baseFrameWidthDom + zoneTarget * 2 + gapEffective * 2 + BUBBLE_PADDING * 2);
+    // traceResizeChain('bubblePosition.positionOnly', {
+    //   requiredWindowWidth,
+    //   leftCapacity,
+    //   rightCapacity,
+    //   zoneTarget,
+    //   gapEffective,
+    //   innerWidth: window.innerWidth,
+    //   innerHeight: window.innerHeight,
+    //   boundsWidth: windowBoundsRef.current?.width ?? null,
+    //   boundsHeight: windowBoundsRef.current?.height ?? null,
+    //   dragSessionState: dragSessionStateRef.current,
+    //   reason: 'position-only-no-size-policy',
+    // });
+
+    emitDebugTrace({
+      kind: 'resize',
+      profile: 'jitter',
+      level: 'debug',
+      request: {
+        source: 'updateBubblePosition',
+        phase: 'position-only',
+        ts: Date.now(),
+      },
+      resizeCore: {
+        requiredWidth: requiredWindowWidth,
+      },
+      window: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        boundsWidth: windowBoundsRef.current?.width ?? null,
+        boundsHeight: windowBoundsRef.current?.height ?? null,
+        dragSessionState: dragSessionStateRef.current,
+      },
+      layout: {
+        kind: 'bubble-position',
+        source: 'updateBubblePosition',
+        decision: 'position-only-no-size-policy',
+      },
     });
-
-    const {
-      leftCapacity,
-      rightCapacity,
-      requiredWindowWidth,
-      enforcedWindowWidth,
-      capacityShortfall,
-      isEnlarge,
-      boundsToScreenRatio,
-      abnormalStartupEnlarge,
-    } = requirement;
-
-    // 初始化阶段 DOM 与窗口坐标系尚未稳定时，先禁止 bubble 参与扩窗决策。
-    // 这类测量失真会把 requiredWidth 放大到远超当前窗口的值（例如 1710）。
-    const distortedBoundsRatio = screen.width > 0 && (bounds.width / screen.width) > 1.35;
-    const distortedBaseFrameRatio = canvasRect.width > 0 && (baseFrameWidthDom / canvasRect.width) > 1.15;
-    const startupMeasurementDistorted = distortedBoundsRatio || distortedBaseFrameRatio;
-    if (startupMeasurementDistorted) {
-      startupStableFramesRef.current = 0;
-      startupMeasurementReadyRef.current = false;
-    } else if (!startupMeasurementReadyRef.current) {
-      startupStableFramesRef.current += 1;
-      if (startupStableFramesRef.current >= 3) {
-        startupMeasurementReadyRef.current = true;
-      }
-    }
-    const startupMeasurementReady = startupMeasurementReadyRef.current;
-
-    const windowPolicySuppressed = isWindowPolicySuppressed(dragSessionStateRef.current);
-
-    if (resizeWindowOnNextLayoutRef.current) {
-      const resizeTrace = {
-        requiredWindowWidth,
-        enforcedWindowWidth,
-        baseFrameWidthDom,
-        boundsWidthDom: bounds.width,
-        screenWidthDom: screen.width,
-        canvasRectWidthDom: canvasRect.width,
-        zoneTarget,
-        gapEffective,
-        isEnlarge,
-        boundsToScreenRatio,
-      };
-
-      emitDebugTrace({
-        kind: 'resize',
-        profile: 'jitter',
-        level: (abnormalStartupEnlarge || startupMeasurementDistorted) ? 'warn' : 'debug',
-        request: {
-          source: 'updateBubblePosition',
-          phase: 'calc',
-          ts: Date.now(),
-        },
-        resizeCore: {
-          requiredWidth: requiredWindowWidth,
-          enforcedWindowWidth,
-          isEnlarge,
-        },
-        window: {
-          innerWidth: window.innerWidth,
-          innerHeight: window.innerHeight,
-          boundsWidth: windowBoundsRef.current?.width ?? null,
-          boundsHeight: windowBoundsRef.current?.height ?? null,
-          boundsX: windowBoundsRef.current?.x ?? null,
-          boundsY: windowBoundsRef.current?.y ?? null,
-          targetWindowWidth: targetWindowWidthRef.current,
-          pendingWidth: pendingResizeRef.current?.width ?? null,
-          dragSessionState: dragSessionStateRef.current,
-        },
-        layout: resizeTrace,
-      });
-
-      if (windowPolicySuppressed) {
-        enlargeWidthConfirmRef.current = null;
-        suppressResizeForBubbleRef.current = false;
-      } else if (abnormalStartupEnlarge || startupMeasurementDistorted || !startupMeasurementReady) {
-        // 启动期 DOM / bounds 测量失真时，必须一并清理已经排队的 bubble resize，
-        // 否则上一帧排进去的错误宽度会在后续 raf 中继续落到 applyWindowWidth。
-        cancelPendingBubbleWindowWidth();
-        enlargeWidthConfirmRef.current = null;
-        suppressResizeForBubbleRef.current = false;
-      } else if (isEnlarge) {
-        const candidate = enlargeWidthConfirmRef.current;
-        const withinWindow = Boolean(candidate && (now - candidate.seenAt) <= ENLARGE_CONFIRM_WINDOW_MS);
-        const stableEnough = Boolean(candidate && Math.abs(candidate.width - enforcedWindowWidth) <= ENLARGE_CONFIRM_DELTA_PX);
-        if (!(withinWindow && stableEnough)) {
-          enlargeWidthConfirmRef.current = { width: enforcedWindowWidth, seenAt: now };
-          suppressResizeForBubbleRef.current = false;
-        } else {
-          enlargeWidthConfirmRef.current = null;
-          resizeWindowOnNextLayoutRef.current = false;
-          requestBubbleWindowWidth(enforcedWindowWidth);
-          suppressResizeForBubbleRef.current = false;
-        }
-      } else {
-        enlargeWidthConfirmRef.current = null;
-        resizeWindowOnNextLayoutRef.current = false;
-        requestBubbleWindowWidth(enforcedWindowWidth);
-        suppressResizeForBubbleRef.current = false;
-      }
-    }
 
     if (!hasBubble) {
       bubbleLayoutCommitter.clearBubblePresentation();
@@ -304,7 +198,7 @@ export const useBubblePositionEngine = ({
       return;
     }
 
-    const awaitingResize = Boolean(pendingResizeRef.current);
+    const awaitingResize = false;
 
     const symmetricCapacity = Math.min(leftCapacity, rightCapacity);
     const unclampedSymmetric = Math.min(zoneTarget, symmetricCapacity);
@@ -312,7 +206,7 @@ export const useBubblePositionEngine = ({
     const symmetricWidth = meetsMinimum
       ? unclampedSymmetric
       : Math.max(0, symmetricCapacity);
-    const widthShortfall = !meetsMinimum || capacityShortfall || awaitingResize;
+    const widthShortfall = !meetsMinimum || awaitingResize;
 
     const leftZoneLeft = centerDom - gapEffective - symmetricWidth;
     const rightZoneLeft = centerDom + gapEffective;
@@ -446,44 +340,7 @@ export const useBubblePositionEngine = ({
       position: nextPosition,
       tailY: nextTailY,
     });
-  }, [
-    scale,
-    motionTextRef,
-    lastBubbleUpdateRef,
-    modelRef,
-    appRef,
-    canvasRef,
-    bubbleLayoutCommitter,
-    hitAreasRef,
-    visualFrameRef,
-    touchMapRef,
-    redLineLeftRef,
-    visibleFrameMetricsRef,
-    baseFrameMetricsRef,
-    pendingResizeRef,
-    targetWindowWidthRef,
-    resizeWindowOnNextLayoutRef,
-    emitDebugTrace,
-    windowBoundsRef,
-    dragSessionStateRef,
-    enlargeWidthConfirmRef,
-    suppressResizeForBubbleRef,
-    requestBubbleWindowWidth,
-    cancelPendingBubbleWindowWidth,
-    bubbleRef,
-    bubbleSettingsRef,
-    bubbleZoneMetricsRef,
-    updateBubblePositionRef,
-    bubbleAlignmentRef,
-    bubblePositionRef,
-  ]);
-
-  useEffect(() => {
-    startupStableFramesRef.current = 0;
-    startupMeasurementReadyRef.current = false;
-    enlargeWidthConfirmRef.current = null;
-    resizeWindowOnNextLayoutRef.current = true;
-  }, [scale, enlargeWidthConfirmRef, resizeWindowOnNextLayoutRef]);
+  }, [scale, motionTextRef, lastBubbleUpdateRef, modelRef, appRef, canvasRef, bubbleLayoutCommitter, hitAreasRef, visualFrameRef, touchMapRef, emitDebugTrace, windowBoundsRef, dragSessionStateRef, bubbleRef, bubbleSettingsRef, updateBubblePositionRef]);
 
   useLayoutEffect(() => {
     updateBubblePositionRef.current = updateBubblePosition;

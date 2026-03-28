@@ -1,14 +1,10 @@
-import { useCallback, useEffect, type RefObject } from 'react';
-import { agg, warn } from '../../../../utils/log';
+import { useEffect, type RefObject } from 'react';
+import { agg, traceResizeChain, warn } from '../../../../utils/log';
 import type { DragSessionState } from './DragSessionController';
 import {
   handleResizeFollowupAfterAck,
   type ResizeFollowupOrchestratorDeps,
 } from './orchestrator/ResizeFollowupOrchestrator';
-import {
-  handleBubbleWindowWidth,
-  type BubbleResizeOrchestratorDeps,
-} from './orchestrator/BubbleResizeOrchestrator';
 import {
   alignWindowToCenterLineByOrchestrator,
   type CenterAlignOrchestratorDeps,
@@ -38,14 +34,9 @@ export interface UseGeometryRuntimeParams {
   dragSessionStateRef: RefObject<DragSessionState>;
   updateBubblePosition: (force?: boolean) => void;
   updateDragHandlePosition: (force?: boolean) => void;
-  bubbleResizeOrchestratorDeps: BubbleResizeOrchestratorDeps;
   centerAlignOrchestratorDeps: CenterAlignOrchestratorDeps;
   ackFollowupOrchestratorDeps: ResizeFollowupOrchestratorDeps;
   emitDebugTrace: (payload: Record<string, unknown>) => void;
-}
-
-export interface UseGeometryRuntimeResult {
-  applyWindowWidthByRuntime: (requiredWidth: number) => void;
 }
 
 /**
@@ -60,20 +51,48 @@ export const useGeometryRuntime = ({
   dragSessionStateRef,
   updateBubblePosition,
   updateDragHandlePosition,
-  bubbleResizeOrchestratorDeps,
   centerAlignOrchestratorDeps,
   ackFollowupOrchestratorDeps,
   emitDebugTrace,
-}: UseGeometryRuntimeParams): UseGeometryRuntimeResult => {
-  const applyWindowWidthByRuntime = useCallback((requiredWidth: number) => {
-    handleBubbleWindowWidth(requiredWidth, bubbleResizeOrchestratorDeps);
-  }, [bubbleResizeOrchestratorDeps]);
+}: UseGeometryRuntimeParams): void => {
+
+  const classifyIntentId = (intentId: string): 'drag-state' | 'resize' | 'align' | 'unknown' => {
+    if (intentId.startsWith('drag_state_')) return 'drag-state';
+    if (intentId.startsWith('rsz_')) return 'resize';
+    if (intentId.startsWith('align_')) return 'align';
+    return 'unknown';
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
 
+    const runtimeInstanceId = `geo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    const ACTIVE_RUNTIME_COUNTER_KEY = '__PET_GEOMETRY_RUNTIME_ACTIVE_COUNT__';
+    const runtimeCounterHost = window as unknown as Record<string, unknown>;
+
+    const increaseActiveRuntimeCount = (): number => {
+      const current = typeof runtimeCounterHost[ACTIVE_RUNTIME_COUNTER_KEY] === 'number'
+        ? (runtimeCounterHost[ACTIVE_RUNTIME_COUNTER_KEY] as number)
+        : 0;
+      const next = current + 1;
+      runtimeCounterHost[ACTIVE_RUNTIME_COUNTER_KEY] = next;
+      return next;
+    };
+
+    const decreaseActiveRuntimeCount = (): number => {
+      const current = typeof runtimeCounterHost[ACTIVE_RUNTIME_COUNTER_KEY] === 'number'
+        ? (runtimeCounterHost[ACTIVE_RUNTIME_COUNTER_KEY] as number)
+        : 0;
+      const next = Math.max(0, current - 1);
+      runtimeCounterHost[ACTIVE_RUNTIME_COUNTER_KEY] = next;
+      return next;
+    };
     const recentAckBoundsByRid = new Map<string, { x: number; y: number; width: number; height: number; ts: number }>();
+
+    let lastObservedFactBounds: GeometryRuntimeWindowBounds | null = null;
+    const recentAckRepeatByRid = new Map<string, { count: number; ts: number }>();
     const RECENT_ACK_TTL_MS = 1500;
+    const RECENT_ACK_REPEAT_WINDOW_MS = 1200;
 
     const isValidBounds = (bounds?: GeometryRuntimeWindowBounds): bounds is GeometryRuntimeWindowBounds => {
       return Boolean(
@@ -114,7 +133,7 @@ export const useGeometryRuntime = ({
       alignWindowToCenterLineByOrchestrator(snapshot.bounds, centerAlignOrchestratorDeps);
 
       agg({
-        level: 'debug',
+        level: 'info',
         ns: 'pet.window',
         event: 'bounds.accepted',
         key: snapshot.bounds.requestId ?? 'noRid',
@@ -131,7 +150,7 @@ export const useGeometryRuntime = ({
         emitDebugTrace({
           kind: 'windowIntent',
           profile: 'windowJump',
-          level: 'warn',
+          level: 'info',
           request: {
             source: 'geometryRuntime.onBoundsChanged',
             rid: snapshot.bounds.requestId ?? 'noRid',
@@ -167,7 +186,7 @@ export const useGeometryRuntime = ({
       emitDebugTrace({
         kind: 'windowIntent',
         profile: 'singleWriter',
-        level: 'warn',
+        level: 'info',
         request: {
           source: 'geometryRuntime.onBoundsChanged',
           rid: snapshot.bounds.requestId ?? 'noRid',
@@ -230,12 +249,32 @@ export const useGeometryRuntime = ({
       }
     };
 
-    const onWindowFact = (payload?: { bounds?: GeometryRuntimeWindowBounds; lastAppliedIntentId?: string | null; source?: string | null; epoch?: number | null }) => {
+    const onWindowFact = (payload?: {
+      bounds?: GeometryRuntimeWindowBounds;
+      lastAppliedIntentId?: string | null;
+      source?: string | null;
+      kind?: 'position' | 'size' | 'bounds' | null;
+      eventHint?: 'move' | 'moved' | 'resize' | null;
+      epoch?: number | null;
+    }) => {
       const bounds = payload?.bounds;
       if (!bounds) return;
 
       const rid = typeof payload?.lastAppliedIntentId === 'string' ? payload.lastAppliedIntentId : null;
       const factSource = typeof payload?.source === 'string' ? payload.source : 'unknown';
+      const factKind = payload?.kind === 'position' || payload?.kind === 'size' || payload?.kind === 'bounds'
+        ? payload.kind
+        : (factSource === 'user:resize'
+          ? 'size'
+          : (factSource === 'user:move' || factSource === 'user:moved' ? 'position' : 'bounds'));
+      const eventHint = payload?.eventHint ?? null;
+
+      const observedBounds = {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+      };
       let effectiveBounds = bounds;
       if (rid) {
         const recentAck = recentAckBoundsByRid.get(rid);
@@ -249,6 +288,71 @@ export const useGeometryRuntime = ({
         }
       }
 
+      const prevAccepted = windowBoundsRef.current;
+      if (factKind === 'position' && prevAccepted) {
+        // move 链路只消费位置，尺寸维持最近一次已接受事实，避免 Windows 外边框抖动污染渲染尺寸。
+        effectiveBounds = {
+          x: effectiveBounds.x,
+          y: effectiveBounds.y,
+          width: prevAccepted.width,
+          height: prevAccepted.height,
+        };
+      } else if (factKind === 'size' && prevAccepted) {
+        // resize 链路只消费尺寸，位置维持稳定，避免 resize 伴生位移影响拖拽位置治理。
+        effectiveBounds = {
+          x: prevAccepted.x,
+          y: prevAccepted.y,
+          width: effectiveBounds.width,
+          height: effectiveBounds.height,
+        };
+      }
+
+      traceResizeChain('geometryRuntime.fact.observe', {
+        runtimeInstanceId,
+        factSource,
+        factKind,
+        eventHint,
+        factRid: rid,
+        factX: observedBounds.x,
+        factY: observedBounds.y,
+        factWidth: observedBounds.width,
+        factHeight: observedBounds.height,
+        effectiveX: effectiveBounds.x,
+        effectiveY: effectiveBounds.y,
+        effectiveWidth: effectiveBounds.width,
+        effectiveHeight: effectiveBounds.height,
+        effectiveReason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : factSource,
+      });
+
+      if (lastObservedFactBounds) {
+        const deltaWidth = effectiveBounds.width - lastObservedFactBounds.width;
+        const deltaHeight = effectiveBounds.height - lastObservedFactBounds.height;
+        if (Math.abs(deltaWidth) > 1 || Math.abs(deltaHeight) > 1) {
+          traceResizeChain('geometryRuntime.fact.jump', {
+            runtimeInstanceId,
+            factSource,
+            factKind,
+            factRid: rid,
+            prevX: lastObservedFactBounds.x,
+            prevY: lastObservedFactBounds.y,
+            prevWidth: lastObservedFactBounds.width,
+            prevHeight: lastObservedFactBounds.height,
+            nextX: effectiveBounds.x,
+            nextY: effectiveBounds.y,
+            nextWidth: effectiveBounds.width,
+            nextHeight: effectiveBounds.height,
+            deltaWidth,
+            deltaHeight,
+          });
+        }
+      }
+      lastObservedFactBounds = {
+        x: effectiveBounds.x,
+        y: effectiveBounds.y,
+        width: effectiveBounds.width,
+        height: effectiveBounds.height,
+      };
+
       emitDebugTrace({
         kind: 'windowIntent',
         profile: 'windowJump',
@@ -257,14 +361,14 @@ export const useGeometryRuntime = ({
           source: 'renderer.windowFact',
           rid: rid ?? 'fact-no-rid',
           phase: 'consume',
-          reason: factSource,
+          reason: `${factSource}:${factKind}`,
           ts: Date.now(),
         },
         window: {
-          factX: bounds.x,
-          factY: bounds.y,
-          factWidth: bounds.width,
-          factHeight: bounds.height,
+          factX: observedBounds.x,
+          factY: observedBounds.y,
+          factWidth: observedBounds.width,
+          factHeight: observedBounds.height,
           effectiveX: effectiveBounds.x,
           effectiveY: effectiveBounds.y,
           effectiveWidth: effectiveBounds.width,
@@ -274,7 +378,7 @@ export const useGeometryRuntime = ({
         layout: {
           kind: 'fact-consume',
           source: 'windowFact',
-          reason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : factSource,
+          reason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : `${factSource}:${factKind}`,
         },
       });
 
@@ -310,6 +414,27 @@ export const useGeometryRuntime = ({
     const onWindowIntentAck = (ack?: { intentId?: string; status?: string; reason?: string; appliedBounds?: GeometryRuntimeWindowBounds }) => {
       const intentId = typeof ack?.intentId === 'string' ? ack.intentId : null;
       if (!intentId) return;
+      const ackKind = classifyIntentId(intentId);
+      const ackNow = Date.now();
+      const prevRepeat = recentAckRepeatByRid.get(intentId);
+      const repeatCount = prevRepeat && (ackNow - prevRepeat.ts) <= RECENT_ACK_REPEAT_WINDOW_MS
+        ? prevRepeat.count + 1
+        : 1;
+      recentAckRepeatByRid.set(intentId, { count: repeatCount, ts: ackNow });
+      for (const [key, value] of recentAckRepeatByRid.entries()) {
+        if (ackNow - value.ts > RECENT_ACK_REPEAT_WINDOW_MS) {
+          recentAckRepeatByRid.delete(key);
+        }
+      }
+
+      traceResizeChain('geometryRuntime.ack.observe', {
+        runtimeInstanceId,
+        ackId: intentId,
+        ackKind,
+        status: typeof ack?.status === 'string' ? ack.status : 'unknown',
+        reason: typeof ack?.reason === 'string' ? ack.reason : null,
+        repeatCount,
+      });
 
       emitDebugTrace({
         kind: 'windowIntent',
@@ -319,7 +444,7 @@ export const useGeometryRuntime = ({
           source: 'renderer.windowIntentAck',
           rid: intentId,
           phase: 'ack',
-          ts: Date.now(),
+          ts: ackNow,
           status: typeof ack?.status === 'string' ? ack.status : undefined,
           reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
         },
@@ -332,11 +457,33 @@ export const useGeometryRuntime = ({
         layout: {
           kind: 'ack',
           source: 'windowIntentAck',
+          ackKind,
+          runtimeInstanceId,
+          repeatCount,
           reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
         },
       });
 
       if (ack?.status !== 'applied') return;
+
+      const hasAppliedBounds = Boolean(
+        Number.isFinite(ack?.appliedBounds?.x)
+        && Number.isFinite(ack?.appliedBounds?.y)
+        && Number.isFinite(ack?.appliedBounds?.width)
+        && Number.isFinite(ack?.appliedBounds?.height),
+      );
+
+      // drag-state ack 不承载窗口尺寸，不应进入 resize follow-up 流程。
+      if (ackKind === 'drag-state' || !hasAppliedBounds) {
+        traceResizeChain('geometryRuntime.ack.ignored', {
+          runtimeInstanceId,
+          ackId: intentId,
+          ackKind,
+          reason: ackKind === 'drag-state' ? 'drag-state-ack' : 'missing-applied-bounds',
+          status: typeof ack?.status === 'string' ? ack.status : 'unknown',
+        });
+        return;
+      }
 
       const appliedX = Number.isFinite(ack?.appliedBounds?.x) ? ack.appliedBounds!.x : 0;
       const appliedY = Number.isFinite(ack?.appliedBounds?.y) ? ack.appliedBounds!.y : 0;
@@ -348,7 +495,7 @@ export const useGeometryRuntime = ({
         y: appliedY,
         width: appliedWidth,
         height: appliedHeight,
-        ts: Date.now(),
+        ts: ackNow,
       });
       for (const [key, value] of recentAckBoundsByRid.entries()) {
         if (Date.now() - value.ts > RECENT_ACK_TTL_MS) {
@@ -372,6 +519,13 @@ export const useGeometryRuntime = ({
     };
 
     try {
+      const activeInstanceCount = increaseActiveRuntimeCount();
+      traceResizeChain('geometryRuntime.subscription', {
+        runtimeInstanceId,
+        action: 'subscribe',
+        activeInstanceCount,
+        channels: 'pet:windowFact,pet:windowIntentAck',
+      });
       window.WindowAPI?.on?.('pet:windowFact', onWindowFact);
       window.WindowAPI?.on?.('pet:windowIntentAck', onWindowIntentAck);
     } catch {
@@ -380,6 +534,13 @@ export const useGeometryRuntime = ({
 
     return () => {
       try {
+        const activeInstanceCount = decreaseActiveRuntimeCount();
+        traceResizeChain('geometryRuntime.subscription', {
+          runtimeInstanceId,
+          action: 'unsubscribe',
+          activeInstanceCount,
+          channels: 'pet:windowFact,pet:windowIntentAck',
+        });
         window.WindowAPI?.off?.('pet:windowFact', onWindowFact);
         window.WindowAPI?.off?.('pet:windowIntentAck', onWindowIntentAck);
       } catch {
@@ -397,7 +558,5 @@ export const useGeometryRuntime = ({
     windowBoundsRef,
   ]);
 
-  return {
-    applyWindowWidthByRuntime,
-  };
+  return;
 };

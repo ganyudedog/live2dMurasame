@@ -249,11 +249,6 @@ const PetCanvas: React.FC = () => {
   const ignoreUserMoveDetectUntilRef = useRef(0);
   const lastObservedBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
-  // 窗口宽度策略：只跟随 scale 变化。
-  // 在 scale 变化时置位，下一次 updateBubblePosition 计算出目标宽度后只触发一次 resize。
-  const resizeWindowOnNextLayoutRef = useRef(true);
-  const enlargeWidthConfirmRef = useRef<{ width: number; seenAt: number } | null>(null);
-
   // 鼠标穿透
   const mousePassthroughRef = useRef<boolean | null>(null); // 鼠标穿透状态
   const recomputeWindowPassthroughRef = useRef<() => void>(() => { }); // 重新计算窗口穿透的函数引用
@@ -307,9 +302,6 @@ const PetCanvas: React.FC = () => {
 
   // 布局相关
   const baseWindowSizeRef = useRef<{ width: number; height: number } | null>(null);
-  const pendingBubbleWindowWidthRef = useRef<number | null>(null);
-  const bubbleWindowPolicyRafRef = useRef<number | null>(null);
-
   const lastResizeAtRef = useRef(0); // 上次调整大小的时间戳
   const lastRequestedSizeRef = useRef<{ w: number; h: number } | null>(null); // 最后请求的尺寸
 
@@ -459,7 +451,6 @@ const PetCanvas: React.FC = () => {
 
   const {
     emitDebugTrace,
-    bubbleResizeOrchestratorDeps,
     centerAlignOrchestratorDeps,
     ackFollowupOrchestratorDeps,
   } = usePetResizeOrchestrator({
@@ -490,38 +481,16 @@ const PetCanvas: React.FC = () => {
     windowBoundsRef,
   });
 
-  const flushPendingBubbleWindowWidth = useCallback(() => {
-    bubbleWindowPolicyRafRef.current = null;
-    const requiredWidth = pendingBubbleWindowWidthRef.current;
-    pendingBubbleWindowWidthRef.current = null;
-    if (typeof requiredWidth !== 'number' || !Number.isFinite(requiredWidth)) return;
-    applyWindowWidthByRuntimeRef.current?.(requiredWidth);
-  }, []);
-
-  const applyWindowWidthByRuntimeRef = useRef<((requiredWidth: number) => void) | null>(null);
-
-  const cancelPendingBubbleWindowWidth = useCallback(() => {
-    pendingBubbleWindowWidthRef.current = null;
-    if (typeof window === 'undefined' || typeof window.cancelAnimationFrame !== 'function') return;
-    if (bubbleWindowPolicyRafRef.current === null) return;
-    window.cancelAnimationFrame(bubbleWindowPolicyRafRef.current);
-    bubbleWindowPolicyRafRef.current = null;
-  }, []);
-
-  const requestBubbleWindowWidth = useCallback((requiredWidth: number) => {
-    if (!Number.isFinite(requiredWidth)) return;
-    pendingBubbleWindowWidthRef.current = requiredWidth;
-
-    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-      flushPendingBubbleWindowWidth();
-      return;
-    }
-
-    if (bubbleWindowPolicyRafRef.current !== null) return;
-    bubbleWindowPolicyRafRef.current = window.requestAnimationFrame(() => {
-      flushPendingBubbleWindowWidth();
-    });
-  }, [flushPendingBubbleWindowWidth]);
+  useGeometryRuntime({
+    windowBoundsRef,
+    isWindowDragActiveRef,
+    dragSessionStateRef,
+    updateBubblePosition: (force?: boolean) => updateBubblePositionRef.current?.(force),
+    updateDragHandlePosition: (force?: boolean) => updateDragHandlePositionRef.current?.(force),
+    centerAlignOrchestratorDeps,
+    ackFollowupOrchestratorDeps,
+    emitDebugTrace,
+  });
 
   const bubbleLayoutCommitter = useBubbleLayoutCommitter({
     redLineLeftRef,
@@ -551,33 +520,13 @@ const PetCanvas: React.FC = () => {
     visualFrameRef,
     bubbleSettingsRef,
     touchMapRef,
-    redLineLeftRef,
-    visibleFrameMetricsRef,
-    baseFrameMetricsRef,
-    bubbleZoneMetricsRef,
-    pendingResizeRef,
-    targetWindowWidthRef,
-    resizeWindowOnNextLayoutRef,
-    enlargeWidthConfirmRef,
-    suppressResizeForBubbleRef,
-    pendingResizeIssuedAtRef,
     windowBoundsRef,
     dragSessionStateRef,
     lastBubbleUpdateRef,
-    bubbleAlignmentRef,
-    bubblePositionRef,
     updateBubblePositionRef,
-    requestBubbleWindowWidth,
-    cancelPendingBubbleWindowWidth,
     emitDebugTrace,
     bubbleLayoutCommitter,
   });
-
-  useEffect(() => {
-    return () => {
-      cancelPendingBubbleWindowWidth();
-    };
-  }, [cancelPendingBubbleWindowWidth]);
 
   useMousePassthrough({
     ignoreMouse,
@@ -747,22 +696,6 @@ const PetCanvas: React.FC = () => {
   useLayoutEffect(() => {
     updateDragHandlePositionRef.current = updateDragHandlePosition;
   }, [updateDragHandlePosition]);
-
-  const { applyWindowWidthByRuntime } = useGeometryRuntime({
-    windowBoundsRef,
-    isWindowDragActiveRef,
-    dragSessionStateRef,
-    updateBubblePosition,
-    updateDragHandlePosition,
-    bubbleResizeOrchestratorDeps,
-    centerAlignOrchestratorDeps,
-    ackFollowupOrchestratorDeps,
-    emitDebugTrace,
-  });
-
-  useLayoutEffect(() => {
-    applyWindowWidthByRuntimeRef.current = applyWindowWidthByRuntime;
-  }, [applyWindowWidthByRuntime]);
 
   const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
     const settings = (modelInstance as any).internalModel?.settings;

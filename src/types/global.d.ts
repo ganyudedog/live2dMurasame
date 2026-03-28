@@ -143,7 +143,9 @@ declare global {
   // 窗口事实（状态机中的事件结构）
   interface PetWindowFact {
     epoch: number;
-    source: 'system' | 'intent' | 'user';
+    source: 'system' | 'intent' | 'user' | 'user:move' | 'user:moved' | 'user:resize';
+    kind?: 'position' | 'size' | 'bounds';
+    eventHint?: 'move' | 'moved' | 'resize' | null;
     lastAppliedIntentId?: string | null;
     bounds: { x: number; y: number; width: number; height: number };
     ts?: number;
@@ -338,6 +340,57 @@ declare global {
     debugTrace?: (payload: PetDebugTracePayload) => void;
   }
 
+  interface PetFrontendTraceEntry {
+    seq: number;
+    t: number;
+    ns: string;
+    event: string;
+    level: 'debug' | 'info' | 'warn' | 'error';
+    data?: Record<string, unknown>;
+  }
+
+  interface PetFrontendTraceStore {
+    max: number;
+    enabled: boolean;
+    consoleEcho: boolean;
+    seq: number;
+    entries: PetFrontendTraceEntry[];
+  }
+
+  interface PetFrontendTraceApi {
+    get: () => PetFrontendTraceEntry[];
+    clear: () => void;
+    setEnabled: (enabled: boolean) => boolean;
+    setConsoleEcho: (enabled: boolean) => boolean;
+    setMax: (max: number) => number;
+    analyzeEnforcedWidthJumps: (options?: {
+      ns?: string;
+      event?: string;
+      around?: number;
+      minDelta?: number;
+      limit?: number;
+    }) => {
+      totalEntries: number;
+      scannedEntries: number;
+      jumps: Array<{
+        fromWidth: number;
+        toWidth: number;
+        delta: number;
+        atSeq: number;
+        atT: number;
+        context: PetFrontendTraceEntry[];
+      }>;
+      firstJump: {
+        fromWidth: number;
+        toWidth: number;
+        delta: number;
+        atSeq: number;
+        atT: number;
+        context: PetFrontendTraceEntry[];
+      } | null;
+    };
+  }
+
   interface Window {
     WindowAPI?: PetWindowAPI;
     ConfigAPI?: PetConfigAPI;
@@ -346,6 +399,8 @@ declare global {
     AIAPI?: PetAIAPI;
     ChatAPI?: PetChatAPI;
     SystemAPI?: PetSystemAPI;
+    __PET_FRONTEND_TRACE__?: PetFrontendTraceStore;
+    __PET_FRONTEND_TRACE_API__?: PetFrontendTraceApi;
     __PET_CONFIG__?: PetConfigSnapshot;
   }
 }

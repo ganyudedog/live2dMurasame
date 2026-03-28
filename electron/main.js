@@ -393,9 +393,9 @@ const createMainWindow = () => {
     });
 
     // 在拖动过程中首选“move”更新;保留“move”作为后备。
-    mainWindow.on('move', scheduleEmitMainWindowBounds);
-    mainWindow.on('moved', scheduleEmitMainWindowBounds);
-    mainWindow.on('resize', scheduleEmitMainWindowBounds);
+    mainWindow.on('move', () => scheduleEmitMainWindowBounds('move'));
+    mainWindow.on('moved', () => scheduleEmitMainWindowBounds('moved'));
+    mainWindow.on('resize', () => scheduleEmitMainWindowBounds('resize'));
 
     return mainWindow;
 };

@@ -1,5 +1,6 @@
 import type { DragSessionState } from '../DragSessionController';
 import type { ResizeCommandCommitter } from '../commit/ResizeCommandCommitter';
+import { traceResizeChain } from '../../../../../utils/log';
 
 export interface WindowBoundsLike {
   x: number;
@@ -42,22 +43,51 @@ export const handleResizeFollowupAfterAck = (
   bounds: WindowBoundsLike | undefined,
   deps: ResizeFollowupOrchestratorDeps,
 ): void => {
+  const classifyRequestId = (requestId: string | null | undefined): 'drag-state' | 'resize' | 'align' | 'unknown' | 'none' => {
+    if (!requestId) return 'none';
+    if (requestId.startsWith('drag_state_')) return 'drag-state';
+    if (requestId.startsWith('rsz_')) return 'resize';
+    if (requestId.startsWith('align_')) return 'align';
+    return 'unknown';
+  };
+
   const ackId = bounds?.requestId;
-  if (!ackId) return;
+  if (!ackId) {
+    traceResizeChain('followup.afterAck.skip', { reason: 'missing-ack-id' });
+    return;
+  }
+  const ackKind = classifyRequestId(ackId);
 
   const inFlight = deps.resizeInFlightRequestIdRef.current;
-  if (!inFlight || inFlight !== ackId) return;
+  const inFlightKind = classifyRequestId(inFlight);
+  if (!inFlight || inFlight !== ackId) {
+    traceResizeChain('followup.afterAck.skip', {
+      reason: 'ack-not-inflight',
+      ackId,
+      ackKind,
+      inFlightRequestId: inFlight ?? null,
+      inFlightKind,
+    });
+    return;
+  }
 
   deps.resizeInFlightRequestIdRef.current = null;
 
   const latest = deps.latestResizeDesiredRef.current;
   const lastSent = deps.lastSentResizeDesiredRef.current;
-  if (!latest) return;
+  if (!latest) {
+    traceResizeChain('followup.afterAck.skip', {
+      reason: 'missing-latest-desired',
+      ackId,
+    });
+    return;
+  }
 
   const sameDesired = Boolean(
     lastSent
-      && Math.abs(lastSent.width - latest.width) <= 1
-      && Math.abs(lastSent.height - latest.height) <= 1
+      // 与 requestResize 去重阈值对齐：宽高误差在 2px 内视为同一目标，避免 follow-up 抖动放大。
+      && Math.abs(lastSent.width - latest.width) <= 10
+      && Math.abs(lastSent.height - latest.height) <= 10
       && (lastSent.anchorCenter == null || latest.anchorCenter == null
         ? lastSent.anchorCenter == null && latest.anchorCenter == null
         : Math.abs(lastSent.anchorCenter - latest.anchorCenter) <= 0.5),
@@ -76,6 +106,7 @@ export const handleResizeFollowupAfterAck = (
       rid: ackId,
       phase: 'evaluate',
       ts: Date.now(),
+      reason: ackKind,
     },
     window: {
       innerWidth: typeof window !== 'undefined' ? window.innerWidth : null,
@@ -101,8 +132,40 @@ export const handleResizeFollowupAfterAck = (
     },
   });
 
-  if (sameDesired) return;
-  if (now < deps.suppressAutoResizeUntilRef.current) return;
+  traceResizeChain('followup.afterAck.evaluate', {
+    ackId,
+    ackKind,
+    sameDesired: sameDesired ? 1 : 0,
+    latestWidth: latest.width,
+    latestHeight: latest.height,
+    lastSentWidth: lastSent?.width ?? null,
+    lastSentHeight: lastSent?.height ?? null,
+    now,
+    suppressAutoResizeUntil: deps.suppressAutoResizeUntilRef.current,
+    dragSessionState: deps.dragSessionStateRef.current,
+    policySuppressed: deps.isWindowPolicySuppressed() ? 1 : 0,
+  });
+
+  if (sameDesired) {
+    traceResizeChain('followup.afterAck.skip', {
+      reason: 'same-desired',
+      ackId,
+      ackKind,
+      latestWidth: latest.width,
+      latestHeight: latest.height,
+    });
+    return;
+  }
+  if (now < deps.suppressAutoResizeUntilRef.current) {
+    traceResizeChain('followup.afterAck.skip', {
+      reason: 'suppress-auto-resize',
+      ackId,
+      ackKind,
+      now,
+      suppressAutoResizeUntil: deps.suppressAutoResizeUntilRef.current,
+    });
+    return;
+  }
 
   try {
     const requestId = deps.resizeCommandCommitter.createResizeRequestId();
@@ -165,6 +228,20 @@ export const handleResizeFollowupAfterAck = (
       },
     });
 
+    traceResizeChain('followup.afterAck.send', {
+      ackId,
+      ackKind,
+      requestId,
+      width: latest.width,
+      height: latest.height,
+      anchorCenter: latest.anchorCenter ?? null,
+      innerWidth: typeof window !== 'undefined' ? window.innerWidth : null,
+      innerHeight: typeof window !== 'undefined' ? window.innerHeight : null,
+      boundsWidth: deps.windowBoundsRef.current?.width ?? null,
+      boundsHeight: deps.windowBoundsRef.current?.height ?? null,
+      dragSessionState: deps.dragSessionStateRef.current,
+    }, 'info');
+
     void deps.resizeCommandCommitter.sendResizeIntent({
       requestId,
       source: 'handleWindowBoundsAck',
@@ -176,5 +253,10 @@ export const handleResizeFollowupAfterAck = (
     deps.ignoreUserMoveDetectUntilRef.current = now + 240;
   } catch {
     deps.resizeInFlightRequestIdRef.current = null;
+    traceResizeChain('followup.afterAck.error', {
+      ackId,
+      latestWidth: latest.width,
+      latestHeight: latest.height,
+    }, 'warn');
   }
 };

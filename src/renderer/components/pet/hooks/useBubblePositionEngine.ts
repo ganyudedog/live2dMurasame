@@ -147,19 +147,6 @@ export const useBubblePositionEngine = ({
     // 中文注释：气泡引擎只负责位置，不再参与窗口尺寸治理。
     // 这里保留 requiredWindowWidth 仅用于调试可视化与日志观察，不触发任何 resize intent。
     const requiredWindowWidth = Math.ceil(baseFrameWidthDom + zoneTarget * 2 + gapEffective * 2 + BUBBLE_PADDING * 2);
-    // traceResizeChain('bubblePosition.positionOnly', {
-    //   requiredWindowWidth,
-    //   leftCapacity,
-    //   rightCapacity,
-    //   zoneTarget,
-    //   gapEffective,
-    //   innerWidth: window.innerWidth,
-    //   innerHeight: window.innerHeight,
-    //   boundsWidth: windowBoundsRef.current?.width ?? null,
-    //   boundsHeight: windowBoundsRef.current?.height ?? null,
-    //   dragSessionState: dragSessionStateRef.current,
-    //   reason: 'position-only-no-size-policy',
-    // });
 
     emitDebugTrace({
       kind: 'resize',

@@ -1,4 +1,4 @@
-import { sample, warn } from '../../renderer/utils/log';
+import { debug, warn } from '../../renderer/utils/log';
 import { detectActionCapability } from '../action/capability';
 import { ActionExecutor } from '../action/executor';
 import { normalizeActionIntent } from '../action/normalize';
@@ -107,17 +107,10 @@ export class Live2DActionController {
 
     const result = this.executor.tick(core, nowMs);
     if (result.finished && result.action) {
-      sample({
-        level: 'debug',
-        ns: 'ai.action',
-        event: 'finished',
-        key: result.action.kind,
-        intervalMs: 600,
-        data: {
-          kind: result.action.kind,
-          intensity: result.action.intensity,
-          durationMs: result.action.durationMs,
-        },
+      debug('ai.action', 'finished', {
+        kind: result.action.kind,
+        intensity: result.action.intensity,
+        durationMs: result.action.durationMs,
       });
     }
   }

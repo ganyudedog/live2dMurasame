@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from 'react';
-import { agg, traceResizeChain, warn } from '../../../../utils/log';
+import { debug, info, warn } from '../../../../utils/log/log';
 import type { DragSessionState } from './DragSessionController';
 import {
   handleResizeFollowupAfterAck,
@@ -132,18 +132,11 @@ export const useGeometryRuntime = ({
     const commitLayoutSnapshot = (snapshot: GeometryRuntimeLayoutSnapshot): void => {
       alignWindowToCenterLineByOrchestrator(snapshot.bounds, centerAlignOrchestratorDeps);
 
-      agg({
-        level: 'info',
-        ns: 'pet.window',
-        event: 'bounds.accepted',
-        key: snapshot.bounds.requestId ?? 'noRid',
-        windowMs: 800,
-        data: {
-          x: snapshot.bounds.x,
-          y: snapshot.bounds.y,
-          width: snapshot.bounds.width,
-          height: snapshot.bounds.height,
-        },
+      info('pet.window', 'bounds.accepted', {
+        x: snapshot.bounds.x,
+        y: snapshot.bounds.y,
+        width: snapshot.bounds.width,
+        height: snapshot.bounds.height,
       });
 
       if (snapshot.prevBounds && (snapshot.widthChanged || snapshot.heightChanged)) {
@@ -218,14 +211,7 @@ export const useGeometryRuntime = ({
 
     const onBoundsChanged = (bounds?: GeometryRuntimeWindowBounds) => {
       try {
-        agg({
-          level: 'debug',
-          ns: 'pet.window',
-          event: 'bounds.changed',
-          key: bounds?.requestId ?? 'noRid',
-          windowMs: 800,
-          data: bounds ? { ...bounds } : { missing: true },
-        });
+        debug('pet.window', 'bounds.changed', bounds ? { ...bounds } : { missing: true });
 
         if (isValidBounds(bounds)) {
           const prev = windowBoundsRef.current;
@@ -234,14 +220,7 @@ export const useGeometryRuntime = ({
           const snapshot = buildLayoutSnapshot(bounds, prev, dragSessionStateRef.current);
           commitLayoutSnapshot(snapshot);
         } else {
-          agg({
-            level: 'warn',
-            ns: 'pet.window',
-            event: 'bounds.ignored',
-            key: 'invalid',
-            windowMs: 2000,
-            data: { missing: true },
-          });
+          info('pet.window', 'bounds.ignored', { missing: true });
           return;
         }
       } catch (error) {
@@ -290,7 +269,7 @@ export const useGeometryRuntime = ({
 
       const prevAccepted = windowBoundsRef.current;
       if (factKind === 'position' && prevAccepted) {
-        // move 链路只消费位置，尺寸维持最近一次已接受事实，避免 Windows 外边框抖动污染渲染尺寸。
+        // move 链路只消费位置，尺寸维持最近一次已接受事实，避�?Windows 外边框抖动污染渲染尺寸�?
         effectiveBounds = {
           x: effectiveBounds.x,
           y: effectiveBounds.y,
@@ -298,7 +277,7 @@ export const useGeometryRuntime = ({
           height: prevAccepted.height,
         };
       } else if (factKind === 'size' && prevAccepted) {
-        // resize 链路只消费尺寸，位置维持稳定，避免 resize 伴生位移影响拖拽位置治理。
+        // resize 链路只消费尺寸，位置维持稳定，避�?resize 伴生位移影响拖拽位置治理�?
         effectiveBounds = {
           x: prevAccepted.x,
           y: prevAccepted.y,
@@ -307,7 +286,7 @@ export const useGeometryRuntime = ({
         };
       }
 
-      traceResizeChain('geometryRuntime.fact.observe', {
+      debug('pet.resize', 'geometryRuntime.fact.observe', {
         runtimeInstanceId,
         factSource,
         factKind,
@@ -328,7 +307,7 @@ export const useGeometryRuntime = ({
         const deltaWidth = effectiveBounds.width - lastObservedFactBounds.width;
         const deltaHeight = effectiveBounds.height - lastObservedFactBounds.height;
         if (Math.abs(deltaWidth) > 1 || Math.abs(deltaHeight) > 1) {
-          traceResizeChain('geometryRuntime.fact.jump', {
+          debug('pet.resize', 'geometryRuntime.fact.jump', {
             runtimeInstanceId,
             factSource,
             factKind,
@@ -427,7 +406,7 @@ export const useGeometryRuntime = ({
         }
       }
 
-      traceResizeChain('geometryRuntime.ack.observe', {
+      debug('pet.resize', 'geometryRuntime.ack.observe', {
         runtimeInstanceId,
         ackId: intentId,
         ackKind,
@@ -473,9 +452,9 @@ export const useGeometryRuntime = ({
         && Number.isFinite(ack?.appliedBounds?.height),
       );
 
-      // drag-state ack 不承载窗口尺寸，不应进入 resize follow-up 流程。
+      // drag-state ack 不承载窗口尺寸，不应进入 resize follow-up 流程�?
       if (ackKind === 'drag-state' || !hasAppliedBounds) {
-        traceResizeChain('geometryRuntime.ack.ignored', {
+        debug('pet.resize', 'geometryRuntime.ack.ignored', {
           runtimeInstanceId,
           ackId: intentId,
           ackKind,
@@ -520,7 +499,7 @@ export const useGeometryRuntime = ({
 
     try {
       const activeInstanceCount = increaseActiveRuntimeCount();
-      traceResizeChain('geometryRuntime.subscription', {
+      debug('pet.resize', 'geometryRuntime.subscription', {
         runtimeInstanceId,
         action: 'subscribe',
         activeInstanceCount,
@@ -535,7 +514,7 @@ export const useGeometryRuntime = ({
     return () => {
       try {
         const activeInstanceCount = decreaseActiveRuntimeCount();
-        traceResizeChain('geometryRuntime.subscription', {
+        debug('pet.resize', 'geometryRuntime.subscription', {
           runtimeInstanceId,
           action: 'unsubscribe',
           activeInstanceCount,

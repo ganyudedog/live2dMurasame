@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { agg, warn } from '../../../utils/log';
+import { info, warn } from '../../../utils/log';
 
 export interface UsePointerTapHandlerParams {
   handlePointerTap: (clientX: number, clientY: number) => void;
@@ -47,36 +47,22 @@ export const usePointerTapHandler = ({
     let lastScreenY = 0;
 
     const finalizeRendererDragEnd = (reason: 'main-sync', screenX: number, screenY: number, pointerIdValue?: number | null) => {
-      agg({
-        level: 'info',
-        ns: 'pet.pointerDrag',
-        event: 'session',
-        key: reason,
-        windowMs: 250,
-        data: {
-          phase: reason,
-          pointerId: pointerIdValue ?? pointerId,
-          screenX,
-          screenY,
-        },
+      info('pet.pointerDrag', 'session', {
+        phase: reason,
+        pointerId: pointerIdValue ?? pointerId,
+        screenX,
+        screenY,
       });
 
       onDragEnd?.();
     };
 
     const finishDragSession = (reason: 'up' | 'cancel' | 'blur', screenX: number, screenY: number, pointerIdValue?: number | null) => {
-      agg({
-        level: 'info',
-        ns: 'pet.pointerDrag',
-        event: 'session',
-        key: reason,
-        windowMs: 250,
-        data: {
-          phase: reason,
-          pointerId: pointerIdValue ?? pointerId,
-          screenX,
-          screenY,
-        },
+      info('pet.pointerDrag', 'session', {
+        phase: reason,
+        pointerId: pointerIdValue ?? pointerId,
+        screenX,
+        screenY,
       });
 
       try {
@@ -147,22 +133,15 @@ export const usePointerTapHandler = ({
         captureTarget = null;
       }
 
-      agg({
-        level: 'info',
-        ns: 'pet.pointerDrag',
-        event: 'session',
-        key: `down:${allowed ? 'allowed' : 'blocked'}`,
-        windowMs: 250,
-        data: {
-          phase: 'down',
-          pointerId: event.pointerId,
-          allowed,
-          captureAcquired,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          screenX: event.screenX,
-          screenY: event.screenY,
-        },
+      info('pet.pointerDrag', 'session', {
+        phase: 'down',
+        pointerId: event.pointerId,
+        allowed,
+        captureAcquired,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        screenX: event.screenX,
+        screenY: event.screenY,
       });
 
       pendingTap = true;
@@ -189,20 +168,13 @@ export const usePointerTapHandler = ({
 
       if (!dragging && shouldStartDrag) {
         dragging = true;
-        agg({
-          level: 'info',
-          ns: 'pet.pointerDrag',
-          event: 'session',
-          key: 'drag-start',
-          windowMs: 250,
-          data: {
-            phase: 'drag-start',
-            pointerId: event.pointerId,
-            movedDistance,
-            pressedMs,
-            screenX: event.screenX,
-            screenY: event.screenY,
-          },
+        info('pet.pointerDrag', 'session', {
+          phase: 'drag-start',
+          pointerId: event.pointerId,
+          movedDistance,
+          pressedMs,
+          screenX: event.screenX,
+          screenY: event.screenY,
         });
         try {
           windowApi?.sendWindowDrag?.({
@@ -226,20 +198,13 @@ export const usePointerTapHandler = ({
 
       lastScreenX = event.screenX;
       lastScreenY = event.screenY;
-      agg({
-        level: 'info',
-        ns: 'pet.pointerDrag',
-        event: 'session',
-        key: 'drag-move',
-        windowMs: 200,
-        data: {
-          phase: 'drag-move',
-          pointerId: event.pointerId,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          screenX: event.screenX,
-          screenY: event.screenY,
-        },
+      info('pet.pointerDrag', 'session', {
+        phase: 'drag-move',
+        pointerId: event.pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        screenX: event.screenX,
+        screenY: event.screenY,
       });
       onDragMove?.();
     };
@@ -255,21 +220,14 @@ export const usePointerTapHandler = ({
       if (!wasDragging) {
         onPendingDragCancel?.();
       }
-      agg({
-        level: 'info',
-        ns: 'pet.pointerDrag',
-        event: 'session',
-        key: wasDragging ? 'up-drag' : 'up-tap',
-        windowMs: 250,
-        data: {
-          phase: 'up',
-          pointerId: event.pointerId,
-          wasDragging,
-          canTap,
-          movedDistance,
-          screenX: event.screenX,
-          screenY: event.screenY,
-        },
+      info('pet.pointerDrag', 'session', {
+        phase: 'up',
+        pointerId: event.pointerId,
+        wasDragging,
+        canTap,
+        movedDistance,
+        screenX: event.screenX,
+        screenY: event.screenY,
       });
       resetSession();
 
@@ -290,19 +248,12 @@ export const usePointerTapHandler = ({
       if (!wasDragging) {
         onPendingDragCancel?.();
       }
-      agg({
-        level: 'warn',
-        ns: 'pet.pointerDrag',
-        event: 'session',
-        key: 'cancel',
-        windowMs: 250,
-        data: {
-          phase: 'cancel',
-          pointerId: event.pointerId,
-          wasDragging,
-          screenX: lastScreenX,
-          screenY: lastScreenY,
-        },
+      warn('pet.pointerDrag', 'session', {
+        phase: 'cancel',
+        pointerId: event.pointerId,
+        wasDragging,
+        screenX: lastScreenX,
+        screenY: lastScreenY,
       });
       resetSession();
       if (wasDragging) {
@@ -316,19 +267,12 @@ export const usePointerTapHandler = ({
       if (!wasDragging) {
         onPendingDragCancel?.();
       }
-      agg({
-        level: 'warn',
-        ns: 'pet.pointerDrag',
-        event: 'session',
-        key: 'blur',
-        windowMs: 250,
-        data: {
-          phase: 'blur',
-          pointerId,
-          wasDragging,
-          screenX: lastScreenX,
-          screenY: lastScreenY,
-        },
+      warn('pet.pointerDrag', 'session', {
+        phase: 'blur',
+        pointerId,
+        wasDragging,
+        screenX: lastScreenX,
+        screenY: lastScreenY,
       });
       resetSession();
       if (wasDragging) {

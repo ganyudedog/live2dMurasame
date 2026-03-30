@@ -1,6 +1,6 @@
 import { useCallback, useMemo, type RefObject } from 'react';
 import { RESIZE_THROTTLE_MS } from '../const';
-import { traceResizeChain } from '../../../utils/log';
+import { debug, info } from '../../../utils/log';
 import type { DragSessionState } from '../runtime/geometry/DragSessionController';
 import {
   isWindowPolicySuppressed as getWindowPolicySuppressed,
@@ -104,7 +104,7 @@ export const usePetResizeOrchestrator = ({
     const now = performance?.now ? performance.now() : Date.now();
     const prev = lastRequestedSizeRef.current;
     if (prev && Math.abs(prev.w - width) < 2 && Math.abs(prev.h - height) < 2) {
-      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+      debug('pet.resize', 'resizeOrchestrator.requestResize.skip', {
         reason: 'same-last-requested',
         source: options?.source ?? 'requestResize',
         width,
@@ -117,7 +117,7 @@ export const usePetResizeOrchestrator = ({
 
     if (now < suppressAutoResizeUntilRef.current) {
       lastRequestedSizeRef.current = { w: width, h: height };
-      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+      debug('pet.resize', 'resizeOrchestrator.requestResize.skip', {
         reason: 'suppress-auto-resize',
         source: options?.source ?? 'requestResize',
         width,
@@ -130,7 +130,7 @@ export const usePetResizeOrchestrator = ({
 
     if (isWindowPolicySuppressed()) {
       lastRequestedSizeRef.current = { w: width, h: height };
-      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+      debug('pet.resize', 'resizeOrchestrator.requestResize.skip', {
         reason: 'window-policy-suppressed',
         source: options?.source ?? 'requestResize',
         width,
@@ -162,7 +162,7 @@ export const usePetResizeOrchestrator = ({
     latestResizeDesiredRef.current = desired;
 
     if (resizeInFlightRequestIdRef.current) {
-      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+      debug('pet.resize', 'resizeOrchestrator.requestResize.skip', {
         reason: 'in-flight-exists',
         source: options?.source ?? 'requestResize',
         width,
@@ -173,7 +173,7 @@ export const usePetResizeOrchestrator = ({
     }
 
     if (now - lastResizeAtRef.current < RESIZE_THROTTLE_MS) {
-      traceResizeChain('resizeOrchestrator.requestResize.skip', {
+      debug('pet.resize', 'resizeOrchestrator.requestResize.skip', {
         reason: 'throttle',
         source: options?.source ?? 'requestResize',
         width,
@@ -190,7 +190,7 @@ export const usePetResizeOrchestrator = ({
     resizeInFlightRequestIdRef.current = requestId;
     lastSentResizeDesiredRef.current = desired;
 
-    traceResizeChain('resizeOrchestrator.requestResize.send', {
+    info('pet.resize', 'resizeOrchestrator.requestResize.send', {
       source: options?.source ?? 'requestResize',
       requestId,
       width,
@@ -201,7 +201,7 @@ export const usePetResizeOrchestrator = ({
       boundsWidth: windowBoundsRef.current?.width ?? null,
       boundsHeight: windowBoundsRef.current?.height ?? null,
       dragSessionState: dragSessionStateRef.current,
-    }, 'info');
+    });
 
     if (anchorCenter !== null && Number.isFinite(anchorCenter)) {
       const predictedLeft = Math.round(anchorCenter - width / 2);

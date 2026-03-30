@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { agg, info, warn } from '../utils/log';
+import { debug, info, warn } from '../utils/log';
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null;
@@ -56,19 +56,12 @@ export const useConfigStore = create<ConfigState>((set) => {
     const configApi = window.ConfigAPI;
     const modelApi = window.ModelAPI;
     const detachLive2denv = configApi?.onLive2denvConfigUpdated?.((payload) => {
-      agg({
-        level: 'debug',
-        ns: 'config',
-        event: 'live2denv.updated',
-        key: 'live2denvConfig',
-        windowMs: 800,
-        data: {
-          hasLive2denv: !!payload?.live2denvConfig,
-          hasGlobalModelConfig: !!payload?.globalModelConfig,
-          activeModelPath: payload?.activeModelPath ?? null,
-          modelKey: payload?.modelKey ?? null,
-          hasFileUrl: !!payload?.activeModelFileUrl,
-        },
+      debug('config', 'live2denv.updated', {
+        hasLive2denv: !!payload?.live2denvConfig,
+        hasGlobalModelConfig: !!payload?.globalModelConfig,
+        activeModelPath: payload?.activeModelPath ?? null,
+        modelKey: payload?.modelKey ?? null,
+        hasFileUrl: !!payload?.activeModelFileUrl,
       });
       set((state) => ({
         live2denvConfig: payload?.live2denvConfig ?? state.live2denvConfig,
@@ -81,19 +74,12 @@ export const useConfigStore = create<ConfigState>((set) => {
     const detachModel = modelApi?.onConfigUpdated?.((payload) => {
       const overrides = readOverrides(payload);
       const modelFileUrl = isRecord(payload) ? payload['modelFileUrl'] : undefined;
-      agg({
-        level: 'debug',
-        ns: 'config',
-        event: 'model.updated',
-        key: payload?.modelKey ?? payload?.modelPath ?? 'unknown',
-        windowMs: 800,
-        data: {
-          modelPath: payload?.modelPath ?? null,
-          modelKey: payload?.modelKey ?? null,
-          hasConfig: !!payload?.config,
-          hasOverrides: Object.keys(overrides).length > 0,
-          hasFileUrl: typeof modelFileUrl === 'string' && modelFileUrl.length > 0,
-        },
+      debug('config', 'model.updated', {
+        modelPath: payload?.modelPath ?? null,
+        modelKey: payload?.modelKey ?? null,
+        hasConfig: !!payload?.config,
+        hasOverrides: Object.keys(overrides).length > 0,
+        hasFileUrl: typeof modelFileUrl === 'string' && modelFileUrl.length > 0,
       });
       set((state) => ({
         modelConfig: payload?.config ?? state.modelConfig,

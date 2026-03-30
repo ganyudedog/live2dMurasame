@@ -4,7 +4,7 @@ import { Application, Ticker } from 'pixi.js';
 import { loadModel } from '../live2dManage/loader';
 import { Live2DModel } from '../live2dManage/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2dManage/runtime';
-import { debug as logDebug, error, sample, warn } from '../../../utils/log';
+import { debug as logDebug, error, warn } from '../../../utils/log';
 import { createLive2DActionController, type Live2DActionController } from '../../../../AI/core/actionController';
 import { createStage2Runtime, type Stage2Runtime } from '../../../../AI/core/stage2Runtime';
 import type { ActionIntentInput } from '../../../../AI/types/action';
@@ -336,22 +336,15 @@ export const usePetModel = ({
         core.setParameterValueById?.('ParamAngleY', clampedAngleY);
 
         if (debugMotion && frameCountRef.current % 60 === 0) {
-          sample({
-            level: 'debug',
-            ns: 'pet.eye',
-            event: 'blendTick',
-            key: 'blend',
-            intervalMs: 500,
-            data: {
-              idle,
-              blend,
-              targetX,
-              targetY,
-              eyeX: newEyeX,
-              eyeY: clampedEyeY,
-              angleX: newAngleX,
-              angleY: clampedAngleY,
-            },
+          logDebug('pet.eye', 'blendTick', {
+            idle,
+            blend,
+            targetX,
+            targetY,
+            eyeX: newEyeX,
+            eyeY: clampedEyeY,
+            angleX: newAngleX,
+            angleY: clampedAngleY,
           });
         }
         updateBubblePosition();
@@ -414,14 +407,7 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamAngleX', writeAX);
               core.setParameterValueById?.('ParamAngleY', clampedAY);
               if (debug() && frameCountRef.current % 60 === 0) {
-                sample({
-                  level: 'debug',
-                  ns: 'pet.eye',
-                  event: 'guard.afterMotion',
-                  key: 'guard',
-                  intervalMs: 500,
-                  data: { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY },
-                });
+                logDebug('pet.eye', 'guard.afterMotion', { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
               }
             } catch { /* swallow */ }
           }
@@ -478,14 +464,7 @@ export const usePetModel = ({
           core.setParameterValueById?.('ParamAngleX', writeAX);
           core.setParameterValueById?.('ParamAngleY', clampedAY);
           if (((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) && frameCountRef.current % 60 === 0) {
-            sample({
-              level: 'debug',
-              ns: 'pet.eye',
-              event: 'patch.afterInternalUpdate',
-              key: 'internal',
-              intervalMs: 500,
-              data: { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY },
-            });
+            logDebug('pet.eye', 'patch.afterInternalUpdate', { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
           }
         } catch { /* swallow */ }
       };
@@ -621,14 +600,7 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamAngleX', writeAngleX);
               core.setParameterValueById?.('ParamAngleY', writeAngleY);
               if (debugEnabled && frameCountRef.current % 60 === 0) {
-                sample({
-                  level: 'debug',
-                  ns: 'pet.eye',
-                  event: 'forceAfter',
-                  key: 'force',
-                  intervalMs: 500,
-                  data: { idleNow, blend, writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY },
-                });
+                logDebug('pet.eye', 'forceAfter', { idleNow, blend, writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY });
               }
             }
 

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useEffect, type RefObject } from 'react';
 import { useCursorTracking } from './useCursorTracking';
-import { agg, warn } from '../../../utils/log';
+import { info, warn } from '../../../utils/log';
 import { resolveMousePassthroughPolicy } from '../runtime/geometry/policy/MousePassthroughPolicy';
 
 export interface UseMousePassthroughParams {
@@ -80,14 +80,7 @@ export const useMousePassthrough = ({
     if (mousePassthroughRef.current === passthrough) return;
     mousePassthroughRef.current = passthrough;
 
-    agg({
-      level: 'info',
-      ns: 'pet.passthrough',
-      event: 'state',
-      key: passthrough ? 'on' : 'off',
-      windowMs: 800,
-      data: { passthrough },
-    });
+    info('pet.passthrough', 'state', { passthrough });
 
     const bridge = window.WindowAPI?.setMousePassthrough?.(passthrough);
     if (bridge && typeof bridge.then === 'function') {

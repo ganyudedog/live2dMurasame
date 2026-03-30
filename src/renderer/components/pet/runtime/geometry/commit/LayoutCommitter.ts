@@ -1,5 +1,5 @@
 import { useCallback, type RefObject } from 'react';
-import { agg } from '../../../../../utils/log';
+import { debug } from '../../../../../utils/log';
 
 export interface ContextZoneData {
   alignment: 'left' | 'right';
@@ -62,14 +62,7 @@ export const useLayoutCommitter = ({
     if (contextZoneAlignmentRef.current !== data.alignment) {
       contextZoneAlignmentRef.current = data.alignment;
       setContextZoneAlignment(data.alignment);
-      agg({
-        level: 'debug',
-        ns: 'pet.contextZone',
-        event: 'alignment',
-        key: data.alignment,
-        windowMs: 800,
-        data: { alignment: data.alignment },
-      });
+      debug('pet.contextZone', 'alignment', { alignment: data.alignment });
     }
 
     const nextStyle = data.style;
@@ -81,14 +74,7 @@ export const useLayoutCommitter = ({
       || Math.abs(prevStyle.height - nextStyle.height) > 0.5) {
       contextZoneStyleRef.current = nextStyle;
       setContextZoneStyle(nextStyle);
-      agg({
-        level: 'debug',
-        ns: 'pet.contextZone',
-        event: 'layout',
-        key: data.alignment,
-        windowMs: 800,
-        data: nextStyle,
-      });
+      debug('pet.contextZone', 'layout', nextStyle);
     }
 
     contextZoneActiveUntilRef.current = data.nextActiveUntil;
@@ -133,25 +119,13 @@ export const useLayoutCommitter = ({
       recomputeWindowPassthroughRef.current();
     }
 
-    agg({
-      level: 'debug',
-      ns: 'pet.interactivity',
-      event: 'snapshot',
-      key: [
-        pointerInsideModel ? 'model' : 'none',
-        pointerInsideBubble ? 'bubble' : 'none',
-        pointerInsideHandle ? 'handle' : 'none',
-        pointerInsideContextZone ? 'context' : 'none',
-      ].join(':'),
-      windowMs: 800,
-      data: {
-        pointerInsideModel,
-        pointerInsideBubble,
-        pointerInsideHandle,
-        pointerInsideContextZone: pointerInsideContextZone ?? pointerInsideContextZoneRef.current,
-        shouldCapture: shouldCapture ?? null,
-        shouldPassthrough: shouldPassthrough ?? null,
-      },
+    debug('pet.interactivity', 'snapshot', {
+      pointerInsideModel,
+      pointerInsideBubble,
+      pointerInsideHandle,
+      pointerInsideContextZone: pointerInsideContextZone ?? pointerInsideContextZoneRef.current,
+      shouldCapture: shouldCapture ?? null,
+      shouldPassthrough: shouldPassthrough ?? null,
     });
   }, [
     pointerInsideBubbleRef,

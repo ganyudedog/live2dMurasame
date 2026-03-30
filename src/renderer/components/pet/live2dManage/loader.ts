@@ -2,7 +2,7 @@
 // 先导入 Cubism4 运行时，再导入主类，避免顺序问题导致回退到 Cubism2
 import { Live2DModel } from './runtime';
 
-import { agg, debug, info } from '../../../utils/log';
+import { debug, info, warn } from '../../../utils/log';
 
 declare global {
   interface Window { Live2DCubismCore?: any }
@@ -32,14 +32,7 @@ async function ensureCubismCore() {
       });
       if (window.Live2DCubismCore) return;
     } catch (e) {
-      agg({
-        level: 'warn',
-        ns: 'pet.live2d',
-        event: 'cubismCore.tryFailed',
-        key: url,
-        windowMs: 2000,
-        data: { url, err: String(e) },
-      });
+      warn('pet.live2d', 'cubismCore.tryFailed', { url, err: String(e) });
     }
   }
   if (!window.Live2DCubismCore) {

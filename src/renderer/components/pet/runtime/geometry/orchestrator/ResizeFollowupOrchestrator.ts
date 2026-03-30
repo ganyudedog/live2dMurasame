@@ -1,6 +1,6 @@
 import type { DragSessionState } from '../DragSessionController';
 import type { ResizeCommandCommitter } from '../commit/ResizeCommandCommitter';
-import { traceResizeChain } from '../../../../../utils/log';
+import { debug, info, warn } from '../../../../../utils/log';
 
 export interface WindowBoundsLike {
   x: number;
@@ -53,7 +53,7 @@ export const handleResizeFollowupAfterAck = (
 
   const ackId = bounds?.requestId;
   if (!ackId) {
-    traceResizeChain('followup.afterAck.skip', { reason: 'missing-ack-id' });
+    debug('pet.resize', 'followup.afterAck.skip', { reason: 'missing-ack-id' });
     return;
   }
   const ackKind = classifyRequestId(ackId);
@@ -61,7 +61,7 @@ export const handleResizeFollowupAfterAck = (
   const inFlight = deps.resizeInFlightRequestIdRef.current;
   const inFlightKind = classifyRequestId(inFlight);
   if (!inFlight || inFlight !== ackId) {
-    traceResizeChain('followup.afterAck.skip', {
+    debug('pet.resize', 'followup.afterAck.skip', {
       reason: 'ack-not-inflight',
       ackId,
       ackKind,
@@ -76,7 +76,7 @@ export const handleResizeFollowupAfterAck = (
   const latest = deps.latestResizeDesiredRef.current;
   const lastSent = deps.lastSentResizeDesiredRef.current;
   if (!latest) {
-    traceResizeChain('followup.afterAck.skip', {
+    debug('pet.resize', 'followup.afterAck.skip', {
       reason: 'missing-latest-desired',
       ackId,
     });
@@ -132,7 +132,7 @@ export const handleResizeFollowupAfterAck = (
     },
   });
 
-  traceResizeChain('followup.afterAck.evaluate', {
+  debug('pet.resize', 'followup.afterAck.evaluate', {
     ackId,
     ackKind,
     sameDesired: sameDesired ? 1 : 0,
@@ -147,7 +147,7 @@ export const handleResizeFollowupAfterAck = (
   });
 
   if (sameDesired) {
-    traceResizeChain('followup.afterAck.skip', {
+    debug('pet.resize', 'followup.afterAck.skip', {
       reason: 'same-desired',
       ackId,
       ackKind,
@@ -157,7 +157,7 @@ export const handleResizeFollowupAfterAck = (
     return;
   }
   if (now < deps.suppressAutoResizeUntilRef.current) {
-    traceResizeChain('followup.afterAck.skip', {
+    debug('pet.resize', 'followup.afterAck.skip', {
       reason: 'suppress-auto-resize',
       ackId,
       ackKind,
@@ -228,7 +228,7 @@ export const handleResizeFollowupAfterAck = (
       },
     });
 
-    traceResizeChain('followup.afterAck.send', {
+    info('pet.resize', 'followup.afterAck.send', {
       ackId,
       ackKind,
       requestId,
@@ -240,7 +240,7 @@ export const handleResizeFollowupAfterAck = (
       boundsWidth: deps.windowBoundsRef.current?.width ?? null,
       boundsHeight: deps.windowBoundsRef.current?.height ?? null,
       dragSessionState: deps.dragSessionStateRef.current,
-    }, 'info');
+    });
 
     void deps.resizeCommandCommitter.sendResizeIntent({
       requestId,
@@ -253,10 +253,10 @@ export const handleResizeFollowupAfterAck = (
     deps.ignoreUserMoveDetectUntilRef.current = now + 240;
   } catch {
     deps.resizeInFlightRequestIdRef.current = null;
-    traceResizeChain('followup.afterAck.error', {
+    warn('pet.resize', 'followup.afterAck.error', {
       ackId,
       latestWidth: latest.width,
       latestHeight: latest.height,
-    }, 'warn');
+    });
   }
 };

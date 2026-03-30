@@ -1,4 +1,4 @@
-import { traceResizeChain } from '../../../../utils/log';
+import { debug, warn } from '../../../../utils/log';
 
 interface WindowCommandIntentPayload {
   intentId: string;
@@ -37,7 +37,7 @@ export const createWindowCommandGateway = (): WindowCommandGateway => {
       throw new Error('WindowAPI.sendWindowIntent is not available');
     }
 
-    traceResizeChain('gateway.intent.send', {
+    debug('pet.resize', 'gateway.intent.send', {
       intentId: intent.intentId,
       kind: intent.kind,
       source: intent.source,
@@ -53,7 +53,7 @@ export const createWindowCommandGateway = (): WindowCommandGateway => {
 
     try {
       const ack = await bridge(intent);
-      traceResizeChain('gateway.intent.ack', {
+      debug('pet.resize', 'gateway.intent.ack', {
         intentId: intent.intentId,
         kind: intent.kind,
         source: intent.source,
@@ -62,12 +62,12 @@ export const createWindowCommandGateway = (): WindowCommandGateway => {
       });
       return ack;
     } catch (error) {
-      traceResizeChain('gateway.intent.error', {
+      warn('pet.resize', 'gateway.intent.error', {
         intentId: intent.intentId,
         kind: intent.kind,
         source: intent.source,
         error: String(error),
-      }, 'warn');
+      });
       throw error;
     }
   };

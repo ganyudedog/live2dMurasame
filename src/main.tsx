@@ -5,8 +5,7 @@ import ControlPanel from './renderer/components/controlPanel/ControlPanel.tsx';;
 import DemoRoot from './demo/DemoRoot';
 import './app.css';
 
-import { info, setContextProvider, setEnabledProvider } from './renderer/utils/log';
-import { useConfigStore } from './renderer/store/useConfigStore';
+import { info } from './renderer/utils/log';
 
 const searchParams = typeof window !== 'undefined'
   ? new URLSearchParams(window.location.search)
@@ -19,29 +18,6 @@ const windowType: 'pet' | 'control-panel' | 'demo' = isDemoView
   ? 'demo'
   : (isControlPanelView ? 'control-panel' : 'pet');
 
-// Renderer logging bootstrap (DevTools-only).
-setEnabledProvider(() => {
-  try {
-    return useConfigStore.getState().globalModelConfig?.debugModeEnabled === true;
-  } catch {
-    return false;
-  }
-});
-
-setContextProvider(() => {
-  try {
-    const config = useConfigStore.getState();
-    return {
-      windowType,
-      scale: config.globalModelConfig?.scale,
-      modelKey: config.modelKey,
-      activeModelPath: config.activeModelPath,
-      activeModelFileUrl: config.activeModelFileUrl,
-    };
-  } catch {
-    return { windowType };
-  }
-});
 
 info('renderer', 'boot', {
   windowType,

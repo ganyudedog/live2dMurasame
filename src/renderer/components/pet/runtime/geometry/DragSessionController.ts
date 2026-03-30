@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
-import { agg } from '../../../../utils/log';
+import { info } from '../../../../utils/log';
 import type { WindowCommandGateway } from './WindowCommandGateway';
 
 export type DragSessionState = 'idle' | 'pending-drag' | 'dragging' | 'settling' | 'stable';
@@ -63,14 +63,7 @@ export const useDragSessionController = ({
     if (prevState === nextState) return;
     dragSessionStateRef.current = nextState;
 
-    agg({
-      level: 'info',
-      ns: 'pet.dragSession',
-      event: 'state',
-      key: nextState,
-      windowMs: 800,
-      data: { prevState, nextState, reason },
-    });
+    info('pet.dragSession', 'state', { prevState, nextState, reason });
 
     emitDebugTrace({
       kind: 'drag',

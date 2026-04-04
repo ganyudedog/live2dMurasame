@@ -1,21 +1,11 @@
+import { ipcMain, BrowserWindow } from 'electron';
+import { getConfigSnapshot, getLive2denvConfigCache, applyLive2denvConfigPatch, getModelConfigState, applyModelConfigPatch, listModelPaths, getLastConfigOverrides, getDefaultModelConfig } from '../runtime/allEnv.js';
+import { ensureGlobalModelConfigLoaded, overrideGlobalModelConfigCache, persistGlobalModelConfig, invalidateGlobalModelConfigCache, getGlobalModelConfigSnapshot } from '../config/live2dGlobal.js';
+import { setDebugTracePolicy } from '../utils/log.js';
+
 export const registerConfigIpc = ({
-  ipcMain,
-  BrowserWindow,
   getMainWindow,
   getControlPanelWindow,
-  ensureGlobalModelConfigLoaded,
-  overrideGlobalModelConfigCache,
-  persistGlobalModelConfig,
-  invalidateGlobalModelConfigCache,
-  getGlobalModelConfigSnapshot,
-  getConfigSnapshot,
-  getLive2denvConfigCache,
-  applyLive2denvConfigPatch,
-  getModelConfigState,
-  applyModelConfigPatch,
-  listModelPaths,
-  getLastConfigOverrides,
-  getDefaultModelConfig,
   scheduleApplyAutoLaunchSetting,
 }) => {
   const broadcastConfigSnapshot = (snapshot, options = { live2denv: true, model: true }) => {
@@ -98,6 +88,15 @@ export const registerConfigIpc = ({
     invalidateGlobalModelConfigCache();
     broadcastGlobalModelConfig();
     broadcastConfigSnapshotPatch({ globalModelConfig: next });
+
+    if (Object.prototype.hasOwnProperty.call(safePatch, 'debugModeEnabled')) {
+      try {
+        setDebugTracePolicy({
+          minLevel: next.debugModeEnabled ? 'debug' : 'info',
+          consoleVerbose: Boolean(next.debugModeEnabled),
+        });
+      } catch { }
+    }
 
     if (Object.prototype.hasOwnProperty.call(safePatch, 'autoLaunch')) {
       scheduleApplyAutoLaunchSetting(safePatch.autoLaunch);

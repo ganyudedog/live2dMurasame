@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { app } from 'electron';
 
 const MAX_RAG_TEXT_FILE_CHARS = 120000;
 
-export const createRagFileService = ({ app }) => {
+export const createRagFileService = () => {
   const resolveRagKnowledgeFilePath = ({ knowledgeBasePath, modelPath } = {}) => {
     const raw = typeof knowledgeBasePath === 'string' ? knowledgeBasePath.trim() : '';
     if (!raw) return null;

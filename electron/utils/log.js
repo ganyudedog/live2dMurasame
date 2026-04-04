@@ -13,6 +13,8 @@ const LEVEL_WEIGHT = {
 const DEFAULT_TRACE_POLICY = {
 	//默认模式为“设计静音”：保持诊断关键信号，抑制拖动噪声。
 	minLevel: 'info',
+	// mirror/事故排查时打开：将缓冲中通过 shouldKeepTrace 的内容全量打印到控制台。
+	consoleVerbose: false,
 	enabledProfiles: ['default', 'layout', 'model', 'modelLoad', 'perf', 'windowJump'],
 	quietProfiles: ['singleWriter', 'windowMove', 'jitter', 'align'],
 	// 不默认丢弃拖动主相位，改为走“静默档案 + 周期摘要”，避免“完全没输出”的错觉。
@@ -81,6 +83,7 @@ const TRACE_PROFILE_FIELDS = {
 	modelLoad: ['request', 'model'],
 	perf: ['request', 'perf', 'model'],
 	windowJump: ['request', 'window', 'layout'],
+	renderer: ['renderer'],
 	default: ['request', 'resizeCore', 'window'],
 };
 
@@ -105,6 +108,9 @@ export const setDebugTracePolicy = (patch = {}) => {
 	if (typeof patch.minLevel === 'string' && LEVEL_WEIGHT[patch.minLevel]) {
 		tracePolicy.minLevel = patch.minLevel;
 	}
+	if (typeof patch.consoleVerbose === 'boolean') {
+		tracePolicy.consoleVerbose = patch.consoleVerbose;
+	}
 	if (typeof patch.summaryIntervalMs === 'number' && Number.isFinite(patch.summaryIntervalMs) && patch.summaryIntervalMs >= 500) {
 		tracePolicy.summaryIntervalMs = Math.floor(patch.summaryIntervalMs);
 	}
@@ -121,11 +127,40 @@ export const setDebugTracePolicy = (patch = {}) => {
 
 export const getDebugTracePolicy = () => ({
 	minLevel: tracePolicy.minLevel,
+	consoleVerbose: tracePolicy.consoleVerbose,
 	summaryIntervalMs: tracePolicy.summaryIntervalMs,
 	enabledProfiles: Array.from(tracePolicy.enabledProfiles),
 	quietProfiles: Array.from(tracePolicy.quietProfiles),
 	dropPhases: Array.from(tracePolicy.dropPhases),
 });
+
+const pickRendererData = (rawData) => {
+	if (!isPlainObject(rawData)) return undefined;
+	const output = {};
+	const keys = Object.keys(rawData);
+	const limit = Math.min(keys.length, 32);
+	for (let i = 0; i < limit; i += 1) {
+		const key = keys[i];
+		const value = rawData[key];
+		if (value == null) continue;
+		if (typeof value === 'string' || typeof value === 'boolean' || isFiniteNumber(value)) {
+			output[key] = value;
+		}
+	}
+	return Object.keys(output).length ? output : undefined;
+};
+
+const pickRendererGroup = (rawGroup) => {
+	if (!isPlainObject(rawGroup)) return undefined;
+	const ns = typeof rawGroup.ns === 'string' && rawGroup.ns ? rawGroup.ns : undefined;
+	const event = typeof rawGroup.event === 'string' && rawGroup.event ? rawGroup.event : undefined;
+	const msg = typeof rawGroup.msg === 'string' && rawGroup.msg ? rawGroup.msg : undefined;
+	const t = isFiniteNumber(rawGroup.t) ? rawGroup.t : undefined;
+	const seq = isFiniteNumber(rawGroup.seq) ? rawGroup.seq : undefined;
+	const data = pickRendererData(rawGroup.data);
+	const output = { ns, event, msg, t, seq, data };
+	return Object.values(output).some((v) => v != null) ? output : undefined;
+};
 
 const pickGroup = (rawGroup, allowedFields) => {
 	if (!isPlainObject(rawGroup)) return undefined;
@@ -143,9 +178,23 @@ const pickGroup = (rawGroup, allowedFields) => {
 const normalizeTracePayload = (rawPayload = {}) => {
 	if (!isPlainObject(rawPayload)) return null;
 
+	// renderer 侧结构化日志镜像：{ kind:'rendererLog', level, renderer:{ ns,event,msg,data,t,seq } }
+	if (rawPayload.kind === 'rendererLog') {
+		const level = rawPayload.level === 'warn' || rawPayload.level === 'error' || rawPayload.level === 'debug' || rawPayload.level === 'info'
+			? rawPayload.level
+			: 'debug';
+		const renderer = pickRendererGroup(rawPayload.renderer) ?? pickRendererGroup(rawPayload.entry);
+		return {
+			kind: 'rendererLog',
+			profile: 'renderer',
+			level,
+			renderer,
+		};
+	}
+
 	const kind = typeof rawPayload.kind === 'string' && rawPayload.kind ? rawPayload.kind : 'resize';
 	const profile = typeof rawPayload.profile === 'string' && rawPayload.profile ? rawPayload.profile : 'default';
-	const level = rawPayload.level === 'warn' || rawPayload.level === 'error' || rawPayload.level === 'debug'
+	const level = rawPayload.level === 'warn' || rawPayload.level === 'error' || rawPayload.level === 'debug' || rawPayload.level === 'info'
 		? rawPayload.level
 		: 'debug';
 
@@ -246,6 +295,8 @@ const shouldKeepTrace = (normalized) => {
 	if (level === 'warn' || level === 'error') return true;
 
 	const profile = normalized?.profile ?? 'default';
+	// renderer 镜像日志：由 renderer 侧做主要筛选（warn/error 永远保留），这里避免被 minLevel/enabledProfiles 意外丢弃。
+	if (profile === 'renderer') return true;
 	// quietProfiles 即使低于 minLevel 也会保留，用于缓冲与摘要统计。
 	if (tracePolicy.quietProfiles.has(profile)) return true;
 
@@ -262,6 +313,7 @@ const shouldKeepTrace = (normalized) => {
 };
 
 const shouldPrintToConsole = (normalized) => {
+	if (tracePolicy.consoleVerbose) return true;
 	// 门2：控制台通道有意收窄跟踪缓冲通道。
 	const level = normalized?.level ?? 'debug';
 	if (level === 'warn' || level === 'error') return true;

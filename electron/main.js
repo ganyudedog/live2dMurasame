@@ -3,26 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
     initializeRuntimeConfig,
-    getConfigSnapshot,
     getLive2denvConfigCache,
     applyLive2denvConfigPatch,
-    getModelConfigState,
-    applyModelConfigPatch,
-    listModelPaths,
-    getLastConfigOverrides,
-    getDefaultModelConfig,
 } from './runtime/allEnv.js';
 import {
     ensureGlobalModelConfigLoaded,
-    overrideGlobalModelConfigCache,
-    persistGlobalModelConfig,
-    invalidateGlobalModelConfigCache,
     applyAutoLaunchSetting,
 } from './config/live2dGlobal.js';
-import { loadModelMemory, saveModelMemory } from './config/configManager.js';
-import { detectModelFilePath } from './utils/path.js';
-import { getModelKeyFromPath } from './utils/modelKey.js';
-import { logDebugTrace, logPetEvent } from './utils/log.js';
+import { logDebugTrace, setDebugTracePolicy } from './utils/log.js';
 import { createAutoLaunchScheduler } from './main/autoLaunch.js';
 import { createRagFileService } from './main/ragFileService.js';
 import { registerModelMemoryIpc } from './main/modelMemoryIpc.js';
@@ -185,49 +173,20 @@ const ensureControlPanelWindow = () => {
 
 const isControlPanelVisible = () => Boolean(controlPanelWindow?.isVisible());
 
-const { readRagTextFile } = createRagFileService({ app });
+const { readRagTextFile } = createRagFileService();
 const { scheduleApplyAutoLaunchSetting, flushPendingAutoLaunchSetting } = createAutoLaunchScheduler({
-    BrowserWindow,
     getControlPanelWindow: () => controlPanelWindow,
-    applyAutoLaunchSetting,
 });
 const { handleWindowIntent, scheduleEmitMainWindowBounds } = createWindowIntentController({
     getMainWindow: () => mainWindow,
-    logDebugTrace,
 });
-const { handleWindowDrag } = createWindowDragController({
-    BrowserWindow,
-    screen,
-    logPetEvent,
-    logDebugTrace,
-});
+const { handleWindowDrag } = createWindowDragController();
 const { broadcastConfigSnapshot } = registerConfigIpc({
-    ipcMain,
-    BrowserWindow,
     getMainWindow: () => mainWindow,
     getControlPanelWindow: () => controlPanelWindow,
-    ensureGlobalModelConfigLoaded,
-    overrideGlobalModelConfigCache,
-    persistGlobalModelConfig,
-    invalidateGlobalModelConfigCache,
-    getConfigSnapshot,
-    getLive2denvConfigCache,
-    applyLive2denvConfigPatch,
-    getModelConfigState,
-    applyModelConfigPatch,
-    listModelPaths,
-    getLastConfigOverrides,
-    getDefaultModelConfig,
     scheduleApplyAutoLaunchSetting,
 });
-registerModelMemoryIpc({
-    ipcMain,
-    BrowserWindow,
-    getConfigSnapshot,
-    loadModelMemory,
-    saveModelMemory,
-    getModelKeyFromPath,
-});
+registerModelMemoryIpc();
 
 const hideControlPanel = () => {
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
@@ -416,6 +375,7 @@ ipcMain.handle('pet:pickModelFile', async () => {
 
 ipcMain.on('pet:debugTrace', (_event, payload = {}) => {
     try {
+        if (payload && typeof payload === 'object' && payload.kind === 'policy.patch') return;
         logDebugTrace(payload);
     } catch { }
 });
@@ -470,6 +430,10 @@ app.on('before-quit', () => {
 
 app.whenReady().then(async () => {
     const loadedConfig = ensureGlobalModelConfigLoaded();
+    setDebugTracePolicy({
+        minLevel: loadedConfig?.debugModeEnabled ? 'debug' : 'info',
+        consoleVerbose: Boolean(loadedConfig?.debugModeEnabled),
+    });
     applyAutoLaunchSetting(loadedConfig.autoLaunch);
     try {
         const snapshot = initializeRuntimeConfig();

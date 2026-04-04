@@ -2,7 +2,9 @@ const WINDOW_INTENT_SETTLE_MS = 120;
 const WINDOW_INTENT_DRAG_ACTIVE_MS = 220;
 const EMIT_BOUNDS_THROTTLE_MS = 50;
 
-export const createWindowIntentController = ({ getMainWindow, logDebugTrace }) => {
+import { logDebugTrace } from '../utils/log.js';
+
+export const createWindowIntentController = ({ getMainWindow }) => {
   let pendingBoundsRequestId = null;
   let pendingBoundsSource = 'system';
   let pendingBoundsKind = null;

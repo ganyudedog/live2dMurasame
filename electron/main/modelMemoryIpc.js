@@ -1,11 +1,9 @@
-export const registerModelMemoryIpc = ({
-  ipcMain,
-  BrowserWindow,
-  getConfigSnapshot,
-  loadModelMemory,
-  saveModelMemory,
-  getModelKeyFromPath,
-}) => {
+import { ipcMain, BrowserWindow } from 'electron';
+import { getConfigSnapshot } from '../runtime/allEnv.js';
+import { loadModelMemory, saveModelMemory } from '../config/configManager.js';
+import { getModelKeyFromPath } from '../utils/modelKey.js';
+
+export const registerModelMemoryIpc = () => {
   const resolveTargetModelPath = (value) => {
     if (typeof value === 'string' && value.trim()) {
       return value;

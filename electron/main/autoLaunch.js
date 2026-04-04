@@ -1,7 +1,8 @@
+import { BrowserWindow } from 'electron';
+import { applyAutoLaunchSetting } from '../config/live2dGlobal.js';
+
 export const createAutoLaunchScheduler = ({
-  BrowserWindow,
   getControlPanelWindow,
-  applyAutoLaunchSetting,
   debounceMs = 1200,
 }) => {
   let pendingAutoLaunchValue = null;

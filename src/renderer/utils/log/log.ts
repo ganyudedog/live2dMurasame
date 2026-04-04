@@ -43,6 +43,83 @@ const emit = (entry: LogEntry): void => {
   }
 };
 
+const NORMAL_MIRROR_NS_ALLOWLIST: ReadonlyArray<string> = [
+  'pet.resize',
+];
+
+const matchNs = (ns: string, pattern: string): boolean => {
+  if (!pattern) return false;
+  if (pattern === '*') return true;
+  if (pattern.endsWith('*')) return ns.startsWith(pattern.slice(0, -1));
+  return ns === pattern;
+};
+
+// 是否开启镜像模式（镜像模式会把日志通过 IPC 发送到主进程，便于在开发者工具之外的环境中收集日志）
+const getMirrorEnabled = (): boolean => {
+  try {
+    if (typeof window === 'undefined') return false;
+    const snapshot = window.ConfigAPI?.getSnapshot?.();
+    return Boolean(snapshot?.globalModelConfig?.debugModeEnabled);
+  } catch {
+    return false;
+  }
+};
+
+let ipcSeq = 0;
+
+const sanitizeIpcData = (value: unknown): AnyRecord | undefined => {
+  const record = safeCopyRecord(value);
+  if (!record) return undefined;
+  const output: AnyRecord = {};
+  const keys = Object.keys(record);
+  const limit = Math.min(keys.length, 32);
+  for (let i = 0; i < limit; i += 1) {
+    const key = keys[i];
+    const v = record[key];
+    if (v == null) continue;
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      output[key] = v;
+      continue;
+    }
+    if (Array.isArray(v)) {
+      const trimmed = v.slice(0, 20).filter((item) => item == null || typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean');
+      if (trimmed.length) output[key] = trimmed;
+      continue;
+    }
+  }
+  return Object.keys(output).length ? output : undefined;
+};
+
+const mirrorToMain = (entry: LogEntry): void => {
+  try {
+    if (typeof window === 'undefined') return;
+    const debugTrace = window.SystemAPI?.debugTrace;
+    if (typeof debugTrace !== 'function') return;
+
+    const mirrorEnabled = getMirrorEnabled();
+    const isImportant = entry.level === 'warn' || entry.level === 'error';
+    const isWhitelisted = NORMAL_MIRROR_NS_ALLOWLIST.some((p) => matchNs(entry.ns, p));
+    if (!mirrorEnabled && !isImportant && !isWhitelisted) return;
+
+    ipcSeq += 1;
+    debugTrace({
+      kind: 'rendererLog',
+      profile: 'renderer',
+      level: entry.level,
+      renderer: {
+        t: entry.t,
+        seq: ipcSeq,
+        ns: entry.ns,
+        event: entry.event,
+        msg: entry.msg,
+        data: entry.data ? sanitizeIpcData(entry.data) : undefined,
+      },
+    });
+  } catch {
+    // ignore
+  }
+};
+
 const write = (level: LogLevel, ns: string, event: string, data?: AnyRecord, msg?: string): void => {
   const entry: LogEntry = {
     t: nowMs(),
@@ -53,6 +130,7 @@ const write = (level: LogLevel, ns: string, event: string, data?: AnyRecord, msg
     data: data ? safeCopyRecord(data) : undefined,
   };
   emit(entry);
+  mirrorToMain(entry);
 };
 
 export const debug = (ns: string, event: string, data?: AnyRecord, msg?: string): void => write('debug', ns, event, data, msg);

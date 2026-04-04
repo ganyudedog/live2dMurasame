@@ -1,3 +1,5 @@
+import { BrowserWindow, screen } from 'electron';
+import { logDebugTrace } from '../utils/log.js';
 const normalizeWindowDragPayload = (payload = {}) => {
   const action = String(payload?.action || '').trim().toLowerCase();
   if (!['start', 'end'].includes(action)) return null;
@@ -21,7 +23,7 @@ const WINDOWS_RELEASE_MESSAGES = [
   { code: 0x0247, name: 'WM_POINTERUP' },
 ];
 
-export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent, logDebugTrace }) => {
+export const createWindowDragController = () => {
   const dragStates = new Map();
 
   const debugDrag = (eventName, payload = {}, level = 'debug') => {
@@ -67,10 +69,6 @@ export const createWindowDragController = ({ BrowserWindow, screen, logPetEvent,
         },
       });
       return;
-    }
-
-    if (typeof logPetEvent === 'function') {
-      logPetEvent(eventName, payload, { level });
     }
   };
 

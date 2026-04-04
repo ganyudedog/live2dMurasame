@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useLayoutEffect, type RefObject } from 'react';
+import { debug } from '../../../utils/log';
 import { clamp } from '../../../utils/math';
 import { computeBubblePlacement } from '../logic/bubble/placementEngine';
 import { getBaseFrame, getVisibleFrame } from '../logic/visual/getVisualFrameDom';
@@ -43,16 +44,11 @@ export interface UseBubblePositionEngineParams {
 
   lastBubbleUpdateRef: RefObject<number>;
   updateBubblePositionRef: RefObject<(force?: boolean) => void>;
-  emitDebugTrace: (payload: Record<string, unknown>) => void;
   bubbleLayoutCommitter: BubbleLayoutCommitter;
 }
 
 /**
  * 气泡位置与窗口宽度联动引擎。
- *
- * 日志契约：
- * - `emitDebugTrace` payload 必须与 Electron 端 `logDebugTrace` 约定一致，
- *   使用 `request/resizeCore/window/layout` 分组，便于两端对齐排查。
  */
 export const useBubblePositionEngine = ({
   scale,
@@ -69,7 +65,6 @@ export const useBubblePositionEngine = ({
   dragSessionStateRef,
   lastBubbleUpdateRef,
   updateBubblePositionRef,
-  emitDebugTrace,
   bubbleLayoutCommitter,
 }: UseBubblePositionEngineParams) => {
   const updateBubblePosition = useCallback((force = false) => {
@@ -148,30 +143,14 @@ export const useBubblePositionEngine = ({
     // 这里保留 requiredWindowWidth 仅用于调试可视化与日志观察，不触发任何 resize intent。
     const requiredWindowWidth = Math.ceil(baseFrameWidthDom + zoneTarget * 2 + gapEffective * 2 + BUBBLE_PADDING * 2);
 
-    emitDebugTrace({
-      kind: 'resize',
-      profile: 'jitter',
-      level: 'debug',
-      request: {
-        source: 'updateBubblePosition',
-        phase: 'position-only',
-        ts: Date.now(),
-      },
-      resizeCore: {
-        requiredWidth: requiredWindowWidth,
-      },
-      window: {
-        innerWidth: window.innerWidth,
-        innerHeight: window.innerHeight,
-        boundsWidth: windowBoundsRef.current?.width ?? null,
-        boundsHeight: windowBoundsRef.current?.height ?? null,
-        dragSessionState: dragSessionStateRef.current,
-      },
-      layout: {
-        kind: 'bubble-position',
-        source: 'updateBubblePosition',
-        decision: 'position-only-no-size-policy',
-      },
+    debug('pet.resize', 'bubblePosition.positionOnly', {
+      requiredWindowWidth,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      boundsWidth: windowBoundsRef.current?.width ?? null,
+      boundsHeight: windowBoundsRef.current?.height ?? null,
+      dragSessionState: dragSessionStateRef.current,
+      decision: 'position-only-no-size-policy',
     });
 
     if (!hasBubble) {
@@ -327,7 +306,7 @@ export const useBubblePositionEngine = ({
       position: nextPosition,
       tailY: nextTailY,
     });
-  }, [scale, motionTextRef, lastBubbleUpdateRef, modelRef, appRef, canvasRef, bubbleLayoutCommitter, hitAreasRef, visualFrameRef, touchMapRef, emitDebugTrace, windowBoundsRef, dragSessionStateRef, bubbleRef, bubbleSettingsRef, updateBubblePositionRef]);
+  }, [scale, motionTextRef, lastBubbleUpdateRef, modelRef, appRef, canvasRef, bubbleLayoutCommitter, hitAreasRef, visualFrameRef, touchMapRef, windowBoundsRef, dragSessionStateRef, bubbleRef, bubbleSettingsRef, updateBubblePositionRef]);
 
   useLayoutEffect(() => {
     updateBubblePositionRef.current = updateBubblePosition;

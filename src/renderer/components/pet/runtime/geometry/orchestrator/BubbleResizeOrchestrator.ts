@@ -1,5 +1,6 @@
 import type { DragSessionState } from '../DragSessionController';
 import { resolveBubbleResizePolicy } from '../policy/WindowPolicyEngine';
+import { debug } from '../../../../../utils/log';
 
 type RefLike<T> = { current: T };
 
@@ -9,7 +10,6 @@ export interface BubbleResizeOrchestratorDeps {
   getWindowCenter: () => number;
   commitBaseline: (nextCenter: number) => number;
   requestResize: (width: number, height: number, options?: { preserveCenterLine?: boolean; source?: string }) => void;
-  emitDebugTrace: (payload: Record<string, unknown>) => void;
   isWindowPolicySuppressed: () => boolean;
   windowBoundsRef: RefLike<{ x: number; y: number; width: number; height: number } | null>;
   suppressAutoResizeUntilRef: RefLike<number>;
@@ -60,40 +60,24 @@ export const handleBubbleWindowWidth = (
     pendingResize: deps.pendingResizeRef.current,
   });
 
-  deps.emitDebugTrace({
-    kind: 'resize',
-    profile: 'jitter',
-    level: 'debug',
-    request: {
-      source: 'applyWindowWidth',
-      phase: 'policy',
-      ts: Date.now(),
-    },
-    resizeCore: {
-      requiredWidth,
-      normalizedWidth: decision.action === 'skip' ? decision.fallbackWidth : decision.normalizedWidth,
-      desiredHeight: window.innerHeight,
-      stableHeight: deps.windowBoundsRef.current?.height ?? null,
-    },
-    window: {
-      innerWidth: window.innerWidth,
-      innerHeight: window.innerHeight,
-      boundsWidth: deps.windowBoundsRef.current?.width ?? null,
-      boundsHeight: deps.windowBoundsRef.current?.height ?? null,
-      boundsX: deps.windowBoundsRef.current?.x ?? null,
-      boundsY: deps.windowBoundsRef.current?.y ?? null,
-      targetWindowWidth: deps.targetWindowWidthRef.current,
-      pendingWidth: deps.pendingResizeRef.current?.width ?? null,
-      dragSessionState: deps.dragSessionStateRef.current,
-      fallbackWidth: decision.action === 'skip' ? decision.fallbackWidth : null,
-    },
-    layout: {
-      kind: 'size',
-      source: 'applyWindowWidth',
-      decisionAction: decision.action,
-      decisionReason: decision.action === 'skip' ? decision.reason : 'policy-allowed',
-      policySuppressed: deps.isWindowPolicySuppressed() ? 1 : 0,
-    },
+  debug('pet.resize', 'bubbleResize.policy', {
+    requiredWidth,
+    normalizedWidth: decision.action === 'skip' ? decision.fallbackWidth : decision.normalizedWidth,
+    desiredHeight: window.innerHeight,
+    stableHeight: deps.windowBoundsRef.current?.height ?? null,
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
+    boundsWidth: deps.windowBoundsRef.current?.width ?? null,
+    boundsHeight: deps.windowBoundsRef.current?.height ?? null,
+    boundsX: deps.windowBoundsRef.current?.x ?? null,
+    boundsY: deps.windowBoundsRef.current?.y ?? null,
+    targetWindowWidth: deps.targetWindowWidthRef.current,
+    pendingWidth: deps.pendingResizeRef.current?.width ?? null,
+    dragSessionState: deps.dragSessionStateRef.current,
+    fallbackWidth: decision.action === 'skip' ? decision.fallbackWidth : null,
+    decisionAction: decision.action,
+    decisionReason: decision.action === 'skip' ? decision.reason : 'policy-allowed',
+    policySuppressed: deps.isWindowPolicySuppressed() ? 1 : 0,
   });
 
   if (decision.action === 'skip') {

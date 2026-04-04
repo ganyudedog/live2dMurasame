@@ -5,6 +5,7 @@ import {
     initializeRuntimeConfig,
     getLive2denvConfigCache,
     applyLive2denvConfigPatch,
+    getModelConfigState,
 } from './runtime/allEnv.js';
 import {
     ensureGlobalModelConfigLoaded,
@@ -17,6 +18,7 @@ import { registerModelMemoryIpc } from './main/modelMemoryIpc.js';
 import { registerConfigIpc } from './main/configIpc.js';
 import { createWindowDragController } from './main/windowDragController.js';
 import { createWindowIntentController } from './main/windowIntentController.js';
+import { createTtsService } from './main/ttsService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -181,6 +183,7 @@ const { handleWindowIntent, scheduleEmitMainWindowBounds } = createWindowIntentC
     getMainWindow: () => mainWindow,
 });
 const { handleWindowDrag } = createWindowDragController();
+const ttsService = createTtsService();
 const { broadcastConfigSnapshot } = registerConfigIpc({
     getMainWindow: () => mainWindow,
     getControlPanelWindow: () => controlPanelWindow,
@@ -236,6 +239,19 @@ const submitChatThroughMainRenderer = async (payload = {}) => {
                 rawText: result?.rawText,
             };
         }
+
+        const live2denv = getLive2denvConfigCache();
+        const modelPath = typeof live2denv?.CURRENT_PATH === 'string' && live2denv.CURRENT_PATH
+            ? live2denv.CURRENT_PATH
+            : null;
+        const modelState = getModelConfigState(modelPath);
+        const ttsResult = await ttsService.synthesize({
+            text: result.reply.reply_text,
+            requestId,
+            modelPath: modelState?.modelPath ?? null,
+            modelConfig: modelState?.modelConfig,
+        });
+
         return {
             ok: true,
             requestId,
@@ -246,9 +262,11 @@ const submitChatThroughMainRenderer = async (payload = {}) => {
             voice: {
                 displayText: result.reply.reply_text,
                 speakText: result.reply.reply_text,
-                enabled: false,
+                enabled: Boolean(modelState?.modelConfig?.tts?.enabled),
+                provider: 'gpt-sovits',
             },
             rawText: result.rawText,
+            ttsResult,
         };
     } catch (error) {
         return {

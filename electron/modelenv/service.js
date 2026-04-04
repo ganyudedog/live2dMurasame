@@ -53,6 +53,12 @@ const mergeModelConfig = (base, patch = {}) => {
       ...clone(patch.rag),
     };
   }
+  if (patch.tts && typeof patch.tts === 'object') {
+    next.tts = {
+      ...(clone(base.tts) || {}),
+      ...clone(patch.tts),
+    };
+  }
   return next;
 };
 

@@ -28,7 +28,6 @@ export interface ResizeFollowupOrchestratorDeps {
   ignoreUserMoveDetectUntilRef: RefLike<number>;
   dragSessionStateRef: RefLike<DragSessionState>;
   isWindowPolicySuppressed: () => boolean;
-  emitDebugTrace: (payload: Record<string, unknown>) => void;
   resizeCommandCommitter: ResizeCommandCommitter;
 }
 
@@ -97,39 +96,22 @@ export const handleResizeFollowupAfterAck = (
     ? performance.now()
     : Date.now();
 
-  deps.emitDebugTrace({
-    kind: 'windowIntent',
-    profile: 'singleWriter',
-    level: 'debug',
-    request: {
-      source: 'handleWindowBoundsAck',
-      rid: ackId,
-      phase: 'evaluate',
-      ts: Date.now(),
-      reason: ackKind,
-    },
-    window: {
-      innerWidth: typeof window !== 'undefined' ? window.innerWidth : null,
-      innerHeight: typeof window !== 'undefined' ? window.innerHeight : null,
-      boundsWidth: deps.windowBoundsRef.current?.width ?? null,
-      boundsHeight: deps.windowBoundsRef.current?.height ?? null,
-      boundsX: deps.windowBoundsRef.current?.x ?? null,
-      boundsY: deps.windowBoundsRef.current?.y ?? null,
-      targetWindowWidth: deps.targetWindowWidthRef.current,
-      pendingWidth: deps.pendingResizeRef.current?.width ?? null,
-      dragSessionState: deps.dragSessionStateRef.current,
-    },
-    resizeCore: {
-      targetWidth: latest.width,
-      targetHeight: latest.height,
-    },
-    layout: {
-      kind: 'size',
-      source: 'handleWindowBoundsAck',
-      reason: sameDesired ? 'same-desired' : 'followup-check',
-      decisionAction: sameDesired ? 'noop' : 'consider-followup',
-      policySuppressed: deps.isWindowPolicySuppressed() ? 1 : 0,
-    },
+  debug('pet.resize', 'followup.afterAck.trace.evaluate', {
+    ackId,
+    ackKind,
+    sameDesired: sameDesired ? 1 : 0,
+    innerWidth: typeof window !== 'undefined' ? window.innerWidth : null,
+    innerHeight: typeof window !== 'undefined' ? window.innerHeight : null,
+    boundsWidth: deps.windowBoundsRef.current?.width ?? null,
+    boundsHeight: deps.windowBoundsRef.current?.height ?? null,
+    boundsX: deps.windowBoundsRef.current?.x ?? null,
+    boundsY: deps.windowBoundsRef.current?.y ?? null,
+    targetWindowWidth: deps.targetWindowWidthRef.current,
+    pendingWidth: deps.pendingResizeRef.current?.width ?? null,
+    dragSessionState: deps.dragSessionStateRef.current,
+    targetWidth: latest.width,
+    targetHeight: latest.height,
+    policySuppressed: deps.isWindowPolicySuppressed() ? 1 : 0,
   });
 
   debug('pet.resize', 'followup.afterAck.evaluate', {
@@ -196,36 +178,19 @@ export const handleResizeFollowupAfterAck = (
       deps.pendingBoundsPredictionRef.current = null;
     }
 
-    deps.emitDebugTrace({
-      kind: 'windowIntent',
-      profile: 'single-writer',
-      level: 'debug',
-      request: {
-        source: 'handleWindowBoundsAck',
-        rid: requestId,
-        phase: 'send',
-        ts: Date.now(),
-      },
-      resizeCore: {
-        targetWidth: latest.width,
-        targetHeight: latest.height,
-        intentEpoch: 0,
-        priority: 38,
-      },
-      window: {
-        innerWidth: typeof window !== 'undefined' ? window.innerWidth : null,
-        innerHeight: typeof window !== 'undefined' ? window.innerHeight : null,
-        boundsWidth: deps.windowBoundsRef.current?.width ?? null,
-        boundsHeight: deps.windowBoundsRef.current?.height ?? null,
-        boundsX: deps.windowBoundsRef.current?.x ?? null,
-        boundsY: deps.windowBoundsRef.current?.y ?? null,
-        anchorCenter: latest.anchorCenter ?? null,
-      },
-      layout: {
-        kind: 'size',
-        source: 'handleWindowBoundsAck',
-        reason: 'followup-latest-desired',
-      },
+    debug('pet.resize', 'followup.afterAck.trace.send', {
+      requestId,
+      source: 'handleWindowBoundsAck',
+      targetWidth: latest.width,
+      targetHeight: latest.height,
+      priority: 38,
+      innerWidth: typeof window !== 'undefined' ? window.innerWidth : null,
+      innerHeight: typeof window !== 'undefined' ? window.innerHeight : null,
+      boundsWidth: deps.windowBoundsRef.current?.width ?? null,
+      boundsHeight: deps.windowBoundsRef.current?.height ?? null,
+      boundsX: deps.windowBoundsRef.current?.x ?? null,
+      boundsY: deps.windowBoundsRef.current?.y ?? null,
+      anchorCenter: latest.anchorCenter ?? null,
     });
 
     info('pet.resize', 'followup.afterAck.send', {

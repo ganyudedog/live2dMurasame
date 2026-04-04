@@ -860,16 +860,145 @@ V1 精简原则：
 
 - 文本、动作、语音并行
 
-任务清单：
+范围：
+
+- 采用 GPT-SoVITS 本地 HTTP 服务（`api_v2.py`）作为 TTS Provider
+- 以 Electron 主进程为统一代理层（Renderer 不直接跨域请求 Python 服务）
+- 每个模型拥有独立 TTS 配置，避免不同角色互相污染
+
+架构结论：
+
+1. Python 端 `api_v2.py` 支持“音频流式返回”，但不是标准 SSE（`text/event-stream`）
+2. 长连接能力由服务端决定，前端仅消费流
+3. 本项目采用：`Renderer -> IPC -> Electron Main -> GPT-SoVITS HTTP`
+4. 不建议 Renderer 直接请求 `127.0.0.1:9880`，避免 CORS/路径暴露/参数绕过校验
+
+#### 16.6.1 每模型配置（新增）
+
+在模型独立配置中新增 `tts` 节点（示例字段）：
+
+```json
+{
+	"tts": {
+		"enabled": true,
+		"provider": "gpt-sovits",
+		"baseUrl": "http://127.0.0.1:9880",
+		"gptWeightsPath": "GPT_weights_v2Pro/murasame_ja_v1-e24.ckpt",
+		"sovitsWeightsPath": "SoVITS_weights_v2Pro/murasame_ja_v1_e16_s3056.pth",
+		"textLang": "ja",
+		"promptLang": "ja",
+		"refAudioPath": "",
+		"refAudioText": "",
+		"textSplitMode": "cut4",
+		"speedFactor": 1.0,
+		"fragmentInterval": 0.3,
+		"useLastGeneratedAsRef": false,
+		"topK": 20,
+		"topP": 0.8,
+		"temperature": 0.5
+	}
+}
+```
+
+说明：
+
+- `gptWeightsPath` 与 `sovitsWeightsPath` 为模型级路径，不放全局共享配置
+- `refAudioPath`、`refAudioText` 也应按模型隔离
+- `textLang/promptLang` 由模型默认值提供，UI 可覆盖
+
+#### 16.6.2 参数与 UI 约束（按产品需求）
+
+语言选择：
+
+- 中文、日语、英语、韩语、粤语
+
+文本切分（产品枚举）：
+
+- 四字切
+- 50 字切
+- 中文逗号
+- 英文逗号
+- 标点符号
+- 不切
+
+建议映射到 GPT-SoVITS `text_split_method`（项目内统一映射，不在 UI 直接暴露底层字符串）。
+
+数值参数：
+
+- `speedFactor`: 0~2，步长 0.01，默认 1.00
+- `fragmentInterval`: 0~0.5，步长 0.01，默认 0.30
+- `topK`: 1~100，步长 1，默认 20
+- `topP`: 0~1，步长 0.01，默认 0.80
+- `temperature`: 0~1，步长 0.01，默认 0.50
+
+文件类输入：
+
+- GPT 权重路径（文件选择）
+- SoVITS 权重路径（文件选择）
+- 参考音频路径（文件选择）
+- 参考音频文本（文本框）
+
+#### 16.6.3 运行时编排（Main 侧）
+
+建议新增：
 
 1. `src/AI/voice/gptSovitsClient.ts`
-2. `voiceQueue` 串行与打断
-3. `voice.start/first_chunk/end` 生命周期钩子
+2. `voiceQueue`（串行、可中断）
+3. `voice runtime manager`（位于 Electron Main）
+
+主流程：
+
+1. 接收 LLM `reply_text`
+2. 立即触发预备动作（不等待 TTS）
+3. 发出 `voice.start`
+4. 调用 GPT-SoVITS `/tts`
+5. 收到首块音频后发出 `voice.first_chunk`
+6. 播放结束发出 `voice.end`
+7. 失败时发出 `voice.error` 并降级到“文本 + 静默动作”
+
+中断策略：
+
+- 新请求到来可取消在途 `voiceQueue` 项
+- 支持 `AbortSignal`
+- 保证同一会话只有一个正在播放的语音任务
+
+#### 16.6.4 生命周期事件（最小集合）
+
+```json
+{ "type": "voice.start", "request_id": "req_xxx", "provider": "gpt-sovits", "ts": 0 }
+{ "type": "voice.first_chunk", "request_id": "req_xxx", "latency_ms": 0, "ts": 0 }
+{ "type": "voice.end", "request_id": "req_xxx", "duration_ms": 0, "ts": 0 }
+{ "type": "voice.error", "request_id": "req_xxx", "error": "...", "ts": 0 }
+```
+
+#### 16.6.5 与 transformer.js 的关系（评估结论）
+
+结论：
+
+- `transformer.js` 适合纯文本/通用 Transformer 推理场景
+- 当前 GPT-SoVITS 属于语音生成链路（包含声学/声码器流程），不建议在本阶段迁移到 `transformer.js`
+
+本阶段建议：
+
+1. 保留 Python TTS 服务作为语音后端
+2. Electron Main 做统一代理与参数校验
+3. 后续若确实需要打包一体化，再评估 ONNX/WebGPU 方向
+
+#### 16.6.6 任务清单（更新）
+
+1. 新增 `src/AI/voice/gptSovitsClient.ts`（HTTP 客户端 + 参数映射 + 错误归一化）
+2. 建立 `voiceQueue`（串行、可取消、latest-wins 策略）
+3. 增加 `voice.start/first_chunk/end/error` 生命周期事件
+4. 在模型配置中新增 `tts` 独立节点（路径、语种、切分、采样参数）
+5. 增加权重切换与配置热更新（`set_gpt_weights` / `set_sovits_weights`）
+6. 主进程统一代理 TTS 请求，Renderer 不直连 Python
 
 验收：
 
-1. 首音频包延迟达标
+1. 首音频包延迟达标（目标 < 900ms）
 2. 语音失败可降级为文本 + 静默动作
+3. 模型切换后可自动加载对应 TTS 配置
+4. 取消与打断行为可复现且稳定
 
 ### 16.7 阶段 5（待实现）
 

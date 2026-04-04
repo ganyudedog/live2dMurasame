@@ -36,7 +36,6 @@ export interface UseGeometryRuntimeParams {
   updateDragHandlePosition: (force?: boolean) => void;
   centerAlignOrchestratorDeps: CenterAlignOrchestratorDeps;
   ackFollowupOrchestratorDeps: ResizeFollowupOrchestratorDeps;
-  emitDebugTrace: (payload: Record<string, unknown>) => void;
 }
 
 /**
@@ -53,7 +52,6 @@ export const useGeometryRuntime = ({
   updateDragHandlePosition,
   centerAlignOrchestratorDeps,
   ackFollowupOrchestratorDeps,
-  emitDebugTrace,
 }: UseGeometryRuntimeParams): void => {
 
   const classifyIntentId = (intentId: string): 'drag-state' | 'resize' | 'align' | 'unknown' => {
@@ -140,65 +138,36 @@ export const useGeometryRuntime = ({
       });
 
       if (snapshot.prevBounds && (snapshot.widthChanged || snapshot.heightChanged)) {
-        emitDebugTrace({
-          kind: 'windowIntent',
-          profile: 'windowJump',
-          level: 'info',
-          request: {
-            source: 'geometryRuntime.onBoundsChanged',
-            rid: snapshot.bounds.requestId ?? 'noRid',
-            phase: 'jump-check',
-            reason: snapshot.widthChanged && snapshot.heightChanged
-              ? 'size-jump'
-              : snapshot.widthChanged
-                ? 'width-jump'
-                : 'height-jump',
-            ts: Date.now(),
-          },
-          window: {
-            currentX: snapshot.prevBounds.x,
-            currentY: snapshot.prevBounds.y,
-            currentWidth: snapshot.prevBounds.width,
-            currentHeight: snapshot.prevBounds.height,
-            nextX: snapshot.bounds.x,
-            nextY: snapshot.bounds.y,
-            nextWidth: snapshot.bounds.width,
-            nextHeight: snapshot.bounds.height,
-            dragSessionState: snapshot.dragState,
-          },
-          layout: {
-            kind: 'fact-jump',
-            source: 'onBoundsChanged',
-            reason: snapshot.bounds.requestId ? 'ack-or-fact' : 'fact-without-rid',
-            moveOnly: snapshot.moveOnly ? 1 : 0,
-            policySuppressed: snapshot.policySuppressed ? 1 : 0,
-          },
+        info('pet.resize', 'geometryRuntime.bounds.jump', {
+          requestId: snapshot.bounds.requestId ?? 'noRid',
+          reason: snapshot.widthChanged && snapshot.heightChanged
+            ? 'size-jump'
+            : snapshot.widthChanged
+              ? 'width-jump'
+              : 'height-jump',
+          currentX: snapshot.prevBounds.x,
+          currentY: snapshot.prevBounds.y,
+          currentWidth: snapshot.prevBounds.width,
+          currentHeight: snapshot.prevBounds.height,
+          nextX: snapshot.bounds.x,
+          nextY: snapshot.bounds.y,
+          nextWidth: snapshot.bounds.width,
+          nextHeight: snapshot.bounds.height,
+          dragSessionState: snapshot.dragState,
+          moveOnly: snapshot.moveOnly ? 1 : 0,
+          policySuppressed: snapshot.policySuppressed ? 1 : 0,
         });
       }
 
-      emitDebugTrace({
-        kind: 'windowIntent',
-        profile: 'singleWriter',
-        level: 'info',
-        request: {
-          source: 'geometryRuntime.onBoundsChanged',
-          rid: snapshot.bounds.requestId ?? 'noRid',
-          phase: 'evaluate',
-          ts: Date.now(),
-        },
-        window: {
-          boundsX: snapshot.bounds.x,
-          boundsY: snapshot.bounds.y,
-          boundsWidth: snapshot.bounds.width,
-          boundsHeight: snapshot.bounds.height,
-          dragSessionState: snapshot.dragState,
-        },
-        layout: {
-          kind: 'fact',
-          source: 'onBoundsChanged',
-          moveOnly: snapshot.moveOnly ? 1 : 0,
-          policySuppressed: snapshot.policySuppressed ? 1 : 0,
-        },
+      info('pet.resize', 'geometryRuntime.bounds.evaluate', {
+        requestId: snapshot.bounds.requestId ?? 'noRid',
+        boundsX: snapshot.bounds.x,
+        boundsY: snapshot.bounds.y,
+        boundsWidth: snapshot.bounds.width,
+        boundsHeight: snapshot.bounds.height,
+        dragSessionState: snapshot.dragState,
+        moveOnly: snapshot.moveOnly ? 1 : 0,
+        policySuppressed: snapshot.policySuppressed ? 1 : 0,
       });
 
       if (isWindowDragActiveRef.current && snapshot.moveOnly) return;
@@ -332,56 +301,28 @@ export const useGeometryRuntime = ({
         height: effectiveBounds.height,
       };
 
-      emitDebugTrace({
-        kind: 'windowIntent',
-        profile: 'windowJump',
-        level: 'info',
-        request: {
-          source: 'renderer.windowFact',
-          rid: rid ?? 'fact-no-rid',
-          phase: 'consume',
-          reason: `${factSource}:${factKind}`,
-          ts: Date.now(),
-        },
-        window: {
-          factX: observedBounds.x,
-          factY: observedBounds.y,
-          factWidth: observedBounds.width,
-          factHeight: observedBounds.height,
-          effectiveX: effectiveBounds.x,
-          effectiveY: effectiveBounds.y,
-          effectiveWidth: effectiveBounds.width,
-          effectiveHeight: effectiveBounds.height,
-          lastAppliedIntentId: rid ?? null,
-        },
-        layout: {
-          kind: 'fact-consume',
-          source: 'windowFact',
-          reason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : `${factSource}:${factKind}`,
-        },
+      info('pet.resize', 'geometryRuntime.fact.consume', {
+        rid: rid ?? 'fact-no-rid',
+        reason: `${factSource}:${factKind}`,
+        factX: observedBounds.x,
+        factY: observedBounds.y,
+        factWidth: observedBounds.width,
+        factHeight: observedBounds.height,
+        effectiveX: effectiveBounds.x,
+        effectiveY: effectiveBounds.y,
+        effectiveWidth: effectiveBounds.width,
+        effectiveHeight: effectiveBounds.height,
+        lastAppliedIntentId: rid ?? null,
+        preferRecentAck: rid && effectiveBounds !== bounds ? 1 : 0,
       });
 
-      emitDebugTrace({
-        kind: 'windowIntent',
-        profile: 'singleWriter',
-        level: 'debug',
-        request: {
-          source: 'renderer.windowFact',
-          rid: rid ?? 'fact-no-rid',
-          phase: 'fact',
-          ts: Date.now(),
-        },
-        window: {
-          boundsX: effectiveBounds.x,
-          boundsY: effectiveBounds.y,
-          boundsWidth: effectiveBounds.width,
-          boundsHeight: effectiveBounds.height,
-        },
-        layout: {
-          kind: 'fact',
-          source: 'windowFact',
-          reason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : undefined,
-        },
+      debug('pet.resize', 'geometryRuntime.fact.trace', {
+        rid: rid ?? 'fact-no-rid',
+        boundsX: effectiveBounds.x,
+        boundsY: effectiveBounds.y,
+        boundsWidth: effectiveBounds.width,
+        boundsHeight: effectiveBounds.height,
+        reason: rid && effectiveBounds !== bounds ? 'prefer-recent-ack' : undefined,
       });
 
       onBoundsChanged({
@@ -415,33 +356,20 @@ export const useGeometryRuntime = ({
         repeatCount,
       });
 
-      emitDebugTrace({
-        kind: 'windowIntent',
-        profile: 'singleWriter',
-        level: ack?.status === 'applied' ? 'debug' : 'warn',
-        request: {
-          source: 'renderer.windowIntentAck',
-          rid: intentId,
-          phase: 'ack',
-          ts: ackNow,
-          status: typeof ack?.status === 'string' ? ack.status : undefined,
-          reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
-        },
-        window: {
-          boundsX: Number.isFinite(ack?.appliedBounds?.x) ? ack!.appliedBounds!.x : null,
-          boundsY: Number.isFinite(ack?.appliedBounds?.y) ? ack!.appliedBounds!.y : null,
-          boundsWidth: Number.isFinite(ack?.appliedBounds?.width) ? ack!.appliedBounds!.width : null,
-          boundsHeight: Number.isFinite(ack?.appliedBounds?.height) ? ack!.appliedBounds!.height : null,
-        },
-        layout: {
-          kind: 'ack',
-          source: 'windowIntentAck',
-          ackKind,
-          runtimeInstanceId,
-          repeatCount,
-          reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
-        },
-      });
+      const ackPayload = {
+        intentId,
+        status: typeof ack?.status === 'string' ? ack.status : undefined,
+        reason: typeof ack?.reason === 'string' ? ack.reason : undefined,
+        boundsX: Number.isFinite(ack?.appliedBounds?.x) ? ack!.appliedBounds!.x : null,
+        boundsY: Number.isFinite(ack?.appliedBounds?.y) ? ack!.appliedBounds!.y : null,
+        boundsWidth: Number.isFinite(ack?.appliedBounds?.width) ? ack!.appliedBounds!.width : null,
+        boundsHeight: Number.isFinite(ack?.appliedBounds?.height) ? ack!.appliedBounds!.height : null,
+        ackKind,
+        runtimeInstanceId,
+        repeatCount,
+      };
+      if (ack?.status === 'applied') debug('pet.resize', 'geometryRuntime.ack.trace', ackPayload);
+      else warn('pet.resize', 'geometryRuntime.ack.trace', ackPayload);
 
       if (ack?.status !== 'applied') return;
 
@@ -529,7 +457,6 @@ export const useGeometryRuntime = ({
   }, [
     centerAlignOrchestratorDeps,
     ackFollowupOrchestratorDeps,
-    emitDebugTrace,
     dragSessionStateRef,
     isWindowDragActiveRef,
     updateBubblePosition,

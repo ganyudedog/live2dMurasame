@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
-import { info } from '../../../../utils/log';
+import { debug, info } from '../../../../utils/log';
 import type { WindowCommandGateway } from './WindowCommandGateway';
 
 export type DragSessionState = 'idle' | 'pending-drag' | 'dragging' | 'settling' | 'stable';
 
 export interface UseDragSessionControllerParams {
   sendWindowIntent: WindowCommandGateway['sendWindowIntent'];
-  emitDebugTrace: (payload: Record<string, unknown>) => void;
   recomputeWindowPassthroughRef: RefObject<(() => void) | null>;
   dragHandleActiveRef: RefObject<boolean>;
   pointerInsideHandleRef: RefObject<boolean>;
@@ -35,7 +34,6 @@ const SETTLING_MS = 180;
  */
 export const useDragSessionController = ({
   sendWindowIntent,
-  emitDebugTrace,
   recomputeWindowPassthroughRef,
   dragHandleActiveRef,
   pointerInsideHandleRef,
@@ -65,30 +63,17 @@ export const useDragSessionController = ({
 
     info('pet.dragSession', 'state', { prevState, nextState, reason });
 
-    emitDebugTrace({
-      kind: 'drag',
-      profile: 'windowMove',
-      level: 'debug',
-      request: {
-        source: 'dragSession',
-        phase: nextState,
-        ts: Date.now(),
-      },
-      layout: {
-        kind: 'drag-session',
-        source: 'dragSessionController',
-        reason,
-        prevState,
-        nextState,
-      },
-      window: {
-        boundsX: windowBoundsRef.current?.x ?? null,
-        boundsY: windowBoundsRef.current?.y ?? null,
-        boundsWidth: windowBoundsRef.current?.width ?? null,
-        boundsHeight: windowBoundsRef.current?.height ?? null,
-      },
+    debug('pet.dragSession', 'state.trace', {
+      phase: nextState,
+      reason,
+      prevState,
+      nextState,
+      boundsX: windowBoundsRef.current?.x ?? null,
+      boundsY: windowBoundsRef.current?.y ?? null,
+      boundsWidth: windowBoundsRef.current?.width ?? null,
+      boundsHeight: windowBoundsRef.current?.height ?? null,
     });
-  }, [emitDebugTrace, windowBoundsRef]);
+  }, [windowBoundsRef]);
 
   const sendDragStateIntent = useCallback((phase: 'start' | 'end') => {
     void sendWindowIntent({
@@ -158,33 +143,19 @@ export const useDragSessionController = ({
     isWindowDragActiveRef.current = true;
     suppressAutoResizeUntilRef.current = now + 220;
     ignoreUserMoveDetectUntilRef.current = now + 220;
-    emitDebugTrace({
-      kind: 'drag',
-      profile: 'windowMove',
-      level: 'debug',
-      request: {
-        source: 'dragSession',
-        rid: `${windowBoundsRef.current?.x ?? 'na'}:${windowBoundsRef.current?.y ?? 'na'}`,
-        phase: 'move',
-        ts: Date.now(),
-      },
-      window: {
-        boundsX: windowBoundsRef.current?.x ?? null,
-        boundsY: windowBoundsRef.current?.y ?? null,
-        boundsWidth: windowBoundsRef.current?.width ?? null,
-        boundsHeight: windowBoundsRef.current?.height ?? null,
-        dragSessionState: dragSessionStateRef.current,
-      },
-      layout: {
-        kind: 'drag-move',
-        source: 'dragSessionController',
-        reason: 'renderer-pointer-move',
-      },
+    debug('pet.dragSession', 'move.trace', {
+      rid: `${windowBoundsRef.current?.x ?? 'na'}:${windowBoundsRef.current?.y ?? 'na'}`,
+      boundsX: windowBoundsRef.current?.x ?? null,
+      boundsY: windowBoundsRef.current?.y ?? null,
+      boundsWidth: windowBoundsRef.current?.width ?? null,
+      boundsHeight: windowBoundsRef.current?.height ?? null,
+      dragSessionState: dragSessionStateRef.current,
+      reason: 'renderer-pointer-move',
     });
     if (dragSessionStateRef.current !== 'dragging') {
       setState('dragging', 'drag-move');
     }
-  }, [emitDebugTrace, ignoreUserMoveDetectUntilRef, setState, suppressAutoResizeUntilRef, windowBoundsRef]);
+  }, [ignoreUserMoveDetectUntilRef, setState, suppressAutoResizeUntilRef, windowBoundsRef]);
 
   const onDragEnd = useCallback(() => {
     const now = typeof performance !== 'undefined' && typeof performance.now === 'function'

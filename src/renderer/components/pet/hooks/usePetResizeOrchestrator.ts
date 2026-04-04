@@ -51,10 +51,6 @@ export interface UsePetResizeOrchestratorParams {
 
 /**
  * 统一管理窗口 resize 与对齐策略。
- *
- * 日志契约：
- * - 发送给 Electron 的 payload 结构与 `electron/utils/log.js` 的 allowed groups 对齐：
- *   `request` / `resizeCore` / `window` / `layout`。
  */
 export const usePetResizeOrchestrator = ({
   getWindowCenter,
@@ -88,16 +84,6 @@ export const usePetResizeOrchestrator = ({
   const isWindowPolicySuppressed = useCallback(() => {
     return getWindowPolicySuppressed(dragSessionStateRef.current);
   }, [dragSessionStateRef]);
-
-  const emitDebugTrace = useCallback((payload: Record<string, unknown>) => {
-    try {
-      if (typeof window === 'undefined') return;
-      if (typeof window.SystemAPI?.debugTrace !== 'function') return;
-      window.SystemAPI.debugTrace(payload);
-    } catch {
-      // swallow debug trace bridge errors
-    }
-  }, []);
 
   const requestResize = useCallback((width: number, height: number, options?: { preserveCenterLine?: boolean; source?: string }) => {
     if (typeof window === 'undefined') return;
@@ -218,30 +204,19 @@ export const usePetResizeOrchestrator = ({
       pendingBoundsPredictionRef.current = null;
     }
 
-    emitDebugTrace({
-      kind: 'resize',
-      profile: 'jitter',
-      level: 'debug',
-      request: {
-        source: options?.source ?? 'requestResize',
-        rid: requestId,
-        phase: 'send',
-        ts: Date.now(),
-      },
-      resizeCore: {
-        normalizedWidth: width,
-        targetWidth: width,
-        targetHeight: height,
-      },
-      window: {
-        innerWidth: window.innerWidth,
-        innerHeight: window.innerHeight,
-        boundsWidth: windowBoundsRef.current?.width ?? null,
-        boundsHeight: windowBoundsRef.current?.height ?? null,
-        boundsX: windowBoundsRef.current?.x ?? null,
-        boundsY: windowBoundsRef.current?.y ?? null,
-        anchorCenter: anchorCenter ?? null,
-      },
+    debug('pet.resize', 'resizeOrchestrator.requestResize.trace', {
+      source: options?.source ?? 'requestResize',
+      requestId,
+      normalizedWidth: width,
+      targetWidth: width,
+      targetHeight: height,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      boundsWidth: windowBoundsRef.current?.width ?? null,
+      boundsHeight: windowBoundsRef.current?.height ?? null,
+      boundsX: windowBoundsRef.current?.x ?? null,
+      boundsY: windowBoundsRef.current?.y ?? null,
+      anchorCenter: anchorCenter ?? null,
     });
 
     try {
@@ -259,7 +234,7 @@ export const usePetResizeOrchestrator = ({
         resizeInFlightRequestIdRef.current = null;
       }
     }
-  }, [lastRequestedSizeRef, suppressAutoResizeUntilRef, isWindowPolicySuppressed, latestResizeDesiredRef, resizeInFlightRequestIdRef, lastResizeAtRef, resizeCommandCommitter, lastSentResizeDesiredRef, windowBoundsRef, dragSessionStateRef, emitDebugTrace, getBaseline, ensureBaseline, getWindowCenter, commitBaseline, pendingBoundsPredictionRef, ignoreUserMoveDetectUntilRef]);
+  }, [lastRequestedSizeRef, suppressAutoResizeUntilRef, isWindowPolicySuppressed, latestResizeDesiredRef, resizeInFlightRequestIdRef, lastResizeAtRef, resizeCommandCommitter, lastSentResizeDesiredRef, windowBoundsRef, dragSessionStateRef, getBaseline, ensureBaseline, getWindowCenter, commitBaseline, pendingBoundsPredictionRef, ignoreUserMoveDetectUntilRef]);
 
   const ackFollowupOrchestratorDeps = useMemo<ResizeFollowupOrchestratorDeps>(() => ({
       resizeInFlightRequestIdRef,
@@ -275,9 +250,8 @@ export const usePetResizeOrchestrator = ({
       ignoreUserMoveDetectUntilRef,
       dragSessionStateRef,
       isWindowPolicySuppressed,
-      emitDebugTrace,
       resizeCommandCommitter,
-    }), [resizeInFlightRequestIdRef, latestResizeDesiredRef, lastSentResizeDesiredRef, suppressAutoResizeUntilRef, lastResizeAtRef, pendingResizeRef, pendingBoundsPredictionRef, pendingResizeIssuedAtRef, targetWindowWidthRef, windowBoundsRef, ignoreUserMoveDetectUntilRef, dragSessionStateRef, isWindowPolicySuppressed, emitDebugTrace, resizeCommandCommitter]);
+    }), [resizeInFlightRequestIdRef, latestResizeDesiredRef, lastSentResizeDesiredRef, suppressAutoResizeUntilRef, lastResizeAtRef, pendingResizeRef, pendingBoundsPredictionRef, pendingResizeIssuedAtRef, targetWindowWidthRef, windowBoundsRef, ignoreUserMoveDetectUntilRef, dragSessionStateRef, isWindowPolicySuppressed, resizeCommandCommitter]);
 
   const bubbleResizeOrchestratorDeps = useMemo<BubbleResizeOrchestratorDeps>(() => ({
     isDevToolsOpenedNow,
@@ -285,7 +259,6 @@ export const usePetResizeOrchestrator = ({
     getWindowCenter,
     commitBaseline,
     requestResize,
-    emitDebugTrace,
     isWindowPolicySuppressed,
     windowBoundsRef,
     suppressAutoResizeUntilRef,
@@ -296,7 +269,7 @@ export const usePetResizeOrchestrator = ({
     pendingBoundsPredictionRef,
     pendingResizeIssuedAtRef,
     suppressResizeForBubbleRef,
-  }), [isDevToolsOpenedNow, isDevtoolsDockedLike, getWindowCenter, commitBaseline, requestResize, emitDebugTrace, isWindowPolicySuppressed, windowBoundsRef, suppressAutoResizeUntilRef, isWindowDragActiveRef, dragSessionStateRef, targetWindowWidthRef, pendingResizeRef, pendingBoundsPredictionRef, pendingResizeIssuedAtRef, suppressResizeForBubbleRef]);
+  }), [isDevToolsOpenedNow, isDevtoolsDockedLike, getWindowCenter, commitBaseline, requestResize, isWindowPolicySuppressed, windowBoundsRef, suppressAutoResizeUntilRef, isWindowDragActiveRef, dragSessionStateRef, targetWindowWidthRef, pendingResizeRef, pendingBoundsPredictionRef, pendingResizeIssuedAtRef, suppressResizeForBubbleRef]);
 
   const centerAlignOrchestratorDeps = useMemo<CenterAlignOrchestratorDeps>(() => ({
       getBaseline,
@@ -317,7 +290,6 @@ export const usePetResizeOrchestrator = ({
     }), [getBaseline, commitBaseline, commitBaselineFromBounds, isWindowPolicySuppressed, resizeCommandCommitter, pendingResizeRef, resizeInFlightRequestIdRef, lastObservedBoundsRef, ignoreUserMoveDetectUntilRef, suppressAutoResizeUntilRef, pendingBoundsPredictionRef, targetWindowWidthRef, suppressResizeForBubbleRef, lastAlignAttemptRef, isWindowDragActiveRef]);
 
   return {
-    emitDebugTrace,
     requestResize,
     bubbleResizeOrchestratorDeps,
     centerAlignOrchestratorDeps,

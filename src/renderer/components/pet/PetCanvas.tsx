@@ -419,14 +419,6 @@ const PetCanvas: React.FC = () => {
   const windowCommandGateway = useMemo(() => createWindowCommandGateway(), []);
   const modelLayoutCommitter = useMemo(() => createModelLayoutCommitter(), []);
 
-  const emitDragSessionDebugTrace = useCallback((payload: Record<string, unknown>) => {
-    try {
-      window.SystemAPI?.debugTrace?.(payload);
-    } catch {
-      // swallow drag session debug trace bridge errors
-    }
-  }, []);
-
   const {
     dragSessionStateRef,
     isWindowDragActiveRef,
@@ -437,7 +429,6 @@ const PetCanvas: React.FC = () => {
     onDragEnd: onModelDragEnd,
   } = useDragSessionController({
     sendWindowIntent: windowCommandGateway.sendWindowIntent,
-    emitDebugTrace: emitDragSessionDebugTrace,
     recomputeWindowPassthroughRef,
     dragHandleActiveRef,
     pointerInsideHandleRef,
@@ -450,7 +441,6 @@ const PetCanvas: React.FC = () => {
   });
 
   const {
-    emitDebugTrace,
     centerAlignOrchestratorDeps,
     ackFollowupOrchestratorDeps,
   } = usePetResizeOrchestrator({
@@ -489,7 +479,6 @@ const PetCanvas: React.FC = () => {
     updateDragHandlePosition: (force?: boolean) => updateDragHandlePositionRef.current?.(force),
     centerAlignOrchestratorDeps,
     ackFollowupOrchestratorDeps,
-    emitDebugTrace,
   });
 
   const bubbleLayoutCommitter = useBubbleLayoutCommitter({
@@ -524,7 +513,6 @@ const PetCanvas: React.FC = () => {
     dragSessionStateRef,
     lastBubbleUpdateRef,
     updateBubblePositionRef,
-    emitDebugTrace,
     bubbleLayoutCommitter,
   });
 
@@ -796,39 +784,24 @@ const PetCanvas: React.FC = () => {
     baseWindowSizeRef.current = layout.nextBaseWindowSize;
     // Model transform writes are committed through the runtime commit layer.
     modelLayoutCommitter.commitModelLayout(m, layout);
-    emitDebugTrace({
-      kind: 'layout',
-      profile: 'model',
-      level: 'debug',
-      request: {
-        source: 'PetCanvas.applyLayout',
-        phase: 'apply',
-        ts: Date.now(),
-      },
-      model: {
-        windowWidth: winW,
-        windowHeight: winH,
-        referenceWidth: reference.width,
-        referenceHeight: reference.height,
-        baselineScreen,
-        windowLeft,
-        usedPredictedBounds: usedPredictedBounds ? 1 : 0,
-        modelScaleX: layout.modelScale,
-        modelScaleY: layout.modelScale,
-        modelX: layout.positionX,
-        modelY: layout.positionY,
-        pivotX: layout.pivotX,
-        pivotY: layout.pivotY,
-        localBoundsWidth: lb.width,
-        localBoundsHeight: lb.height,
-        rendererWidth: app.renderer.screen.width,
-        rendererHeight: app.renderer.screen.height,
-      },
-      layout: {
-        kind: 'model-layout',
-        source: 'applyLayout',
-        usedPredictedBounds: usedPredictedBounds ? 1 : 0,
-      },
+    debug('pet.layout', 'petCanvas.applyLayout.trace', {
+      windowWidth: winW,
+      windowHeight: winH,
+      referenceWidth: reference.width,
+      referenceHeight: reference.height,
+      baselineScreen,
+      windowLeft,
+      usedPredictedBounds: usedPredictedBounds ? 1 : 0,
+      modelScaleX: layout.modelScale,
+      modelScaleY: layout.modelScale,
+      modelX: layout.positionX,
+      modelY: layout.positionY,
+      pivotX: layout.pivotX,
+      pivotY: layout.pivotY,
+      localBoundsWidth: lb.width,
+      localBoundsHeight: lb.height,
+      rendererWidth: app.renderer.screen.width,
+      rendererHeight: app.renderer.screen.height,
     });
     if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
       if (layoutBubbleMeasureRafRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
@@ -842,7 +815,7 @@ const PetCanvas: React.FC = () => {
       updateBubblePosition(true);
     }
     updateDragHandlePosition(true);
-  }, [ensureBaseline, scale, emitDebugTrace, updateDragHandlePosition, updateBubblePosition, modelLayoutCommitter]);
+  }, [ensureBaseline, scale, updateDragHandlePosition, updateBubblePosition, modelLayoutCommitter]);
 
   // 合帧调度：同一帧内多次触发布局（scale/resize/bounds 等）只执行一次 applyLayout。
   const applyLayoutRafRef = useRef<number | null>(null);

@@ -50,6 +50,25 @@ export const DEFAULT_MODEL_CONFIG = {
       rerankerModel: 'bge-reranker-v2-m3',
     },
   },
+  tts: {
+    enabled: false,
+    baseUrl: 'http://127.0.0.1:9880',
+    gptWeightsPath: '',
+    sovitsWeightsPath: '',
+    textLang: 'ja',
+    promptLang: 'ja',
+    refAudioPath: '',
+    refAudioText: '',
+    textSplitMode: 'punctuation',
+    speedFactor: 1,
+    fragmentInterval: 0.3,
+    useLastGeneratedAsRef: false,
+    topK: 20,
+    topP: 0.8,
+    temperature: 0.5,
+    mediaType: 'wav',
+    streamingMode: true,
+  },
 };
 
 const normalizeTextField = (value) => {
@@ -110,6 +129,34 @@ const normalizeRagConfig = (input = {}) => {
   };
 };
 
+const clampNumber = (value, fallback, min, max) => {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, value));
+};
+
+const normalizeTtsConfig = (input = {}) => {
+  const source = toSafeObject(input);
+  const next = { ...DEFAULT_MODEL_CONFIG.tts };
+  if (typeof source.enabled === 'boolean') next.enabled = source.enabled;
+  if (typeof source.baseUrl === 'string' && source.baseUrl.trim()) next.baseUrl = source.baseUrl.trim();
+  if (typeof source.gptWeightsPath === 'string') next.gptWeightsPath = source.gptWeightsPath;
+  if (typeof source.sovitsWeightsPath === 'string') next.sovitsWeightsPath = source.sovitsWeightsPath;
+  if (typeof source.textLang === 'string' && source.textLang.trim()) next.textLang = source.textLang.trim();
+  if (typeof source.promptLang === 'string' && source.promptLang.trim()) next.promptLang = source.promptLang.trim();
+  if (typeof source.refAudioPath === 'string') next.refAudioPath = source.refAudioPath;
+  if (typeof source.refAudioText === 'string') next.refAudioText = source.refAudioText;
+  if (typeof source.textSplitMode === 'string' && source.textSplitMode.trim()) next.textSplitMode = source.textSplitMode.trim();
+  next.speedFactor = clampNumber(source.speedFactor, next.speedFactor, 0, 2);
+  next.fragmentInterval = clampNumber(source.fragmentInterval, next.fragmentInterval, 0, 0.5);
+  next.topK = Math.max(1, Math.min(100, Number.isFinite(source.topK) ? Math.floor(source.topK) : next.topK));
+  next.topP = clampNumber(source.topP, next.topP, 0, 1);
+  next.temperature = clampNumber(source.temperature, next.temperature, 0, 1);
+  if (typeof source.useLastGeneratedAsRef === 'boolean') next.useLastGeneratedAsRef = source.useLastGeneratedAsRef;
+  if (source.mediaType === 'wav' || source.mediaType === 'ogg' || source.mediaType === 'aac') next.mediaType = source.mediaType;
+  if (typeof source.streamingMode === 'boolean') next.streamingMode = source.streamingMode;
+  return next;
+};
+
 export const normalizeModelConfig = (input = {}) => {
   const next = {
     ...DEFAULT_MODEL_CONFIG,
@@ -135,6 +182,7 @@ export const normalizeModelConfig = (input = {}) => {
     : {};
 
   next.rag = normalizeRagConfig(input && input.rag);
+  next.tts = normalizeTtsConfig(input && input.tts);
   return next;
 };
 

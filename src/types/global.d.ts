@@ -55,6 +55,27 @@ declare global {
     [key: string]: unknown;
   }
 
+  interface PetTtsConfig {
+    enabled?: boolean;
+    baseUrl?: string;
+    gptWeightsPath?: string;
+    sovitsWeightsPath?: string;
+    textLang?: string;
+    promptLang?: string;
+    refAudioPath?: string;
+    refAudioText?: string;
+    textSplitMode?: string;
+    speedFactor?: number;
+    fragmentInterval?: number;
+    useLastGeneratedAsRef?: boolean;
+    topK?: number;
+    topP?: number;
+    temperature?: number;
+    mediaType?: 'wav' | 'ogg' | 'aac';
+    streamingMode?: boolean;
+    [key: string]: unknown;
+  }
+
   interface PetVisualFrameConfig {
     ratio?: number;
     minPx?: number;
@@ -86,6 +107,7 @@ declare global {
     bubble?: PetBubbleConfig;
     interactionZones?: Record<string, PetInteractionZoneConfig>;
     rag?: PetRagConfig;
+    tts?: PetTtsConfig;
     [key: string]: unknown;
   }
 

@@ -59,10 +59,28 @@ const buildRagConfig = (
 };
 
 const isSameGlobalAiDraft = (
-  left: { apiBaseUrl: string; apiKey: string },
-  right: { apiBaseUrl: string; apiKey: string },
+  left: {
+    apiBaseUrl: string;
+    apiKey: string;
+    displayLang: 'zh' | 'en' | 'ja' | 'ko';
+    ttsMediaType: 'wav' | 'ogg' | 'aac';
+    ttsStreamingMode: boolean;
+  },
+  right: {
+    apiBaseUrl: string;
+    apiKey: string;
+    displayLang: 'zh' | 'en' | 'ja' | 'ko';
+    ttsMediaType: 'wav' | 'ogg' | 'aac';
+    ttsStreamingMode: boolean;
+  },
 ) => {
-  return left.apiBaseUrl === right.apiBaseUrl && left.apiKey === right.apiKey;
+  return (
+    left.apiBaseUrl === right.apiBaseUrl
+    && left.apiKey === right.apiKey
+    && left.displayLang === right.displayLang
+    && left.ttsMediaType === right.ttsMediaType
+    && left.ttsStreamingMode === right.ttsStreamingMode
+  );
 };
 
 const createChatMessageId = (): string => `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -211,16 +229,39 @@ const ControlPanel: React.FC = () => {
 
   const remoteApiKey = typeof globalModelConfig?.apiKey === 'string' ? globalModelConfig.apiKey : '';
   const remoteApiBaseUrl = typeof globalModelConfig?.baseURL === 'string' ? globalModelConfig.baseURL : '';
+  const remoteDisplayLang = globalModelConfig?.displayLang === 'en'
+    || globalModelConfig?.displayLang === 'ja'
+    || globalModelConfig?.displayLang === 'ko'
+    ? globalModelConfig.displayLang
+    : 'zh';
+  const remoteTtsMediaType = globalModelConfig?.ttsMediaType === 'ogg'
+    || globalModelConfig?.ttsMediaType === 'aac'
+    ? globalModelConfig.ttsMediaType
+    : 'wav';
+  const remoteTtsStreamingMode = typeof globalModelConfig?.ttsStreamingMode === 'boolean'
+    ? globalModelConfig.ttsStreamingMode
+    : true;
+
+  // 破坏性迁移：将 displayLang/ttsMediaType/ttsStreamingMode 统一纳入全局 AI 设置草稿。
   const globalAiDraft = useDebouncedRemoteDraft({
     remoteValue: {
       apiBaseUrl: remoteApiBaseUrl,
       apiKey: remoteApiKey,
+      displayLang: remoteDisplayLang,
+      ttsMediaType: remoteTtsMediaType,
+      ttsStreamingMode: remoteTtsStreamingMode,
     },
     debounceMs: 250,
     isEqual: isSameGlobalAiDraft,
     onCommit: async (next) => {
       try {
-        await updateGlobalModelConfig({ apiKey: next.apiKey, baseURL: next.apiBaseUrl });
+        await updateGlobalModelConfig({
+          apiKey: next.apiKey,
+          baseURL: next.apiBaseUrl,
+          displayLang: next.displayLang,
+          ttsMediaType: next.ttsMediaType,
+          ttsStreamingMode: next.ttsStreamingMode,
+        });
       } catch (e) {
         toast.error(String(e instanceof Error ? e.message : e));
         warn('controlPanel', 'aiSettings.persistGlobalFailed', { err: String(e) });
@@ -553,16 +594,21 @@ const ControlPanel: React.FC = () => {
         <AiSettingsPage
           apiBaseUrl={globalAiDraft.draft.apiBaseUrl}
           apiKey={globalAiDraft.draft.apiKey}
+          displayLang={globalAiDraft.draft.displayLang}
+          ttsMediaType={globalAiDraft.draft.ttsMediaType}
+          ttsStreamingMode={globalAiDraft.draft.ttsStreamingMode}
           onChange={(next) => {
             const nextGlobalDraft = {
               apiBaseUrl: next.apiBaseUrl,
               apiKey: next.apiKey,
+              displayLang: next.displayLang,
+              ttsMediaType: next.ttsMediaType,
+              ttsStreamingMode: next.ttsStreamingMode,
             };
             if (!isSameGlobalAiDraft(globalAiDraft.draft, nextGlobalDraft)) {
               globalAiDraft.commit(nextGlobalDraft);
             }
           }}
-          displayLang={ globalModelConfig?.displayLang || 'zh' }
         />
       )}
 

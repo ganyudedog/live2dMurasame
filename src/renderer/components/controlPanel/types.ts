@@ -101,7 +101,5 @@ export type ModelConfig = {
     topK: number;
     topP: number;
     temperature: number;
-    mediaType: 'wav' | 'ogg' | 'aac';
-    streamingMode: boolean;
   };
 };

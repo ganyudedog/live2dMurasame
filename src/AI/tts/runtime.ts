@@ -42,8 +42,13 @@ const normalizeTextSplitMode = (value: unknown): string => {
   return 'cut5';
 };
 
-const normalizeTtsConfig = (raw: unknown): TtsRuntimeConfig => {
+const normalizeTtsConfig = (raw: unknown, globalRaw: unknown): TtsRuntimeConfig => {
   const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const globalSource = globalRaw && typeof globalRaw === 'object' ? (globalRaw as Record<string, unknown>) : {};
+
+  const globalMediaType = normalizeMediaType(globalSource.ttsMediaType);
+  const globalStreamingMode = globalSource.ttsStreamingMode !== false;
+
   return {
     enabled: Boolean(source.enabled),
     baseUrl: normalizeText(source.baseUrl),
@@ -60,8 +65,8 @@ const normalizeTtsConfig = (raw: unknown): TtsRuntimeConfig => {
     topK: clampInteger(source.topK, 20, 1, 100),
     topP: clampNumber(source.topP, 0.8, 0, 1),
     temperature: clampNumber(source.temperature, 0.5, 0, 1),
-    mediaType: normalizeMediaType(source.mediaType),
-    streamingMode: source.streamingMode !== false,
+    mediaType: globalMediaType,
+    streamingMode: globalStreamingMode,
   };
 };
 
@@ -121,7 +126,7 @@ export class FrontendTtsRuntime {
     }
 
     const snapshot = window.ConfigAPI?.getSnapshot?.();
-    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
+    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts, snapshot?.globalModelConfig);
 
     if (!ttsConfig.enabled) {
       info('ai.tts', 'request.skip.disabled', {

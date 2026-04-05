@@ -57,8 +57,6 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     topK: 20,
     topP: 0.8,
     temperature: 0.5,
-    mediaType: 'wav',
-    streamingMode: true,
   },
 };
 

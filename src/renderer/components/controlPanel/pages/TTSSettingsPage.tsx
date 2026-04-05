@@ -1,8 +1,36 @@
-﻿import { useMemo } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelConfig } from '../types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
 
 type TtsUiDraft = ModelConfig['tts'];
+
+type SliderState = Pick<TtsUiDraft, 'speedFactor' | 'fragmentInterval' | 'topK' | 'topP' | 'temperature'>;
+type SliderKey = keyof SliderState;
+type SliderStepState = Record<SliderKey, number>;
+
+const SLIDER_LIMITS: Record<SliderKey, { min: number; max: number; integer?: boolean }> = {
+  speedFactor: { min: 0, max: 2 },
+  fragmentInterval: { min: 0, max: 0.5 },
+  topK: { min: 1, max: 100, integer: true },
+  topP: { min: 0, max: 1 },
+  temperature: { min: 0, max: 1 },
+};
+
+const DEFAULT_SLIDER_STEPS: SliderStepState = {
+  speedFactor: 0.01,
+  fragmentInterval: 0.01,
+  topK: 1,
+  topP: 0.01,
+  temperature: 0.01,
+};
+
+const buildSliderState = (draft: TtsUiDraft): SliderState => ({
+  speedFactor: draft.speedFactor,
+  fragmentInterval: draft.fragmentInterval,
+  topK: draft.topK,
+  topP: draft.topP,
+  temperature: draft.temperature,
+});
 
 const normalizeTextSplitMode = (value: unknown): TtsUiDraft['textSplitMode'] => {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -63,8 +91,6 @@ const isSameTtsDraft = (left: TtsUiDraft, right: TtsUiDraft) => {
     && left.topK === right.topK
     && left.topP === right.topP
     && left.temperature === right.temperature
-    && left.mediaType === right.mediaType
-    && left.streamingMode === right.streamingMode
   );
 };
 
@@ -100,6 +126,77 @@ export default function TTSSettingsPage({
   });
 
   const draft = ttsDraft.draft;
+  const [sliderPreviewState, setSliderPreviewState] = useState<SliderState | null>(null);
+  const draftRef = useRef(draft);
+  const sliderPendingPatchRef = useRef<Partial<SliderState>>({});
+  const sliderDebounceTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  const flushSliderPatch = useCallback((clearPreview = false) => {
+    if (sliderDebounceTimerRef.current != null) {
+      window.clearTimeout(sliderDebounceTimerRef.current);
+      sliderDebounceTimerRef.current = null;
+    }
+
+    const patch = sliderPendingPatchRef.current;
+    const patchKeys = Object.keys(patch);
+    if (!patchKeys.length) {
+      if (clearPreview) {
+        setSliderPreviewState(null);
+      }
+      return;
+    }
+
+    sliderPendingPatchRef.current = {};
+    ttsDraft.commit({
+      ...draftRef.current,
+      ...patch,
+    });
+    if (clearPreview) {
+      setSliderPreviewState(null);
+    }
+  }, [ttsDraft]);
+
+  const scheduleSliderPatch = useCallback((patch: Partial<SliderState>) => {
+    sliderPendingPatchRef.current = {
+      ...sliderPendingPatchRef.current,
+      ...patch,
+    };
+
+    if (sliderDebounceTimerRef.current != null) {
+      window.clearTimeout(sliderDebounceTimerRef.current);
+      sliderDebounceTimerRef.current = null;
+    }
+
+    sliderDebounceTimerRef.current = window.setTimeout(() => {
+      flushSliderPatch(false);
+    }, 180);
+  }, [flushSliderPatch]);
+
+  useEffect(() => {
+    return () => {
+      flushSliderPatch(false);
+    };
+  }, [flushSliderPatch]);
+
+  const sliderState = sliderPreviewState ?? buildSliderState(draft);
+
+  const updateSliderValue = useCallback((key: SliderKey, rawValue: string, fallback: number) => {
+    const limits = SLIDER_LIMITS[key];
+    let next = clamp(toNumber(rawValue, fallback), limits.min, limits.max);
+    if (limits.integer) {
+      next = Math.round(next);
+    }
+
+    setSliderPreviewState((prev) => ({
+      ...(prev ?? buildSliderState(draftRef.current)),
+      [key]: next,
+    }));
+    scheduleSliderPatch({ [key]: next } as Partial<SliderState>);
+  }, [scheduleSliderPatch]);
 
   const pickPath = async (kind: 'gpt' | 'sovits' | 'ref') => {
     const ttsApi = window.AIAPI?.tts;
@@ -127,7 +224,7 @@ export default function TTSSettingsPage({
     <div className="p-4 space-y-4">
       <div>
         <h1 className="text-lg font-semibold">TTS 设置</h1>
-        <p className="text-xs text-base-content/60">已接入 AIAPI.tts IPC 与配置快照同步，千问返回后会按本页配置触发语音合成。为保证浏览器兼容性，wav + 流式会自动降级为非流式。</p>
+        <p className="text-xs text-base-content/60">已接入 AIAPI.tts IPC 与配置快照同步，千问返回后会按本页配置触发语音合成。音频格式与流式开关已迁移到 AI 设置（全局生效）。</p>
       </div>
 
       <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-4">
@@ -210,33 +307,9 @@ export default function TTSSettingsPage({
             </select>
           </label>
 
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">音频格式</span>
-            </div>
-            <select
-              className="select select-sm select-bordered w-full"
-              value={draft.mediaType}
-              onChange={(e) => ttsDraft.commit({ ...draft, mediaType: e.target.value as TtsUiDraft['mediaType'] })}
-            >
-              <option value="wav">wav</option>
-              <option value="ogg">ogg</option>
-              <option value="aac">aac</option>
-            </select>
-          </label>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="label cursor-pointer justify-start gap-2">
-            <input
-              type="checkbox"
-              className="checkbox checkbox-sm"
-              checked={draft.streamingMode}
-              onChange={(e) => ttsDraft.commit({ ...draft, streamingMode: e.target.checked })}
-            />
-            <span className="label-text text-xs">流式返回（streaming_mode）</span>
-          </label>
-
           <label className="label cursor-pointer justify-start gap-2">
             <input
               type="checkbox"
@@ -254,92 +327,148 @@ export default function TTSSettingsPage({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">速度 speedFactor (0~2)</span>
+            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
+              <span className="label-text text-xs truncate">语言速度</span>
+              <div className="w-full">
+                <input
+                  type="number"
+                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  min={SLIDER_LIMITS.speedFactor.min}
+                  max={SLIDER_LIMITS.speedFactor.max}
+                  step={DEFAULT_SLIDER_STEPS.speedFactor}
+                  value={sliderState.speedFactor}
+                  onChange={(e) => updateSliderValue('speedFactor', e.target.value, sliderState.speedFactor)}
+                  onBlur={() => flushSliderPatch(true)}
+                />
+              </div>
             </div>
             <input
-              type="number"
-              className="input input-sm input-bordered w-full"
-              min={0}
-              max={2}
-              step={0.01}
-              value={draft.speedFactor}
-              onChange={(e) => ttsDraft.commit({
-                ...draft,
-                speedFactor: clamp(toNumber(e.target.value, draft.speedFactor), 0, 2),
-              })}
+              type="range"
+              className="range range-sm w-full mt-1"
+              min={SLIDER_LIMITS.speedFactor.min}
+              max={SLIDER_LIMITS.speedFactor.max}
+              step={DEFAULT_SLIDER_STEPS.speedFactor}
+              value={sliderState.speedFactor}
+              onChange={(e) => updateSliderValue('speedFactor', e.target.value, sliderState.speedFactor)}
+              onPointerUp={() => flushSliderPatch(true)}
+              onBlur={() => flushSliderPatch(true)}
             />
           </label>
 
           <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">片段间隔 fragmentInterval (0~0.5)</span>
+            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
+              <span className="label-text text-xs truncate">片段间隔</span>
+              <div className="w-full">
+                <input
+                  type="number"
+                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  min={SLIDER_LIMITS.fragmentInterval.min}
+                  max={SLIDER_LIMITS.fragmentInterval.max}
+                  step={DEFAULT_SLIDER_STEPS.fragmentInterval}
+                  value={sliderState.fragmentInterval}
+                  onChange={(e) => updateSliderValue('fragmentInterval', e.target.value, sliderState.fragmentInterval)}
+                  onBlur={() => flushSliderPatch(true)}
+                />
+              </div>
             </div>
             <input
-              type="number"
-              className="input input-sm input-bordered w-full"
-              min={0}
-              max={0.5}
-              step={0.01}
-              value={draft.fragmentInterval}
-              onChange={(e) => ttsDraft.commit({
-                ...draft,
-                fragmentInterval: clamp(toNumber(e.target.value, draft.fragmentInterval), 0, 0.5),
-              })}
+              type="range"
+              className="range range-sm w-full mt-1"
+              min={SLIDER_LIMITS.fragmentInterval.min}
+              max={SLIDER_LIMITS.fragmentInterval.max}
+              step={DEFAULT_SLIDER_STEPS.fragmentInterval}
+              value={sliderState.fragmentInterval}
+              onChange={(e) => updateSliderValue('fragmentInterval', e.target.value, sliderState.fragmentInterval)}
+              onPointerUp={() => flushSliderPatch(true)}
+              onBlur={() => flushSliderPatch(true)}
             />
           </label>
 
           <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">topK (1~100)</span>
+            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
+              <span className="label-text text-xs truncate">topK</span>
+              <div className="w-full">
+                <input
+                  type="number"
+                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  min={SLIDER_LIMITS.topK.min}
+                  max={SLIDER_LIMITS.topK.max}
+                  step={DEFAULT_SLIDER_STEPS.topK}
+                  value={Math.round(sliderState.topK)}
+                  onChange={(e) => updateSliderValue('topK', e.target.value, sliderState.topK)}
+                  onBlur={() => flushSliderPatch(true)}
+                />
+              </div>
             </div>
             <input
-              type="number"
-              className="input input-sm input-bordered w-full"
-              min={1}
-              max={100}
-              step={1}
-              value={draft.topK}
-              onChange={(e) => ttsDraft.commit({
-                ...draft,
-                topK: Math.round(clamp(toNumber(e.target.value, draft.topK), 1, 100)),
-              })}
+              type="range"
+              className="range range-sm w-full mt-1"
+              min={SLIDER_LIMITS.topK.min}
+              max={SLIDER_LIMITS.topK.max}
+              step={DEFAULT_SLIDER_STEPS.topK}
+              value={sliderState.topK}
+              onChange={(e) => updateSliderValue('topK', e.target.value, sliderState.topK)}
+              onPointerUp={() => flushSliderPatch(true)}
+              onBlur={() => flushSliderPatch(true)}
+            />
+
+          </label>
+
+          <label className="form-control">
+            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
+              <span className="label-text text-xs truncate">topP</span>
+              <div className="w-full">
+                <input
+                  type="number"
+                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  min={SLIDER_LIMITS.topP.min}
+                  max={SLIDER_LIMITS.topP.max}
+                  step={DEFAULT_SLIDER_STEPS.topP}
+                  value={sliderState.topP}
+                  onChange={(e) => updateSliderValue('topP', e.target.value, sliderState.topP)}
+                  onBlur={() => flushSliderPatch(true)}
+                />
+              </div>
+            </div>
+            <input
+              type="range"
+              className="range range-sm w-full mt-1"
+              min={SLIDER_LIMITS.topP.min}
+              max={SLIDER_LIMITS.topP.max}
+              step={DEFAULT_SLIDER_STEPS.topP}
+              value={sliderState.topP}
+              onChange={(e) => updateSliderValue('topP', e.target.value, sliderState.topP)}
+              onPointerUp={() => flushSliderPatch(true)}
+              onBlur={() => flushSliderPatch(true)}
             />
           </label>
 
           <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">topP (0~1)</span>
+            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
+              <span className="label-text text-xs truncate">temperature</span>
+              <div className="w-full">
+                <input
+                  type="number"
+                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  min={SLIDER_LIMITS.temperature.min}
+                  max={SLIDER_LIMITS.temperature.max}
+                  step={DEFAULT_SLIDER_STEPS.temperature}
+                  value={sliderState.temperature}
+                  onChange={(e) => updateSliderValue('temperature', e.target.value, sliderState.temperature)}
+                  onBlur={() => flushSliderPatch(true)}
+                />
+              </div>
             </div>
             <input
-              type="number"
-              className="input input-sm input-bordered w-full"
-              min={0}
-              max={1}
-              step={0.01}
-              value={draft.topP}
-              onChange={(e) => ttsDraft.commit({
-                ...draft,
-                topP: clamp(toNumber(e.target.value, draft.topP), 0, 1),
-              })}
-            />
-          </label>
-
-          <label className="form-control md:col-span-2">
-            <div className="label py-0">
-              <span className="label-text text-xs">temperature (0~1)</span>
-            </div>
-            <input
-              type="number"
-              className="input input-sm input-bordered w-full"
-              min={0}
-              max={1}
-              step={0.01}
-              value={draft.temperature}
-              onChange={(e) => ttsDraft.commit({
-                ...draft,
-                temperature: clamp(toNumber(e.target.value, draft.temperature), 0, 1),
-              })}
+              type="range"
+              className="range range-sm w-full mt-1"
+              min={SLIDER_LIMITS.temperature.min}
+              max={SLIDER_LIMITS.temperature.max}
+              step={DEFAULT_SLIDER_STEPS.temperature}
+              value={sliderState.temperature}
+              onChange={(e) => updateSliderValue('temperature', e.target.value, sliderState.temperature)}
+              onPointerUp={() => flushSliderPatch(true)}
+              onBlur={() => flushSliderPatch(true)}
             />
           </label>
         </div>

@@ -10,6 +10,10 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   apiKey: '',
   baseURL: '',
   displayLang: 'zh',
+  // 破坏性迁移：TTS 输出格式改为全局配置。
+  ttsMediaType: 'wav',
+  // 破坏性迁移：TTS 流式开关改为全局配置。
+  ttsStreamingMode: true,
 };
 
 // Live2denvConfig: liv2denv.json（模型列表/当前模型等），不包含全局模型设置。
@@ -67,8 +71,6 @@ export const DEFAULT_MODEL_CONFIG = {
     topK: 20,
     topP: 0.8,
     temperature: 0.5,
-    mediaType: 'wav',
-    streamingMode: true,
   },
 };
 
@@ -172,8 +174,6 @@ const normalizeTtsConfig = (input = {}) => {
   next.topP = clampNumber(source.topP, next.topP, 0, 1);
   next.temperature = clampNumber(source.temperature, next.temperature, 0, 1);
   if (typeof source.useLastGeneratedAsRef === 'boolean') next.useLastGeneratedAsRef = source.useLastGeneratedAsRef;
-  if (source.mediaType === 'wav' || source.mediaType === 'ogg' || source.mediaType === 'aac') next.mediaType = source.mediaType;
-  if (typeof source.streamingMode === 'boolean') next.streamingMode = source.streamingMode;
   return next;
 };
 
@@ -234,6 +234,12 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   }
   if (settings.displayLang === 'zh' || settings.displayLang === 'en' || settings.displayLang === 'ja' || settings.displayLang === 'ko') {
     next.displayLang = settings.displayLang;
+  }
+  if (settings.ttsMediaType === 'wav' || settings.ttsMediaType === 'ogg' || settings.ttsMediaType === 'aac') {
+    next.ttsMediaType = settings.ttsMediaType;
+  }
+  if (typeof settings.ttsStreamingMode === 'boolean') {
+    next.ttsStreamingMode = settings.ttsStreamingMode;
   }
   return next;
 };

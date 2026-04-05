@@ -17,6 +17,7 @@ declare global {
     debugModeEnabled?: boolean;
     apiKey?: string;
     baseURL?: string;
+    displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   }
 
   type PetGlobalModelConfig = PetGlobalModelConfigPayload;
@@ -275,6 +276,7 @@ declare global {
   interface PetAIConfigPayload {
     apiKey?: string;
     baseURL?: string;
+    displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   }
 
   type PetChatInputSource = 'text' | 'asr';
@@ -352,10 +354,17 @@ declare global {
     updateConfig?: (patch: PetAIConfigPayload) => Promise<PetAIConfigPayload | undefined>;
     onConfigUpdated?: (callback: (config: PetAIConfigPayload) => void) => (() => void) | void;
     readRagTextFile?: (payload: { knowledgeBasePath?: string; modelPath?: string }) => Promise<{ ok: boolean; path: string | null; content: string; error?: string } | undefined>;
-  }
-
-  interface PetChatAPI {
-    submit?: (payload: PetChatSubmitPayload) => Promise<PetChatSubmitResult | undefined>;
+    tts?: {
+      getConfig?: (payload?: { modelPath?: string }) => Promise<PetTtsConfig | undefined>;
+      updateConfig?: (payload: { modelPath?: string; patch?: Partial<PetTtsConfig> }) => Promise<{
+        modelPath: string | null;
+        tts: PetTtsConfig | null;
+        snapshot?: PetConfigSnapshot;
+      } | undefined>;
+      pickGptWeightsPath?: () => Promise<string | null | undefined>;
+      pickSovitsWeightsPath?: () => Promise<string | null | undefined>;
+      pickRefAudioPath?: () => Promise<string | null | undefined>;
+    };
   }
 
   interface PetSystemAPI {
@@ -368,7 +377,6 @@ declare global {
     ModelAPI?: PetModelAPI;
     MemoryAPI?: PetMemoryAPI;
     AIAPI?: PetAIAPI;
-    ChatAPI?: PetChatAPI;
     SystemAPI?: PetSystemAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
   }

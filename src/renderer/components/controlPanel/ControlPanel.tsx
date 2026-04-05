@@ -9,6 +9,7 @@ import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
 import RagSettingsPage from './pages/RagSettingsPage';
 import RagParamsPage from './pages/RagParamsPage';
+import TTSSettingsPage from './pages/TTSSettingsPage';
 import { useDebouncedRemoteDraft } from './hooks/useDebouncedRemoteDraft';
 import { useThemeMode } from './theme';
 import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from './chatCache';
@@ -16,6 +17,7 @@ import type { ChatMessage, ChatSessionCache, ControlPanelTabKey, ModelConfig, Mo
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
 import { useConfigStore } from '../../store/useConfigStore';
+import { createStage2Runtime } from '../../../AI/core/stage2Runtime';
 import { info, warn } from '../../utils/log';
 
 const buildInitialSegmentActions = (touchMap: number[], actions: string[]) => {
@@ -113,6 +115,7 @@ const ControlPanel: React.FC = () => {
     };
   }, [globalModelConfig, workerScale]);
 
+  // 
   const modelConfig: ModelConfig = useMemo(() => {
     const persisted = (persistedModelConfig ?? {}) as unknown as Partial<ModelConfig>;
     return {
@@ -128,6 +131,10 @@ const ControlPanel: React.FC = () => {
       },
       interactionZones: persisted.interactionZones ?? DEFAULT_MODEL_CONFIG.interactionZones,
       rag: buildRagConfig(persisted.rag, DEFAULT_MODEL_CONFIG.rag),
+      tts: {
+        ...DEFAULT_MODEL_CONFIG.tts,
+        ...(persisted.tts as Partial<ModelConfig['tts']>),
+      },
     };
   }, [persistedModelConfig]);
 
@@ -144,14 +151,23 @@ const ControlPanel: React.FC = () => {
   const [actions, setActions] = useState<string[]>(() => [...DEFAULT_ACTIONS]);
   const [segmentActionsByModel, setSegmentActionsByModel] = useState<Record<string, string[]>>({});
 
-  const [aiSettings, setAiSettings] = useState({
-    ttsProvider: 'disabled',
-    ttsVoice: '',
-  });
   const [chatDraft, setChatDraft] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const stage2RuntimeRef = useRef<ReturnType<typeof createStage2Runtime> | null>(null);
+
+  if (!stage2RuntimeRef.current) {
+    // 控制面板窗口没有 Live2D 实例，这里仅用于发起前端 LLM 请求与拿到结构化回复。
+    stage2RuntimeRef.current = createStage2Runtime({
+      dispatchAction: () => ({ ok: false, state: 'dropped', reason: 'no-capability' }),
+      getActionCapability: () => ({
+        canShakeHead: false,
+        canBlink: false,
+        canMouth: false,
+      }),
+    });
+  }
 
   const remoteApiKey = typeof globalModelConfig?.apiKey === 'string' ? globalModelConfig.apiKey : '';
   const remoteApiBaseUrl = typeof globalModelConfig?.baseURL === 'string' ? globalModelConfig.baseURL : '';
@@ -340,8 +356,15 @@ const ControlPanel: React.FC = () => {
     setChatMessages((prev) => [...prev, userMessage, pendingMessage]);
 
     try {
-      const result = await window.ChatAPI?.submit?.({ text, source: 'text', requestId });
-      if (!result?.ok || !result.replyText) {
+      const runtime = stage2RuntimeRef.current;
+      if (!runtime) {
+        throw new Error('Stage2Runtime 未初始化');
+      }
+      const result = await runtime.ask(text, {
+        apiKey: globalAiDraft.draft.apiKey,
+        baseURL: globalAiDraft.draft.apiBaseUrl,
+      });
+      if (!result?.ok || !result.reply?.reply_text) {
         const message = result?.error ?? '对话请求失败';
         setChatError(message);
         setChatMessages((prev) => prev.map((item) => {
@@ -356,11 +379,29 @@ const ControlPanel: React.FC = () => {
         return;
       }
 
+      // 双语言链路结构：UI 显示文本与语音合成文本先分离存放。
+      // 当前阶段先用 displayText 更新聊天 UI，speakText 为后续 TTS 接入预留。
+      const displayText = typeof result.reply.display_text === 'string' && result.reply.display_text.trim()
+        ? result.reply.display_text.trim()
+        : result.reply.reply_text;
+      const speakText = typeof result.reply.speak_text === 'string' && result.reply.speak_text.trim()
+        ? result.reply.speak_text.trim()
+        : result.reply.reply_text;
+
+      // 前端日志：记录双文本链路是否生效，便于后续多模型调试。
+      info('controlPanel.chat', 'submit.ok', {
+        requestId,
+        hasDisplayText: Boolean(displayText),
+        hasSpeakText: Boolean(speakText),
+        ttsEnabled: false,
+        ttsProvider: 'pending-frontend',
+      });
+
       setChatMessages((prev) => prev.map((item) => {
         if (item.requestId !== requestId || item.role !== 'assistant') return item;
         return {
           ...item,
-          text: result.replyText ?? item.text,
+          text: displayText ?? item.text,
           status: 'done',
           error: undefined,
         };
@@ -438,14 +479,7 @@ const ControlPanel: React.FC = () => {
         <AiSettingsPage
           apiBaseUrl={globalAiDraft.draft.apiBaseUrl}
           apiKey={globalAiDraft.draft.apiKey}
-          ttsProvider={aiSettings.ttsProvider}
-          ttsVoice={aiSettings.ttsVoice}
           onChange={(next) => {
-            setAiSettings((prev) => ({
-              ...prev,
-              ttsProvider: next.ttsProvider,
-              ttsVoice: next.ttsVoice,
-            }));
             const nextGlobalDraft = {
               apiBaseUrl: next.apiBaseUrl,
               apiKey: next.apiKey,
@@ -454,6 +488,15 @@ const ControlPanel: React.FC = () => {
               globalAiDraft.commit(nextGlobalDraft);
             }
           }}
+          displayLang={ globalModelConfig?.displayLang || 'zh' }
+        />
+      )}
+
+      {activeTab === 'ai-tts' && (
+        <TTSSettingsPage
+          modelPath={currentModelPath}
+          modelConfig={modelConfig}
+          onModelConfigChange={persistModelConfig}
         />
       )}
 

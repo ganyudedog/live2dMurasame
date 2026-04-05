@@ -64,16 +64,21 @@ const AIAPI = {
     return {
       apiKey: config?.apiKey ?? '',
       baseURL: config?.baseURL ?? '',
+      displayLang: config?.displayLang ?? 'zh',
     };
   },
   updateConfig: async (patch = {}) => {
     const nextPatch = {};
     if (typeof patch?.apiKey === 'string') nextPatch.apiKey = patch.apiKey;
     if (typeof patch?.baseURL === 'string') nextPatch.baseURL = patch.baseURL;
+    if (patch?.displayLang === 'zh' || patch?.displayLang === 'en' || patch?.displayLang === 'ja' || patch?.displayLang === 'ko') {
+      nextPatch.displayLang = patch.displayLang;
+    }
     const config = await ipcRenderer.invoke('pet:updateGlobalModelConfig', nextPatch);
     return {
       apiKey: config?.apiKey ?? '',
       baseURL: config?.baseURL ?? '',
+      displayLang: config?.displayLang ?? 'zh',
     };
   },
   onConfigUpdated: (callback) => {
@@ -82,6 +87,7 @@ const AIAPI = {
         callback({
           apiKey: config?.apiKey ?? '',
           baseURL: config?.baseURL ?? '',
+          displayLang: config?.displayLang ?? 'zh',
         });
       } catch (error) {
         console.error('[AIAPI] config listener error', error);
@@ -91,10 +97,13 @@ const AIAPI = {
     return () => ipcRenderer.removeListener('pet:globalModelConfigUpdated', listener);
   },
   readRagTextFile: (payload) => ipcRenderer.invoke('pet:readRagTextFile', payload),
-};
-
-const ChatAPI = {
-  submit: (payload) => ipcRenderer.invoke('pet:chatSubmit', payload),
+  tts: {
+    getConfig: (payload) => ipcRenderer.invoke('pet:ai:tts:getConfig', payload),
+    updateConfig: (payload) => ipcRenderer.invoke('pet:ai:tts:updateConfig', payload),
+    pickGptWeightsPath: () => ipcRenderer.invoke('pet:ai:tts:pickGptWeightsPath'),
+    pickSovitsWeightsPath: () => ipcRenderer.invoke('pet:ai:tts:pickSovitsWeightsPath'),
+    pickRefAudioPath: () => ipcRenderer.invoke('pet:ai:tts:pickRefAudioPath'),
+  },
 };
 
 const SystemAPI = {
@@ -125,5 +134,4 @@ contextBridge.exposeInMainWorld('ConfigAPI', ConfigAPI);
 contextBridge.exposeInMainWorld('ModelAPI', ModelAPI);
 contextBridge.exposeInMainWorld('MemoryAPI', MemoryAPI);
 contextBridge.exposeInMainWorld('AIAPI', AIAPI);
-contextBridge.exposeInMainWorld('ChatAPI', ChatAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);

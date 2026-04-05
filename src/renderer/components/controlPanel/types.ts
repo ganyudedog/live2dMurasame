@@ -5,6 +5,7 @@ export type ControlPanelTabKey =
   | 'model-motions'
   | 'model-interaction'
   | 'ai-settings'
+  | 'ai-tts'
   | 'ai-rag'
   | 'ai-rag-params';
 
@@ -83,5 +84,24 @@ export type ModelConfig = {
       embeddingModel: string;
       rerankerModel: string;
     };
+  };
+  tts: {
+    enabled: boolean;
+    baseUrl: string;
+    gptWeightsPath: string;
+    sovitsWeightsPath: string;
+    textLang: 'zh' | 'ja' | 'en' | 'ko' | 'yue';
+    promptLang: 'zh' | 'ja' | 'en' | 'ko' | 'yue';
+    refAudioPath: string;
+    refAudioText: string;
+    textSplitMode: 'cut4' | 'cut50' | 'cut_zh_comma' | 'cut_en_comma' | 'cut_punc' | 'none';
+    speedFactor: number;
+    fragmentInterval: number;
+    useLastGeneratedAsRef: boolean;
+    topK: number;
+    topP: number;
+    temperature: number;
+    mediaType: 'wav' | 'ogg' | 'aac';
+    streamingMode: boolean;
   };
 };

@@ -120,11 +120,13 @@ const getGlobalConfigPath = () => path.join(getBaseConfigDir(), GLOBAL_CONFIG_FI
 
 const getGlobalModelConfigPath = () => path.join(getBaseConfigDir(), GLOBAL_MODEL_CONFIG_FILENAME);
 
+// 生成一个安全的模型key，避免因路径问题导致的配置冲突
 const getSafeModelKey = (modelDir) => {
   const key = getModelKeyFromPath(modelDir);
   return key || `model-${Date.now().toString(36)}`;
 };
 
+// 基于模型路径生成一个稳定且安全的配置目录，避免不同模型路径因细微差异导致的配置分散或冲突
 export const getModelConfigDirFor = (modelDir) => {
   const modelKey = getSafeModelKey(modelDir);
   return path.join(getBaseConfigDir(), modelKey);

@@ -6,6 +6,7 @@ import {
     getLive2denvConfigCache,
     applyLive2denvConfigPatch,
     getModelConfigState,
+    applyModelConfigPatch,
 } from './runtime/allEnv.js';
 import {
     ensureGlobalModelConfigLoaded,
@@ -18,7 +19,6 @@ import { registerModelMemoryIpc } from './main/modelMemoryIpc.js';
 import { registerConfigIpc } from './main/configIpc.js';
 import { createWindowDragController } from './main/windowDragController.js';
 import { createWindowIntentController } from './main/windowIntentController.js';
-import { createTtsService } from './main/ttsService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -97,6 +97,40 @@ const pickModelDirViaDialog = async (parentWindow) => {
         console.warn('[pet] pick model file failed', error);
         return null;
     }
+};
+
+const pickFilePathViaDialog = async (parentWindow, options = {}) => {
+    try {
+        const result = parentWindow
+            ? await dialog.showOpenDialog(parentWindow, options)
+            : await dialog.showOpenDialog(options);
+        if (result.canceled) return null;
+        const picked = result.filePaths?.[0] ?? null;
+        if (!picked) return null;
+        return path.normalize(picked);
+    } catch (error) {
+        console.warn('[pet] pick file failed', error);
+        return null;
+    }
+};
+
+const getBestDialogParentWindow = () => {
+    return BrowserWindow.getFocusedWindow()
+        ?? (controlPanelWindow && !controlPanelWindow.isDestroyed() ? controlPanelWindow : null)
+        ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+};
+
+const pickTtsFileWithFilters = async ({ title, filters }) => {
+    const parentWindow = getBestDialogParentWindow();
+    try {
+        parentWindow?.show();
+        parentWindow?.focus();
+    } catch { }
+    return pickFilePathViaDialog(parentWindow, {
+        title,
+        properties: ['openFile'],
+        filters,
+    });
 };
 
 const ensureModelSelectedOnStartup = async () => {
@@ -183,7 +217,6 @@ const { handleWindowIntent, scheduleEmitMainWindowBounds } = createWindowIntentC
     getMainWindow: () => mainWindow,
 });
 const { handleWindowDrag } = createWindowDragController();
-const ttsService = createTtsService();
 const { broadcastConfigSnapshot } = registerConfigIpc({
     getMainWindow: () => mainWindow,
     getControlPanelWindow: () => controlPanelWindow,
@@ -194,87 +227,6 @@ registerModelMemoryIpc();
 const hideControlPanel = () => {
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
         controlPanelWindow.hide();
-    }
-};
-
-const submitChatThroughMainRenderer = async (payload = {}) => {
-    const target = mainWindow;
-    if (!target || target.isDestroyed()) {
-        return {
-            ok: false,
-            requestId: typeof payload?.requestId === 'string' && payload.requestId ? payload.requestId : `chat_${Date.now()}`,
-            source: payload?.source === 'asr' ? 'asr' : 'text',
-            error: '主窗口未就绪，无法处理对话请求',
-        };
-    }
-
-    const requestId = typeof payload?.requestId === 'string' && payload.requestId ? payload.requestId : `chat_${Date.now()}`;
-    const source = payload?.source === 'asr' ? 'asr' : 'text';
-    const text = typeof payload?.text === 'string' ? payload.text.trim() : '';
-    if (!text) {
-        return {
-            ok: false,
-            requestId,
-            source,
-            error: '请输入有效文本',
-        };
-    }
-
-    const script = `(() => {
-        const api = globalThis.__PET_AI_STAGE2__;
-        if (!api || typeof api.ask !== 'function') {
-            throw new Error('主窗口 AI 运行时尚未准备完成');
-        }
-        return Promise.resolve(api.ask(${JSON.stringify(text)})).then((result) => result ?? null);
-    })()`;
-
-    try {
-        const result = await target.webContents.executeJavaScript(script, true);
-        if (!result?.ok || !result.reply?.reply_text) {
-            return {
-                ok: false,
-                requestId,
-                source,
-                error: result?.error || 'AI 返回为空',
-                rawText: result?.rawText,
-            };
-        }
-
-        const live2denv = getLive2denvConfigCache();
-        const modelPath = typeof live2denv?.CURRENT_PATH === 'string' && live2denv.CURRENT_PATH
-            ? live2denv.CURRENT_PATH
-            : null;
-        const modelState = getModelConfigState(modelPath);
-        const ttsResult = await ttsService.synthesize({
-            text: result.reply.reply_text,
-            requestId,
-            modelPath: modelState?.modelPath ?? null,
-            modelConfig: modelState?.modelConfig,
-        });
-
-        return {
-            ok: true,
-            requestId,
-            source,
-            replyText: result.reply.reply_text,
-            actionResult: result.actionResult,
-            rag: result.rag,
-            voice: {
-                displayText: result.reply.reply_text,
-                speakText: result.reply.reply_text,
-                enabled: Boolean(modelState?.modelConfig?.tts?.enabled),
-                provider: 'gpt-sovits',
-            },
-            rawText: result.rawText,
-            ttsResult,
-        };
-    } catch (error) {
-        return {
-            ok: false,
-            requestId,
-            source,
-            error: String(error instanceof Error ? error.message : error),
-        };
     }
 };
 
@@ -381,14 +333,69 @@ const createMainWindow = () => {
 // 只允许选择 *.model3.json（UI 过滤只能做到 json，后缀校验在这里做）。
 // 返回值统一为“模型目录绝对路径”（符合 offset.md：VITE_MODEL_PATHS/CURRENT_PATH 存目录）。
 ipcMain.handle('pet:pickModelFile', async () => {
-    const parentWindow = BrowserWindow.getFocusedWindow()
-        ?? (controlPanelWindow && !controlPanelWindow.isDestroyed() ? controlPanelWindow : null)
-        ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    const parentWindow = getBestDialogParentWindow();
     try {
         parentWindow?.show();
         parentWindow?.focus();
     } catch { }
     return pickModelDirViaDialog(parentWindow);
+});
+
+ipcMain.handle('pet:ai:tts:getConfig', (_event, payload = {}) => {
+    const modelPath = typeof payload?.modelPath === 'string' && payload.modelPath ? payload.modelPath : undefined;
+    const state = getModelConfigState(modelPath);
+    return state?.modelConfig?.tts ?? null;
+});
+
+ipcMain.handle('pet:ai:tts:updateConfig', (_event, payload = {}) => {
+    const modelPath = typeof payload?.modelPath === 'string' && payload.modelPath ? payload.modelPath : undefined;
+    const patch = payload && typeof payload === 'object' && payload.patch && typeof payload.patch === 'object'
+        ? payload.patch
+        : payload;
+    const snapshot = applyModelConfigPatch({
+        modelPath,
+        patch: {
+            tts: patch,
+        },
+    });
+    if (snapshot) {
+        broadcastConfigSnapshot(snapshot, { live2denv: false, model: true });
+    }
+    return {
+        modelPath: snapshot?.activeModelPath ?? null,
+        tts: snapshot?.modelConfig?.tts ?? null,
+        snapshot: snapshot ?? null,
+    };
+});
+
+ipcMain.handle('pet:ai:tts:pickGptWeightsPath', async () => {
+    return pickTtsFileWithFilters({
+        title: '选择 GPT 权重文件',
+        filters: [
+            { name: '权重文件', extensions: ['ckpt', 'pt', 'bin', 'safetensors'] },
+            { name: '所有文件', extensions: ['*'] },
+        ],
+    });
+});
+
+ipcMain.handle('pet:ai:tts:pickSovitsWeightsPath', async () => {
+    return pickTtsFileWithFilters({
+        title: '选择 SoVITS 权重文件',
+        filters: [
+            { name: '权重文件', extensions: ['pth', 'pt', 'ckpt', 'bin', 'safetensors'] },
+            { name: '所有文件', extensions: ['*'] },
+        ],
+    });
+});
+
+ipcMain.handle('pet:ai:tts:pickRefAudioPath', async () => {
+    return pickTtsFileWithFilters({
+        title: '选择参考音频文件',
+        filters: [
+            { name: '音频文件', extensions: ['wav', 'ogg', 'mp3', 'flac', 'aac', 'm4a'] },
+            { name: '所有文件', extensions: ['*'] },
+        ],
+    });
 });
 
 ipcMain.on('pet:debugTrace', (_event, payload = {}) => {
@@ -434,12 +441,6 @@ ipcMain.handle('pet:getWindowBounds', (event) => {
 ipcMain.handle('pet:readRagTextFile', (_event, payload = {}) => {
     return readRagTextFile(payload);
 });
-
-ipcMain.handle('pet:chatSubmit', async (_event, payload = {}) => {
-    return submitChatThroughMainRenderer(payload);
-});
-
-
 
 app.on('before-quit', () => {
     isQuitting = true;

@@ -13,6 +13,7 @@ interface ActiveExecution {
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
+// ActionExecutor 负责管理和执行模型动作（如摇头、眨眼、张嘴），根据当前的动作能力和意图，周期性地更新模型参数以实现预期的动画效果。
 export class ActionExecutor {
   private active: ActiveExecution | null = null;
   private capability: ActionCapability = {

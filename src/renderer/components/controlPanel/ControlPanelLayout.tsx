@@ -33,6 +33,7 @@ const MENU_STRUCTURE: MenuGroup[] = [
     collapsible: true,
     items: [
       { key: 'ai-settings', label: 'AI 设置' },
+      { key: 'ai-tts', label: 'TTS 设置' },
       { key: 'ai-rag', label: 'RAG 设置' },
       { key: 'ai-rag-params', label: 'RAG 参数' },
     ],

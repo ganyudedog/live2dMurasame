@@ -41,6 +41,25 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
       rerankerModel: 'bge-reranker-v2-m3',
     },
   },
+  tts: {
+    enabled: false,
+    baseUrl: 'http://127.0.0.1:9880',
+    gptWeightsPath: '',
+    sovitsWeightsPath: '',
+    textLang: 'ja',
+    promptLang: 'ja',
+    refAudioPath: '',
+    refAudioText: '',
+    textSplitMode: 'cut_punc',
+    speedFactor: 1,
+    fragmentInterval: 0.3,
+    useLastGeneratedAsRef: false,
+    topK: 20,
+    topP: 0.8,
+    temperature: 0.5,
+    mediaType: 'wav',
+    streamingMode: true,
+  },
 };
 
 export const DEFAULT_MODELS: ModelEntry[] = [

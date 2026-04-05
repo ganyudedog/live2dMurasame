@@ -26,6 +26,11 @@ interface RuntimeBridgeConfig {
   temperature: number;
 }
 
+interface Stage2LanguageProfile {
+  displayLang: 'zh' | 'en' | 'ja' | 'ko';
+  speakLang: string;
+}
+
 interface RagTextFileResult {
   ok: boolean;
   path: string | null;
@@ -46,6 +51,21 @@ const RECENT_MEMORY_MAX_MESSAGES = 12;
 const isString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+const normalizeReplyText = (value: unknown): string => {
+  if (!isString(value)) return '';
+  return String(value).trim();
+};
+
+const normalizeDisplayLang = (value: unknown): 'zh' | 'en' | 'ja' | 'ko' => {
+  if (value === 'en' || value === 'ja' || value === 'ko') return value;
+  return 'zh';
+};
+
+const normalizeSpeakLang = (value: unknown): string => {
+  if (!isString(value)) return 'ja';
+  return String(value).trim();
+};
 
 const createMemoryMessageId = (): string => {
   return `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -71,6 +91,7 @@ const normalizeMemoryMessages = (messages: unknown): PetModelMemoryMessage[] => 
   return normalized;
 };
 
+// 构建 RAG 上下文，包括从模型记忆中提取相关消息、生成摘要，以及根据配置构建最终的上下文文本。
 const buildRecentMemoryPatch = (
   current: PetModelMemoryRecent | null | undefined,
   messages: PetModelMemoryMessage[],
@@ -85,6 +106,7 @@ const buildRecentMemoryPatch = (
   };
 };
 
+// 构建记忆摘要，基于当前的记忆状态和新消息，通过调用 buildRollingSummary 函数生成一个新的摘要文本，并返回一个包含更新后的摘要和相关信息的对象。
 const buildMetaMemoryPatch = (
   current: PetModelMemoryMeta | null | undefined,
   appendedCount: number,
@@ -120,6 +142,7 @@ const readGlobalConfigFallback = (): { apiKey?: string; baseURL?: string } => {
   }
 };
 
+// 发送对话请求，获取模型回复，并根据当前的 RAG 配置和记忆状态构建上下文信息，同时处理动作意图的分发和记忆的持久化更新。
 export class Stage2Runtime {
   private readonly dispatchAction: Stage2RuntimeOptions['dispatchAction'];
   private readonly getActionCapability?: Stage2RuntimeOptions['getActionCapability'];
@@ -163,6 +186,7 @@ export class Stage2Runtime {
     try {
       const resolved = await this.resolveConfig(options);
       const ragRuntime = await this.resolveRagRuntime(cleanText);
+      const languageProfile = this.resolveLanguageProfile();
       const start = performance.now();
       // 发起对话
       const llmResult = await requestStage2LLM(
@@ -177,6 +201,8 @@ export class Stage2Runtime {
           model: resolved.model,
           temperature: resolved.temperature,
           ragContext: ragRuntime.contextText,
+          displayLang: languageProfile.displayLang,
+          speakLang: languageProfile.speakLang,
         },
       );
 
@@ -187,15 +213,27 @@ export class Stage2Runtime {
       reply.meta.latency_ms = Math.round(performance.now() - start);
       reply.meta.provider = reply.meta.provider ?? 'openai-compatible';
 
+      // 双文本协议：display_text 用于前端展示，speak_text 用于 TTS。
+      // 若任一字段缺失，回退到旧字段 reply_text，保证兼容历史模型输出。
+      const displayText = normalizeReplyText(reply.display_text) || normalizeReplyText(reply.reply_text);
+      const speakText = normalizeReplyText(reply.speak_text) || normalizeReplyText(reply.reply_text);
+      reply.display_text = displayText;
+      reply.speak_text = speakText;
+      reply.reply_text = displayText;
+
       const actionResult = this.dispatchAction(reply.action_intent, 'stage2.llm');
 
-      await this.persistConversationMemory(ragRuntime, cleanText, reply.reply_text);
+      await this.persistConversationMemory(ragRuntime, cleanText, displayText);
 
       info('ai.stage2', 'ask.ok', {
         model: reply.meta.model,
         latencyMs: reply.meta.latency_ms,
         actionState: actionResult.state,
         actionKind: reply.action_intent.kind,
+        hasDisplayText: Boolean(displayText),
+        hasSpeakText: Boolean(speakText),
+        displayLang: languageProfile.displayLang,
+        speakLang: languageProfile.speakLang,
         ragChunks: ragRuntime.chunkCount,
         memoryMessages: ragRuntime.memoryState?.recent?.messages?.length ?? 0,
       });
@@ -394,6 +432,21 @@ export class Stage2Runtime {
       model: merged.model,
       temperature,
     };
+  }
+
+  private resolveLanguageProfile(): Stage2LanguageProfile {
+    try {
+      const snapshot = window.ConfigAPI?.getSnapshot?.();
+      const displayLang = normalizeDisplayLang(snapshot?.globalModelConfig?.displayLang);
+      // speakText 语言直接跟随模型 TTS 配置（textLang）。
+      const speakLang = normalizeSpeakLang(snapshot?.modelConfig?.tts?.textLang);
+      return { displayLang, speakLang };
+    } catch {
+      return {
+        displayLang: 'zh',
+        speakLang: 'ja',
+      };
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { applyAutoLaunchSetting } from '../config/live2dGlobal.js';
 
+// 自动启动electron应用
 export const createAutoLaunchScheduler = ({
   getControlPanelWindow,
   debounceMs = 1200,

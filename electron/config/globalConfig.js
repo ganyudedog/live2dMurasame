@@ -9,6 +9,7 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   debugModeEnabled: false,
   apiKey: '',
   baseURL: '',
+  displayLang: 'zh',
 };
 
 // Live2denvConfig: liv2denv.json（模型列表/当前模型等），不包含全局模型设置。
@@ -211,6 +212,9 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   }
   if (typeof settings.baseURL === 'string') {
     next.baseURL = settings.baseURL;
+  }
+  if (settings.displayLang === 'zh' || settings.displayLang === 'en' || settings.displayLang === 'ja' || settings.displayLang === 'ko') {
+    next.displayLang = settings.displayLang;
   }
   return next;
 };

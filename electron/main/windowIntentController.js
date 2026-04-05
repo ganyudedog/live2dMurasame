@@ -58,7 +58,7 @@ export const createWindowIntentController = ({ getMainWindow }) => {
       logDebugTrace({
         kind: 'windowIntent',
         profile: 'windowJump',
-        level: 'info',
+        level: 'debug',
         request: {
           source: 'main.emitMainWindowBounds',
           rid: typeof context?.requestId === 'string' && context.requestId ? context.requestId : 'fact-no-rid',
@@ -194,7 +194,7 @@ export const createWindowIntentController = ({ getMainWindow }) => {
         logDebugTrace({
           kind: 'windowIntent',
           profile: 'windowJump',
-          level: 'info',
+          level: 'debug',
           request: {
             source: 'main.emitMainWindowBounds',
             rid: 'fact-no-rid',
@@ -228,7 +228,7 @@ export const createWindowIntentController = ({ getMainWindow }) => {
       logDebugTrace({
         kind: 'windowIntent',
         profile: 'windowJump',
-        level: 'warn',
+        level: 'debug',
         request: {
           source: 'main.emitMainWindowBounds',
           rid: requestId ?? 'fact-no-rid',

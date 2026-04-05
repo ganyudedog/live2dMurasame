@@ -1,6 +1,7 @@
 import { stage2LlmReplySchema } from '../types/llm.schema';
 import type { Stage2LLMReply } from '../types/llm';
 
+
 const extractJsonCandidate = (raw: string): string => {
   const trimmed = raw.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
@@ -17,6 +18,7 @@ const extractJsonCandidate = (raw: string): string => {
   return trimmed;
 };
 
+// 解析LLM输出的文本，提取其中的JSON部分，并验证其结构是否符合预期的Stage2LLMReply格式，如果不合法则抛出相应的错误。
 export const parseStage2Reply = (rawText: string): Stage2LLMReply => {
   const candidate = extractJsonCandidate(rawText);
   let parsed: unknown;

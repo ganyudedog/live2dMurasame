@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import PetCanvas from './renderer/components/pet/PetCanvas.tsx';
 import ControlPanel from './renderer/components/controlPanel/ControlPanel.tsx';;
 import DemoRoot from './demo/DemoRoot';
+import { Toaster } from 'react-hot-toast';
 import './app.css';
 
 import { info } from './renderer/utils/log';
@@ -44,6 +45,16 @@ const ActiveRoot = isDemoView ? DemoRoot : (isControlPanelView ? ControlPanelRoo
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <Toaster
+      position="top-center"
+      toastOptions={{
+        style: {
+          fontSize: '14px',
+          fontFamily: 'Inter, "Microsoft YaHei", system-ui, -apple-system, sans-serif',
+          borderRadius: '16px',
+        },
+      }}
+    />
     <ActiveRoot />
   </StrictMode>
 );

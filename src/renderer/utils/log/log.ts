@@ -43,8 +43,9 @@ const emit = (entry: LogEntry): void => {
   }
 };
 
+// 白名单：即使用户未开启镜像模式，仍然允许这些命名空间的日志被发送到主进程，以便在开发者工具之外的环境中收集重要日志。
 const NORMAL_MIRROR_NS_ALLOWLIST: ReadonlyArray<string> = [
-  'pet.resize',
+
 ];
 
 const matchNs = (ns: string, pattern: string): boolean => {

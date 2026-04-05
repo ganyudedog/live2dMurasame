@@ -14,10 +14,17 @@ export interface Stage2LLMRequest {
   model?: string;
   temperature?: number;
   ragContext?: string;
+  displayLang?: 'zh' | 'en' | 'ja' | 'ko';
+  speakLang?: string;
 }
 
 export interface Stage2LLMReply {
   request_id?: string;
+  // 面向 UI 的展示文本（例如中文）
+  display_text?: string;
+  // 面向 TTS 的发音文本（例如日文）
+  speak_text?: string;
+  // 兼容旧协议字段，作为双文本缺失时的回退
   reply_text: string;
   action_intent: ActionIntentInput;
   meta?: {

@@ -3,6 +3,8 @@ import { actionIntentInputSchema } from './action.schema';
 
 export const stage2LlmReplySchema = z.object({
   request_id: z.string().trim().min(1).max(120).optional(),
+  display_text: z.string().trim().min(1).optional(),
+  speak_text: z.string().trim().min(1).optional(),
   reply_text: z.string().trim().min(1),
   action_intent: actionIntentInputSchema,
   meta: z.record(z.string(), z.unknown()).optional(),

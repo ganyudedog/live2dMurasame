@@ -72,6 +72,9 @@ export const registerConfigIpc = ({
     if (typeof patch.debugModeEnabled === 'boolean') safePatch.debugModeEnabled = patch.debugModeEnabled;
     if (typeof patch.apiKey === 'string') safePatch.apiKey = patch.apiKey;
     if (typeof patch.baseURL === 'string') safePatch.baseURL = patch.baseURL;
+    if (patch.displayLang === 'zh' || patch.displayLang === 'en' || patch.displayLang === 'ja' || patch.displayLang === 'ko') {
+      safePatch.displayLang = patch.displayLang;
+    }
     return safePatch;
   };
 

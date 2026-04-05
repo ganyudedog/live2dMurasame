@@ -7,7 +7,6 @@ import type { Live2DModel as Live2DModelType } from '../live2dManage/runtime';
 import { debug as logDebug, error, warn } from '../../../utils/log';
 import { createLive2DActionController, type Live2DActionController } from '../../../../AI/core/actionController';
 import { createStage2Runtime, type Stage2Runtime } from '../../../../AI/core/stage2Runtime';
-import type { ActionIntentInput } from '../../../../AI/types/action';
 
 export interface UsePetModelParams {
   settingsLoaded: boolean;
@@ -205,23 +204,6 @@ export const usePetModel = ({
     if (!app) return;
 
     const disposeCurrentModel = () => {
-      const globalObj = window as any;
-      const bridge = globalObj.__PET_AI_ACTION__;
-      if (bridge?.__from === 'stage1') {
-        try {
-          delete globalObj.__PET_AI_ACTION__;
-        } catch {
-          globalObj.__PET_AI_ACTION__ = undefined;
-        }
-      }
-      const stage2Bridge = globalObj.__PET_AI_STAGE2__;
-      if (stage2Bridge?.__from === 'stage2') {
-        try {
-          delete globalObj.__PET_AI_STAGE2__;
-        } catch {
-          globalObj.__PET_AI_STAGE2__ = undefined;
-        }
-      }
       if (stage2RuntimeRef.current) {
         try {
           stage2RuntimeRef.current.dispose();
@@ -493,40 +475,6 @@ export const usePetModel = ({
         (model as any).eventMode = 'none';
         app.stage.addChild(model as any);
         applyLayoutRef.current?.();
-        try {
-          const attachContainer = canvasRef.current;
-          const bounds = (model as any).getBounds?.();
-          const localBounds = (model as any).getLocalBounds?.();
-          window.SystemAPI?.debugTrace?.({
-            kind: 'modelLoadAttached',
-            profile: 'modelLoad',
-            level: 'info',
-            request: {
-              source: 'renderer.usePetModel',
-              phase: 'model-attached',
-              ts: Date.now(),
-            },
-            model: {
-              settingsLoaded,
-              resolvedModelPath: modelPath,
-              stageChildren: Number.isFinite((app.stage as any)?.children?.length) ? (app.stage as any).children.length : null,
-              containerWidth: Number.isFinite(attachContainer?.clientWidth) ? attachContainer.clientWidth : null,
-              containerHeight: Number.isFinite(attachContainer?.clientHeight) ? attachContainer.clientHeight : null,
-              rendererWidth: Number.isFinite((app.renderer as any)?.screen?.width) ? (app.renderer as any).screen.width : null,
-              rendererHeight: Number.isFinite((app.renderer as any)?.screen?.height) ? (app.renderer as any).screen.height : null,
-              modelScaleX: Number.isFinite((model as any).scale?.x) ? (model as any).scale.x : null,
-              modelScaleY: Number.isFinite((model as any).scale?.y) ? (model as any).scale.y : null,
-              modelX: Number.isFinite((model as any).position?.x) ? (model as any).position.x : null,
-              modelY: Number.isFinite((model as any).position?.y) ? (model as any).position.y : null,
-              boundsWidth: Number.isFinite(bounds?.width) ? bounds.width : null,
-              boundsHeight: Number.isFinite(bounds?.height) ? bounds.height : null,
-              localBoundsWidth: Number.isFinite(localBounds?.width) ? localBounds.width : null,
-              localBoundsHeight: Number.isFinite(localBounds?.height) ? localBounds.height : null,
-            },
-          });
-        } catch {
-          // ignore debug trace bridge errors
-        }
         setModel(model);
         setModelLoadStatus('loaded');
         updateHitAreas(model);
@@ -538,28 +486,6 @@ export const usePetModel = ({
           getActionCapability: () => actionController.getCapability(),
         });
         stage2RuntimeRef.current = stage2Runtime;
-
-        try {
-          const globalObj = window as any;
-          globalObj.__PET_AI_ACTION__ = {
-            __from: 'stage1',
-            dispatch: (input: ActionIntentInput) => actionController.dispatch(input, 'window.__PET_AI_ACTION__'),
-            blink: () => actionController.dispatch({ kind: 'blink', reason: 'manual-bridge' }, 'window.__PET_AI_ACTION__.blink'),
-            mouth: () => actionController.dispatch({ kind: 'mouth', reason: 'manual-bridge' }, 'window.__PET_AI_ACTION__.mouth'),
-            shakeHead: () => actionController.dispatch({ kind: 'shake_head', reason: 'manual-bridge' }, 'window.__PET_AI_ACTION__.shakeHead'),
-            capability: () => actionController.getCapability(),
-          };
-          globalObj.__PET_AI_STAGE2__ = {
-            __from: 'stage2',
-            ask: (text: string, options?: { model?: string; temperature?: number; apiKey?: string; baseURL?: string }) => stage2Runtime.ask(text, options),
-            previewRag: (text: string) => stage2Runtime.previewRag(text),
-            setConfig: (patch: { apiKey?: string; baseURL?: string; model?: string; temperature?: number }) => stage2Runtime.setConfig(patch),
-            getConfig: () => stage2Runtime.getConfig(),
-            capability: () => actionController.getCapability(),
-          };
-        } catch {
-          // ignore bridge install failures
-        }
 
         attachEyeFollow(model);
         installMotionEyeGuard(model);
@@ -631,25 +557,6 @@ export const usePetModel = ({
           });
         }
       } catch (err) {
-        try {
-          window.SystemAPI?.debugTrace?.({
-            kind: 'modelLoadFailed',
-            profile: 'modelLoad',
-            level: 'warn',
-            request: {
-              source: 'renderer.usePetModel',
-              phase: 'load-failed',
-              ts: Date.now(),
-            },
-            model: {
-              settingsLoaded,
-              resolvedModelPath: modelPath,
-              error: String(err),
-            },
-          });
-        } catch {
-          // ignore debug trace bridge errors
-        }
         error('pet.model', 'load.failed', { modelPath, err: String(err) });
         setModelLoadStatus('error', (err as Error).message);
       }

@@ -4,6 +4,21 @@ import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
 
 type TtsUiDraft = ModelConfig['tts'];
 
+const normalizeTextSplitMode = (value: unknown): TtsUiDraft['textSplitMode'] => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (normalized === 'cut0' || normalized === 'cut1' || normalized === 'cut2'
+    || normalized === 'cut3' || normalized === 'cut4' || normalized === 'cut5') {
+    return normalized as TtsUiDraft['textSplitMode'];
+  }
+  if (normalized === 'none') return 'cut0';
+  if (normalized === 'cut50') return 'cut2';
+  if (normalized === 'cut_punc' || normalized === 'punctuation'
+    || normalized === 'cut_zh_comma' || normalized === 'cut_en_comma') {
+    return 'cut5';
+  }
+  return 'cut5';
+};
+
 const LANG_OPTIONS: Array<{ label: string; value: TtsUiDraft['textLang'] }> = [
   { label: '中文', value: 'zh' },
   { label: '日语', value: 'ja' },
@@ -13,12 +28,12 @@ const LANG_OPTIONS: Array<{ label: string; value: TtsUiDraft['textLang'] }> = [
 ];
 
 const SPLIT_OPTIONS: Array<{ label: string; value: TtsUiDraft['textSplitMode'] }> = [
-  { label: '四字切', value: 'cut4' },
-  { label: '50 字切', value: 'cut50' },
-  { label: '中文逗号', value: 'cut_zh_comma' },
-  { label: '英文逗号', value: 'cut_en_comma' },
-  { label: '标点符号', value: 'cut_punc' },
-  { label: '不切', value: 'none' },
+  { label: '不切', value: 'cut0' },
+  { label: '凑四句一切', value: 'cut1' },
+  { label: '凑 50 字一切', value: 'cut2' },
+  { label: '按中文句号切', value: 'cut3' },
+  { label: '按英文句号切', value: 'cut4' },
+  { label: '按标点符号切', value: 'cut5' },
 ];
 
 const clamp = (value: number, min: number, max: number) => {
@@ -62,7 +77,10 @@ export default function TTSSettingsPage({
   modelConfig: ModelConfig;
   onModelConfigChange: (next: ModelConfig) => Promise<void>;
 }) {
-  const remoteTtsConfig = useMemo<TtsUiDraft>(() => ({ ...modelConfig.tts }), [modelConfig.tts]);
+  const remoteTtsConfig = useMemo<TtsUiDraft>(() => ({
+    ...modelConfig.tts,
+    textSplitMode: normalizeTextSplitMode(modelConfig.tts.textSplitMode),
+  }), [modelConfig.tts]);
 
   const ttsDraft = useDebouncedRemoteDraft<TtsUiDraft>({
     remoteValue: remoteTtsConfig,
@@ -109,7 +127,7 @@ export default function TTSSettingsPage({
     <div className="p-4 space-y-4">
       <div>
         <h1 className="text-lg font-semibold">TTS 设置</h1>
-        <p className="text-xs text-base-content/60">已接入 AIAPI.tts IPC 与配置快照同步，当前阶段不触发语音合成。</p>
+        <p className="text-xs text-base-content/60">已接入 AIAPI.tts IPC 与配置快照同步，千问返回后会按本页配置触发语音合成。为保证浏览器兼容性，wav + 流式会自动降级为非流式。</p>
       </div>
 
       <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-4">

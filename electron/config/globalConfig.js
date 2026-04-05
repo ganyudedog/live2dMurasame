@@ -60,7 +60,7 @@ export const DEFAULT_MODEL_CONFIG = {
     promptLang: 'ja',
     refAudioPath: '',
     refAudioText: '',
-    textSplitMode: 'punctuation',
+    textSplitMode: 'cut5',
     speedFactor: 1,
     fragmentInterval: 0.3,
     useLastGeneratedAsRef: false,
@@ -135,6 +135,25 @@ const clampNumber = (value, fallback, min, max) => {
   return Math.max(min, Math.min(max, value));
 };
 
+const normalizeTextSplitMode = (value, fallback = 'cut5') => {
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === 'cut0' || normalized === 'cut1' || normalized === 'cut2'
+    || normalized === 'cut3' || normalized === 'cut4' || normalized === 'cut5') {
+    return normalized;
+  }
+
+  if (normalized === 'none') return 'cut0';
+  if (normalized === 'cut50') return 'cut2';
+  if (normalized === 'cut_punc' || normalized === 'punctuation'
+    || normalized === 'cut_zh_comma' || normalized === 'cut_en_comma') {
+    return 'cut5';
+  }
+
+  return fallback;
+};
+
 const normalizeTtsConfig = (input = {}) => {
   const source = toSafeObject(input);
   const next = { ...DEFAULT_MODEL_CONFIG.tts };
@@ -146,7 +165,7 @@ const normalizeTtsConfig = (input = {}) => {
   if (typeof source.promptLang === 'string' && source.promptLang.trim()) next.promptLang = source.promptLang.trim();
   if (typeof source.refAudioPath === 'string') next.refAudioPath = source.refAudioPath;
   if (typeof source.refAudioText === 'string') next.refAudioText = source.refAudioText;
-  if (typeof source.textSplitMode === 'string' && source.textSplitMode.trim()) next.textSplitMode = source.textSplitMode.trim();
+  next.textSplitMode = normalizeTextSplitMode(source.textSplitMode, next.textSplitMode);
   next.speedFactor = clampNumber(source.speedFactor, next.speedFactor, 0, 2);
   next.fragmentInterval = clampNumber(source.fragmentInterval, next.fragmentInterval, 0, 0.5);
   next.topK = Math.max(1, Math.min(100, Number.isFinite(source.topK) ? Math.floor(source.topK) : next.topK));

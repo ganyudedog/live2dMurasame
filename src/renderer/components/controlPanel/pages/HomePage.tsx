@@ -106,7 +106,7 @@ export default function HomePage({
           <header className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-medium">对话</div>
-              <div className="text-xs text-base-content/60">文字输入会经由 Electron 主链路转发到 AI 运行时</div>
+              <div className="text-xs text-base-content/60">文字输入会在前端请求千问，并在返回后触发 TTS 合成</div>
             </div>
             <button type="button" className="btn btn-ghost btn-xs" onClick={onClearChat} disabled={chatSending || chatMessages.length === 0}>
               清空
@@ -172,7 +172,7 @@ export default function HomePage({
           </div>
           {chatError && <div className="text-xs text-error">{chatError}</div>}
           <div className="text-xs text-base-content/60">
-            说明：这里的会话只做本地缓存恢复；真正的 RAG、memory 与后续语音输出都走 Electron 统一处理链。
+            说明：这里的会话只做本地缓存恢复；RAG 与 memory 在前端运行时处理，TTS 仅在千问返回文本后触发。
           </div>
         </section>
       </div>

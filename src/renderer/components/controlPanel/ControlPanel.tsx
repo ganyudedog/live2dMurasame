@@ -18,7 +18,9 @@ import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
 import { useConfigStore } from '../../store/useConfigStore';
 import { createStage2Runtime } from '../../../AI/core/stage2Runtime';
+import { createFrontendTtsRuntime } from '../../../AI/tts/runtime';
 import { info, warn } from '../../utils/log';
+import { toast } from 'react-hot-toast';
 
 const buildInitialSegmentActions = (touchMap: number[], actions: string[]) => {
   const count = Array.isArray(touchMap) ? touchMap.length : 0;
@@ -70,6 +72,18 @@ const createChatSessionCache = (patch?: Partial<ChatSessionCache>): ChatSessionC
   messages: patch?.messages ?? [],
   updatedAt: patch?.updatedAt ?? Date.now(),
 });
+
+const createControlPanelStage2Runtime = () => {
+  // 控制面板窗口没有 Live2D 实例，这里仅用于发起前端 LLM 请求与拿到结构化回复。
+  return createStage2Runtime({
+    dispatchAction: () => ({ ok: false, state: 'dropped', reason: 'no-capability' }),
+    getActionCapability: () => ({
+      canShakeHead: false,
+      canBlink: false,
+      canMouth: false,
+    }),
+  });
+};
 
 const ControlPanel: React.FC = () => {
   const { theme, toggle } = useThemeMode();
@@ -156,18 +170,44 @@ const ControlPanel: React.FC = () => {
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const stage2RuntimeRef = useRef<ReturnType<typeof createStage2Runtime> | null>(null);
+  const ttsRuntimeRef = useRef<ReturnType<typeof createFrontendTtsRuntime> | null>(null);
+  const mountedRef = useRef(false);
 
-  if (!stage2RuntimeRef.current) {
-    // 控制面板窗口没有 Live2D 实例，这里仅用于发起前端 LLM 请求与拿到结构化回复。
-    stage2RuntimeRef.current = createStage2Runtime({
-      dispatchAction: () => ({ ok: false, state: 'dropped', reason: 'no-capability' }),
-      getActionCapability: () => ({
-        canShakeHead: false,
-        canBlink: false,
-        canMouth: false,
-      }),
-    });
-  }
+  const ensureStage2Runtime = () => {
+    if (!stage2RuntimeRef.current) {
+      stage2RuntimeRef.current = createControlPanelStage2Runtime();
+    }
+    return stage2RuntimeRef.current;
+  };
+
+  const ensureTtsRuntime = () => {
+    if (!ttsRuntimeRef.current) {
+      ttsRuntimeRef.current = createFrontendTtsRuntime();
+    }
+    return ttsRuntimeRef.current;
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    ensureStage2Runtime();
+    ensureTtsRuntime();
+
+    return () => {
+      mountedRef.current = false;
+      try {
+        stage2RuntimeRef.current?.dispose();
+      } catch {
+        // ignore
+      }
+      stage2RuntimeRef.current = null;
+      try {
+        ttsRuntimeRef.current?.dispose();
+      } catch {
+        // ignore
+      }
+      ttsRuntimeRef.current = null;
+    };
+  }, []);
 
   const remoteApiKey = typeof globalModelConfig?.apiKey === 'string' ? globalModelConfig.apiKey : '';
   const remoteApiBaseUrl = typeof globalModelConfig?.baseURL === 'string' ? globalModelConfig.baseURL : '';
@@ -182,6 +222,7 @@ const ControlPanel: React.FC = () => {
       try {
         await updateGlobalModelConfig({ apiKey: next.apiKey, baseURL: next.apiBaseUrl });
       } catch (e) {
+        toast.error(String(e instanceof Error ? e.message : e));
         warn('controlPanel', 'aiSettings.persistGlobalFailed', { err: String(e) });
         throw e;
       }
@@ -242,6 +283,7 @@ const ControlPanel: React.FC = () => {
     try {
       await updateGlobalModelConfig(patch);
     } catch (e) {
+      toast.error(String(e instanceof Error ? e.message : e));
       warn('controlPanel', 'globalSettings.persistFailed', { via: 'configStore', err: String(e) });
       throw e;
     }
@@ -251,6 +293,7 @@ const ControlPanel: React.FC = () => {
     try {
       await updateModelConfig({ modelPath: currentModelPath ?? undefined, patch: next });
     } catch (e) {
+      toast.error(String(e instanceof Error ? e.message : e));
       warn('controlPanel', 'modelConfig.persistFailed', { err: String(e) });
       throw e;
     }
@@ -278,6 +321,7 @@ const ControlPanel: React.FC = () => {
       info('controlPanel', 'modelImport.ok', { modelDir, nextCount: nextPaths.length });
       return refresh();
     }).catch((err) => {
+      toast.error(String(err instanceof Error ? err.message : err));
       warn('controlPanel', 'modelImport.persistFailed', { err: String(err) });
     });
   };
@@ -356,16 +400,16 @@ const ControlPanel: React.FC = () => {
     setChatMessages((prev) => [...prev, userMessage, pendingMessage]);
 
     try {
-      const runtime = stage2RuntimeRef.current;
-      if (!runtime) {
-        throw new Error('Stage2Runtime 未初始化');
-      }
+      const runtime = ensureStage2Runtime();
       const result = await runtime.ask(text, {
         apiKey: globalAiDraft.draft.apiKey,
         baseURL: globalAiDraft.draft.apiBaseUrl,
       });
+      if (!mountedRef.current) return;
+
       if (!result?.ok || !result.reply?.reply_text) {
         const message = result?.error ?? '对话请求失败';
+        toast.error(message);
         setChatError(message);
         setChatMessages((prev) => prev.map((item) => {
           if (item.requestId !== requestId || item.role !== 'assistant') return item;
@@ -380,7 +424,7 @@ const ControlPanel: React.FC = () => {
       }
 
       // 双语言链路结构：UI 显示文本与语音合成文本先分离存放。
-      // 当前阶段先用 displayText 更新聊天 UI，speakText 为后续 TTS 接入预留。
+      // displayText 用于 UI 展示，speakText 只用于 TTS。
       const displayText = typeof result.reply.display_text === 'string' && result.reply.display_text.trim()
         ? result.reply.display_text.trim()
         : result.reply.reply_text;
@@ -388,13 +432,15 @@ const ControlPanel: React.FC = () => {
         ? result.reply.speak_text.trim()
         : result.reply.reply_text;
 
-      // 前端日志：记录双文本链路是否生效，便于后续多模型调试。
+      const ttsEnabled = Boolean(modelConfig.tts?.enabled);
+
+      // 前端日志：记录双文本链路与 TTS 触发状态，便于多模型调试。
       info('controlPanel.chat', 'submit.ok', {
         requestId,
         hasDisplayText: Boolean(displayText),
         hasSpeakText: Boolean(speakText),
-        ttsEnabled: false,
-        ttsProvider: 'pending-frontend',
+        ttsEnabled,
+        ttsProvider: 'frontend.gpt-sovits',
       });
 
       setChatMessages((prev) => prev.map((item) => {
@@ -406,8 +452,34 @@ const ControlPanel: React.FC = () => {
           error: undefined,
         };
       }));
+
+      // 唯一触发约束：只在千问返回文本后发起 TTS。
+      const ttsRuntime = ensureTtsRuntime();
+      if (ttsRuntime) {
+        void ttsRuntime.speakFromQwenReply({
+          requestId,
+          speakText,
+          displayText,
+        }).then((ttsResult) => {
+          info('controlPanel.chat', 'tts.done', {
+            requestId,
+            ok: ttsResult.ok,
+            skipped: Boolean(ttsResult.skipped),
+            reason: ttsResult.reason,
+            streamed: ttsResult.streamed,
+            bytesReceived: ttsResult.bytesReceived,
+            mimeType: ttsResult.mimeType,
+          });
+        }).catch((ttsError) => {
+          const message = String(ttsError instanceof Error ? ttsError.message : ttsError);
+          toast.error(message);
+          warn('controlPanel.chat', 'tts.failed', { requestId, err: message });
+        });
+      }
     } catch (error) {
+      if (!mountedRef.current) return;
       const message = String(error instanceof Error ? error.message : error);
+      toast.error(message);
       setChatError(message);
       setChatMessages((prev) => prev.map((item) => {
         if (item.requestId !== requestId || item.role !== 'assistant') return item;
@@ -419,7 +491,9 @@ const ControlPanel: React.FC = () => {
         };
       }));
     } finally {
-      setChatSending(false);
+      if (mountedRef.current) {
+        setChatSending(false);
+      }
     }
   };
 

@@ -50,7 +50,7 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     promptLang: 'ja',
     refAudioPath: '',
     refAudioText: '',
-    textSplitMode: 'cut_punc',
+    textSplitMode: 'cut5',
     speedFactor: 1,
     fragmentInterval: 0.3,
     useLastGeneratedAsRef: false,

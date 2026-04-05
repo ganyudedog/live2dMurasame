@@ -5,6 +5,7 @@
  */
 import type { LogEntry, LogLevel } from './types';
 import { nowMs } from './time';
+import { toast } from 'react-hot-toast';
 
 type AnyRecord = Record<string, unknown>;
 
@@ -67,6 +68,22 @@ const getMirrorEnabled = (): boolean => {
 };
 
 let ipcSeq = 0;
+const errorToastThrottleMap = new Map<string, number>();
+
+const notifyErrorToast = (entry: LogEntry): void => {
+  try {
+    const fromData = entry.data && typeof entry.data.err === 'string' ? entry.data.err : '';
+    const message = String(entry.msg || fromData || `${entry.ns}.${entry.event}`);
+    const key = message.slice(0, 120);
+    const now = Date.now();
+    const last = errorToastThrottleMap.get(key) ?? 0;
+    if (now - last < 1500) return;
+    errorToastThrottleMap.set(key, now);
+    toast.error(message);
+  } catch {
+    // ignore
+  }
+};
 
 const sanitizeIpcData = (value: unknown): AnyRecord | undefined => {
   const record = safeCopyRecord(value);
@@ -131,6 +148,9 @@ const write = (level: LogLevel, ns: string, event: string, data?: AnyRecord, msg
     data: data ? safeCopyRecord(data) : undefined,
   };
   emit(entry);
+  if (level === 'error') {
+    notifyErrorToast(entry);
+  }
   mirrorToMain(entry);
 };
 

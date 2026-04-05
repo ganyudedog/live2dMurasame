@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useRef } from 'react';
+import { toast } from 'react-hot-toast';
 
 type EqualityFn<T> = (left: T, right: T) => boolean;
 
@@ -15,6 +16,10 @@ type Action<T> =
   | { type: 'rollback'; rollback: T; requestId: number };
 
 const defaultEquality = <T,>(left: T, right: T): boolean => Object.is(left, right);
+
+const toErrorMessage = (value: unknown): string => {
+  return String(value instanceof Error ? value.message : value || '保存失败');
+};
 
 const createReducer = <T,>() => {
   return (state: State<T>, action: Action<T>): State<T> => {
@@ -85,8 +90,8 @@ export const useDebouncedRemoteDraft = <T,>(options: {
       const latest = latestCommitRef.current;
       if (!latest) return;
       latestCommitRef.current = null;
-      onCommit(latest.next).catch(() => {
-        // ignore
+      onCommit(latest.next).catch((e) => {
+        toast.error(toErrorMessage(e));
       });
     };
   }, [onCommit]);
@@ -112,7 +117,8 @@ export const useDebouncedRemoteDraft = <T,>(options: {
       const latest = latestCommitRef.current;
       if (!latest) return;
       latestCommitRef.current = null;
-      onCommit(latest.next).catch(() => {
+      onCommit(latest.next).catch((e) => {
+        toast.error(toErrorMessage(e));
         if (requestIdRef.current !== latest.requestId) return;
         const rollback = remoteRef.current;
         dispatch({ type: 'rollback', rollback, requestId: latest.requestId });

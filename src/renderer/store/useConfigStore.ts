@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { debug, info, warn } from '../utils/log';
+import { toast } from 'react-hot-toast';
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null;
@@ -151,6 +152,7 @@ export const useConfigStore = create<ConfigState>((set) => {
           hasFileUrl: !!nextFileUrl,
         });
       } catch (e) {
+        toast.error(String(e instanceof Error ? e.message : e));
         warn('config', 'refresh.failed', { err: String(e) });
         throw e;
       }
@@ -168,6 +170,7 @@ export const useConfigStore = create<ConfigState>((set) => {
         }));
         return (next as PetGlobalModelConfig | undefined) ?? null;
       } catch (e) {
+        toast.error(String(e instanceof Error ? e.message : e));
         warn('config', 'updateGlobalModelConfig.failed', { err: String(e) });
         throw e;
       }
@@ -189,6 +192,7 @@ export const useConfigStore = create<ConfigState>((set) => {
         });
         return next ?? null;
       } catch (e) {
+        toast.error(String(e instanceof Error ? e.message : e));
         warn('config', 'updateLive2denvConfig.failed', { err: String(e) });
         throw e;
       }
@@ -211,6 +215,7 @@ export const useConfigStore = create<ConfigState>((set) => {
         }));
         return result;
       } catch (e) {
+        toast.error(String(e instanceof Error ? e.message : e));
         warn('config', 'updateModelConfig.failed', { err: String(e) });
         throw e;
       }
@@ -225,6 +230,7 @@ export const useConfigStore = create<ConfigState>((set) => {
         const modelDir = await modelApi.pickModelFile();
         return typeof modelDir === 'string' ? modelDir : null;
       } catch (e) {
+        toast.error(String(e instanceof Error ? e.message : e));
         warn('config', 'pickModelFile.failed', { err: String(e) });
         throw e;
       }

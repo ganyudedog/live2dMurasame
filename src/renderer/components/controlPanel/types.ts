@@ -94,7 +94,7 @@ export type ModelConfig = {
     promptLang: 'zh' | 'ja' | 'en' | 'ko' | 'yue';
     refAudioPath: string;
     refAudioText: string;
-    textSplitMode: 'cut4' | 'cut50' | 'cut_zh_comma' | 'cut_en_comma' | 'cut_punc' | 'none';
+    textSplitMode: 'cut0' | 'cut1' | 'cut2' | 'cut3' | 'cut4' | 'cut5';
     speedFactor: number;
     fragmentInterval: number;
     useLastGeneratedAsRef: boolean;

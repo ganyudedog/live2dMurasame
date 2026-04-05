@@ -192,6 +192,7 @@ const ensureControlPanelWindow = () => {
     });
 
     loadControlPanelWindow(controlPanelWindow);
+    controlPanelWindow.openDevTools(true);
 
     controlPanelWindow.on('close', (event) => {
         if (!isQuitting) {

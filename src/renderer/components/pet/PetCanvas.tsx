@@ -30,7 +30,8 @@ import { solveContextZoneLayout } from './runtime/geometry/solvers/ContextZoneLa
 import { solveInteractivity } from './runtime/geometry/solvers/InteractivitySolver';
 import { solveContextZoneActivity } from './runtime/geometry/solvers/ContextZoneActivitySolver';
 import { solveModelLayout } from './runtime/geometry/solvers/ModelLayoutSolver';
-import { debug } from '../../utils/log';
+import { createFrontendTtsRuntime } from '../../../AI/tts/runtime';
+import { debug, warn } from '../../utils/log';
 import { useConfigStore } from '../../store/useConfigStore';
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
@@ -103,9 +104,11 @@ const PetCanvas: React.FC = () => {
   const live2denvConfig = useConfigStore((s) => s.live2denvConfig);
   const globalModelConfig = useConfigStore((s) => s.globalModelConfig);
   const activeModelFileUrl = useConfigStore((s) => s.activeModelFileUrl);
+  const activeModelPath = useConfigStore((s) => s.activeModelPath);
   const persistedModelConfig = useConfigStore((s) => s.modelConfig);
   const hydrated = useConfigStore((s) => s.hydrated);
   const refreshConfigSnapshot = useConfigStore((s) => s.refresh);
+  
 
   const eyeMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.VITE_EYE_MAX_UP, 0.5), [live2denvConfig]);
   const angleMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.VITE_ANGLE_MAX_UP, 20), [live2denvConfig]);
@@ -220,6 +223,76 @@ const PetCanvas: React.FC = () => {
     const clampedScale = Math.min(2, Math.max(0.3, globalModelConfig.scale));
     sharedStoreClient.dispatchPatch([{ path: 'global.scale', value: clampedScale }]);
   }, [globalModelConfig?.scale]);
+
+  // tts预热模型切换
+  const persistedTtsConfig = persistedModelConfig?.tts;
+  const globalTtsMediaType = globalModelConfig?.ttsMediaType;
+  const globalTtsStreamingMode = globalModelConfig?.ttsStreamingMode;
+  
+  const ttsWarmupRuntimeRef = useRef<ReturnType<typeof createFrontendTtsRuntime> | null>(null);
+  const ensureTtsWarmupRuntime = useCallback(() => {
+    if (!ttsWarmupRuntimeRef.current) {
+      ttsWarmupRuntimeRef.current = createFrontendTtsRuntime();
+    }
+    return ttsWarmupRuntimeRef.current;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      try {
+        ttsWarmupRuntimeRef.current?.dispose();
+      } catch {
+        // ignore
+      }
+      ttsWarmupRuntimeRef.current = null;
+    };
+  }, []);
+
+  // Electron 主窗口启动后与配置变更后，提前触发模型预热，尽量避免首句 TTS 才切权重。
+  useEffect(() => {
+    if (!hydrated) return;
+
+    const tts = persistedTtsConfig;
+    const enabled = Boolean(tts?.enabled);
+    if (!enabled) return;
+
+    const baseUrl = typeof tts?.baseUrl === 'string' ? tts.baseUrl.trim() : '';
+    if (!baseUrl) return;
+
+    const gptWeightsPath = typeof tts?.gptWeightsPath === 'string' ? tts.gptWeightsPath.trim() : '';
+    const sovitsWeightsPath = typeof tts?.sovitsWeightsPath === 'string' ? tts.sovitsWeightsPath.trim() : '';
+
+    // 自动预热要求两份权重都配置完成后再触发，避免路径编辑中间态导致无效切换。
+    if (!gptWeightsPath || !sovitsWeightsPath) return;
+
+    const timer = window.setTimeout(() => {
+      const runtime = ensureTtsWarmupRuntime();
+      void runtime.warmupFromCurrentConfig('pet-startup-or-config-change').then((result) => {
+        if (result.ok || result.skipped) return;
+        warn('pet.tts', 'warmup.failed', {
+          reason: result.reason,
+          activeModelPath,
+        });
+      }).catch((e) => {
+        warn('pet.tts', 'warmup.failed', {
+          reason: 'pet-startup-or-config-change',
+          err: String(e instanceof Error ? e.message : e),
+          activeModelPath,
+        });
+      });
+    }, 260);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    hydrated,
+    activeModelPath,
+    persistedTtsConfig,
+    globalTtsMediaType,
+    globalTtsStreamingMode,
+    ensureTtsWarmupRuntime,
+  ]);
 
 
   // 动作相关

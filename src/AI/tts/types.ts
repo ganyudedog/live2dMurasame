@@ -27,7 +27,16 @@ export interface QwenTtsTriggerInput {
 }
 
 export interface TtsSynthesisRequest {
-  text: string;
+  requestId: string;
+  speakText: string;
+  displayText?: string;
+  config: TtsRuntimeConfig;
+  signal?: AbortSignal;
+}
+
+export interface TtsCancelRequest {
+  requestId: string;
+  reason?: string;
   config: TtsRuntimeConfig;
   signal?: AbortSignal;
 }
@@ -53,4 +62,10 @@ export interface TtsRunResult {
   streamed?: boolean;
   bytesReceived?: number;
   mimeType?: string | null;
+}
+
+export interface TtsWarmupResult {
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
 }

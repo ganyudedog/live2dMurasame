@@ -1,21 +1,34 @@
-import type { TtsSynthesisRequest } from './types';
+import {
+  fromSessionCreateServer,
+  getJson,
+  normalizeBaseUrl,
+  postRequest,
+  toModelSwitchServer,
+  toSessionCreateServer,
+  toTtsCancelServer,
+  toTtsSpeakServer,
+} from '../../../api/service/liveKitService';
+import type {
+  LiveKitModelSwitchRequest,
+  LiveKitModelSwitchResponseServer,
+  LiveKitSessionCreateResponseServer,
+  LiveKitTtsSpeakRequest,
+} from '../../../api/model/liveKitModel';
+import type { TtsCancelRequest, TtsSynthesisRequest } from './types';
+import toast from 'react-hot-toast';
 
-// 记录已应用的权重路径，避免重复切权请求。
-type AppliedWeightsState = {
-  gptWeightsPath: string;
-  sovitsWeightsPath: string;
+type V3RuntimeState = {
+  sessionId: string;
+  expiresAt: number;
+  configVersion: string;
+  modelReady: boolean;
 };
 
-const appliedWeightsByBaseUrl = new Map<string, AppliedWeightsState>();
+const stateByBaseUrl = new Map<string, V3RuntimeState>();
 
 const trimText = (value: unknown): string => {
   if (typeof value !== 'string') return '';
   return value.trim();
-};
-
-const normalizeBaseUrl = (baseUrl: string): string => {
-  const trimmed = trimText(baseUrl);
-  return trimmed.replace(/\/+$/, '');
 };
 
 const clampNumber = (value: unknown, fallback: number, min: number, max: number): number => {
@@ -70,90 +83,181 @@ const normalizeTextSplitMethod = (value: unknown): string => {
   return 'cut5';
 };
 
-// 调用后端切换权重的接口，通知后端切换到指定的权重路径。
-const callSetWeightsEndpoint = async (
+const buildConfigVersion = (config: TtsSynthesisRequest['config']): string => {
+  const seed = [
+    trimText(config.gptWeightsPath),
+    trimText(config.sovitsWeightsPath),
+    trimText(config.refAudioPath),
+    trimText(config.refAudioText),
+    trimText(config.textLang),
+    trimText(config.promptLang),
+    normalizeTextSplitMethod(config.textSplitMode),
+  ].join('|');
+
+  let hash = 2166136261;
+  for (let idx = 0; idx < seed.length; idx += 1) {
+    hash ^= seed.charCodeAt(idx);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return `cfg_${(hash >>> 0).toString(16)}`;
+};
+
+const ensureSession = async (baseUrl: string, signal?: AbortSignal): Promise<string> => {
+  const cached = stateByBaseUrl.get(baseUrl);
+  if (cached && cached.expiresAt > Date.now() + 5000) {
+    return cached.sessionId;
+  }
+
+  const raw = await postRequest<LiveKitSessionCreateResponseServer>(
+    baseUrl,
+    '/v3/session/create',
+    toSessionCreateServer({
+      client: 'desktop',
+      version: '0.1.0',
+      capabilities: {
+        livekit: true,
+        audioDownlink: true,
+      },
+    }),
+    signal,
+  );
+
+  const data = fromSessionCreateServer(raw);
+  const expiresInMs = Math.max(30, data.livekit.expiresIn) * 1000;
+  const nextState: V3RuntimeState = {
+    sessionId: data.sessionId,
+    expiresAt: Date.now() + expiresInMs,
+    configVersion: cached?.configVersion ?? '',
+    modelReady: cached?.modelReady ?? false,
+  };
+  stateByBaseUrl.set(baseUrl, nextState);
+  return data.sessionId;
+};
+
+const waitUntilModelReady = async (baseUrl: string, sessionId: string, signal?: AbortSignal): Promise<boolean> => {
+  for (let idx = 0; idx < 8; idx += 1) {
+    if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError');
+
+    const status = await getJson<{ ready?: boolean }>(
+      baseUrl,
+      `/v3/model/current?session_id=${encodeURIComponent(sessionId)}`,
+      signal,
+    ).catch(() => ({ ready: false }));
+    if (status.ready) return true;
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 150);
+    });
+  }
+  return false;
+};
+
+const ensureModelReady = async (
   baseUrl: string,
-  endpoint: 'set_gpt_weights' | 'set_sovits_weights',
-  weightsPath: string,
+  sessionId: string,
+  requestId: string,
+  config: TtsSynthesisRequest['config'],
+  options?: { silent?: boolean },
   signal?: AbortSignal,
 ): Promise<void> => {
-  const cleanPath = trimText(weightsPath);
-  if (!cleanPath) return;
+  const configVersion = buildConfigVersion(config);
+  const cached = stateByBaseUrl.get(baseUrl);
+  if (cached && cached.configVersion === configVersion && cached.modelReady) {
+    return;
+  }
 
-  const query = `weights_path=${encodeURIComponent(cleanPath)}`;
-  const requestUrl = `${baseUrl}/${endpoint}?${query}`;
-  const response = await fetch(requestUrl, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json, text/plain;q=0.9, */*;q=0.8',
+  // 构建模型切换请求，通知后端加载模型权重并准备就绪。后端接口会根据请求中的权重路径等信息判断是否需要重新加载模型。
+  const request: LiveKitModelSwitchRequest = {
+    sessionId,
+    requestId: `${requestId}_model`,
+    payload: {
+      reason: cached ? 'settings_update' : 'startup',
+      configVersion,
+      modelId: trimText(config.gptWeightsPath) || 'default_local_model',
+      gptWeightsPath: trimText(config.gptWeightsPath),
+      sovitsWeightsPath: trimText(config.sovitsWeightsPath),
+      refAudioPath: trimText(config.refAudioPath),
+      promptText: trimText(config.refAudioText),
+      promptLang: trimText(config.promptLang) || 'zh',
     },
+  };
+
+  const raw = await postRequest<LiveKitModelSwitchResponseServer>(
+    baseUrl,
+    '/v3/model/switch',
+    toModelSwitchServer(request),
     signal,
+  );
+
+  let modelReady = Boolean(raw.model_ready);
+  if (!modelReady) {
+    modelReady = await waitUntilModelReady(baseUrl, sessionId, signal);
+  }
+
+  stateByBaseUrl.set(baseUrl, {
+    sessionId,
+    expiresAt: cached?.expiresAt ?? Date.now() + 3600_000,
+    configVersion,
+    modelReady,
   });
 
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => '');
-    const detail = bodyText ? `, body=${bodyText.slice(0, 240)}` : '';
-    throw new Error(`切换权重失败: ${endpoint} HTTP ${response.status}${detail}`);
+  if (!modelReady) {
+    if (!options?.silent) {
+      toast.error('模型加载超时，请检查后端状态与权重配置');
+    }
+    throw new Error('模型未就绪（MODEL_NOT_READY），请检查权重配置与后端状态');
   }
 };
 
-// 根据当前 TTS 配置中的权重路径与已应用的权重路径对比，决定是否需要调用切换权重的接口来切换到目标权重。
-const ensureDynamicWeights = async (
-  baseUrl: string,
+export const warmupTtsModel = async (
   config: TtsSynthesisRequest['config'],
-  signal?: AbortSignal,
+  options?: { reason?: string; signal?: AbortSignal },
 ): Promise<void> => {
-  const gptWeightsPath = trimText(config.gptWeightsPath);
-  const sovitsWeightsPath = trimText(config.sovitsWeightsPath);
+  const baseUrl = normalizeBaseUrl(config.baseUrl);
+  if (!baseUrl) return;
 
-  if (!gptWeightsPath && !sovitsWeightsPath) return;
-
-  const applied = appliedWeightsByBaseUrl.get(baseUrl) ?? {
-    gptWeightsPath: '',
-    sovitsWeightsPath: '',
-  };
-
-  if (gptWeightsPath && gptWeightsPath !== applied.gptWeightsPath) {
-    await callSetWeightsEndpoint(baseUrl, 'set_gpt_weights', gptWeightsPath, signal);
-    applied.gptWeightsPath = gptWeightsPath;
-  }
-
-  if (sovitsWeightsPath && sovitsWeightsPath !== applied.sovitsWeightsPath) {
-    await callSetWeightsEndpoint(baseUrl, 'set_sovits_weights', sovitsWeightsPath, signal);
-    applied.sovitsWeightsPath = sovitsWeightsPath;
-  }
-
-  appliedWeightsByBaseUrl.set(baseUrl, applied);
+  const sessionId = await ensureSession(baseUrl, options?.signal);
+  const requestId = `warmup_${(options?.reason || 'auto').replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now().toString(36)}`;
+  await ensureModelReady(baseUrl, sessionId, requestId, config, { silent: true }, options?.signal);
 };
 
-// 构建请求体
-const buildTtsPayload = (text: string, config: TtsSynthesisRequest['config']) => {
+const buildTtsPayload = (
+  requestId: string,
+  speakText: string,
+  displayText: string,
+  sessionId: string,
+  config: TtsSynthesisRequest['config'],
+) => {
   const transport = normalizeTransport(config.mediaType, config.streamingMode);
-  return {
-    text,
-    text_lang: trimText(config.textLang) || 'ja',
-    prompt_lang: trimText(config.promptLang) || 'ja',
-    prompt_text: trimText(config.refAudioText),
-    ref_audio_path: trimText(config.refAudioPath),
-    text_split_method: normalizeTextSplitMethod(config.textSplitMode),
-    speed_factor: clampNumber(config.speedFactor, 1, 0, 2),
-    fragment_interval: clampNumber(config.fragmentInterval, 0.3, 0, 0.5),
-    top_k: clampInteger(config.topK, 20, 1, 100),
-    top_p: clampNumber(config.topP, 0.8, 0, 1),
-    temperature: clampNumber(config.temperature, 0.5, 0, 1),
-    media_type: transport.mediaType,
-    streaming_mode: transport.streamingMode,
-    use_last_generated_as_ref: Boolean(config.useLastGeneratedAsRef),
-    // 兼容部分二次封装服务：若后端读取该字段也可直接生效。
-    gpt_weights_path: trimText(config.gptWeightsPath),
-    sovits_weights_path: trimText(config.sovitsWeightsPath),
+  const request: LiveKitTtsSpeakRequest = {
+    sessionId,
+    requestId,
+    ts: Date.now(),
+    payload: {
+      displayText,
+      speakText,
+      textLang: trimText(config.textLang) || 'ja',
+      promptLang: trimText(config.promptLang) || 'ja',
+      refAudioPath: trimText(config.refAudioPath),
+      promptText: trimText(config.refAudioText),
+      textSplitMethod: normalizeTextSplitMethod(config.textSplitMode),
+      speedFactor: clampNumber(config.speedFactor, 1, 0, 2),
+      fragmentInterval: clampNumber(config.fragmentInterval, 0.3, 0, 0.5),
+      topK: clampInteger(config.topK, 20, 1, 100),
+      topP: clampNumber(config.topP, 0.8, 0, 1),
+      temperature: clampNumber(config.temperature, 0.5, 0, 1),
+      streamingMode: transport.streamingMode,
+      mediaType: transport.mediaType,
+    },
   };
+
+  return toTtsSpeakServer(request);
 };
 
-// 发送请求到 TTS 服务，获取合成结果的响应对象，如果请求失败则抛出相应的错误。
-export const requestTtsSynthesis = async ({ text, config, signal }: TtsSynthesisRequest): Promise<Response> => {
-  const cleanText = trimText(text);
-  if (!cleanText) {
+// 语音合成接口，返回原始 Response 以支持流式处理与多种媒体类型。
+export const requestTtsSynthesis = async ({ requestId, speakText, displayText, config, signal }: TtsSynthesisRequest): Promise<Response> => {
+  const cleanSpeakText = trimText(speakText);
+  if (!cleanSpeakText) {
     throw new Error('TTS 文本为空，无法发起合成');
   }
 
@@ -162,12 +266,11 @@ export const requestTtsSynthesis = async ({ text, config, signal }: TtsSynthesis
     throw new Error('TTS 服务地址为空，请先在 TTS 设置中配置');
   }
 
-  const endpoint = `${baseUrl}/tts`;
+  const sessionId = await ensureSession(baseUrl, signal);
+  await ensureModelReady(baseUrl, sessionId, requestId, config, undefined, signal);
 
-  // v2 API 已提供动态切权接口，这里在合成前先确保目标权重已切换。
-  await ensureDynamicWeights(baseUrl, config, signal);
-
-  const payload = buildTtsPayload(cleanText, config);
+  const endpoint = `${baseUrl}/v3/tts/speak`;
+  const payload = buildTtsPayload(requestId, cleanSpeakText, trimText(displayText) || cleanSpeakText, sessionId, config);
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -186,4 +289,26 @@ export const requestTtsSynthesis = async ({ text, config, signal }: TtsSynthesis
   }
 
   return response;
+};
+
+export const cancelTtsSynthesis = async ({ requestId, reason, config, signal }: TtsCancelRequest): Promise<void> => {
+  const baseUrl = normalizeBaseUrl(config.baseUrl);
+  if (!baseUrl) return;
+
+  const cached = stateByBaseUrl.get(baseUrl);
+  if (!cached?.sessionId) return;
+
+  await postRequest<{ ok?: boolean }>(
+    baseUrl,
+    '/v3/tts/cancel',
+    toTtsCancelServer({
+      sessionId: cached.sessionId,
+      requestId,
+      ts: Date.now(),
+      payload: {
+        reason,
+      },
+    }),
+    signal,
+  );
 };

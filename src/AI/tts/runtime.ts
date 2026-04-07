@@ -1,9 +1,10 @@
 import toast from 'react-hot-toast';
 import { error, info, warn } from '../../renderer/utils/log';
-import { requestTtsSynthesis } from './client';
+import { cancelTtsSynthesis, requestTtsSynthesis, warmupTtsModel } from './client';
 import { TtsStreamPlayer } from './streamPlayer';
-import type { QwenTtsTriggerInput, TtsRunResult, TtsRuntimeConfig } from './types';
+import type { QwenTtsTriggerInput, TtsRunResult, TtsRuntimeConfig, TtsWarmupResult } from './types';
 
+// 规范化数据
 const clampNumber = (value: unknown, fallback: number, min: number, max: number): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, value));
@@ -75,6 +76,8 @@ const isAbortError = (value: unknown): boolean => {
   return String(value).includes('AbortError');
 };
 
+
+// 前端 TTS 运行时，负责处理来自前端的 TTS 请求，管理请求状态和播放，调用后端 API，并处理取消和错误等情况。
 export class FrontendTtsRuntime {
   private readonly player = new TtsStreamPlayer();
 
@@ -91,7 +94,85 @@ export class FrontendTtsRuntime {
     this.player.dispose();
   }
 
+  // 根据当前配置进行预热，预热过程会检查必要的配置项并调用后端接口，记录日志以供分析预热失败的原因和时长。
+  async warmupFromCurrentConfig(reason = 'auto-warmup'): Promise<TtsWarmupResult> {
+    if (this.disposed) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'runtime-disposed',
+      };
+    }
+
+    const snapshot = window.ConfigAPI?.getSnapshot?.();
+    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts, snapshot?.globalModelConfig);
+
+    if (!ttsConfig.enabled) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'tts-disabled',
+      };
+    }
+
+    if (!ttsConfig.baseUrl) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'base-url-empty',
+      };
+    }
+
+    const startedAt = performance.now();
+    try {
+      await warmupTtsModel(ttsConfig, { reason });
+      const latencyMs = Math.round(performance.now() - startedAt);
+      info('ai.tts', 'warmup.ok', {
+        reason,
+        latencyMs,
+      });
+      return {
+        ok: true,
+      };
+    } catch (rawError) {
+      if (isAbortError(rawError)) {
+        return {
+          ok: false,
+          skipped: true,
+          reason: 'aborted',
+        };
+      }
+
+      warn('ai.tts', 'warmup.failed', {
+        reason,
+        err: String(rawError instanceof Error ? rawError.message : rawError),
+      });
+      return {
+        ok: false,
+        reason: 'warmup-failed',
+      };
+    }
+  }
+
   cancelActive(reason: string): void {
+    const requestId = this.activeRequestId;
+    if (requestId) {
+      const snapshot = window.ConfigAPI?.getSnapshot?.();
+      const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts, snapshot?.globalModelConfig);
+      if (ttsConfig.baseUrl) {
+        void cancelTtsSynthesis({
+          requestId,
+          reason,
+          config: ttsConfig,
+        }).catch((e) => {
+          warn('ai.tts', 'request.cancel.remoteFailed', {
+            requestId,
+            err: String(e instanceof Error ? e.message : e),
+          });
+        });
+      }
+    }
+
     const active = this.activeAbortController;
     if (active) {
       try {
@@ -109,6 +190,7 @@ export class FrontendTtsRuntime {
   async speakFromQwenReply(input: QwenTtsTriggerInput): Promise<TtsRunResult> {
     const requestId = normalizeText(input.requestId) || `tts_${Date.now().toString(36)}`;
     const speakText = normalizeText(input.speakText);
+    const displayText = normalizeText(input.displayText) || speakText;
     if (!speakText) {
       return {
         ok: false,
@@ -170,7 +252,9 @@ export class FrontendTtsRuntime {
 
     try {
       const response = await requestTtsSynthesis({
-        text: speakText,
+        requestId,
+        speakText,
+        displayText,
         config: ttsConfig,
         signal: controller.signal,
       });

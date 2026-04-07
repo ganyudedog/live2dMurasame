@@ -38,12 +38,6 @@ const normalizeTextSplitMode = (value: unknown): TtsUiDraft['textSplitMode'] => 
     || normalized === 'cut3' || normalized === 'cut4' || normalized === 'cut5') {
     return normalized as TtsUiDraft['textSplitMode'];
   }
-  if (normalized === 'none') return 'cut0';
-  if (normalized === 'cut50') return 'cut2';
-  if (normalized === 'cut_punc' || normalized === 'punctuation'
-    || normalized === 'cut_zh_comma' || normalized === 'cut_en_comma') {
-    return 'cut5';
-  }
   return 'cut5';
 };
 
@@ -126,6 +120,7 @@ export default function TTSSettingsPage({
   });
 
   const draft = ttsDraft.draft;
+  // 拖动条的所有state聚合
   const [sliderPreviewState, setSliderPreviewState] = useState<SliderState | null>(null);
   const draftRef = useRef(draft);
   const sliderPendingPatchRef = useRef<Partial<SliderState>>({});
@@ -135,6 +130,7 @@ export default function TTSSettingsPage({
     draftRef.current = draft;
   }, [draft]);
 
+  // 同步拖动条的变更
   const flushSliderPatch = useCallback((clearPreview = false) => {
     if (sliderDebounceTimerRef.current != null) {
       window.clearTimeout(sliderDebounceTimerRef.current);
@@ -160,6 +156,7 @@ export default function TTSSettingsPage({
     }
   }, [ttsDraft]);
 
+  // 防抖合并频繁的变更，避免在拖动过程中频繁提交更新导致性能问题，同时在组件卸载时确保变更被提交。
   const scheduleSliderPatch = useCallback((patch: Partial<SliderState>) => {
     sliderPendingPatchRef.current = {
       ...sliderPendingPatchRef.current,

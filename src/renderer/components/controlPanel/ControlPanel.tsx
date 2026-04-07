@@ -242,7 +242,7 @@ const ControlPanel: React.FC = () => {
     ? globalModelConfig.ttsStreamingMode
     : true;
 
-  // 破坏性迁移：将 displayLang/ttsMediaType/ttsStreamingMode 统一纳入全局 AI 设置草稿。
+  // 将 displayLang/ttsMediaType/ttsStreamingMode 统一纳入全局 AI 设置草稿。
   const globalAiDraft = useDebouncedRemoteDraft({
     remoteValue: {
       apiBaseUrl: remoteApiBaseUrl,

@@ -854,151 +854,133 @@ V1 精简原则：
 2. 再根据体量决定是否迁移到 SQLite
 3. 若长期记忆需要语义检索，再接入向量库
 
-### 16.6 阶段 4（待实现）
+### 16.6 阶段 4（实施方法：LiveKit + API v3）
 
 目标：
 
-- 文本、动作、语音并行
+- 在本机场景下跑通“用户文本 -> Qwen 双文本输出 -> TTS 语音播放”的稳定闭环。
+- 与阶段 3 的动作链并行，不阻塞 UI 展示与动作反馈。
 
 范围：
 
-- 采用 GPT-SoVITS 本地 HTTP 服务（`api_v2.py`）作为 TTS Provider
-- 以 Electron 主进程为统一代理层（Renderer 不直接跨域请求 Python 服务）
-- 每个模型拥有独立 TTS 配置，避免不同角色互相污染
+- 采用 Python 端 `api_v3.py` 作为 v3 接口后端。
+- 当前以 HTTP 联调适配接口打通链路，后续再切到 LiveKit Data Channel。
+- 不做兼容：阶段 4 只认 v3 语义与 Qwen 双文本协议。
 
 架构结论：
 
-1. Python 端 `api_v2.py` 支持“音频流式返回”，但不是标准 SSE（`text/event-stream`）
-2. 长连接能力由服务端决定，前端仅消费流
-3. 本项目采用：`Renderer -> IPC -> Electron Main -> GPT-SoVITS HTTP`
-4. 不建议 Renderer 直接请求 `127.0.0.1:9880`，避免 CORS/路径暴露/参数绕过校验
+1. 当前可跑通路径为：`用户文本 -> Stage2Runtime.ask -> displayText/speakText -> /v3/tts/speak -> 播放`。
+2. `displayText` 仅用于 UI 展示，`speakText` 仅用于语音合成。
+3. 模型切换统一走 `/v3/model/switch`，不再使用旧切权接口语义。
+4. ASR 不在阶段 4 范围内。
 
-#### 16.6.1 每模型配置（新增）
+#### 16.6.1 阶段 4 接口基线（按 api_v3.py）
 
-在模型独立配置中新增 `tts` 节点（示例字段）：
+核心接口：
 
-```json
-{
-	"tts": {
-		"enabled": true,
-		"provider": "gpt-sovits",
-		"baseUrl": "http://127.0.0.1:9880",
-		"gptWeightsPath": "GPT_weights_v2Pro/murasame_ja_v1-e24.ckpt",
-		"sovitsWeightsPath": "SoVITS_weights_v2Pro/murasame_ja_v1_e16_s3056.pth",
-		"textLang": "ja",
-		"promptLang": "ja",
-		"refAudioPath": "",
-		"refAudioText": "",
-		"textSplitMode": "cut4",
-		"speedFactor": 1.0,
-		"fragmentInterval": 0.3,
-		"useLastGeneratedAsRef": false,
-		"topK": 20,
-		"topP": 0.8,
-		"temperature": 0.5
-	}
-}
-```
+1. `POST /v3/session/create`
+2. `POST /v3/model/switch`
+3. `POST /v3/tts/speak`（阶段 4 联调适配接口）
+4. `POST /v3/tts/cancel`（阶段 4 联调适配接口）
+
+辅助接口：
+
+1. `GET /v3/health`（健康检查）
 
 说明：
 
-- `gptWeightsPath` 与 `sovitsWeightsPath` 为模型级路径，不放全局共享配置
-- `refAudioPath`、`refAudioText` 也应按模型隔离
-- `textLang/promptLang` 由模型默认值提供，UI 可覆盖
+- `GET /v3/model/current` 与 `GET /v3/capabilities` 已实现但在 MVP 不作为必需依赖。
+- 阶段 4 不再围绕 `api_v2.py` 设计。
 
-#### 16.6.2 参数与 UI 约束（按产品需求）
+#### 16.6.2 双文本协议（强约束）
 
-语言选择：
+输入来源：
 
-- 中文、日语、英语、韩语、粤语
+- Qwen 回复中的 `displayText` 与 `speakText`。
 
-文本切分（产品枚举）：
+协议要求：
 
-- 四字切
-- 50 字切
-- 中文逗号
-- 英文逗号
-- 标点符号
-- 不切
+1. `display_text`：仅用于 UI 展示和日志。
+2. `speak_text`：仅用于 TTS 推理输入。
+3. 不接受旧的 `text` 单字段语义。
 
-建议映射到 GPT-SoVITS `text_split_method`（项目内统一映射，不在 UI 直接暴露底层字符串）。
+示例（阶段 4 请求体核心）：
 
-数值参数：
+```json
+{
+  "session_id": "sess_xxx",
+  "request_id": "req_xxx",
+  "payload": {
+    "display_text": "展示文本",
+    "speak_text": "合成文本",
+    "text_lang": "zh",
+    "prompt_lang": "zh",
+    "ref_audio_path": "C:/voices/ref.wav",
+    "prompt_text": "示例参考文本",
+    "text_split_method": "cut5",
+    "media_type": "ogg",
+    "streaming_mode": true
+  }
+}
+```
 
-- `speedFactor`: 0~2，步长 0.01，默认 1.00
-- `fragmentInterval`: 0~0.5，步长 0.01，默认 0.30
-- `topK`: 1~100，步长 1，默认 20
-- `topP`: 0~1，步长 0.01，默认 0.80
-- `temperature`: 0~1，步长 0.01，默认 0.50
-
-文件类输入：
-
-- GPT 权重路径（文件选择）
-- SoVITS 权重路径（文件选择）
-- 参考音频路径（文件选择）
-- 参考音频文本（文本框）
-
-#### 16.6.3 运行时编排（Main 侧）
-
-建议新增：
-
-1. `src/AI/voice/gptSovitsClient.ts`
-2. `voiceQueue`（串行、可中断）
-3. `voice runtime manager`（位于 Electron Main）
+#### 16.6.3 运行时编排（当前实现口径）
 
 主流程：
 
-1. 接收 LLM `reply_text`
-2. 立即触发预备动作（不等待 TTS）
-3. 发出 `voice.start`
-4. 调用 GPT-SoVITS `/tts`
-5. 收到首块音频后发出 `voice.first_chunk`
-6. 播放结束发出 `voice.end`
-7. 失败时发出 `voice.error` 并降级到“文本 + 静默动作”
+1. 用户在控制面板输入文本。
+2. 前端调用 `runtime.ask()` 获取 Qwen 结果。
+3. 前端使用 `displayText` 更新聊天 UI。
+4. 前端使用 `speakText` 触发 TTS（阶段 4 走 `/v3/tts/speak`）。
+5. 播放首包后进入 speaking 生命周期。
+6. 请求被取消时调用 `/v3/tts/cancel` 并终止在途播放。
 
 中断策略：
 
-- 新请求到来可取消在途 `voiceQueue` 项
-- 支持 `AbortSignal`
-- 保证同一会话只有一个正在播放的语音任务
+- 同会话新请求可以中断旧请求。
+- 取消以 `request_id` 为主键，后端维护取消标记并丢弃后续分片。
 
-#### 16.6.4 生命周期事件（最小集合）
+#### 16.6.4 模型切换与门禁（阶段 4 必做）
 
-```json
-{ "type": "voice.start", "request_id": "req_xxx", "provider": "gpt-sovits", "ts": 0 }
-{ "type": "voice.first_chunk", "request_id": "req_xxx", "latency_ms": 0, "ts": 0 }
-{ "type": "voice.end", "request_id": "req_xxx", "duration_ms": 0, "ts": 0 }
-{ "type": "voice.error", "request_id": "req_xxx", "error": "...", "ts": 0 }
-```
+策略：
 
-#### 16.6.5 与 transformer.js 的关系（评估结论）
+1. 应用启动或模型配置变更后，先调用 `/v3/model/switch`。
+2. `model_ready` 未就绪时不允许进入 TTS 推理。
+3. 用 `config_version` 做幂等去重，避免重复切换。
 
-结论：
+结果要求：
 
-- `transformer.js` 适合纯文本/通用 Transformer 推理场景
-- 当前 GPT-SoVITS 属于语音生成链路（包含声学/声码器流程），不建议在本阶段迁移到 `transformer.js`
+- 模型状态与语音推理解耦，确保“先就绪再播报”。
 
-本阶段建议：
+#### 16.6.5 配置约束（沿用当前模型级 tts）
 
-1. 保留 Python TTS 服务作为语音后端
-2. Electron Main 做统一代理与参数校验
-3. 后续若确实需要打包一体化，再评估 ONNX/WebGPU 方向
+阶段 4 继续使用模型级 `tts` 配置节点，重点字段包括：
 
-#### 16.6.6 任务清单（更新）
+- `baseUrl`
+- `gptWeightsPath` / `sovitsWeightsPath`
+- `textLang` / `promptLang`
+- `refAudioPath` / `refAudioText`
+- `textSplitMode`
+- `speedFactor` / `fragmentInterval` / `topK` / `topP` / `temperature`
 
-1. 新增 `src/AI/voice/gptSovitsClient.ts`（HTTP 客户端 + 参数映射 + 错误归一化）
-2. 建立 `voiceQueue`（串行、可取消、latest-wins 策略）
-3. 增加 `voice.start/first_chunk/end/error` 生命周期事件
-4. 在模型配置中新增 `tts` 独立节点（路径、语种、切分、采样参数）
-5. 增加权重切换与配置热更新（`set_gpt_weights` / `set_sovits_weights`）
-6. 主进程统一代理 TTS 请求，Renderer 不直连 Python
+约束：
+
+- 参数归一化在前端完成，后端只执行与校验。
+
+#### 16.6.6 阶段 4 任务清单（重写）
+
+1. 前端：确保 `displayText` 与 `speakText` 分流执行，不串用。
+2. 前端：TTS 请求统一走 v3 speak/cancel 接口。
+3. 后端：保持 `session/create` 与 `model/switch` 稳定可用。
+4. 后端：`/v3/tts/speak` 仅消费 `speak_text`。
+5. 联调：补齐 request_id 全链路日志与取消链路观测。
 
 验收：
 
-1. 首音频包延迟达标（目标 < 900ms）
-2. 语音失败可降级为文本 + 静默动作
-3. 模型切换后可自动加载对应 TTS 配置
-4. 取消与打断行为可复现且稳定
+1. UI 始终显示 `displayText`。
+2. 播放始终使用 `speakText`。
+3. 取消后不再继续播放晚到音频。
+4. 模型未就绪时 TTS 被门禁拦截。
 
 ### 16.7 阶段 5（待实现）
 

@@ -259,6 +259,26 @@ export class FrontendTtsRuntime {
         signal: controller.signal,
       });
 
+      // LiveKit 实时模式下，主音频播放由 Room 下行音轨承担；
+      // 这里的 Response 可能是一个用于兼容旧播放流程的占位 JSON。
+      const realtimeState = normalizeText(response.headers.get('X-Tts-Realtime-State'));
+      const isRealtimeResponse = normalizeText(response.headers.get('X-LiveKit-Realtime')) === '1';
+
+      if (isRealtimeResponse) {
+        const latencyMs = Math.round(performance.now() - startedAt);
+        info('ai.tts', 'request.ok.realtime', {
+          requestId,
+          state: realtimeState || 'unknown',
+          latencyMs,
+        });
+        return {
+          ok: true,
+          streamed: true,
+          bytesReceived: 0,
+          mimeType: 'audio/livekit',
+        };
+      }
+
       const playbackResult = await this.player.playResponse(response, {
         requestId,
         preferredMediaType: ttsConfig.mediaType,

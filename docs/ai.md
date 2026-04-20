@@ -854,43 +854,53 @@ V1 精简原则：
 2. 再根据体量决定是否迁移到 SQLite
 3. 若长期记忆需要语义检索，再接入向量库
 
-### 16.6 阶段 4（实施方法：LiveKit + API v3）
+### 16.6 阶段 4（实施方法：LiveKit 主链路 + HTTP 降级）
+
+运行前置（必须）：
+
+1. LiveKit Server 需要单独安装并启动（本方案不内嵌 LiveKit Server）。
+2. `api_v3.py` 的 `LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET` 必须与 LiveKit Server 密钥一致。
+3. 房间由后端负责：后端在 `/v3/session/create` 下发 `room_name` 与 token，前端只连接不创建。
+4. LiveKit 房间由 LiveKit Server 在首个 participant 加入时自动创建。
+5. LiveKit 需要 WebSocket 信令连接：前后端都连 LiveKit Server 的 `ws_url`，不需要额外自建业务 WebSocket 服务。
 
 目标：
 
 - 在本机场景下跑通“用户文本 -> Qwen 双文本输出 -> TTS 语音播放”的稳定闭环。
-- 与阶段 3 的动作链并行，不阻塞 UI 展示与动作反馈。
+- 主链路切到 LiveKit（控制面 Data Channel + 媒体面 subscribe 下行音轨），并保留 HTTP 降级能力。
+- 保持前端主导实施（前端约 80%，后端约 20%）。
 
 范围：
 
-- 采用 Python 端 `api_v3.py` 作为 v3 接口后端。
-- 当前以 HTTP 联调适配接口打通链路，后续再切到 LiveKit Data Channel。
-- 不做兼容：阶段 4 只认 v3 语义与 Qwen 双文本协议。
+- 采用 Python 端 `api_v3.py` 作为 v3 后端。
+- 不新增后端 HTTP 路由，继续沿用：`/v3/session/create`、`/v3/model/switch`、`/v3/tts/speak`、`/v3/tts/cancel`、`/v3/health`。
+- 房间模型固定为 single-room。
+- ASR 不在阶段 4 范围内。
+- LiveKit Server 属于独立基础服务，由后端部署与维护可用性。
 
 架构结论：
 
-1. 当前可跑通路径为：`用户文本 -> Stage2Runtime.ask -> displayText/speakText -> /v3/tts/speak -> 播放`。
-2. `displayText` 仅用于 UI 展示，`speakText` 仅用于语音合成。
-3. 模型切换统一走 `/v3/model/switch`，不再使用旧切权接口语义。
-4. ASR 不在阶段 4 范围内。
+1. 主链路：`用户文本 -> Stage2Runtime.ask -> displayText/speakText -> LiveKit Data Channel tts.speak -> 下行音轨播放`。
+2. 降级链路：`... -> /v3/tts/speak` 与 `/v3/tts/cancel` + HTTP 音频播放。
+3. `displayText` 仅用于 UI 展示，`speakText` 仅用于语音合成。
+4. 模型切换统一走 `/v3/model/switch`，并保留 `config_version` 幂等。
+5. Data Channel 仅承载控制事件；TTS 音频通过订阅远端音轨播放，不走 Data Channel 传输音频数据。
+6. WebSocket 信令由 LiveKit Server 提供，业务后端无需新增独立 WebSocket 路由。
 
-#### 16.6.1 阶段 4 接口基线（按 api_v3.py）
+#### 16.6.1 阶段 4 接口基线（不扩接口面）
 
 核心接口：
 
 1. `POST /v3/session/create`
 2. `POST /v3/model/switch`
-3. `POST /v3/tts/speak`（阶段 4 联调适配接口）
-4. `POST /v3/tts/cancel`（阶段 4 联调适配接口）
-
-辅助接口：
-
-1. `GET /v3/health`（健康检查）
+3. `POST /v3/tts/speak`（降级策略保留）
+4. `POST /v3/tts/cancel`（降级策略保留）
+5. `GET /v3/health`
 
 说明：
 
-- `GET /v3/model/current` 与 `GET /v3/capabilities` 已实现但在 MVP 不作为必需依赖。
-- 阶段 4 不再围绕 `api_v2.py` 设计。
+- `GET /v3/model/current` 与 `GET /v3/capabilities` 在 MVP 后置。
+- 不新增其他 HTTP 接口。
 
 #### 16.6.2 双文本协议（强约束）
 
@@ -904,83 +914,46 @@ V1 精简原则：
 2. `speak_text`：仅用于 TTS 推理输入。
 3. 不接受旧的 `text` 单字段语义。
 
-示例（阶段 4 请求体核心）：
-
-```json
-{
-  "session_id": "sess_xxx",
-  "request_id": "req_xxx",
-  "payload": {
-    "display_text": "展示文本",
-    "speak_text": "合成文本",
-    "text_lang": "zh",
-    "prompt_lang": "zh",
-    "ref_audio_path": "C:/voices/ref.wav",
-    "prompt_text": "示例参考文本",
-    "text_split_method": "cut5",
-    "media_type": "ogg",
-    "streaming_mode": true
-  }
-}
-```
-
-#### 16.6.3 运行时编排（当前实现口径）
-
-主流程：
-
-1. 用户在控制面板输入文本。
-2. 前端调用 `runtime.ask()` 获取 Qwen 结果。
-3. 前端使用 `displayText` 更新聊天 UI。
-4. 前端使用 `speakText` 触发 TTS（阶段 4 走 `/v3/tts/speak`）。
-5. 播放首包后进入 speaking 生命周期。
-6. 请求被取消时调用 `/v3/tts/cancel` 并终止在途播放。
-
-中断策略：
-
-- 同会话新请求可以中断旧请求。
-- 取消以 `request_id` 为主键，后端维护取消标记并丢弃后续分片。
-
-#### 16.6.4 模型切换与门禁（阶段 4 必做）
+#### 16.6.3 启动与切模门禁（阶段 4 必做）
 
 策略：
 
-1. 应用启动或模型配置变更后，先调用 `/v3/model/switch`。
-2. `model_ready` 未就绪时不允许进入 TTS 推理。
-3. 用 `config_version` 做幂等去重，避免重复切换。
+1. Electron 启动后读取模型配置并自动触发一次 `/v3/model/switch`。
+2. TTS 设置变更时，仅当 GPT 与 SoVITS 权重都有效时触发切换。
+3. 模型切换后自动再做一次预热。
+4. `model_ready` 未就绪时不允许进入 TTS 推理。
+5. 前端基于 `config_version` 幂等去重，避免重复切换。
 
-结果要求：
+#### 16.6.4 阶段 4 实施清单
 
-- 模型状态与语音推理解耦，确保“先就绪再播报”。
+阶段 A（契约冻结，0.5 天）：
+1. 前端冻结 Data Channel 事件 schema 与状态机。
+2. 冻结降级判定条件（连接失败、连接中断、事件超时）。
+3. 后端确认沿用现有 v3 接口，不新增 HTTP 路由。
 
-#### 16.6.5 配置约束（沿用当前模型级 tts）
+阶段 B（前端主链路接入，1-2 天）：
+1. 接入 `livekit-client` 建立 single-room 连接。
+2. 打通 Data Channel 收发，主请求切到 `tts.speak/tts.cancel` 事件。
+3. 通过 subscribe 接入远端下行音轨播放。
+4. 保留 HTTP speak/cancel 与 HTTP 音频 fallback。
 
-阶段 4 继续使用模型级 `tts` 配置节点，重点字段包括：
+阶段 C（后端内部桥接，0.5-1 天）：
+1. 后端新增 LiveKit 内部 worker（或协程）处理 Data Channel 指令。
+2. 将 Data Channel speak/cancel 映射到现有推理与取消逻辑。
+3. 将推理音频发布为 LiveKit 下行音轨。
+4. 不扩展 HTTP 接口面。
 
-- `baseUrl`
-- `gptWeightsPath` / `sovitsWeightsPath`
-- `textLang` / `promptLang`
-- `refAudioPath` / `refAudioText`
-- `textSplitMode`
-- `speedFactor` / `fragmentInterval` / `topK` / `topP` / `temperature`
-
-约束：
-
-- 参数归一化在前端完成，后端只执行与校验。
-
-#### 16.6.6 阶段 4 任务清单（重写）
-
-1. 前端：确保 `displayText` 与 `speakText` 分流执行，不串用。
-2. 前端：TTS 请求统一走 v3 speak/cancel 接口。
-3. 后端：保持 `session/create` 与 `model/switch` 稳定可用。
-4. 后端：`/v3/tts/speak` 仅消费 `speak_text`。
-5. 联调：补齐 request_id 全链路日志与取消链路观测。
+阶段 D（稳定性与延迟优化，0.5-1 天）：
+1. 前端统计 `queue_ms`、`ttfa_ms`、`cancel_ms`、`fallback_count`。
+2. 后端输出关键阶段 trace，并优化取消即时性。
 
 验收：
 
-1. UI 始终显示 `displayText`。
-2. 播放始终使用 `speakText`。
-3. 取消后不再继续播放晚到音频。
+1. 主链路使用 LiveKit，且连接失败时可自动回落到 HTTP 降级链路。
+2. UI 始终显示 `displayText`，语音始终使用 `speakText`。
+3. 取消后不再播放晚到音频。
 4. 模型未就绪时 TTS 被门禁拦截。
+5. 单房间模型下链路稳定，无重复播报。
 
 ### 16.7 阶段 5（待实现）
 

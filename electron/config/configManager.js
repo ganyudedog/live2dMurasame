@@ -58,6 +58,35 @@ const normalizeStringList = (value) => {
     .filter(Boolean);
 };
 
+// 清洗摘要文本中的历史遗留重复片段，避免 summary.json 出现“历史摘要：历史摘要：...”
+const sanitizeSummaryText = (value) => {
+  if (typeof value !== 'string') return '';
+
+  let text = value.trim();
+
+  // 连续去掉最外层重复“历史摘要：”前缀（最多处理 8 层，避免异常输入死循环）
+  for (let i = 0; i < 8; i += 1) {
+    if (!text.startsWith('历史摘要：')) break;
+    text = text.slice('历史摘要：'.length).trim();
+  }
+
+  if (!text) return '';
+
+  // 对“；”分句做去重，减少重复摘要片段反复落盘
+  const parts = text.split(/[；;]+/).map((item) => item.trim()).filter(Boolean);
+  if (!parts.length) return '';
+
+  const seen = new Set();
+  const deduped = [];
+  parts.forEach((item) => {
+    if (seen.has(item)) return;
+    seen.add(item);
+    deduped.push(item);
+  });
+
+  return deduped.join('；');
+};
+
 const normalizeModelMemoryMessage = (input = {}) => {
   const source = toSafeObject(input);
   const role = typeof source.role === 'string' && source.role.trim() ? source.role.trim() : 'user';
@@ -87,7 +116,7 @@ export const normalizeModelMemorySummary = (input = {}) => {
   const source = toSafeObject(input);
   return {
     version: 1,
-    summary: normalizeTextField(source.summary),
+    summary: sanitizeSummaryText(source.summary),
     facts: normalizeStringList(source.facts),
     open_loops: normalizeStringList(source.open_loops),
     updatedAt: normalizeTimestamp(source.updatedAt),

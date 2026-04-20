@@ -57,7 +57,7 @@ export const DEFAULT_MODEL_CONFIG = {
   },
   tts: {
     enabled: false,
-    baseUrl: 'http://127.0.0.1:9880',
+    baseUrl: 'http://127.0.0.1:9881',
     gptWeightsPath: '',
     sovitsWeightsPath: '',
     textLang: 'ja',

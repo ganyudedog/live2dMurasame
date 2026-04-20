@@ -37,22 +37,58 @@ export const requestStage2LLM = async (
     dangerouslyAllowBrowser: true,
   });
 
+  const requestBody = {
+    model: usedModel,
+    temperature: typeof req.temperature === 'number' ? req.temperature : (cfg.temperature ?? 0.4),
+    messages: [
+      {
+        role: 'system' as const,
+        content: buildStage2SystemPrompt({
+          displayLang: req.displayLang,
+          speakLang: req.speakLang,
+        }),
+      },
+      { role: 'user' as const, content: buildStage2UserPrompt({ userText: req.userText, ragContext: req.ragContext }) },
+    ],
+    response_format: { type: 'json_object' as const },
+  };
+
+  if (req.stream) {
+    // 流式模式：增量拼接 JSON 文本，尽早把可见文本回推给 UI。
+    const stream = await client.chat.completions.create(
+      {
+        ...requestBody,
+        stream: true,
+      },
+      {
+        signal: withTimeoutSignal(timeoutMs),
+      },
+    );
+
+    let rawText = '';
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta?.content ?? '';
+      if (!delta) continue;
+      rawText += delta;
+      req.onStreamDelta?.({
+        deltaText: delta,
+        aggregateText: rawText,
+      });
+    }
+
+    const finalText = rawText.trim();
+    if (!finalText) {
+      throw new Error('LLM 返回为空');
+    }
+
+    return {
+      rawText: finalText,
+      usedModel,
+    };
+  }
+
   const response = await client.chat.completions.create(
-    {
-      model: usedModel,
-      temperature: typeof req.temperature === 'number' ? req.temperature : (cfg.temperature ?? 0.4),
-      messages: [
-        {
-          role: 'system',
-          content: buildStage2SystemPrompt({
-            displayLang: req.displayLang,
-            speakLang: req.speakLang,
-          }),
-        },
-        { role: 'user', content: buildStage2UserPrompt({ userText: req.userText, ragContext: req.ragContext }) },
-      ],
-      response_format: { type: 'json_object' },
-    },
+    requestBody,
     {
       signal: withTimeoutSignal(timeoutMs),
     },

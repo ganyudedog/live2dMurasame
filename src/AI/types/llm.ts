@@ -16,6 +16,13 @@ export interface Stage2LLMRequest {
   ragContext?: string;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: string;
+  // 是否启用流式输出（降低首字等待时间）
+  stream?: boolean;
+  // 流式增量回调：每次收到模型增量文本时触发
+  onStreamDelta?: (event: {
+    deltaText: string;
+    aggregateText: string;
+  }) => void;
 }
 
 export interface Stage2LLMReply {

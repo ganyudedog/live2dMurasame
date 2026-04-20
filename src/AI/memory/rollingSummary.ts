@@ -93,14 +93,28 @@ const extractOpenLoops = (messages: PetModelMemoryMessage[]): string[] => {
   return uniqueStrings(hits.reverse(), SUMMARY_MAX_OPEN_LOOPS);
 };
 
+// 兼容历史脏数据：去掉被重复写入的“历史摘要：”前缀链，防止摘要文本无限递归。
+const stripRecursiveHistoryPrefix = (value: string): string => {
+  let output = String(value ?? '').trim();
+  for (let i = 0; i < 8; i += 1) {
+    if (!output.startsWith('历史摘要：')) break;
+    output = output.slice('历史摘要：'.length).trim();
+  }
+  return output;
+};
+
 const mergeSummaryText = (previousSummary: string, dialogueDigest: string): string => {
   const parts: string[] = [];
-  if (isString(previousSummary)) {
-    parts.push(`历史摘要：${truncateText(previousSummary, 120)}`);
-  }
   if (isString(dialogueDigest)) {
     parts.push(`近期对话：${dialogueDigest}`);
   }
+
+  // 新策略：摘要主文本只记录“近期对话”，不再把旧摘要再次写回 summary，避免出现“历史摘要：历史摘要：...”
+  // 兜底：当近期对话为空时，保留清洗后的旧摘要，避免 summary 变成空串。
+  if (!parts.length && isString(previousSummary)) {
+    parts.push(stripRecursiveHistoryPrefix(truncateText(previousSummary, SUMMARY_MAX_TEXT_CHARS)));
+  }
+
   return truncateText(parts.join('；'), SUMMARY_MAX_TEXT_CHARS);
 };
 

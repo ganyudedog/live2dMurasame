@@ -75,6 +75,10 @@ export const registerConfigIpc = ({
     if (patch.displayLang === 'zh' || patch.displayLang === 'en' || patch.displayLang === 'ja' || patch.displayLang === 'ko') {
       safePatch.displayLang = patch.displayLang;
     }
+    if (typeof patch.ttsStreamingMode === 'boolean') safePatch.ttsStreamingMode = patch.ttsStreamingMode;
+    if (patch.ttsMediaType === 'wav' || patch.ttsMediaType === 'ogg' || patch.ttsMediaType === 'aac') {
+      safePatch.ttsMediaType = patch.ttsMediaType;
+    }
     return safePatch;
   };
 

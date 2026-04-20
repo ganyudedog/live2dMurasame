@@ -445,6 +445,23 @@ const ControlPanel: React.FC = () => {
       const result = await runtime.ask(text, {
         apiKey: globalAiDraft.draft.apiKey,
         baseURL: globalAiDraft.draft.apiBaseUrl,
+        onDisplayTextStreaming: (streamingDisplayText) => {
+          if (!mountedRef.current) return;
+          const nextText = typeof streamingDisplayText === 'string' ? streamingDisplayText.trim() : '';
+          if (!nextText) return;
+
+          // 流式阶段仅更新 UI 展示，语音仍等待最终 speak_text，避免“边说边改口”。
+          setChatMessages((prev) => prev.map((item) => {
+            if (item.requestId !== requestId || item.role !== 'assistant') return item;
+            if (item.text === nextText) return item;
+            return {
+              ...item,
+              text: nextText,
+              status: 'sending',
+              error: undefined,
+            };
+          }));
+        },
       });
       if (!mountedRef.current) return;
 
@@ -606,6 +623,7 @@ const ControlPanel: React.FC = () => {
               ttsStreamingMode: next.ttsStreamingMode,
             };
             if (!isSameGlobalAiDraft(globalAiDraft.draft, nextGlobalDraft)) {
+              console.log('提交修改');
               globalAiDraft.commit(nextGlobalDraft);
             }
           }}

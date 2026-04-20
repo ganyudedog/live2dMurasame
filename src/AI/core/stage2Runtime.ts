@@ -1,6 +1,6 @@
 import { info, warn } from '../../renderer/utils/log';
 import { requestStage2LLM } from '../llm/client';
-import { parseStage2Reply } from '../llm/parse';
+import { parseStage2Reply, parseStage2StreamPreview } from '../llm/parse';
 import { buildRollingSummary } from '../memory/rollingSummary';
 import { buildRagContext, normalizeRuntimeRagConfig, type RuntimeRagConfig } from '../rag/contextBuilder';
 import type { ActionCapability, ActionDispatchResult, ActionIntentInput } from '../types/action';
@@ -11,6 +11,8 @@ interface Stage2AskOptions {
   temperature?: number;
   apiKey?: string;
   baseURL?: string;
+  // 流式显示回调：仅用于 UI 文本实时更新，不触发语音。
+  onDisplayTextStreaming?: (displayText: string) => void;
 }
 
 interface Stage2RuntimeOptions {
@@ -188,6 +190,9 @@ export class Stage2Runtime {
       const ragRuntime = await this.resolveRagRuntime(cleanText);
       const languageProfile = this.resolveLanguageProfile();
       const start = performance.now();
+      let firstDeltaLatencyMs = -1;
+      let streamedDisplayText = '';
+
       // 发起对话
       const llmResult = await requestStage2LLM(
         {
@@ -203,6 +208,22 @@ export class Stage2Runtime {
           ragContext: ragRuntime.contextText,
           displayLang: languageProfile.displayLang,
           speakLang: languageProfile.speakLang,
+          stream: true,
+          onStreamDelta: ({ deltaText, aggregateText }) => {
+            if (firstDeltaLatencyMs < 0 && String(deltaText).trim()) {
+              firstDeltaLatencyMs = Math.round(performance.now() - start);
+              info('ai.stage2', 'ask.stream.firstDelta', {
+                latencyMs: firstDeltaLatencyMs,
+              });
+            }
+
+            // 流式阶段只做 UI 预览文本，避免 speak_text 未稳定时误触发语音。
+            const preview = parseStage2StreamPreview(aggregateText);
+            const nextDisplay = normalizeReplyText(preview.display_text) || normalizeReplyText(preview.reply_text);
+            if (!nextDisplay || nextDisplay === streamedDisplayText) return;
+            streamedDisplayText = nextDisplay;
+            options.onDisplayTextStreaming?.(nextDisplay);
+          },
         },
       );
 
@@ -211,6 +232,9 @@ export class Stage2Runtime {
       if (!reply.meta) reply.meta = {};
       reply.meta.model = reply.meta.model ?? llmResult.usedModel;
       reply.meta.latency_ms = Math.round(performance.now() - start);
+      if (firstDeltaLatencyMs >= 0) {
+        reply.meta.first_delta_ms = firstDeltaLatencyMs;
+      }
       reply.meta.provider = reply.meta.provider ?? 'openai-compatible';
 
       // 双文本协议：display_text 用于前端展示，speak_text 用于 TTS。
@@ -228,6 +252,7 @@ export class Stage2Runtime {
       info('ai.stage2', 'ask.ok', {
         model: reply.meta.model,
         latencyMs: reply.meta.latency_ms,
+        firstDeltaMs: firstDeltaLatencyMs >= 0 ? firstDeltaLatencyMs : undefined,
         actionState: actionResult.state,
         actionKind: reply.action_intent.kind,
         hasDisplayText: Boolean(displayText),

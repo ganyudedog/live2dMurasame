@@ -1,6 +1,8 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelConfig } from '../types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
+import { useTtsConfigPreheatMutation } from '../../../../../api/hooks/liveKitHooks';
+import { info, warn } from '../../../utils/log';
 
 type TtsUiDraft = ModelConfig['tts'];
 
@@ -42,11 +44,11 @@ const normalizeTextSplitMode = (value: unknown): TtsUiDraft['textSplitMode'] => 
 };
 
 const LANG_OPTIONS: Array<{ label: string; value: TtsUiDraft['textLang'] }> = [
-  { label: '中文', value: 'zh' },
-  { label: '日语', value: 'ja' },
-  { label: '英语', value: 'en' },
-  { label: '韩语', value: 'ko' },
-  { label: '粤语', value: 'yue' },
+  { label: '中文', value: 'all_zh' },
+  { label: '日语', value: 'all_ja' },
+  { label: '英语', value: 'all_en' },
+  { label: '韩语', value: 'all_ko' },
+  { label: '粤语', value: 'all_yue' },
 ];
 
 const SPLIT_OPTIONS: Array<{ label: string; value: TtsUiDraft['textSplitMode'] }> = [
@@ -66,6 +68,21 @@ const clamp = (value: number, min: number, max: number) => {
 const toNumber = (value: string, fallback: number) => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const trimText = (value: unknown): string => {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+};
+
+const shouldTriggerPreheat = (prev: TtsUiDraft, next: TtsUiDraft): boolean => {
+  return prev.textLang !== next.textLang
+    || trimText(prev.refAudioPath) !== trimText(next.refAudioPath)
+    || trimText(prev.refAudioText) !== trimText(next.refAudioText);
+};
+
+const buildPreheatRequestId = () => {
+  return `tts_preheat_${Date.now().toString(36)}`;
 };
 
 const isSameTtsDraft = (left: TtsUiDraft, right: TtsUiDraft) => {
@@ -102,21 +119,83 @@ export default function TTSSettingsPage({
     textSplitMode: normalizeTextSplitMode(modelConfig.tts.textSplitMode),
   }), [modelConfig.tts]);
 
-  const ttsDraft = useDebouncedRemoteDraft<TtsUiDraft>({
-    remoteValue: remoteTtsConfig,
-    debounceMs: 260,
-    isEqual: isSameTtsDraft,
-    onCommit: async (nextTts) => {
-      const aiApi = window.AIAPI?.tts;
-      if (aiApi?.updateConfig) {
-        await aiApi.updateConfig({ modelPath: modelPath ?? undefined, patch: nextTts });
-        return;
-      }
+  const { mutateAsync:preheatMutation } = useTtsConfigPreheatMutation();
+  const [preheatState, setPreheatState] = useState<'idle' | 'pending' | 'ok' | 'failed'>('idle');
+  const [preheatMessage, setPreheatMessage] = useState('尚未触发自动预热');
+  const lastCommittedTtsRef = useRef<TtsUiDraft>(remoteTtsConfig);
+
+  useEffect(() => {
+    // 远端配置更新后同步基线，避免重复触发同一轮预热。
+    lastCommittedTtsRef.current = remoteTtsConfig;
+  }, [remoteTtsConfig]);
+
+  const commitTtsConfig = useCallback(async (nextTts: TtsUiDraft) => {
+    const prevTts = lastCommittedTtsRef.current;
+    const needPreheat = shouldTriggerPreheat(prevTts, nextTts);
+
+    const aiApi = window.AIAPI?.tts;
+    if (aiApi?.updateConfig) {
+      await aiApi.updateConfig({ modelPath: modelPath ?? undefined, patch: nextTts });
+    } else {
       await onModelConfigChange({
         ...modelConfig,
         tts: nextTts,
       });
-    },
+    }
+
+    // 配置保存成功后更新已提交基线，确保后续比对以最新配置为准。
+    lastCommittedTtsRef.current = nextTts;
+
+    if (!needPreheat) {
+      return;
+    }
+
+    const requestId = buildPreheatRequestId();
+    setPreheatState('pending');
+    setPreheatMessage('配置变更已提交，正在触发预热...');
+    info('controlPanel.tts', 'settings.preheat.start', {
+      requestId,
+      textLang: nextTts.textLang,
+      refAudioPath: trimText(nextTts.refAudioPath),
+      hasRefAudioText: Boolean(trimText(nextTts.refAudioText)),
+    });
+
+    try {
+      const result = await preheatMutation({
+        baseUrl: nextTts.baseUrl,
+        requestId,
+        payload: {
+          textLang: trimText(nextTts.textLang) || 'all_ja',
+          promptLang: trimText(nextTts.promptLang) || 'ja',
+          refAudioPath: trimText(nextTts.refAudioPath),
+          promptText: trimText(nextTts.refAudioText),
+        },
+      });
+
+      setPreheatState('ok');
+      setPreheatMessage(`预热完成：${result.state}`);
+      info('controlPanel.tts', 'settings.preheat.ok', {
+        requestId: result.requestId,
+        state: result.state,
+        warmed: result.warmed,
+      });
+    } catch (e) {
+      const message = String(e instanceof Error ? e.message : e);
+      setPreheatState('failed');
+      setPreheatMessage(`预热失败：${message}`);
+      // 预热失败不回滚已保存配置，避免影响用户已修改的参数。
+      warn('controlPanel.tts', 'settings.preheat.failed', {
+        requestId,
+        err: message,
+      });
+    }
+  }, [modelConfig, modelPath, onModelConfigChange, preheatMutation]);
+
+  const ttsDraft = useDebouncedRemoteDraft<TtsUiDraft>({
+    remoteValue: remoteTtsConfig,
+    debounceMs: 260,
+    isEqual: isSameTtsDraft,
+    onCommit: commitTtsConfig,
   });
 
   const draft = ttsDraft.draft;
@@ -539,6 +618,14 @@ export default function TTSSettingsPage({
 
         <div className="text-xs text-base-content/60">
           提示：本页已通过 AIAPI.tts 持久化到模型配置，并依赖配置快照回流展示。
+        </div>
+
+        <div className="text-xs text-base-content/70">
+          自动预热状态：
+          <span className="ml-1">
+            {preheatState === 'pending' ? '进行中' : (preheatState === 'ok' ? '成功' : (preheatState === 'failed' ? '失败' : '未触发'))}
+          </span>
+          <span className="ml-2 opacity-80">{preheatMessage}</span>
         </div>
       </section>
     </div>

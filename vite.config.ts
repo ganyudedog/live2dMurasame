@@ -17,7 +17,12 @@ export default defineConfig({
     })
   ],
   server: {
-    port:5180,
+    port: 5180,
+    proxy: {
+      '/v3': {
+        target: 'http://127.0.0.1:9881',
+      },
+    }
   },
   optimizeDeps: {
     include: ['pixi-live2d-display', 'eventemitter3'],

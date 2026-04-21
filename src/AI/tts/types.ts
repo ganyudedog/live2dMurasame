@@ -32,6 +32,8 @@ export interface TtsSynthesisRequest {
   displayText?: string;
   config: TtsRuntimeConfig;
   signal?: AbortSignal;
+  // 是否优先使用 LiveKit 实时主链路；测试页可设为 false 强制走 HTTP OGG 流式。
+  preferRealtime?: boolean;
 }
 
 export interface TtsCancelRequest {

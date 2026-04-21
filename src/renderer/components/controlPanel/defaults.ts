@@ -46,7 +46,7 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     baseUrl: 'http://127.0.0.1:9880',
     gptWeightsPath: '',
     sovitsWeightsPath: '',
-    textLang: 'ja',
+    textLang: 'all_ja',
     promptLang: 'ja',
     refAudioPath: '',
     refAudioText: '',

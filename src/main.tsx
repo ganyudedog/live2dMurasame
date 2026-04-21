@@ -1,8 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import PetCanvas from './renderer/components/pet/PetCanvas.tsx';
 import ControlPanel from './renderer/components/controlPanel/ControlPanel.tsx';;
 import DemoRoot from './demo/DemoRoot';
+import TtsTestPage from './renderer/components/ttsTest/TtsTestPage.tsx';
 import { Toaster, toast } from 'react-hot-toast';
 import './app.css';
 
@@ -14,10 +16,23 @@ const searchParams = typeof window !== 'undefined'
 
 const isControlPanelView = searchParams.get('window') === 'control-panel';
 const isDemoView = searchParams.get('window') === 'demo';
+const isTtsTestView = searchParams.get('window') === 'test';
 
-const windowType: 'pet' | 'control-panel' | 'demo' = isDemoView
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+    mutations: {
+      retry: 0,
+    },
+  },
+});
+
+const windowType: 'pet' | 'control-panel' | 'demo' | 'test' = isDemoView
   ? 'demo'
-  : (isControlPanelView ? 'control-panel' : 'pet');
+  : (isControlPanelView ? 'control-panel' : (isTtsTestView ? 'test' : 'pet'));
 
 
 info('renderer', 'boot', {
@@ -57,20 +72,32 @@ export function ControlPanelRoot() {
   );
 }
 
-const ActiveRoot = isDemoView ? DemoRoot : (isControlPanelView ? ControlPanelRoot : Root);
+export function TtsTestRoot() {
+  return (
+    <div className="w-screen h-screen overflow-auto relative pointer-events-auto bg-slate-950 text-slate-100">
+      <TtsTestPage />
+    </div>
+  );
+}
+
+const ActiveRoot = isDemoView
+  ? DemoRoot
+  : (isControlPanelView ? ControlPanelRoot : (isTtsTestView ? TtsTestRoot : Root));
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Toaster
-      position="top-center"
-      toastOptions={{
-        style: {
-          fontSize: '14px',
-          fontFamily: 'Inter, "Microsoft YaHei", system-ui, -apple-system, sans-serif',
-          borderRadius: '16px',
-        },
-      }}
-    />
-    <ActiveRoot />
+    <QueryClientProvider client={queryClient}>
+      <Toaster
+        position="top-center"
+        toastOptions={{
+          style: {
+            fontSize: '14px',
+            fontFamily: 'Inter, "Microsoft YaHei", system-ui, -apple-system, sans-serif',
+            borderRadius: '16px',
+          },
+        }}
+      />
+      <ActiveRoot />
+    </QueryClientProvider>
   </StrictMode>
 );

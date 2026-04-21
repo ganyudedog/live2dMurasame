@@ -314,7 +314,7 @@ const ensureModelReady = async (
       sovitsWeightsPath: trimText(config.sovitsWeightsPath),
       refAudioPath: trimText(config.refAudioPath),
       promptText: trimText(config.refAudioText),
-      promptLang: trimText(config.promptLang) || 'zh',
+      promptLang: trimText(config.promptLang) || 'auto',
     },
   };
 
@@ -376,8 +376,8 @@ const buildTtsPayload = (
     payload: {
       displayText,
       speakText,
-      textLang: trimText(config.textLang) || 'ja',
-      promptLang: trimText(config.promptLang) || 'ja',
+      textLang: trimText(config.textLang) || 'auto',
+      promptLang: trimText(config.promptLang) || 'auto',
       refAudioPath: trimText(config.refAudioPath),
       promptText: trimText(config.refAudioText),
       textSplitMethod: normalizeTextSplitMethod(config.textSplitMode),
@@ -395,7 +395,14 @@ const buildTtsPayload = (
 };
 
 // 语音合成接口，返回原始 Response 以支持流式处理与多种媒体类型。
-export const requestTtsSynthesis = async ({ requestId, speakText, displayText, config, signal }: TtsSynthesisRequest): Promise<Response> => {
+export const requestTtsSynthesis = async ({
+  requestId,
+  speakText,
+  displayText,
+  config,
+  signal,
+  preferRealtime = true,
+}: TtsSynthesisRequest): Promise<Response> => {
   const cleanSpeakText = trimText(speakText);
   if (!cleanSpeakText) {
     throw new Error('TTS 文本为空，无法发起合成');
@@ -417,7 +424,9 @@ export const requestTtsSynthesis = async ({ requestId, speakText, displayText, c
   // LiveKit 主链路：通过 DataChannel 发 tts.speak，并等待后端终态事件。
   // 注意：真实音频播放由 livekit.realtime 中的 TrackSubscribed 自动处理。
   const realtimeEnvelope = buildRealtimeTtsEventEnvelope(requestId, sessionId, payload);
-  const realtimeEnabled = await ensureRealtimeConnected(baseUrl, 'tts.speak.realtime', signal);
+  const realtimeEnabled = preferRealtime
+    ? await ensureRealtimeConnected(baseUrl, 'tts.speak.realtime', signal)
+    : false;
   if (realtimeEnabled) {
     info('ai.tts.v3', 'realtime.speak.publish.start', {
       requestId,
@@ -452,6 +461,9 @@ export const requestTtsSynthesis = async ({ requestId, speakText, displayText, c
       // 继续走 HTTP fallback
     }
   } else {
+    if (!preferRealtime) {
+      info('ai.tts.v3', 'realtime.speak.skippedByCaller', { requestId, reason: 'preferRealtime=false' });
+    }
     warn('ai.tts.v3', 'realtime.speak.disabled.fallbackHttp', { requestId });
   }
 

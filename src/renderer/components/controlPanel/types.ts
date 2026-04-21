@@ -90,7 +90,7 @@ export type ModelConfig = {
     baseUrl: string;
     gptWeightsPath: string;
     sovitsWeightsPath: string;
-    textLang: 'zh' | 'ja' | 'en' | 'ko' | 'yue';
+    textLang: 'all_zh' | 'all_ja' | 'all_en' | 'all_ko' | 'all_yue';
     promptLang: 'zh' | 'ja' | 'en' | 'ko' | 'yue';
     refAudioPath: string;
     refAudioText: string;

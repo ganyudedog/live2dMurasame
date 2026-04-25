@@ -8,6 +8,7 @@ import { error, info, warn } from "../../src/renderer/utils/log";
 import { LiveKitApiError } from "../model/liveKitModel";
 import type {
   LiveKitHealthResponse,
+  LiveKitPlaybackFeedbackPayload,
   LiveKitModelSwitchRequest,
   LiveKitModelSwitchResponse,
   LiveKitModelSwitchResponseServer,
@@ -21,7 +22,7 @@ import type {
   LiveKitTtsPreheatResponse,
   LiveKitTtsPreheatResponseServer,
 } from "../model/liveKitModel";
-import { ensureLiveKitRoomConnected, ensureLiveKitSession } from "../service/liveKitRealtime";
+import { ensureLiveKitRoomConnected, ensureLiveKitSession, publishLiveKitPlaybackFeedback } from "../service/liveKitRealtime";
 import {
   fromModelSwitchServer,
   fromSessionCreateServer,
@@ -247,6 +248,14 @@ export type LiveKitConfigPreheatVariables = {
   signal?: AbortSignal;
 };
 
+export type LiveKitPlaybackFeedbackVariables = {
+  baseUrl: string;
+  sessionId: string;
+  requestId: string;
+  payload: LiveKitPlaybackFeedbackPayload;
+  signal?: AbortSignal;
+};
+
 // 配置变更预热：在前端先确保 session/room，再调用后端 preheat 接口。
 export const useTtsConfigPreheatMutation = (
   options?: UseMutationOptions<
@@ -365,4 +374,64 @@ export const useTtsCancelMutation = (
       ...options,
     },
   );
+};
+
+// 播放反馈通过 LiveKit DataChannel 回传，给后端阀门做生产/消费节流判断。
+export const useTtsPlaybackFeedbackMutation = (
+  options?: UseMutationOptions<
+    { ok: true },
+    LiveKitApiError,
+    LiveKitPlaybackFeedbackVariables
+  >,
+) => {
+  return useMutation<{ ok: true }, LiveKitApiError, LiveKitPlaybackFeedbackVariables>({
+    mutationKey: ["livekit-v3", "tts-playback-feedback"],
+    mutationFn: async (request) => {
+      const normalizedBaseUrl = normalizeBaseUrl(request.baseUrl);
+      info("livekit.hooks", "tts.playbackFeedback.start", {
+        baseUrl: normalizedBaseUrl,
+        requestId: request.requestId,
+        sessionId: request.sessionId,
+        state: request.payload.state,
+        bufferMs: request.payload.bufferMs,
+      });
+
+      try {
+        await ensureLiveKitRoomConnected(normalizedBaseUrl, {
+          signal: request.signal,
+          eventTopic: "v3.event",
+          reason: "tts-playback-feedback",
+        });
+
+        await publishLiveKitPlaybackFeedback(normalizedBaseUrl, {
+          sessionId: request.sessionId,
+          requestId: request.requestId,
+          ts: Date.now(),
+          payload: request.payload,
+        }, {
+          signal: request.signal,
+          eventTopic: "v3.event",
+          reason: "tts-playback-feedback",
+        });
+
+        info("livekit.hooks", "tts.playbackFeedback.ok", {
+          baseUrl: normalizedBaseUrl,
+          requestId: request.requestId,
+          state: request.payload.state,
+          bufferMs: request.payload.bufferMs,
+        });
+
+        return { ok: true };
+      } catch (e) {
+        const msg = String(e instanceof Error ? e.message : e);
+        warn("livekit.hooks", "tts.playbackFeedback.failed", {
+          baseUrl: normalizedBaseUrl,
+          requestId: request.requestId,
+          err: msg,
+        });
+        throw e;
+      }
+    },
+    ...options,
+  });
 };

@@ -10,7 +10,14 @@ import {
 } from 'livekit-client';
 
 import { debug, info, warn } from '../../src/renderer/utils/log';
-import type { LiveKitSessionCreatePayload, LiveKitSessionCreateResponse, LiveKitSessionCreateResponseServer } from '../model/liveKitModel';
+import type {
+  LiveKitPlaybackFeedbackPayload,
+  LiveKitPlaybackFeedbackRequest,
+  LiveKitPlaybackFeedbackState,
+  LiveKitSessionCreatePayload,
+  LiveKitSessionCreateResponse,
+  LiveKitSessionCreateResponseServer,
+} from '../model/liveKitModel';
 import { fromSessionCreateServer, normalizeBaseUrl, postRequest, toSessionCreateServer } from './liveKitService';
 
 export type LiveKitV3EventEnvelopeServer<TPayload = unknown> = {
@@ -42,10 +49,27 @@ type RoomCache = {
   audioEl: HTMLAudioElement;
   attachedAudioTrackSid: string | null;
   attachedAudioTrack: RemoteTrack | null;
+  playbackEstimator: {
+    trackSid: string | null;
+    lastTickAt: number;
+    lastProducedTotalMs: number;
+    estimatedQueueMs: number;
+  };
   handlers: Set<LiveKitV3EventHandler>;
 };
 
+export type LiveKitPlaybackFeedbackSnapshot = LiveKitPlaybackFeedbackPayload & {
+  updatedAt: number;
+  playing: boolean;
+  ended: boolean;
+  paused: boolean;
+  hasAudioTrack: boolean;
+  trackSid: string | null;
+};
+
 const DEFAULT_EVENT_TOPIC = 'v3.event';
+const DEFAULT_FEEDBACK_LOW_WATER_MS = 300;
+const DEFAULT_FEEDBACK_HIGH_WATER_MS = 900;
 
 const sessionByBaseUrl = new Map<string, SessionCache>();
 const roomByBaseUrl = new Map<string, RoomCache>();
@@ -89,6 +113,215 @@ const safeJsonParse = (text: string): unknown => {
   } catch {
     return null;
   }
+};
+
+const getBufferedMilliseconds = (audioEl: HTMLAudioElement): number => {
+  try {
+    if (!audioEl.buffered || audioEl.buffered.length === 0) return 0;
+
+    const currentTime = Number.isFinite(audioEl.currentTime) ? audioEl.currentTime : 0;
+    for (let idx = 0; idx < audioEl.buffered.length; idx += 1) {
+      const start = audioEl.buffered.start(idx);
+      const end = audioEl.buffered.end(idx);
+      if (currentTime >= start && currentTime <= end) {
+        return Math.max(0, Math.round((end - currentTime) * 1000));
+      }
+    }
+
+    const lastEnd = audioEl.buffered.end(audioEl.buffered.length - 1);
+    return Math.max(0, Math.round((lastEnd - currentTime) * 1000));
+  } catch {
+    return -1;
+  }
+};
+
+const extractInboundAudioStats = (stats: RTCStatsReport): {
+  jitterMs: number;
+  jitterBufferMs: number;
+  totalSamplesDurationMs: number;
+} => {
+  type InboundAudioStats = {
+    jitter?: number;
+    jitterBufferDelay?: number;
+    jitterBufferEmittedCount?: number;
+    totalSamplesDuration?: number;
+  };
+
+  let inboundAudioStats: InboundAudioStats | null = null;
+
+  stats.forEach((item) => {
+    if (item.type !== 'inbound-rtp') return;
+    const typedItem = item as {
+      kind?: string;
+      mediaType?: string;
+      jitter?: number;
+      jitterBufferDelay?: number;
+      jitterBufferEmittedCount?: number;
+      totalSamplesDuration?: number;
+    };
+    if (typedItem.kind !== 'audio' && typedItem.mediaType !== 'audio') return;
+    inboundAudioStats = typedItem;
+  });
+
+  if (!inboundAudioStats) {
+    return {
+      jitterMs: -1,
+      jitterBufferMs: -1,
+      totalSamplesDurationMs: -1,
+    };
+  }
+
+  const {
+    jitter,
+    jitterBufferDelay,
+    jitterBufferEmittedCount,
+    totalSamplesDuration,
+  } = inboundAudioStats;
+
+  const jitterMs = typeof jitter === 'number' && Number.isFinite(jitter)
+    ? Math.round(jitter * 1000)
+    : -1;
+
+  const jitterBufferMs = typeof jitterBufferDelay === 'number'
+    && Number.isFinite(jitterBufferDelay)
+    && typeof jitterBufferEmittedCount === 'number'
+    && jitterBufferEmittedCount > 0
+    ? Math.round((jitterBufferDelay / jitterBufferEmittedCount) * 1000)
+    : -1;
+
+  const totalSamplesDurationMs = typeof totalSamplesDuration === 'number'
+    && Number.isFinite(totalSamplesDuration)
+    ? Math.round(totalSamplesDuration * 1000)
+    : -1;
+
+  return {
+    jitterMs,
+    jitterBufferMs,
+    totalSamplesDurationMs,
+  };
+};
+
+const classifyPlaybackState = (
+  audioEl: HTMLAudioElement,
+  bufferMs: number,
+  lowWaterMs: number,
+  highWaterMs: number,
+): LiveKitPlaybackFeedbackState => {
+  if (audioEl.ended) return 'draining';
+  if (audioEl.paused && !audioEl.ended) return 'paused';
+  if (bufferMs < 0) return 'unknown';
+  if (bufferMs <= lowWaterMs) return 'low';
+  if (bufferMs >= highWaterMs) return 'high';
+  return 'ok';
+};
+
+const readPlaybackSnapshot = async (cache: RoomCache): Promise<LiveKitPlaybackFeedbackSnapshot | null> => {
+  const { audioEl } = cache;
+  if (!audioEl) return null;
+
+  const lowWaterMs = DEFAULT_FEEDBACK_LOW_WATER_MS;
+  const highWaterMs = DEFAULT_FEEDBACK_HIGH_WATER_MS;
+  const hasAudioTrack = Boolean(cache.attachedAudioTrackSid);
+  if (!hasAudioTrack) return null;
+
+  const nowMs = Date.now();
+  const bufferFromAudioElementMs = getBufferedMilliseconds(audioEl);
+  let jitterMs = -1;
+  let jitterBufferMs = -1;
+  let totalSamplesDurationMs = -1;
+  let producedDeltaMs = 0;
+  let consumedDeltaMs = 0;
+
+  const audioTrack = cache.attachedAudioTrack;
+  if (audioTrack && typeof (audioTrack as RemoteTrack & { receiver?: RTCRtpReceiver }).receiver?.getStats === 'function') {
+    try {
+      const receiverStats = await (audioTrack as RemoteTrack & { receiver: RTCRtpReceiver }).receiver!.getStats();
+      const extracted = extractInboundAudioStats(receiverStats);
+      jitterMs = extracted.jitterMs;
+      jitterBufferMs = extracted.jitterBufferMs;
+      totalSamplesDurationMs = extracted.totalSamplesDurationMs;
+    } catch (e) {
+      warn('livekit.realtime', 'audio.receiverStats.failed', {
+        trackSid: cache.attachedAudioTrackSid,
+        err: String(e instanceof Error ? e.message : e),
+      });
+    }
+  }
+
+  const estimator = cache.playbackEstimator;
+  if (estimator.trackSid !== cache.attachedAudioTrackSid) {
+    resetPlaybackEstimator(cache);
+    estimator.trackSid = cache.attachedAudioTrackSid;
+  }
+
+  const tickElapsedMs = estimator.lastTickAt > 0
+    ? Math.max(0, nowMs - estimator.lastTickAt)
+    : 0;
+  estimator.lastTickAt = nowMs;
+
+  const playbackRate = Number.isFinite(audioEl.playbackRate)
+    ? Math.max(0, audioEl.playbackRate)
+    : 1;
+  consumedDeltaMs = !audioEl.paused && !audioEl.ended
+    ? Math.round(tickElapsedMs * playbackRate)
+    : 0;
+
+  if (totalSamplesDurationMs >= 0 && estimator.lastProducedTotalMs >= 0) {
+    producedDeltaMs = Math.max(0, Math.round(totalSamplesDurationMs - estimator.lastProducedTotalMs));
+  }
+  if (totalSamplesDurationMs >= 0) {
+    estimator.lastProducedTotalMs = totalSamplesDurationMs;
+  }
+
+  if (estimator.estimatedQueueMs <= 0) {
+    if (jitterBufferMs > 0) {
+      estimator.estimatedQueueMs = jitterBufferMs;
+    } else if (bufferFromAudioElementMs > 0) {
+      estimator.estimatedQueueMs = bufferFromAudioElementMs;
+    }
+  }
+
+  estimator.estimatedQueueMs = Math.max(
+    0,
+    estimator.estimatedQueueMs + producedDeltaMs - consumedDeltaMs,
+  );
+
+  const resolvedBufferMs = estimator.estimatedQueueMs > 0
+    ? Math.round(estimator.estimatedQueueMs)
+    : jitterBufferMs > 0
+      ? jitterBufferMs
+      : bufferFromAudioElementMs > 0
+        ? bufferFromAudioElementMs
+        : -1;
+
+  const snapshot: LiveKitPlaybackFeedbackSnapshot = {
+    state: classifyPlaybackState(audioEl, resolvedBufferMs, lowWaterMs, highWaterMs),
+    bufferMs: resolvedBufferMs,
+    lowWaterMs,
+    highWaterMs,
+    source: 'frontend',
+    latencyMs: -1,
+    jitterMs,
+    producedDeltaMs,
+    consumedDeltaMs,
+    estimatedQueueMs: Math.round(estimator.estimatedQueueMs),
+    estimatorVersion: 'jitter-delta-v1',
+    updatedAt: Date.now(),
+    playing: !audioEl.paused && !audioEl.ended,
+    ended: audioEl.ended,
+    paused: audioEl.paused,
+    hasAudioTrack,
+    trackSid: cache.attachedAudioTrackSid,
+  };
+
+  return snapshot;
+};
+
+const resetPlaybackEstimator = (cache: RoomCache): void => {
+  cache.playbackEstimator.trackSid = null;
+  cache.playbackEstimator.lastTickAt = 0;
+  cache.playbackEstimator.lastProducedTotalMs = -1;
+  cache.playbackEstimator.estimatedQueueMs = 0;
 };
 
 export const getCachedLiveKitSession = (baseUrl: string): LiveKitSessionCreateResponse | null => {
@@ -159,6 +392,28 @@ const attachAudioTrack = (
   if (track.kind !== 'audio') return;
 
   try {
+    // 某些重连/重复订阅场景会重复触发 TrackSubscribed，
+    // 同一个 trackSid 已附着时直接跳过，避免同轨叠加导致金属音/回声感。
+    if (cache.attachedAudioTrackSid === publication.trackSid && cache.attachedAudioTrack === track) {
+      debug('livekit.realtime', 'audio.track.attachSkipSameTrack', {
+        trackSid: publication.trackSid,
+        participant: participant.identity,
+      });
+      return;
+    }
+
+    if (cache.attachedAudioTrackSid === publication.trackSid && cache.attachedAudioTrack && cache.attachedAudioTrack !== track) {
+      debug('livekit.realtime', 'audio.track.replaceSameSid', {
+        trackSid: publication.trackSid,
+        participant: participant.identity,
+      });
+
+      cache.attachedAudioTrack.detach(cache.audioEl);
+      cache.attachedAudioTrack = null;
+      cache.attachedAudioTrackSid = null;
+      resetPlaybackEstimator(cache);
+    }
+
     if (cache.attachedAudioTrackSid && cache.attachedAudioTrackSid !== publication.trackSid) {
       debug('livekit.realtime', 'audio.track.replace', {
         prev: cache.attachedAudioTrackSid,
@@ -169,10 +424,13 @@ const attachAudioTrack = (
       } catch {
         // ignore
       }
+      resetPlaybackEstimator(cache);
     }
 
     cache.attachedAudioTrackSid = publication.trackSid;
     cache.attachedAudioTrack = track;
+    resetPlaybackEstimator(cache);
+    cache.playbackEstimator.trackSid = publication.trackSid;
     track.attach(cache.audioEl);
     void cache.audioEl.play().catch(() => {
       // 浏览器/系统可能限制 autoplay；这里只记日志不抛错。
@@ -251,6 +509,7 @@ const bindRoomLoggingAndHandlers = (cache: RoomCache) => {
       }
       cache.attachedAudioTrack = null;
       cache.attachedAudioTrackSid = null;
+      resetPlaybackEstimator(cache);
       info('livekit.realtime', 'audio.track.detached', { trackSid: publication.trackSid });
     });
 };
@@ -323,6 +582,12 @@ export const ensureLiveKitRoomConnected = async (
       audioEl,
       attachedAudioTrackSid: null,
       attachedAudioTrack: null,
+      playbackEstimator: {
+        trackSid: null,
+        lastTickAt: 0,
+        lastProducedTotalMs: -1,
+        estimatedQueueMs: 0,
+      },
       handlers: reuseHandlers,
     };
 
@@ -389,6 +654,8 @@ export const disconnectLiveKitRoom = (baseUrl: string): void => {
     // ignore
   }
 
+  resetPlaybackEstimator(cache);
+
   try {
     cache.audioEl.remove();
   } catch {
@@ -396,6 +663,43 @@ export const disconnectLiveKitRoom = (baseUrl: string): void => {
   }
 
   roomByBaseUrl.delete(key);
+};
+
+export const getLiveKitPlaybackSnapshot = async (baseUrl: string): Promise<LiveKitPlaybackFeedbackSnapshot | null> => {
+  const key = normalizeBaseUrl(baseUrl);
+  const cache = roomByBaseUrl.get(key);
+  if (!cache) return null;
+  return readPlaybackSnapshot(cache);
+};
+
+export const publishLiveKitPlaybackFeedback = async (
+  baseUrl: string,
+  request: LiveKitPlaybackFeedbackRequest,
+  options?: { signal?: AbortSignal; eventTopic?: string; reason?: string },
+): Promise<void> => {
+  await publishLiveKitV3Event(baseUrl, {
+    type: 'playback.feedback',
+    session_id: request.sessionId,
+    request_id: request.requestId,
+    ts: request.ts ?? Date.now(),
+    payload: {
+      state: request.payload.state,
+      buffer_ms: request.payload.bufferMs,
+      low_water_ms: request.payload.lowWaterMs,
+      high_water_ms: request.payload.highWaterMs,
+      source: request.payload.source ?? 'frontend',
+      latency_ms: request.payload.latencyMs ?? -1,
+      jitter_ms: request.payload.jitterMs ?? -1,
+      produced_delta_ms: request.payload.producedDeltaMs ?? 0,
+      consumed_delta_ms: request.payload.consumedDeltaMs ?? 0,
+      estimated_queue_ms: request.payload.estimatedQueueMs ?? request.payload.bufferMs,
+      estimator_version: request.payload.estimatorVersion ?? 'jitter-delta-v1',
+    },
+  }, {
+    signal: options?.signal,
+    eventTopic: options?.eventTopic ?? DEFAULT_EVENT_TOPIC,
+    reason: options?.reason ?? 'tts-playback-feedback',
+  });
 };
 
 export const subscribeLiveKitV3Events = (baseUrl: string, handler: LiveKitV3EventHandler): (() => void) => {
@@ -419,6 +723,12 @@ export const subscribeLiveKitV3Events = (baseUrl: string, handler: LiveKitV3Even
     audioEl: ensureHiddenAudioElement(key),
     attachedAudioTrackSid: null,
     attachedAudioTrack: null,
+    playbackEstimator: {
+      trackSid: null,
+      lastTickAt: 0,
+      lastProducedTotalMs: -1,
+      estimatedQueueMs: 0,
+    },
     handlers: new Set<LiveKitV3EventHandler>(),
   };
 

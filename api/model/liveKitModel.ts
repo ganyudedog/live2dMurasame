@@ -203,6 +203,51 @@ export interface LiveKitTtsPreheatResponseServer {
   warmed?: boolean;
 }
 
+// 语音合成反馈闭环
+export type LiveKitPlaybackFeedbackState = 'unknown' | 'ok' | 'low' | 'high' | 'paused' | 'draining';
+
+export interface LiveKitPlaybackFeedbackPayload {
+  state: LiveKitPlaybackFeedbackState;
+  bufferMs: number;
+  lowWaterMs: number;
+  highWaterMs: number;
+  source?: string;
+  latencyMs?: number;
+  jitterMs?: number;
+  producedDeltaMs?: number;
+  consumedDeltaMs?: number;
+  estimatedQueueMs?: number;
+  estimatorVersion?: string;
+}
+
+export interface LiveKitPlaybackFeedbackPayloadServer {
+  state: LiveKitPlaybackFeedbackState;
+  buffer_ms: number;
+  low_water_ms: number;
+  high_water_ms: number;
+  source?: string;
+  latency_ms?: number;
+  jitter_ms?: number;
+  produced_delta_ms?: number;
+  consumed_delta_ms?: number;
+  estimated_queue_ms?: number;
+  estimator_version?: string;
+}
+
+export interface LiveKitPlaybackFeedbackRequest {
+  sessionId: string;
+  requestId: string;
+  ts?: number;
+  payload: LiveKitPlaybackFeedbackPayload;
+}
+
+export interface LiveKitPlaybackFeedbackRequestServer {
+  session_id: string;
+  request_id: string;
+  ts?: number;
+  payload: LiveKitPlaybackFeedbackPayloadServer;
+}
+
 export interface LiveKitTtsCancelRequest {
   sessionId: string;
   requestId: string;

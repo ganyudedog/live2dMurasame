@@ -2,6 +2,8 @@ import toast from 'react-hot-toast';
 import { error, info, warn } from '../../renderer/utils/log';
 import { cancelTtsSynthesis, requestTtsSynthesis, warmupTtsModel } from './client';
 import { TtsStreamPlayer } from './streamPlayer';
+import type { LiveKitPlaybackFeedbackPayload } from '../../../api/model/liveKitModel';
+import { ensureLiveKitSession, getLiveKitPlaybackSnapshot, publishLiveKitPlaybackFeedback } from '../../../api/service/liveKitRealtime';
 import type { QwenTtsTriggerInput, TtsRunResult, TtsRuntimeConfig, TtsWarmupResult } from './types';
 
 // 规范化数据
@@ -76,21 +78,158 @@ const isAbortError = (value: unknown): boolean => {
   return String(value).includes('AbortError');
 };
 
+type PlaybackFeedbackReporter = (request: {
+  baseUrl: string;
+  sessionId: string;
+  requestId: string;
+  payload: LiveKitPlaybackFeedbackPayload;
+  signal?: AbortSignal;
+}) => Promise<void> | void;
+
+export interface FrontendTtsRuntimeOptions {
+  reportPlaybackFeedback?: PlaybackFeedbackReporter;
+}
+
 
 // 前端 TTS 运行时，负责处理来自前端的 TTS 请求，管理请求状态和播放，调用后端 API，并处理取消和错误等情况。
 export class FrontendTtsRuntime {
   private readonly player = new TtsStreamPlayer();
 
+  private readonly reportPlaybackFeedback?: PlaybackFeedbackReporter;
+
   private activeAbortController: AbortController | null = null;
 
   private activeRequestId: string | null = null;
 
+  private playbackFeedbackTimerId: number | null = null;
+
+  private playbackFeedbackInFlight = false;
+
+  private playbackFeedbackLastFingerprint = '';
+
+  private playbackFeedbackLastSentAt = 0;
+
   // 当前是否已调用 dispose，dispose 后实例不应再接受新的 speak 请求，且会中止所有未完成的请求。 
   private disposed = false;
+
+  constructor(options?: FrontendTtsRuntimeOptions) {
+    this.reportPlaybackFeedback = options?.reportPlaybackFeedback;
+  }
+
+  private stopPlaybackFeedbackBridge(): void {
+    if (this.playbackFeedbackTimerId !== null) {
+      window.clearInterval(this.playbackFeedbackTimerId);
+      this.playbackFeedbackTimerId = null;
+    }
+    this.playbackFeedbackInFlight = false;
+    this.playbackFeedbackLastFingerprint = '';
+    this.playbackFeedbackLastSentAt = 0;
+  }
+
+  private startPlaybackFeedbackBridge(
+    baseUrl: string,
+    sessionId: string,
+    requestId: string,
+    signal?: AbortSignal,
+  ): void {
+    if (this.playbackFeedbackTimerId !== null) return;
+
+    const reporter = this.reportPlaybackFeedback ?? (async (request: {
+      baseUrl: string;
+      sessionId: string;
+      requestId: string;
+      payload: LiveKitPlaybackFeedbackPayload;
+      signal?: AbortSignal;
+    }) => {
+      await publishLiveKitPlaybackFeedback(request.baseUrl, {
+        sessionId: request.sessionId,
+        requestId: request.requestId,
+        ts: Date.now(),
+        payload: request.payload,
+      }, {
+        signal: request.signal,
+        eventTopic: 'v3.event',
+        reason: 'tts-playback-feedback',
+      });
+    });
+
+    const sendSnapshot = async (reason: 'heartbeat' | 'state-change'): Promise<void> => {
+      if (signal?.aborted || this.disposed) return;
+      if (this.playbackFeedbackInFlight) return;
+
+      const snapshot = await getLiveKitPlaybackSnapshot(baseUrl);
+      if (!snapshot) return;
+
+      const fingerprint = [
+        snapshot.state,
+        snapshot.bufferMs,
+        snapshot.lowWaterMs,
+        snapshot.highWaterMs,
+        snapshot.ended ? '1' : '0',
+        snapshot.paused ? '1' : '0',
+        snapshot.hasAudioTrack ? '1' : '0',
+      ].join('|');
+
+      const now = performance.now();
+      const shouldRefresh = now - this.playbackFeedbackLastSentAt >= 1200;
+      if (fingerprint === this.playbackFeedbackLastFingerprint && !shouldRefresh && reason !== 'state-change') {
+        return;
+      }
+
+      this.playbackFeedbackInFlight = true;
+      try {
+        this.playbackFeedbackLastFingerprint = fingerprint;
+        this.playbackFeedbackLastSentAt = now;
+
+        info('ai.tts.feedback', 'publish.start', {
+          requestId,
+          state: snapshot.state,
+          bufferMs: snapshot.bufferMs,
+          trackSid: snapshot.trackSid,
+        });
+
+        await reporter({
+          baseUrl,
+          sessionId,
+          requestId,
+          signal,
+          payload: snapshot,
+        });
+
+        info('ai.tts.feedback', 'publish.ok', {
+          requestId,
+          state: snapshot.state,
+          bufferMs: snapshot.bufferMs,
+          reason,
+        });
+      } catch (e) {
+        warn('ai.tts.feedback', 'publish.failed', {
+          requestId,
+          err: String(e instanceof Error ? e.message : e),
+        });
+      } finally {
+        this.playbackFeedbackInFlight = false;
+      }
+    };
+
+    void sendSnapshot('heartbeat');
+    this.playbackFeedbackTimerId = window.setInterval(() => {
+      void sendSnapshot('heartbeat');
+    }, 400);
+
+    if (signal) {
+      const onAbort = () => {
+        this.stopPlaybackFeedbackBridge();
+        signal.removeEventListener('abort', onAbort);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  }
 
   dispose(): void {
     this.disposed = true;
     this.cancelActive('dispose');
+    this.stopPlaybackFeedbackBridge();
     this.player.dispose();
   }
 
@@ -183,6 +322,7 @@ export class FrontendTtsRuntime {
     }
     this.activeAbortController = null;
     this.activeRequestId = null;
+    this.stopPlaybackFeedbackBridge();
     this.player.stop();
     info('ai.tts', 'request.cancel', { reason });
   }
@@ -235,6 +375,22 @@ export class FrontendTtsRuntime {
     this.activeAbortController = controller;
     this.activeRequestId = requestId;
     const effectiveStreamingMode = ttsConfig.mediaType === 'wav' ? false : ttsConfig.streamingMode;
+
+    const session = await ensureLiveKitSession(
+      ttsConfig.baseUrl,
+      {
+        client: 'desktop',
+        version: '0.1.0',
+        capabilities: {
+          livekit: true,
+          audioDownlink: true,
+        },
+      },
+      controller.signal,
+    );
+
+    // 反馈闭环只对实时房间链路有意义；先启动轮询，音轨出现后就会有缓冲快照。
+    this.startPlaybackFeedbackBridge(ttsConfig.baseUrl, session.sessionId, requestId, controller.signal);
 
     info('ai.tts', 'request.start', {
       requestId,
@@ -334,10 +490,11 @@ export class FrontendTtsRuntime {
         this.activeAbortController = null;
         this.activeRequestId = null;
       }
+      this.stopPlaybackFeedbackBridge();
     }
   }
 }
 
-export const createFrontendTtsRuntime = (): FrontendTtsRuntime => {
-  return new FrontendTtsRuntime();
+export const createFrontendTtsRuntime = (options?: FrontendTtsRuntimeOptions): FrontendTtsRuntime => {
+  return new FrontendTtsRuntime(options);
 };

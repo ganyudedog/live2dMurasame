@@ -19,6 +19,7 @@ import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../
 import { useConfigStore } from '../../store/useConfigStore';
 import { createStage2Runtime } from '../../../AI/core/stage2Runtime';
 import { createFrontendTtsRuntime } from '../../../AI/tts/runtime';
+import { useTtsPlaybackFeedbackMutation } from '../../../../api/hooks/liveKitHooks';
 import { info, warn } from '../../utils/log';
 import { toast } from 'react-hot-toast';
 
@@ -190,6 +191,11 @@ const ControlPanel: React.FC = () => {
   const stage2RuntimeRef = useRef<ReturnType<typeof createStage2Runtime> | null>(null);
   const ttsRuntimeRef = useRef<ReturnType<typeof createFrontendTtsRuntime> | null>(null);
   const mountedRef = useRef(false);
+  const { mutateAsync: reportPlaybackFeedback } = useTtsPlaybackFeedbackMutation();
+
+  const reportPlaybackFeedbackBridge = async (request: Parameters<typeof reportPlaybackFeedback>[0]) => {
+    await reportPlaybackFeedback(request);
+  };
 
   const ensureStage2Runtime = () => {
     if (!stage2RuntimeRef.current) {
@@ -200,7 +206,9 @@ const ControlPanel: React.FC = () => {
 
   const ensureTtsRuntime = () => {
     if (!ttsRuntimeRef.current) {
-      ttsRuntimeRef.current = createFrontendTtsRuntime();
+      ttsRuntimeRef.current = createFrontendTtsRuntime({
+        reportPlaybackFeedback: reportPlaybackFeedbackBridge,
+      });
     }
     return ttsRuntimeRef.current;
   };

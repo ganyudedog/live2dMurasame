@@ -7,6 +7,7 @@ import {
   toTtsSpeakServer,
 } from '../../../api/service/liveKitService';
 import {
+  disconnectLiveKitRoom,
   ensureLiveKitRoomConnected,
   ensureLiveKitSession,
   publishLiveKitV3Event,
@@ -267,6 +268,39 @@ const createRealtimeSyntheticResponse = (payload: RealtimeSpeakResult): Response
   });
 };
 
+// 取消tts.speak的实时链路，通知后端中断合成并清理房间状态，避免残留音轨叠加导致回声/金属音。
+const cancelRealtimeSpeakBestEffort = async (
+  baseUrl: string,
+  sessionId: string,
+  requestId: string,
+): Promise<void> => {
+  try {
+    await publishLiveKitV3Event(baseUrl, {
+      type: 'tts.cancel',
+      session_id: sessionId,
+      request_id: requestId,
+      ts: Date.now(),
+      payload: {
+        reason: 'realtime-fallback-http',
+      },
+    }, {
+      eventTopic: 'v3.event',
+      reason: 'tts.speak.fallback-cancel',
+    });
+
+    info('ai.tts.v3', 'realtime.speak.fallbackCancel.ok', {
+      requestId,
+      sessionId,
+    });
+  } catch (e) {
+    warn('ai.tts.v3', 'realtime.speak.fallbackCancel.failed', {
+      requestId,
+      sessionId,
+      err: String(e instanceof Error ? e.message : e),
+    });
+  }
+};
+
 const waitUntilModelReady = async (baseUrl: string, sessionId: string, signal?: AbortSignal): Promise<boolean> => {
   for (let idx = 0; idx < 8; idx += 1) {
     if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError');
@@ -345,6 +379,7 @@ const ensureModelReady = async (
   }
 };
 
+// 模型预热
 export const warmupTtsModel = async (
   config: TtsSynthesisRequest['config'],
   options?: { reason?: string; signal?: AbortSignal },
@@ -458,9 +493,16 @@ export const requestTtsSynthesis = async ({
         requestId,
         err: String(e instanceof Error ? e.message : e),
       });
+
+      // 实时链路异常后，后端仍可能继续推送音轨。
+      // fallback 到 HTTP 前先尝试 cancel 并断开本地房间，避免双路同播导致回音/金属音。
+      await cancelRealtimeSpeakBestEffort(baseUrl, sessionId, requestId);
+      disconnectLiveKitRoom(baseUrl);
       // 继续走 HTTP fallback
     }
   } else {
+    // 直接走 HTTP 时，主动清理旧的 LiveKit 播放通道，避免残留音轨叠播。
+    disconnectLiveKitRoom(baseUrl);
     if (!preferRealtime) {
       info('ai.tts.v3', 'realtime.speak.skippedByCaller', { requestId, reason: 'preferRealtime=false' });
     }

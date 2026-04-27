@@ -493,7 +493,7 @@ const ControlPanel: React.FC = () => {
       // displayText 用于 UI 展示，speakText 只用于 TTS。
       const displayText = result.reply.display_text.trim()
       const speakText = result.reply.speak_text!.trim()
-  
+
       const ttsEnabled = Boolean(modelConfig.tts?.enabled);
 
       // 前端日志：记录双文本链路与 TTS 触发状态，便于多模型调试。

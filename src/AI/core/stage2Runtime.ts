@@ -77,19 +77,19 @@ const normalizeMemoryMessages = (messages: unknown): PetModelMemoryMessage[] => 
   if (!Array.isArray(messages)) return [];
   const normalized: PetModelMemoryMessage[] = [];
   messages.forEach((item) => {
-      const source = item && typeof item === 'object' ? item as PetModelMemoryMessage : {};
-      const text = isString(source.text) ? source.text.trim() : '';
-      if (!text) return;
-      normalized.push({
-        id: isString(source.id) ? source.id : createMemoryMessageId(),
-        role: isString(source.role) ? source.role : 'user',
-        text,
-        source: isString(source.source) ? source.source : '',
-        name: isString(source.name) ? source.name : '',
-        ts: isFiniteNumber(source.ts) ? Math.max(0, Math.floor(source.ts)) : 0,
-        meta: source.meta && typeof source.meta === 'object' ? source.meta : {},
-      });
+    const source = item && typeof item === 'object' ? item as PetModelMemoryMessage : {};
+    const text = isString(source.text) ? source.text.trim() : '';
+    if (!text) return;
+    normalized.push({
+      id: isString(source.id) ? source.id : createMemoryMessageId(),
+      role: isString(source.role) ? source.role : 'user',
+      text,
+      source: isString(source.source) ? source.source : '',
+      name: isString(source.name) ? source.name : '',
+      ts: isFiniteNumber(source.ts) ? Math.max(0, Math.floor(source.ts)) : 0,
+      meta: source.meta && typeof source.meta === 'object' ? source.meta : {},
     });
+  });
   return normalized;
 };
 

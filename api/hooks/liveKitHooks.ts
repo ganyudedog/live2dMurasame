@@ -68,6 +68,7 @@ export const useLiveKitHealthQuery = (
   });
 };
 
+// 创建livekit session，获取连接信息和token等，供后续连接room和调用tts接口使用。
 export const useCreateSessionMutation = (
   baseUrl: string,
   options?: UseMutationOptions<
@@ -111,6 +112,7 @@ export const useCreateSessionMutation = (
   });
 };
 
+// 基于livekit发送模型切换，降低消息发送和处理的时延，提升交互流畅度。
 export const useModelSwitchMutation = (
   baseUrl: string,
   options?: UseMutationOptions<

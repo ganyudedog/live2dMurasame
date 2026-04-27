@@ -50,16 +50,14 @@ const extractPartialStringField = (rawText: string, key: string): string => {
 // 从流式增量文本中提取可预览字段（允许 JSON 尚未闭合）。
 export const parseStage2StreamPreview = (
   rawText: string,
-): Partial<Pick<Stage2LLMReply, 'display_text' | 'speak_text' | 'reply_text'>> => {
+): Partial<Pick<Stage2LLMReply, 'display_text' | 'speak_text'>> => {
   const candidate = extractJsonCandidate(rawText);
   const displayText = extractPartialStringField(candidate, 'display_text');
   const speakText = extractPartialStringField(candidate, 'speak_text');
-  const replyText = extractPartialStringField(candidate, 'reply_text');
 
   return {
     display_text: displayText || undefined,
     speak_text: speakText || undefined,
-    reply_text: replyText || undefined,
   };
 };
 

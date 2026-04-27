@@ -15,7 +15,7 @@ export interface Stage2LLMRequest {
   temperature?: number;
   ragContext?: string;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
-  speakLang?: string;
+  speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
   // 是否启用流式输出（降低首字等待时间）
   stream?: boolean;
   // 流式增量回调：每次收到模型增量文本时触发
@@ -31,8 +31,6 @@ export interface Stage2LLMReply {
   display_text?: string;
   // 面向 TTS 的发音文本（例如日文）
   speak_text?: string;
-  // 兼容旧协议字段，作为双文本缺失时的回退
-  reply_text: string;
   action_intent: ActionIntentInput;
   meta?: {
     latency_ms?: number;

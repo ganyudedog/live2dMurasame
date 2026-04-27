@@ -473,7 +473,7 @@ const ControlPanel: React.FC = () => {
       });
       if (!mountedRef.current) return;
 
-      if (!result?.ok || !result.reply?.reply_text) {
+      if (!result?.ok || !result.reply?.display_text) {
         const message = result?.error ?? '对话请求失败';
         toast.error(message);
         setChatError(message);
@@ -491,13 +491,9 @@ const ControlPanel: React.FC = () => {
 
       // 双语言链路结构：UI 显示文本与语音合成文本先分离存放。
       // displayText 用于 UI 展示，speakText 只用于 TTS。
-      const displayText = typeof result.reply.display_text === 'string' && result.reply.display_text.trim()
-        ? result.reply.display_text.trim()
-        : result.reply.reply_text;
-      const speakText = typeof result.reply.speak_text === 'string' && result.reply.speak_text.trim()
-        ? result.reply.speak_text.trim()
-        : result.reply.reply_text;
-
+      const displayText = result.reply.display_text.trim()
+      const speakText = result.reply.speak_text!.trim()
+  
       const ttsEnabled = Boolean(modelConfig.tts?.enabled);
 
       // 前端日志：记录双文本链路与 TTS 触发状态，便于多模型调试。

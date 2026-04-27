@@ -30,7 +30,7 @@ interface RuntimeBridgeConfig {
 
 interface Stage2LanguageProfile {
   displayLang: 'zh' | 'en' | 'ja' | 'ko';
-  speakLang: string;
+  speakLang: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
 }
 
 interface RagTextFileResult {
@@ -64,9 +64,9 @@ const normalizeDisplayLang = (value: unknown): 'zh' | 'en' | 'ja' | 'ko' => {
   return 'zh';
 };
 
-const normalizeSpeakLang = (value: unknown): string => {
-  if (!isString(value)) return 'ja';
-  return String(value).trim();
+const normalizeSpeakLang = (value: unknown): 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto' => {
+  if (!isString(value)) return 'all_ja';
+  return String(value).trim() as 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
 };
 
 const createMemoryMessageId = (): string => {
@@ -219,7 +219,7 @@ export class Stage2Runtime {
 
             // 流式阶段只做 UI 预览文本，避免 speak_text 未稳定时误触发语音。
             const preview = parseStage2StreamPreview(aggregateText);
-            const nextDisplay = normalizeReplyText(preview.display_text) || normalizeReplyText(preview.reply_text);
+            const nextDisplay = normalizeReplyText(preview.display_text);
             if (!nextDisplay || nextDisplay === streamedDisplayText) return;
             streamedDisplayText = nextDisplay;
             options.onDisplayTextStreaming?.(nextDisplay);
@@ -238,12 +238,11 @@ export class Stage2Runtime {
       reply.meta.provider = reply.meta.provider ?? 'openai-compatible';
 
       // 双文本协议：display_text 用于前端展示，speak_text 用于 TTS。
-      // 若任一字段缺失，回退到旧字段 reply_text，保证兼容历史模型输出。
-      const displayText = normalizeReplyText(reply.display_text) || normalizeReplyText(reply.reply_text);
-      const speakText = normalizeReplyText(reply.speak_text) || normalizeReplyText(reply.reply_text);
+      const displayText = normalizeReplyText(reply.display_text);
+      const speakText = normalizeReplyText(reply.speak_text);
       reply.display_text = displayText;
       reply.speak_text = speakText;
-      reply.reply_text = displayText;
+
 
       const actionResult = this.dispatchAction(reply.action_intent, 'stage2.llm');
 
@@ -469,7 +468,7 @@ export class Stage2Runtime {
     } catch {
       return {
         displayLang: 'zh',
-        speakLang: 'ja',
+        speakLang: 'all_ja',
       };
     }
   }

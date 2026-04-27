@@ -65,7 +65,7 @@ declare global {
     baseUrl?: string;
     gptWeightsPath?: string;
     sovitsWeightsPath?: string;
-    textLang?: string;
+    textLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
     promptLang?: string;
     refAudioPath?: string;
     refAudioText?: string;

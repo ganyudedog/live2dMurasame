@@ -19,6 +19,7 @@ import { usePetCanvasBootstrap } from './hooks/usePetCanvasBootstrap';
 import { useDebugMaskHeight } from './hooks/useDebugMaskHeight';
 import { usePetResizeOrchestrator } from './hooks/usePetResizeOrchestrator';
 import { useBubblePositionEngine } from './hooks/useBubblePositionEngine';
+import { createAsrAudioCaptureController, type AsrSharedBufferInfo } from './audio/asrAudioCapture';
 import { useBaselineController } from './runtime/geometry/BaselineController';
 import { useDragSessionController } from './runtime/geometry/DragSessionController';
 import { useGeometryRuntime } from './runtime/geometry/GeometryRuntime';
@@ -31,10 +32,11 @@ import { solveInteractivity } from './runtime/geometry/solvers/InteractivitySolv
 import { solveContextZoneActivity } from './runtime/geometry/solvers/ContextZoneActivitySolver';
 import { solveModelLayout } from './runtime/geometry/solvers/ModelLayoutSolver';
 import { createFrontendTtsRuntime } from '../../../AI/tts/runtime';
-import { debug, warn } from '../../utils/log';
+import { debug, error, info, warn } from '../../utils/log';
 import { useConfigStore } from '../../store/useConfigStore';
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
+import { getSharedWorkerAsrSnapshot, subscribeSharedWorkerAsr } from '../../shared/sharedWorkerAsrStore';
 import {
   CONTEXT_ZONE_LATCH_MS,
   DEFAULT_TOUCH_PRIORITY,
@@ -198,6 +200,15 @@ const PetCanvas: React.FC = () => {
   const modelRef = useRef<Live2DModelType | null>(null);
   const setModel = usePetStore(s => s.setModel);
   const setModelLoadStatus = usePetStore(s => s.setModelLoadStatus);
+  const asrSnapshot = useSyncExternalStore(
+    subscribeSharedWorkerAsr,
+    getSharedWorkerAsrSnapshot,
+    getSharedWorkerAsrSnapshot,
+  );
+
+  const asrCaptureRef = useRef<ReturnType<typeof createAsrAudioCaptureController> | null>(null);
+  const asrSharedBufferRef = useRef<AsrSharedBufferInfo | null>(null);
+  const asrRunningRef = useRef(false);
 
   const workerScale = useSyncExternalStore(
     subscribeSharedWorkerScale,
@@ -414,6 +425,105 @@ const PetCanvas: React.FC = () => {
     windowBoundsRef,
     initializeBaselineFromBounds: commitBaselineFromBounds,
   });
+
+  useEffect(() => {
+    if (asrCaptureRef.current) return;
+    asrCaptureRef.current = createAsrAudioCaptureController({
+      logger: { debug, info, warn, error },
+    });
+    return () => {
+      try {
+        asrCaptureRef.current?.stop();
+      } catch {
+        // ignore
+      }
+      asrCaptureRef.current = null;
+      asrSharedBufferRef.current = null;
+      asrRunningRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const ensureSharedBufferInfo = async () => {
+      try {
+        const api = window.AsrAPI;
+        if (!api?.getSharedBufferInfo) return null;
+        const bufferInfo = api.getSharedBufferInfo({ sampleRate: 16000, channels: 1 });
+        if (!bufferInfo || disposed) return null;
+        return bufferInfo as AsrSharedBufferInfo;
+      } catch (e) {
+        warn('pet.asr', 'sharedBuffer.createFailed', { err: String(e instanceof Error ? e.message : e) });
+        return null;
+      }
+    };
+
+    const syncAsrRuntime = async () => {
+      const nextEnabled = Boolean(asrSnapshot.enabled);
+      const api = window.AsrAPI;
+      if (!api) {
+        warn('pet.asr', 'runtime.missingApi', { enabled: nextEnabled });
+        return;
+      }
+
+      if (!nextEnabled) {
+        if (asrRunningRef.current) {
+          try {
+            await api.stop?.();
+          } catch (e) {
+            warn('pet.asr', 'runtime.stopFailed', { err: String(e instanceof Error ? e.message : e) });
+          }
+        }
+        asrRunningRef.current = false;
+        try {
+          await asrCaptureRef.current?.stop();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      const sharedBufferInfo = asrSharedBufferRef.current ?? await ensureSharedBufferInfo();
+      if (disposed) {
+        return;
+      }
+      asrSharedBufferRef.current = sharedBufferInfo ?? null;
+
+      try {
+        await api.start?.(sharedBufferInfo ? { sharedBufferInfo } : undefined);
+        const controller = asrCaptureRef.current;
+        if (!controller) return;
+        await controller.start({
+          sharedBufferInfo,
+          targetSampleRate: sharedBufferInfo?.sampleRate || 16000,
+          onFallbackChunk: async (payload: { samples: Float32Array; sampleRate: number }) => {
+            try {
+              await api.pushAudioChunk?.({ samples: payload.samples });
+            } catch (error) {
+              warn('pet.asr', 'fallback.chunkFailed', { err: String(error instanceof Error ? error.message : error) });
+            }
+          },
+          logger: { debug, info, warn, error },
+        });
+        asrRunningRef.current = true;
+        info('pet.asr', 'runtime.started', {
+          transport: sharedBufferInfo ? 'sab' : 'fallback',
+          sampleRate: sharedBufferInfo?.sampleRate || 16000,
+          capacitySamples: sharedBufferInfo?.capacitySamples || 0,
+        });
+      } catch (e) {
+        asrRunningRef.current = false;
+        error('pet.asr', 'runtime.startFailed', { err: String(e instanceof Error ? e.message : e) });
+      }
+    };
+
+    void syncAsrRuntime();
+
+    return () => {
+      disposed = true;
+    };
+  }, [asrSnapshot.enabled]);
 
 
   // 上下文区域

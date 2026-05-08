@@ -16,6 +16,7 @@ import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '
 import type { ChatMessage, ChatSessionCache, ControlPanelTabKey, ModelConfig, ModelEntry, GlobalUiSettings } from './types';
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
+import { getSharedWorkerAsrSnapshot, setSharedWorkerAsrEnabled, subscribeSharedWorkerAsr, type PetAsrEvent } from '../../shared/sharedWorkerAsrStore';
 import { useConfigStore } from '../../store/useConfigStore';
 import { createStage2Runtime } from '../../../AI/core/stage2Runtime';
 import { createFrontendTtsRuntime } from '../../../AI/tts/runtime';
@@ -85,6 +86,7 @@ const isSameGlobalAiDraft = (
 };
 
 const createChatMessageId = (): string => `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+const createAsrRequestId = (utteranceId: string): string => `asr_${utteranceId}`;
 
 const createChatSessionCache = (patch?: Partial<ChatSessionCache>): ChatSessionCache => ({
   draftText: patch?.draftText ?? '',
@@ -188,10 +190,17 @@ const ControlPanel: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [asrSwitchLoading, setAsrSwitchLoading] = useState(false);
   const stage2RuntimeRef = useRef<ReturnType<typeof createStage2Runtime> | null>(null);
   const ttsRuntimeRef = useRef<ReturnType<typeof createFrontendTtsRuntime> | null>(null);
   const mountedRef = useRef(false);
   const { mutateAsync: reportPlaybackFeedback } = useTtsPlaybackFeedbackMutation();
+
+  const asrSnapshot = useSyncExternalStore(
+    subscribeSharedWorkerAsr,
+    getSharedWorkerAsrSnapshot,
+    getSharedWorkerAsrSnapshot,
+  );
 
   const reportPlaybackFeedbackBridge = async (request: Parameters<typeof reportPlaybackFeedback>[0]) => {
     await reportPlaybackFeedback(request);
@@ -315,6 +324,7 @@ const ControlPanel: React.FC = () => {
 
   useEffect(() => {
     const cached = readChatSessionCache(chatCacheScope);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setChatDraft(cached.draftText);
     setChatMessages(cached.messages);
     setChatSending(false);
@@ -327,6 +337,96 @@ const ControlPanel: React.FC = () => {
       messages: chatMessages,
     }));
   }, [chatCacheScope, chatDraft, chatMessages]);
+
+  useEffect(() => {
+    const api = window.WindowAPI;
+    if (!api?.on) return;
+
+    let disposed = false;
+    const off = api.on('pet:asr:event', (event: PetAsrEvent) => {
+      if (!mountedRef.current || disposed || !event) return;
+
+      if (event.type === 'mic.state') {
+        if (event.state !== 'error' && event.state !== 'denied') {
+          setChatError(null);
+        }
+        return;
+      }
+
+      if (event.type === 'asr.error') {
+        setChatError(event.message);
+        return;
+      }
+
+      if (event.type === 'asr.partial') {
+        const requestId = createAsrRequestId(event.utteranceId);
+        setChatMessages((prev) => {
+          const found = prev.some((item) => item.requestId === requestId && item.source === 'asr');
+          if (!found) {
+            return [
+              ...prev,
+              {
+                id: createChatMessageId(),
+                role: 'user',
+                text: event.text,
+                status: 'sending',
+                source: 'asr',
+                createdAt: Date.now(),
+                requestId,
+              },
+            ];
+          }
+
+          return prev.map((item) => {
+            if (item.requestId !== requestId || item.source !== 'asr') return item;
+            return {
+              ...item,
+              text: event.text,
+              status: 'sending',
+              error: undefined,
+            };
+          });
+        });
+        return;
+      }
+
+      if (event.type === 'asr.final') {
+        const requestId = createAsrRequestId(event.utteranceId);
+        setChatMessages((prev) => {
+          const found = prev.some((item) => item.requestId === requestId && item.source === 'asr');
+          if (!found) {
+            return [
+              ...prev,
+              {
+                id: createChatMessageId(),
+                role: 'user',
+                text: event.text,
+                status: 'done',
+                source: 'asr',
+                createdAt: Date.now(),
+                requestId,
+              },
+            ];
+          }
+
+          return prev.map((item) => {
+            if (item.requestId !== requestId || item.source !== 'asr') return item;
+            return {
+              ...item,
+              text: event.text,
+              status: 'done',
+              error: undefined,
+            };
+          });
+        });
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (typeof off === 'function') off();
+    };
+  }, []);
 
   const persistGlobalSettings = async (patch: Partial<GlobalUiSettings>) => {
     try {
@@ -416,6 +516,22 @@ const ControlPanel: React.FC = () => {
     setChatMessages([]);
     setChatDraft('');
     setChatError(null);
+  };
+
+  // 开启asr语音识别
+  const handleToggleAsr = async (nextEnabled: boolean) => {
+    setAsrSwitchLoading(true);
+    try {
+      setSharedWorkerAsrEnabled(nextEnabled);
+      setChatError(null);
+      info('controlPanel.asr', 'toggle', { enabled: nextEnabled });
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error);
+      setChatError(message);
+      toast.error(message);
+    } finally {
+      setAsrSwitchLoading(false);
+    }
   };
 
   const handleChatSubmit = async () => {
@@ -576,9 +692,15 @@ const ControlPanel: React.FC = () => {
           chatDraft={chatDraft}
           chatSending={chatSending}
           chatError={chatError}
+          asrEnabled={asrSnapshot.enabled}
+          asrState={asrSnapshot.state}
+          asrPartialText={asrSnapshot.partialText}
+          asrError={asrSnapshot.error}
+          asrSwitchLoading={asrSwitchLoading}
           onChatDraftChange={setChatDraft}
           onChatSubmit={handleChatSubmit}
           onClearChat={handleClearChat}
+          onToggleAsr={handleToggleAsr}
         />
       )}
 

@@ -13,9 +13,15 @@ export default function HomePage({
   chatDraft,
   chatSending,
   chatError,
+  asrEnabled,
+  asrState,
+  asrPartialText,
+  asrError,
+  asrSwitchLoading,
   onChatDraftChange,
   onChatSubmit,
   onClearChat,
+  onToggleAsr,
 }: {
   model: ModelEntry;
   globalSettings: GlobalUiSettings;
@@ -25,9 +31,15 @@ export default function HomePage({
   chatDraft: string;
   chatSending: boolean;
   chatError: string | null;
+  asrEnabled: boolean;
+  asrState: PetMicState;
+  asrPartialText: string;
+  asrError: string | null;
+  asrSwitchLoading: boolean;
   onChatDraftChange: (value: string) => void;
   onChatSubmit: () => void;
   onClearChat: () => void;
+  onToggleAsr: (nextEnabled: boolean) => void | Promise<void>;
 }) {
   const scaleLabel = useMemo(() => globalSettings.scale.toFixed(2), [globalSettings.scale]);
 
@@ -103,6 +115,34 @@ export default function HomePage({
 
         {/* 文字对话框 */}
         <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
+          <div className="rounded-box border border-base-300 bg-base-200/50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium">麦克风（ASR）</div>
+                <div className="text-xs text-base-content/60">
+                  状态：{asrState}
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                className="toggle toggle-primary"
+                checked={asrEnabled}
+                disabled={asrSwitchLoading}
+                onChange={(e) => onToggleAsr(e.target.checked)}
+              />
+            </div>
+            {asrPartialText && (
+              <div className="mt-2 text-xs text-base-content/70 break-all">
+                识别中：{asrPartialText}
+              </div>
+            )}
+            {asrError && (
+              <div className="mt-2 text-xs text-error break-all">
+                错误：{asrError}
+              </div>
+            )}
+          </div>
+
           <header className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-medium">对话</div>

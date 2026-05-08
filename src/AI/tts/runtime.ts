@@ -36,11 +36,6 @@ const normalizeTextSplitMode = (value: unknown): string => {
   }
 
   if (normalized === 'none') return 'cut0';
-  if (normalized === 'cut50') return 'cut2';
-  if (normalized === 'cut_punc' || normalized === 'punctuation'
-    || normalized === 'cut_zh_comma' || normalized === 'cut_en_comma') {
-    return 'cut5';
-  }
 
   return 'cut5';
 };

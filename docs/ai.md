@@ -361,9 +361,9 @@ Electron 侧建议：
 
 2. `final` 才触发正式输出
 
-- 正式 `reply_text`
+- 正式 `display_text`
 - 正式 `action_intent`
-- 语音合成（GPT-SoVITS）
+- `speak_text`语音合成（GPT-SoVITS）
 
 3. 所有在途任务必须可取消
 
@@ -955,22 +955,192 @@ V1 精简原则：
 4. 模型未就绪时 TTS 被门禁拦截。
 5. 单房间模型下链路稳定，无重复播报。
 
-### 16.7 阶段 5（待实现）
+### 16.7 阶段 5（重写：ASR 单向链路与麦克风生命周期）
 
 目标：
 
-- 建立 fast lane（partial）与 commit lane（final）
+- 落地“麦克风 -> ASR -> 标准事件输出”的单向链路。
+- 桌宠启动时自动尝试打开麦克风。
+- 支持通过控制面板与应用菜单统一开关麦克风。
+- 当权限被拒绝后，用户再次开启麦克风时可再次触发权限申请。
 
-任务清单：
+#### 16.7.1 本阶段范围与非目标
 
-1. `asr.partial` 只触发可撤销轻动作
-2. `asr.final` 触发正式文本/动作/语音
-3. 全链路取消（`task.cancel` + AbortSignal）
+本阶段范围：
 
-验收：
+1. 启动自动开麦（自动触发权限申请流程）。
+2. 控制面板开关与菜单开关的双向同步。
+3. 权限拒绝后的可重试申请机制。
+4. 本地 ONNX ASR（已可运行的 exe）接入并输出 `asr.partial` / `asr.final`。
+5. 输出到统一事件总线与调试视图（日志/状态面板）。
 
-1. partial 误触发正式播报次数为 0
-2. 取消成功率达标
+本阶段非目标：
+
+1. 不接入 LLM、动作、TTS 业务处理。
+2. 不触发 `fast lane` / `commit lane` 的业务执行，仅保留事件输出能力。
+3. 不做多房间、多会话并发策略。
+
+#### 16.7.2 主链路定义（单向）
+
+链路：
+
+1. 应用启动 -> 自动触发麦克风开启流程。
+2. 权限通过 -> 启动 ASR 采集/识别。
+3. ASR 连续输出 `asr.partial` 与 `asr.final`。
+4. 事件标准化后进入事件总线（仅展示/记录，不触发业务）。
+
+关闭链路：
+
+1. 控制面板关闭麦克风 -> 停止采集与 ASR。
+2. 菜单关闭麦克风 -> 与控制面板状态同步，停止采集与 ASR。
+
+#### 16.7.3 麦克风权限与状态机
+
+状态集合：
+
+- `off`：麦克风关闭。
+- `requesting`：正在请求权限。
+- `active`：麦克风工作中，ASR 可输出事件。
+- `denied`：权限被拒绝。
+- `error`：设备或进程异常。
+
+状态迁移规则：
+
+1. `app.start`：进入 `requesting`，自动尝试申请权限。
+2. `permission.granted`：进入 `active`，拉起 ASR。
+3. `permission.denied`：进入 `denied`，停止自动重试。
+4. `panel.toggle.on` / `menu.toggle.on`：
+	 - 若当前 `denied` 或 `off`，重新进入 `requesting`，再次申请权限。
+5. `panel.toggle.off` / `menu.toggle.off`：进入 `off`，停止 ASR。
+6. `asr.crash` / `device.error`：进入 `error`，可提示用户一键重试。
+
+权限策略：
+
+1. 启动时必须自动尝试申请一次权限。
+2. 若用户拒绝，不做无提示死循环重试。
+3. 任何“再次开启麦克风”操作都必须重新触发申请流程。
+
+#### 16.7.4 模块职责拆分
+
+1. `MicLifecycleManager`（主进程）
+
+- 管理状态机（off/requesting/active/denied/error）。
+- 接收控制面板与菜单开关事件并统一仲裁。
+- 对外广播麦克风状态。
+
+2. `AsrAdapter`（主进程）
+
+- 负责与本地 ONNX ASR 进程（exe）通信。
+- 负责启动、停止、异常重启（可配置）。
+- 输出标准化的 `asr.partial` / `asr.final` / `asr.error`。
+
+3. `MicControlPanel`（渲染层）
+
+- 展示当前状态与错误提示。
+- 提供开/关按钮。
+- 接收主进程状态回推并实时更新。
+
+4. `AppMenuBridge`（主进程 + 菜单）
+
+- 菜单项触发开关。
+- 与控制面板状态保持强一致。
+
+#### 16.7.5 事件协议（阶段 5 最小集）
+
+麦克风状态事件：
+
+```json
+{
+	"type": "mic.state",
+	"state": "off|requesting|active|denied|error",
+	"reason": "app-start|panel-toggle|menu-toggle|permission-denied|device-error",
+	"ts": 0
+}
+```
+
+ASR 事件（沿用既有草案）：
+
+```json
+{
+	"type": "asr.partial",
+	"session_id": "sess_xxx",
+	"segment_id": "seg_xxx",
+	"text": "我想问一下",
+	"is_final": false,
+	"confidence": 0.86,
+	"start_ms": 120,
+	"end_ms": 980,
+	"ts": 0
+}
+```
+
+```json
+{
+	"type": "asr.final",
+	"session_id": "sess_xxx",
+	"segment_id": "seg_xxx",
+	"text": "我想问一下今天的天气怎么样",
+	"is_final": true,
+	"confidence": 0.93,
+	"start_ms": 120,
+	"end_ms": 1860,
+	"ts": 0
+}
+```
+
+错误事件：
+
+```json
+{
+	"type": "asr.error",
+	"code": "mic-permission-denied|device-not-found|asr-process-exit|unknown",
+	"message": "string",
+	"recoverable": true,
+	"ts": 0
+}
+```
+
+#### 16.7.6 实施清单（可审查版本）
+
+阶段 A：权限与开关骨架（0.5 天）
+
+1. 建立 `MicLifecycleManager` 状态机。
+2. 启动自动申请权限。
+3. 接入控制面板开关与菜单开关。
+4. 完成开关状态双向同步。
+
+阶段 B：ASR 进程接入（0.5-1 天）
+
+1. 接入本地 ONNX ASR exe 的启动/停止。
+2. 统一识别结果解析为 `asr.partial` / `asr.final`。
+3. 输出 `asr.error` 与 `mic.state`。
+
+阶段 C：稳定性与重试（0.5 天）
+
+1. 权限拒绝后再次开启可重新申请。
+2. ASR 进程异常退出后给出可恢复提示。
+3. 加入基础限频日志，避免刷屏。
+
+阶段 D：联调与验收（0.5 天）
+
+1. 冷启动自动开麦链路验证。
+2. 控制面板与菜单互操作验证。
+3. 单向 ASR 事件输出验证（不进入业务逻辑）。
+
+#### 16.7.7 验收标准（阶段 5）
+
+1. 启动后自动进入麦克风申请流程。
+2. 控制面板开关与菜单开关状态始终一致。
+3. 权限拒绝后，用户再次开启麦克风会再次弹出申请流程。
+4. 麦克风开启后可稳定收到 `asr.partial` 与 `asr.final`。
+5. 关闭麦克风后 ASR 停止输出，且不再占用采集资源。
+6. 本阶段不触发 LLM/动作/TTS 业务逻辑。
+
+#### 16.7.8 与后续阶段衔接
+
+1. 阶段 5 完成后，再开启 `fast lane` / `commit lane` 的业务执行。
+2. `task.cancel` 与 `AbortSignal` 在阶段 5 先预留字段与接口，不作为本阶段强验收项。
+3. 阶段 6 继续做指标、压测与故障注入。
 
 ### 16.8 阶段 6（待实现）
 

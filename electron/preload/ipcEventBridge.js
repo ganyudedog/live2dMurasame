@@ -4,6 +4,7 @@ export const createIpcEventBridge = ({ ipcRenderer }) => {
     'pet:windowBoundsChanged',
     'pet:windowFact',
     'pet:windowIntentAck',
+    'pet:asr:event',
   ]);
 
   const ipcEventListenerRegistry = new Map();
@@ -33,12 +34,13 @@ export const createIpcEventBridge = ({ ipcRenderer }) => {
   };
 
   const on = (channel, callback) => {
-    if (!allowedIpcEvents.has(channel)) return;
-    if (typeof callback !== 'function') return;
+    if (!allowedIpcEvents.has(channel)) return () => {};
+    if (typeof callback !== 'function') return () => {};
 
     const reg = getChannelRegistry(channel);
-    if (reg.callbacks.has(callback)) return;
+    if (reg.callbacks.has(callback)) return () => off(channel, callback);
     reg.callbacks.add(callback);
+    return () => off(channel, callback);
   };
 
   const off = (channel, callback) => {

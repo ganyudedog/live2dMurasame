@@ -7,6 +7,56 @@ const eventBridge = createIpcEventBridge({ ipcRenderer });
 const getLive2denvConfigImpl = () => ipcRenderer.invoke('pet:getLive2denvConfig');
 const updateLive2denvConfigImpl = (patch) => ipcRenderer.invoke('pet:updateLive2denvConfig', patch);
 
+const ASR_HEADER_SIZE = 8;
+const ASR_DEFAULT_CAPACITY_SECONDS = 10;
+const ASR_DEFAULT_SAMPLE_RATE = 16000;
+const ASR_DEFAULT_CHANNELS = 1;
+const ASR_DEFAULT_CAPACITY_SAMPLES = ASR_DEFAULT_SAMPLE_RATE * ASR_DEFAULT_CAPACITY_SECONDS * ASR_DEFAULT_CHANNELS;
+
+let asrSharedBufferInfo = null;
+
+const createAsrSharedBufferInfo = (options = {}) => {
+  if (asrSharedBufferInfo) return asrSharedBufferInfo;
+
+  if (typeof SharedArrayBuffer === 'undefined') {
+    return null;
+  }
+
+  const sampleRate = typeof options.sampleRate === 'number' && Number.isFinite(options.sampleRate)
+    ? Math.max(8000, Math.floor(options.sampleRate))
+    : ASR_DEFAULT_SAMPLE_RATE;
+  const channels = typeof options.channels === 'number' && Number.isFinite(options.channels)
+    ? Math.max(1, Math.floor(options.channels))
+    : ASR_DEFAULT_CHANNELS;
+  const capacitySamples = typeof options.capacitySamples === 'number' && Number.isFinite(options.capacitySamples)
+    ? Math.max(2048, Math.floor(options.capacitySamples))
+    : Math.max(ASR_DEFAULT_CAPACITY_SAMPLES, sampleRate * ASR_DEFAULT_CAPACITY_SECONDS * channels);
+
+  const headerBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * ASR_HEADER_SIZE);
+  const dataBuffer = new SharedArrayBuffer(Float32Array.BYTES_PER_ELEMENT * capacitySamples);
+  const header = new Int32Array(headerBuffer);
+
+  header[0] = 0; // writeIndex
+  header[1] = 0; // readIndex
+  header[2] = capacitySamples;
+  header[3] = sampleRate;
+  header[4] = channels;
+  header[5] = 0; // active flag
+  header[6] = 0; // throttle flag
+  header[7] = 0; // dropped sample counter (low 32bit, best-effort)
+
+  asrSharedBufferInfo = {
+    headerBuffer,
+    dataBuffer,
+    headerSize: ASR_HEADER_SIZE,
+    sampleRate,
+    channels,
+    capacitySamples,
+  };
+
+  return asrSharedBufferInfo;
+};
+
 const WindowAPI = {
   sendWindowIntent: (intent) => ipcRenderer.invoke('pet:windowIntent', intent),
   sendWindowDrag: (payload) => ipcRenderer.send('pet:windowDrag', payload),
@@ -105,6 +155,28 @@ const AIAPI = {
     pickRefAudioPath: () => ipcRenderer.invoke('pet:ai:tts:pickRefAudioPath'),
   },
 };
+// electron侧接入asr功能，给渲染进程请求
+
+const AsrAPI = {
+  getSharedBufferInfo: (options) => createAsrSharedBufferInfo(options),
+  attachSharedBuffer: (sharedBufferInfo) => ipcRenderer.invoke('pet:asr:attachSharedBuffer', sharedBufferInfo),
+  pushAudioChunk: (payload) => ipcRenderer.invoke('pet:asr:pushAudioChunk', payload),
+  getStatus: () => ipcRenderer.invoke('pet:asr:getStatus'),
+  start: (options) => ipcRenderer.invoke('pet:asr:start', options),
+  stop: () => ipcRenderer.invoke('pet:asr:stop'),
+  onEvent: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => {
+      try {
+        callback(payload);
+      } catch (error) {
+        console.error('[AsrAPI] event listener error', error);
+      }
+    };
+    ipcRenderer.on('pet:asr:event', listener);
+    return () => ipcRenderer.removeListener('pet:asr:event', listener);
+  },
+};
 
 const SystemAPI = {
   debugTrace: (payload) => ipcRenderer.send('pet:debugTrace', payload),
@@ -134,4 +206,5 @@ contextBridge.exposeInMainWorld('ConfigAPI', ConfigAPI);
 contextBridge.exposeInMainWorld('ModelAPI', ModelAPI);
 contextBridge.exposeInMainWorld('MemoryAPI', MemoryAPI);
 contextBridge.exposeInMainWorld('AIAPI', AIAPI);
+contextBridge.exposeInMainWorld('AsrAPI', AsrAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);

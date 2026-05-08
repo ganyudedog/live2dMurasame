@@ -3,11 +3,19 @@ export type SharedState = {
   global: {
     scale: number;
   };
+  asr: {
+    enabled: boolean;
+    state: 'off' | 'requesting' | 'active' | 'denied' | 'error';
+    partialText: string;
+    error: string | null;
+    throttled: boolean;
+    lastUpdatedAt: number;
+  };
 };
 
 export type PatchOp = {
-  path: 'global.scale';
-  value: number;
+  path: 'global.scale' | 'asr.enabled' | 'asr.state' | 'asr.partialText' | 'asr.error' | 'asr.throttled' | 'asr.lastUpdatedAt';
+  value: number | boolean | string | null;
 };
 
 export type HelloMsg = {

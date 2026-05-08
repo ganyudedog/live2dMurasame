@@ -273,6 +273,7 @@ declare global {
     'pet:windowBoundsChanged': PetWindowBoundsChangedPayload;
     'pet:windowFact': PetWindowFact;
     'pet:windowIntentAck': PetWindowIntentAck;
+    'pet:asr:event': PetAsrEvent;
   }
 
   interface PetAIConfigPayload {
@@ -323,7 +324,7 @@ declare global {
     getCursorScreenPoint?: () => Promise<{ x: number; y: number } | null | undefined>;
     getWindowBounds?: () => Promise<{ x: number; y: number; width: number; height: number } | null | undefined>;
     isDevToolsOpened?: () => boolean;
-    on?: <K extends keyof PetWindowEventMap>(channel: K, callback: (payload: PetWindowEventMap[K]) => void) => void;
+    on?: <K extends keyof PetWindowEventMap>(channel: K, callback: (payload: PetWindowEventMap[K]) => void) => (() => void) | void;
     off?: <K extends keyof PetWindowEventMap>(channel: K, callback: (payload: PetWindowEventMap[K]) => void) => void;
   }
 
@@ -373,12 +374,94 @@ declare global {
     debugTrace?: (payload: PetDebugTracePayload) => void;
   }
 
+  type PetMicState = 'off' | 'requesting' | 'active' | 'denied' | 'error';
+
+  interface PetAsrStatus {
+    enabled: boolean;
+    running: boolean;
+    state: PetMicState;
+    lastError: string | null;
+  }
+
+  interface PetAsrStartOptions {
+    exePath?: string;
+    cwd?: string;
+    args?: string[];
+    sharedBufferInfo?: {
+      headerBuffer: SharedArrayBuffer;
+      dataBuffer: SharedArrayBuffer;
+      headerSize: number;
+      sampleRate: number;
+      channels: number;
+      capacitySamples: number;
+    };
+  }
+
+  interface PetAsrPartialEvent {
+    type: 'asr.partial';
+    utteranceId: string;
+    text: string;
+    ts: number;
+  }
+
+  interface PetAsrFinalEvent {
+    type: 'asr.final';
+    utteranceId: string;
+    text: string;
+    ts: number;
+  }
+
+  interface PetAsrErrorEvent {
+    type: 'asr.error';
+    code: string;
+    message: string;
+    ts: number;
+  }
+
+  interface PetAsrThrottleEvent {
+    type: 'asr.throttle';
+    enabled: boolean;
+    ts: number;
+    queueLength?: number;
+    reason?: string;
+  }
+
+  interface PetMicStateEvent {
+    type: 'mic.state';
+    state: PetMicState;
+    enabled: boolean;
+    reason?: string;
+    ts: number;
+  }
+
+  type PetAsrEvent = PetAsrPartialEvent | PetAsrFinalEvent | PetAsrErrorEvent | PetAsrThrottleEvent | PetMicStateEvent;
+
+  interface PetAsrAPI {
+    // sab链路下的音频处理
+    getSharedBufferInfo?: (options?: { sampleRate?: number; channels?: number; capacitySamples?: number }) => {
+      headerBuffer: SharedArrayBuffer;
+      dataBuffer: SharedArrayBuffer;
+      headerSize: number;
+      sampleRate: number;
+      channels: number;
+      capacitySamples: number;
+    } | null;
+    attachSharedBuffer?: (sharedBufferInfo: PetAsrStartOptions['sharedBufferInfo']) => Promise<boolean | undefined>;
+    // 当asb不可用时的备用接口：直接推送音频数据块
+    pushAudioChunk?: (payload: { samples: Float32Array | number[] }) => Promise<boolean | undefined>;
+    getStatus?: () => Promise<PetAsrStatus | undefined>;
+    start?: (options?: PetAsrStartOptions) => Promise<PetAsrStatus | undefined>;
+    stop?: () => Promise<PetAsrStatus | undefined>;
+    onEvent?: (callback: (event: PetAsrEvent) => void) => (() => void) | void;
+  }
+
   interface Window {
     WindowAPI?: PetWindowAPI;
     ConfigAPI?: PetConfigAPI;
     ModelAPI?: PetModelAPI;
     MemoryAPI?: PetMemoryAPI;
     AIAPI?: PetAIAPI;
+    AsrAPI?: PetAsrAPI;
     SystemAPI?: PetSystemAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
   }

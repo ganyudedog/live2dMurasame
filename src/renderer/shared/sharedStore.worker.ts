@@ -9,6 +9,14 @@ let state: SharedState = {
   global: {
     scale: 1,
   },
+  asr: {
+    enabled: false,
+    state: 'off',
+    partialText: '',
+    error: null,
+    throttled: false,
+    lastUpdatedAt: 0,
+  },
 };
 
 let flushTimer: number | null = null;
@@ -22,6 +30,78 @@ const applyOp = (op: PatchOp) => {
       global: {
         ...state.global,
         scale: next,
+      },
+    };
+    return;
+  }
+
+  if (op.path === 'asr.enabled') {
+    state = {
+      ...state,
+      asr: {
+        ...state.asr,
+        enabled: Boolean(op.value),
+        lastUpdatedAt: Date.now(),
+      },
+    };
+    return;
+  }
+
+  if (op.path === 'asr.state' && typeof op.value === 'string') {
+    state = {
+      ...state,
+      asr: {
+        ...state.asr,
+        state: op.value as SharedState['asr']['state'],
+        lastUpdatedAt: Date.now(),
+      },
+    };
+    return;
+  }
+
+  if (op.path === 'asr.partialText' && typeof op.value === 'string') {
+    state = {
+      ...state,
+      asr: {
+        ...state.asr,
+        partialText: op.value,
+        lastUpdatedAt: Date.now(),
+      },
+    };
+    return;
+  }
+
+  if (op.path === 'asr.error') {
+    state = {
+      ...state,
+      asr: {
+        ...state.asr,
+        error: typeof op.value === 'string' ? op.value : null,
+        lastUpdatedAt: Date.now(),
+      },
+    };
+    return;
+  }
+
+  if (op.path === 'asr.throttled') {
+    state = {
+      ...state,
+      asr: {
+        ...state.asr,
+        throttled: Boolean(op.value),
+        lastUpdatedAt: Date.now(),
+      },
+    };
+    return;
+  }
+
+  if (op.path === 'asr.lastUpdatedAt') {
+    const next = Number.isFinite(op.value) ? Number(op.value) : Date.now();
+    state = {
+      ...state,
+      asr: {
+        ...state.asr,
+        lastUpdatedAt: next,
       },
     };
   }

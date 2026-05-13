@@ -19,6 +19,12 @@ const createAsrSharedBufferInfo = (options = {}) => {
   if (asrSharedBufferInfo) return asrSharedBufferInfo;
 
   if (typeof SharedArrayBuffer === 'undefined') {
+    console.log("[AsrAPI] SharedArrayBuffer is not supported in this environment, ASR functionality is unavailable", {
+      type: typeof SharedArrayBuffer,
+      crossOriginIsolated: globalThis.crossOriginIsolated,
+      isSecureContext: globalThis.isSecureContext,
+      url: location.href,
+    });
     return null;
   }
 
@@ -160,7 +166,6 @@ const AIAPI = {
 const AsrAPI = {
   getSharedBufferInfo: (options) => createAsrSharedBufferInfo(options),
   attachSharedBuffer: (sharedBufferInfo) => ipcRenderer.invoke('pet:asr:attachSharedBuffer', sharedBufferInfo),
-  pushAudioChunk: (payload) => ipcRenderer.invoke('pet:asr:pushAudioChunk', payload),
   getStatus: () => ipcRenderer.invoke('pet:asr:getStatus'),
   start: (options) => ipcRenderer.invoke('pet:asr:start', options),
   stop: () => ipcRenderer.invoke('pet:asr:stop'),

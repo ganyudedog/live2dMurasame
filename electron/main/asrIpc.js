@@ -20,7 +20,6 @@ const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_FEATURE_DIM = 80;
 const DEFAULT_POLL_INTERVAL_MS = 20;
 const DEFAULT_SHARED_BATCH_SIZE = 2048;
-const DEFAULT_FALLBACK_QUEUE_LIMIT = 12;
 
 let sherpaOnnxModule = null;
 
@@ -147,33 +146,6 @@ const createRecognizerConfig = (paths, options = {}) => {
   };
 };
 
-const bufferToFloat32Array = (payload) => {
-  if (!payload) return null;
-  if (payload instanceof Float32Array) return payload;
-  if (ArrayBuffer.isView(payload)) {
-    if (payload.byteLength === 0) return null;
-    return new Float32Array(payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength));
-  }
-  if (payload instanceof ArrayBuffer || payload instanceof SharedArrayBuffer) {
-    if (payload.byteLength === 0) return null;
-    return new Float32Array(payload.slice(0));
-  }
-  if (Array.isArray(payload)) {
-    if (payload.length === 0) return null;
-    return Float32Array.from(payload.map((item) => Number(item) || 0));
-  }
-  if (Buffer.isBuffer(payload)) {
-    const sampleCount = Math.floor(payload.byteLength / 4);
-    if (sampleCount <= 0) return null;
-    const out = new Float32Array(sampleCount);
-    for (let i = 0; i < sampleCount; i += 1) {
-      out[i] = payload.readFloatLE(i * 4);
-    }
-    return out;
-  }
-  return null;
-};
-
 const readSharedBufferFrame = (shared, batchSize = DEFAULT_SHARED_BATCH_SIZE) => {
   if (!shared?.headerBuffer || !shared?.dataBuffer) return null;
   const header = new Int32Array(shared.headerBuffer);
@@ -210,10 +182,8 @@ export const registerAsrIpc = () => {
   let lastError = null;
   let sharedAudio = null;
   let sharedPollTimer = null;
-  let fallbackQueue = [];
-  let fallbackTimer = null;
   let transport = 'idle';
-  let lastInvalidChunkLogAt = 0;
+  let lastThrottleEmitAt = 0;
 
   const broadcast = (payload) => {
     const windows = BrowserWindow.getAllWindows();
@@ -250,10 +220,13 @@ export const registerAsrIpc = () => {
   };
 
   const emitAsrThrottle = (enabled, data = {}) => {
+    const now = nowTs();
+    if (now - lastThrottleEmitAt < 1000) return;
+    lastThrottleEmitAt = now;
     const payload = {
       type: 'asr.throttle',
       enabled: Boolean(enabled),
-      ts: nowTs(),
+      ts: now,
       ...data,
     };
     broadcast(payload);
@@ -322,13 +295,6 @@ export const registerAsrIpc = () => {
     }
   };
 
-  const drainFallbackQueue = () => {
-    if (!runtimeRef || !shouldRun || fallbackQueue.length === 0) return;
-    const batch = fallbackQueue.shift();
-    if (!batch) return;
-    processSamples(batch);
-  };
-
   const drainSharedBuffer = () => {
     if (!sharedAudio) return;
     const chunk = readSharedBufferFrame(sharedAudio, DEFAULT_SHARED_BATCH_SIZE);
@@ -341,10 +307,6 @@ export const registerAsrIpc = () => {
       clearInterval(sharedPollTimer);
       sharedPollTimer = null;
     }
-    if (fallbackTimer != null) {
-      clearInterval(fallbackTimer);
-      fallbackTimer = null;
-    }
   };
 
   const startTimers = () => {
@@ -353,17 +315,11 @@ export const registerAsrIpc = () => {
         drainSharedBuffer();
       }, DEFAULT_POLL_INTERVAL_MS);
     }
-    if (fallbackTimer == null) {
-      fallbackTimer = setInterval(() => {
-        drainFallbackQueue();
-      }, DEFAULT_POLL_INTERVAL_MS * 2);
-    }
   };
 
   const stopRuntime = () => {
     assembler.clear();
     stopTimers();
-    fallbackQueue = [];
     if (sharedAudio?.headerBuffer) {
       try {
         const header = new Int32Array(sharedAudio.headerBuffer);
@@ -384,12 +340,8 @@ export const registerAsrIpc = () => {
     sharedAudio = null;
     transport = 'idle';
 
-    try {
-      if (typeof target.recognizer?.reset === 'function') {
-        target.recognizer.reset(target.stream);
-      }
-    } catch {
-      // ignore cleanup error
+    if (typeof target.recognizer?.reset === 'function') {
+      target.recognizer.reset(target.stream);
     }
 
     logPetEvent('asr.runtime.stop', { reason: 'stopRuntime' }, { level: 'info' });
@@ -452,10 +404,8 @@ export const registerAsrIpc = () => {
 
       if (options.sharedBufferInfo) {
         attachSharedBuffer(options.sharedBufferInfo);
-        transport = 'sab';
-      } else {
-        transport = 'fallback';
       }
+      transport = sharedAudio ? 'sab' : 'idle';
 
       startTimers();
 
@@ -486,37 +436,6 @@ export const registerAsrIpc = () => {
     }
   };
 
-  const pushAudioChunk = (payload) => {
-    if (!shouldRun || !runtimeRef) return false;
-    const candidate = payload?.samples?.samples ?? payload?.samples ?? payload?.buffer ?? payload?.data ?? payload;
-    const samples = bufferToFloat32Array(candidate);
-    if (!samples || samples.length === 0) {
-      const now = Date.now();
-      if (now - lastInvalidChunkLogAt >= 2000) {
-        lastInvalidChunkLogAt = now;
-        logPetEvent('asr.fallback.chunkInvalid', {
-          transport,
-          payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
-          nestedPayloadKeys: payload?.samples && typeof payload.samples === 'object' ? Object.keys(payload.samples) : [],
-          candidateType: candidate == null ? 'nullish' : typeof candidate,
-        }, { level: 'warn' });
-      }
-      return false;
-    }
-
-    if (sharedAudio?.headerBuffer) {
-      // 共享缓冲存在时，主进程优先从 SAB 读取，这里只在回退模式下使用队列。
-      if (transport === 'sab') return true;
-    }
-
-    fallbackQueue.push(samples);
-    if (fallbackQueue.length > DEFAULT_FALLBACK_QUEUE_LIMIT) {
-      fallbackQueue.splice(0, fallbackQueue.length - DEFAULT_FALLBACK_QUEUE_LIMIT);
-      emitAsrThrottle(true, { queueLength: fallbackQueue.length });
-    }
-    return true;
-  };
-
   const getStatus = () => ({
     enabled: shouldRun,
     running: Boolean(runtimeRef),
@@ -538,7 +457,6 @@ export const registerAsrIpc = () => {
     return attached;
   });
 
-  ipcMain.handle('pet:asr:pushAudioChunk', (_event, payload) => pushAudioChunk(payload));
 
   ipcMain.handle('pet:asr:start', (_event, options = {}) => {
     shouldRun = true;

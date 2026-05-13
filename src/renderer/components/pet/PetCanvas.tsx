@@ -428,9 +428,7 @@ const PetCanvas: React.FC = () => {
 
   useEffect(() => {
     if (asrCaptureRef.current) return;
-    asrCaptureRef.current = createAsrAudioCaptureController({
-      logger: { debug, info, warn, error },
-    });
+    asrCaptureRef.current = createAsrAudioCaptureController();
     return () => {
       try {
         asrCaptureRef.current?.stop();
@@ -476,11 +474,7 @@ const PetCanvas: React.FC = () => {
           }
         }
         asrRunningRef.current = false;
-        try {
-          await asrCaptureRef.current?.stop();
-        } catch {
-          // ignore
-        }
+        await asrCaptureRef.current?.stop();
         return;
       }
 
@@ -497,18 +491,10 @@ const PetCanvas: React.FC = () => {
         await controller.start({
           sharedBufferInfo,
           targetSampleRate: sharedBufferInfo?.sampleRate || 16000,
-          onFallbackChunk: async (payload: { samples: Float32Array; sampleRate: number }) => {
-            try {
-              await api.pushAudioChunk?.({ samples: payload.samples });
-            } catch (error) {
-              warn('pet.asr', 'fallback.chunkFailed', { err: String(error instanceof Error ? error.message : error) });
-            }
-          },
-          logger: { debug, info, warn, error },
         });
         asrRunningRef.current = true;
         info('pet.asr', 'runtime.started', {
-          transport: sharedBufferInfo ? 'sab' : 'fallback',
+          transport: 'sab',
           sampleRate: sharedBufferInfo?.sampleRate || 16000,
           capacitySamples: sharedBufferInfo?.capacitySamples || 0,
         });

@@ -29,7 +29,7 @@ const applyOp = (op: PatchOp) => {
       ...state,
       global: {
         ...state.global,
-        scale: next,
+        scale: next as number,
       },
     };
     return;

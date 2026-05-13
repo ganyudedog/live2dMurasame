@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, Menu, screen, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen, dialog, protocol } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -29,8 +30,18 @@ let controlPanelWindow = null;
 let isQuitting = false;
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-const rootIndex = path.join(__dirname, '..', 'index.html');
+const appBaseDir = (() => {
+  const distDir = path.join(__dirname, '..', 'dist');
+  try { if (fs.existsSync(distDir)) return distDir; } catch { /* ignore */ }
+  return path.join(__dirname, '..');
+})();
 const isDevServerMode = Boolean(devServerUrl);
+
+if (!isDevServerMode) {
+  protocol.registerSchemesAsPrivileged([
+    { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
+  ]);
+}
 
 // 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
 const enableGpu = process.env.VITE_ENABLE_GPU === '1';
@@ -47,7 +58,7 @@ const loadMainWindow = (target) => {
     if (devServerUrl) {
         target.loadURL(devServerUrl);
     } else {
-        target.loadFile(rootIndex);
+        target.loadURL('app://./index.html');
     }
 };
 
@@ -56,7 +67,7 @@ const loadControlPanelWindow = (target) => {
     if (devServerUrl) {
         target.loadURL(`${devServerUrl}?window=control-panel`);
     } else {
-        target.loadFile(rootIndex, { query: { window: 'control-panel' } });
+        target.loadURL('app://./index.html?window=control-panel');
     }
 };
 
@@ -185,7 +196,7 @@ const ensureControlPanelWindow = () => {
             contextIsolation: true,
             // DevServer 模式下页面 origin 为 http://localhost，模型使用 file:// 读取本地绝对路径时会被 webSecurity 限制拦截。
             // 仅在开发模式关闭，生产/打包仍保持开启。
-            webSecurity: !isDevServerMode,
+            webSecurity: false,
             sandbox: false,
             enableRemoteModule: false,
             preload: path.join(__dirname, 'preload.js'),
@@ -295,7 +306,7 @@ const createMainWindow = () => {
             offscreen: false,
             nodeIntegration: false,
             contextIsolation: true,
-            webSecurity: !isDevServerMode,
+            webSecurity: false,
             sandbox: false,
             enableRemoteModule: false,
             backgroundThrottling: false,
@@ -453,6 +464,47 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(async () => {
+    if (!isDevServerMode) {
+        protocol.handle('app', (request) => {
+            try {
+                const url = new URL(request.url);
+                let pathname = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+                const filePath = path.normalize(path.join(appBaseDir, pathname));
+                if (!filePath.startsWith(appBaseDir)) {
+                    return new Response('Not Found', { status: 404 });
+                }
+                const ext = path.extname(filePath).toLowerCase();
+                const mimeTypes = {
+                    '.html': 'text/html; charset=utf-8',
+                    '.js': 'application/javascript; charset=utf-8',
+                    '.mjs': 'application/javascript; charset=utf-8',
+                    '.css': 'text/css; charset=utf-8',
+                    '.json': 'application/json; charset=utf-8',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.svg': 'image/svg+xml',
+                    '.ico': 'image/x-icon',
+                    '.woff': 'font/woff',
+                    '.woff2': 'font/woff2',
+                    '.wasm': 'application/wasm',
+                };
+                const contentType = mimeTypes[ext] || 'application/octet-stream';
+                const data = fs.readFileSync(filePath);
+                return new Response(data, {
+                    status: 200,
+                    headers: {
+                        'content-type': contentType,
+                        'Cross-Origin-Opener-Policy': 'same-origin',
+                        'Cross-Origin-Embedder-Policy': 'credentialless',
+                    },
+                });
+            } catch {
+                return new Response('Not Found', { status: 404 });
+            }
+        });
+    }
+
     const loadedConfig = ensureGlobalModelConfigLoaded();
     setDebugTracePolicy({
         minLevel: loadedConfig?.debugModeEnabled ? 'debug' : 'info',

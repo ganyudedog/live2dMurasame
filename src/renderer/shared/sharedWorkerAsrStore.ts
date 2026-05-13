@@ -138,10 +138,6 @@ const applyAsrEvent = (event: PetAsrEvent) => {
     patchSnapshot({
       throttled: Boolean(event.enabled),
     });
-    sharedStoreClient.dispatchPatch([
-      { path: 'asr.throttled', value: Boolean(event.enabled) },
-      { path: 'asr.lastUpdatedAt', value: event.ts },
-    ]);
   }
 };
 
@@ -167,7 +163,7 @@ const ensureConnected = () => {
     disposeWindowAsrListener = window.WindowAPI.on('pet:asr:event', (event: unknown) => {
       if (!event || typeof event !== 'object') return;
       applyAsrEvent(event as PetAsrEvent);
-    });
+    }) as () => void;
   }
 };
 

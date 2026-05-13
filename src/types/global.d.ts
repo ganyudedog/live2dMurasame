@@ -447,8 +447,6 @@ declare global {
       capacitySamples: number;
     } | null;
     attachSharedBuffer?: (sharedBufferInfo: PetAsrStartOptions['sharedBufferInfo']) => Promise<boolean | undefined>;
-    // 当asb不可用时的备用接口：直接推送音频数据块
-    pushAudioChunk?: (payload: { samples: Float32Array | number[] }) => Promise<boolean | undefined>;
     getStatus?: () => Promise<PetAsrStatus | undefined>;
     start?: (options?: PetAsrStartOptions) => Promise<PetAsrStatus | undefined>;
     stop?: () => Promise<PetAsrStatus | undefined>;

@@ -1,144 +1,197 @@
-import { info } from "../../../utils/log";
-
 export type AsrSharedBufferInfo = {
-    headerBuffer: SharedArrayBuffer;
-    dataBuffer: SharedArrayBuffer;
-    headerSize: number;
-    sampleRate: number;
-    channels: number;
-    capacitySamples: number;
+  headerBuffer: SharedArrayBuffer;
+  dataBuffer: SharedArrayBuffer;
+  headerSize: number;
+  sampleRate: number;
+  channels: number;
+  capacitySamples: number;
+};
+
+export type AsrCaptureLogger = {
+  debug?: (ns: string, event: string, data?: Record<string, unknown>, msg?: string) => void;
+  info?: (ns: string, event: string, data?: Record<string, unknown>, msg?: string) => void;
+  warn?: (ns: string, event: string, data?: Record<string, unknown>, msg?: string) => void;
+  error?: (ns: string, event: string, data?: Record<string, unknown>, msg?: string) => void;
 };
 
 export type AsrAudioCaptureStartOptions = {
-    sharedBufferInfo?: AsrSharedBufferInfo | null;
-    targetSampleRate?: number;
+  sharedBufferInfo?: AsrSharedBufferInfo | null;
+  targetSampleRate?: number;
+  onFallbackChunk?: (payload: { samples: Float32Array; sampleRate: number }) => void;
+  logger?: AsrCaptureLogger;
 };
 
+type StartOptions = AsrAudioCaptureStartOptions;
+
 type CaptureStatus = {
-    running: boolean;
-    transport: 'sab' | 'idle';
+  running: boolean;
+  transport: 'sab' | 'fallback' | 'idle';
 };
 
 const DEFAULT_TARGET_SAMPLE_RATE = 16000;
-const DEFAULT_PROCESSOR_NAME = 'asr-capture-processor';
-const ASR_CAPTURE_WORKLET_URL = new URL('./asrCapture.worklet.ts', import.meta.url);
 
-export const createAsrAudioCaptureController = (initialOptions: AsrAudioCaptureStartOptions = {}) => {
-    const defaultTargetSampleRate = initialOptions.targetSampleRate ?? DEFAULT_TARGET_SAMPLE_RATE;
+const mixToMono = (channels: Float32Array[]): Float32Array => {
+  if (channels.length === 0) return new Float32Array(0);
+  if (channels.length === 1) return channels[0].slice(0);
 
-    let audioContext: AudioContext | null = null;
-    let mediaStream: MediaStream | null = null;
-    let mediaSource: MediaStreamAudioSourceNode | null = null;
-    let workletNode: AudioWorkletNode | null = null;
-    let gainNode: GainNode | null = null;
-    let workletModuleLoaded = false;
-    let running = false;
-    let transport: CaptureStatus['transport'] = 'idle';
-    let sharedBufferInfo: AsrSharedBufferInfo | null = initialOptions.sharedBufferInfo ?? null;
+  const frameLength = channels[0]?.length ?? 0;
+  const mixed = new Float32Array(frameLength);
+  for (let i = 0; i < frameLength; i += 1) {
+    let sum = 0;
+    for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+      sum += channels[channelIndex]?.[i] ?? 0;
+    }
+    mixed[i] = sum / channels.length;
+  }
+  return mixed;
+};
 
-    const cleanup = async () => {
-        running = false;
-        transport = 'idle';
+const downsampleToTargetRate = (samples: Float32Array, sourceSampleRate: number, targetSampleRate: number): Float32Array => {
+  if (!samples.length) return new Float32Array(0);
+  if (!Number.isFinite(sourceSampleRate) || !Number.isFinite(targetSampleRate) || sourceSampleRate <= 0 || targetSampleRate <= 0) {
+    return samples.slice(0);
+  }
+  if (sourceSampleRate <= targetSampleRate) {
+    return samples.slice(0);
+  }
 
-        workletNode?.disconnect();
-        mediaSource?.disconnect();
-        gainNode?.disconnect();
+  const ratio = sourceSampleRate / targetSampleRate;
+  const outputLength = Math.max(1, Math.floor(samples.length / ratio));
+  const output = new Float32Array(outputLength);
 
-        workletNode = null;
-        mediaSource = null;
-        gainNode = null;
+  let cursor = 0;
+  let outputIndex = 0;
+  while (outputIndex < output.length) {
+    const leftIndex = Math.min(samples.length - 1, Math.floor(cursor));
+    const rightIndex = Math.min(samples.length - 1, leftIndex + 1);
+    const interpolation = cursor - leftIndex;
+    const left = samples[leftIndex] ?? 0;
+    const right = samples[rightIndex] ?? left;
+    output[outputIndex] = left + (right - left) * interpolation;
+    cursor += ratio;
+    outputIndex += 1;
+  }
 
-        if (mediaStream) {
-            mediaStream.getTracks().forEach((track) => track.stop());
-            mediaStream = null;
-        }
+  return output;
+};
 
-        if (audioContext) {
-            await audioContext.close();
-            audioContext = null;
-        }
 
-        workletModuleLoaded = false;
+export const createAsrAudioCaptureController = (initialOptions: StartOptions = {}) => {
+  const logger = initialOptions.logger ?? {};
+  const defaultTargetSampleRate = initialOptions.targetSampleRate ?? DEFAULT_TARGET_SAMPLE_RATE;
 
-        info('pet.asr.audio', 'capture.stop', { transport });
-        return { running: false, transport: 'idle' as const };
-    };
+  let audioContext: AudioContext | null = null;
+  let mediaStream: MediaStream | null = null;
+  let mediaSource: MediaStreamAudioSourceNode | null = null;
+  let gainNode: GainNode | null = null;
+  let scriptNode: ScriptProcessorNode | null = null;
+  let workletModuleUrl: string | null = null;
+  let running = false;
+  let transport: CaptureStatus['transport'] = 'idle';
 
-    const start = async (options: AsrAudioCaptureStartOptions = {}) => {
-        if (running) {
-            return { running: true, transport };
-        }
+  const cleanup = async () => {
+    running = false;
+    transport = 'idle';
+    
+    scriptNode?.disconnect();
 
-        sharedBufferInfo = options.sharedBufferInfo ?? sharedBufferInfo;
-        const targetSampleRate = options.targetSampleRate ?? defaultTargetSampleRate;
+    mediaSource?.disconnect();
+    
+    gainNode?.disconnect();
 
-        if (!sharedBufferInfo?.headerBuffer || !sharedBufferInfo?.dataBuffer) {
-            throw new Error('SharedArrayBuffer 不可用，无法启动音频采集');
-        }
+    scriptNode = null;
+    mediaSource = null;
+    gainNode = null;
 
-        if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-            throw new Error('当前环境不支持麦克风采集');
-        }
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((track) => track.stop());
+      mediaStream = null;
+    }
 
-        info('pet.asr.audio', 'capture.start', { transport: 'sab', targetSampleRate });
+    if (audioContext) {
+      await audioContext.close();
+      audioContext = null;
+    }
 
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                channelCount: 1,
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-            },
-            video: false,
-        });
+    if (workletModuleUrl) { 
+      URL.revokeObjectURL(workletModuleUrl);
+      workletModuleUrl = null;
+    }
 
-        audioContext = new AudioContext({ latencyHint: 'interactive' });
-        if (audioContext.state === 'suspended') {
-            await audioContext.resume();
-        }
+    logger.info?.('pet.asr.audio', 'capture.stop', { transport });
+    return { running: false, transport: 'idle' as const };
+  };
 
-        mediaSource = audioContext.createMediaStreamSource(mediaStream);
-        gainNode = audioContext.createGain();
-        gainNode.gain.value = 0;
+  const start = async (options: StartOptions = {}) => {
+    if (running) {
+      return { running: true, transport };
+    }
 
-        if (!workletModuleLoaded) {
-            await audioContext.audioWorklet.addModule(ASR_CAPTURE_WORKLET_URL);
-            workletModuleLoaded = true;
-        }
+    const onFallbackChunk = options.onFallbackChunk ?? initialOptions.onFallbackChunk;
+    const loggerRef = options.logger ?? logger;
+    const targetSampleRate = options.targetSampleRate ?? defaultTargetSampleRate;
 
-        workletNode = new AudioWorkletNode(audioContext, DEFAULT_PROCESSOR_NAME, {
-            numberOfInputs: 1,
-            numberOfOutputs: 1,
-            outputChannelCount: [1],
-            processorOptions: {
-                headerBuffer: sharedBufferInfo.headerBuffer,
-                dataBuffer: sharedBufferInfo.dataBuffer,
-                targetSampleRate,
-            },
-        });
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error('当前环境不支持麦克风采集');
+    }
 
-        mediaSource.connect(workletNode);
-        workletNode.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-        running = true;
-        transport = 'sab';
-        info('pet.asr.audio', 'capture.ready', { transport: 'sab' });
-        return { running: true, transport: 'sab' as const };
-    };
-
-    const updateSharedBuffer = (nextSharedBufferInfo: AsrSharedBufferInfo | null) => {
-        sharedBufferInfo = nextSharedBufferInfo;
-    };
-
-    const getStatus = (): CaptureStatus => ({
-        running,
-        transport,
+    loggerRef.info?.('pet.asr.audio', 'capture.start', {
+      transport: 'fallback',
+      targetSampleRate,
     });
 
-    return {
-        start,
-        stop: cleanup,
-        updateSharedBuffer,
-        getStatus,
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+      
+    audioContext = new AudioContext({ latencyHint: 'interactive' });
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    mediaSource = audioContext.createMediaStreamSource(mediaStream);
+    gainNode = audioContext.createGain();
+    gainNode.gain.value = 0;
+
+    scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+    scriptNode.onaudioprocess = (event) => {
+      const input = event.inputBuffer;
+      const frames: Float32Array[] = [];
+      for (let channelIndex = 0; channelIndex < input.numberOfChannels; channelIndex += 1) {
+        frames.push(new Float32Array(input.getChannelData(channelIndex)));
+      }
+
+      const mono = mixToMono(frames);
+      const sourceSampleRate = audioContext?.sampleRate ?? targetSampleRate;
+      const samples = downsampleToTargetRate(mono, sourceSampleRate, targetSampleRate);
+
+      onFallbackChunk?.({ samples, sampleRate: targetSampleRate });
     };
+    mediaSource.connect(scriptNode);
+    scriptNode.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    running = true;
+    transport = 'fallback';
+    loggerRef.info?.('pet.asr.audio', 'capture.ready', { transport });
+    return { running: true, transport };
+  };
+
+
+  const getStatus = (): CaptureStatus => ({
+    running,
+    transport,
+  });
+
+  return {
+    start,
+    stop: cleanup,
+    getStatus,
+  };
 };

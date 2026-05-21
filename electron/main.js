@@ -315,12 +315,7 @@ const createMainWindow = () => {
     });
 
     loadMainWindow(mainWindow);
-
-    if (!app.isPackaged && process.env.VITE_OPEN_DEVTOOLS === '1') {
-        try {
-            mainWindow.webContents.openDevTools({ mode: 'detach' });
-        } catch { }
-    }
+    mainWindow.webContents.openDevTools(true ,{ mode: 'detach' });
 
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
         controlPanelWindow.setParentWindow(mainWindow);

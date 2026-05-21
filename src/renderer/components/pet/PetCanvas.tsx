@@ -19,7 +19,7 @@ import { usePetCanvasBootstrap } from './hooks/usePetCanvasBootstrap';
 import { useDebugMaskHeight } from './hooks/useDebugMaskHeight';
 import { usePetResizeOrchestrator } from './hooks/usePetResizeOrchestrator';
 import { useBubblePositionEngine } from './hooks/useBubblePositionEngine';
-import { createAsrAudioCaptureController, type AsrSharedBufferInfo } from './audio/asrAudioCapture';
+import { createAsrAudioCaptureController } from './audio/asrAudioCapture';
 import { useBaselineController } from './runtime/geometry/BaselineController';
 import { useDragSessionController } from './runtime/geometry/DragSessionController';
 import { useGeometryRuntime } from './runtime/geometry/GeometryRuntime';
@@ -207,7 +207,6 @@ const PetCanvas: React.FC = () => {
   );
 
   const asrCaptureRef = useRef<ReturnType<typeof createAsrAudioCaptureController> | null>(null);
-  const asrSharedBufferRef = useRef<AsrSharedBufferInfo | null>(null);
   const asrRunningRef = useRef(false);
 
   const workerScale = useSyncExternalStore(
@@ -428,7 +427,9 @@ const PetCanvas: React.FC = () => {
 
   useEffect(() => {
     if (asrCaptureRef.current) return;
-    asrCaptureRef.current = createAsrAudioCaptureController();
+    asrCaptureRef.current = createAsrAudioCaptureController({
+      logger: { debug, info, warn, error },
+    });
     return () => {
       try {
         asrCaptureRef.current?.stop();
@@ -436,26 +437,12 @@ const PetCanvas: React.FC = () => {
         // ignore
       }
       asrCaptureRef.current = null;
-      asrSharedBufferRef.current = null;
       asrRunningRef.current = false;
     };
   }, []);
 
   useEffect(() => {
     let disposed = false;
-
-    const ensureSharedBufferInfo = async () => {
-      try {
-        const api = window.AsrAPI;
-        if (!api?.getSharedBufferInfo) return null;
-        const bufferInfo = api.getSharedBufferInfo({ sampleRate: 16000, channels: 1 });
-        if (!bufferInfo || disposed) return null;
-        return bufferInfo as AsrSharedBufferInfo;
-      } catch (e) {
-        warn('pet.asr', 'sharedBuffer.createFailed', { err: String(e instanceof Error ? e.message : e) });
-        return null;
-      }
-    };
 
     const syncAsrRuntime = async () => {
       const nextEnabled = Boolean(asrSnapshot.enabled);
@@ -478,26 +465,26 @@ const PetCanvas: React.FC = () => {
         return;
       }
 
-      const sharedBufferInfo = asrSharedBufferRef.current ?? await ensureSharedBufferInfo();
       if (disposed) {
         return;
       }
-      asrSharedBufferRef.current = sharedBufferInfo ?? null;
 
       try {
-        await api.start?.(sharedBufferInfo ? { sharedBufferInfo } : undefined);
+        await api.start?.(undefined);
         const controller = asrCaptureRef.current;
         if (!controller) return;
         await controller.start({
-          sharedBufferInfo,
-          targetSampleRate: sharedBufferInfo?.sampleRate || 16000,
+          targetSampleRate: 16000,
+          onFallbackChunk: async (payload: { samples: Float32Array; sampleRate: number }) => {
+            try {
+              await api.pushAudioChunk?.({ samples: payload.samples });
+            } catch (error) {
+              warn('pet.asr', 'fallback.chunkFailed', { err: String(error instanceof Error ? error.message : error) });
+            }
+          },
+          logger: { debug, info, warn, error },
         });
-        asrRunningRef.current = true;
-        info('pet.asr', 'runtime.started', {
-          transport: 'sab',
-          sampleRate: sharedBufferInfo?.sampleRate || 16000,
-          capacitySamples: sharedBufferInfo?.capacitySamples || 0,
-        });
+        asrRunningRef.current = true;       
       } catch (e) {
         asrRunningRef.current = false;
         error('pet.asr', 'runtime.startFailed', { err: String(e instanceof Error ? e.message : e) });

@@ -20,6 +20,7 @@ const DEFAULT_SAMPLE_RATE = 16000;
 const DEFAULT_FEATURE_DIM = 80;
 const DEFAULT_POLL_INTERVAL_MS = 20;
 const DEFAULT_SHARED_BATCH_SIZE = 2048;
+const DEFAULT_FALLBACK_QUEUE_LIMIT = 12;
 
 let sherpaOnnxModule = null;
 
@@ -146,6 +147,33 @@ const createRecognizerConfig = (paths, options = {}) => {
   };
 };
 
+const bufferToFloat32Array = (payload) => {
+  if (!payload) return null;
+  if (payload instanceof Float32Array) return payload;
+  if (ArrayBuffer.isView(payload)) {
+    if (payload.byteLength === 0) return null;
+    return new Float32Array(payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength));
+  }
+  if (payload instanceof ArrayBuffer || payload instanceof SharedArrayBuffer) {
+    if (payload.byteLength === 0) return null;
+    return new Float32Array(payload.slice(0));
+  }
+  if (Array.isArray(payload)) {
+    if (payload.length === 0) return null;
+    return Float32Array.from(payload.map((item) => Number(item) || 0));
+  }
+  if (Buffer.isBuffer(payload)) {
+    const sampleCount = Math.floor(payload.byteLength / 4);
+    if (sampleCount <= 0) return null;
+    const out = new Float32Array(sampleCount);
+    for (let i = 0; i < sampleCount; i += 1) {
+      out[i] = payload.readFloatLE(i * 4);
+    }
+    return out;
+  }
+  return null;
+};
+
 const readSharedBufferFrame = (shared, batchSize = DEFAULT_SHARED_BATCH_SIZE) => {
   if (!shared?.headerBuffer || !shared?.dataBuffer) return null;
   const header = new Int32Array(shared.headerBuffer);
@@ -180,10 +208,11 @@ export const registerAsrIpc = () => {
   let shouldRun = false;
   let micState = MIC_STATES.OFF;
   let lastError = null;
-  let sharedAudio = null;
   let sharedPollTimer = null;
+  let fallbackQueue = [];
+  let fallbackTimer = null;
   let transport = 'idle';
-  let lastThrottleEmitAt = 0;
+  let lastInvalidChunkLogAt = 0;
 
   const broadcast = (payload) => {
     const windows = BrowserWindow.getAllWindows();
@@ -220,13 +249,10 @@ export const registerAsrIpc = () => {
   };
 
   const emitAsrThrottle = (enabled, data = {}) => {
-    const now = nowTs();
-    if (now - lastThrottleEmitAt < 1000) return;
-    lastThrottleEmitAt = now;
     const payload = {
       type: 'asr.throttle',
       enabled: Boolean(enabled),
-      ts: now,
+      ts: nowTs(),
       ...data,
     };
     broadcast(payload);
@@ -243,7 +269,7 @@ export const registerAsrIpc = () => {
       ts: nowTs(),
     };
     broadcast(payload);
-    logPetEvent('asr.partial', payload, { level: 'info' });
+    // logPetEvent('asr.partial', payload, { level: 'info' });
   };
 
   const publishFinal = (utteranceId, text) => {
@@ -261,6 +287,7 @@ export const registerAsrIpc = () => {
 
   const getSession = () => runtimeRef;
 
+  // 处理采样数据的核心函数，负责将音频样本送入识别器，并根据识别结果发布部分或最终文本。
   const processSamples = (samples) => {
     const session = getSession();
     if (!session || !shouldRun) return;
@@ -283,8 +310,8 @@ export const registerAsrIpc = () => {
 
       if (isEndpoint) {
         if (text) {
-          publishFinal(utteranceId, text);
           session.utteranceIndex += 1;
+          publishFinal(utteranceId, text);
         }
         session.lastPartialText = '';
         session.recognizer.reset(session.stream);
@@ -295,41 +322,41 @@ export const registerAsrIpc = () => {
     }
   };
 
-  const drainSharedBuffer = () => {
-    if (!sharedAudio) return;
-    const chunk = readSharedBufferFrame(sharedAudio, DEFAULT_SHARED_BATCH_SIZE);
-    if (!chunk || chunk.length === 0) return;
-    processSamples(chunk);
+  // 基于音频样本回退队列的处理函数，在回退模式下使用，定期检查队列并处理其中的样本。
+  const drainFallbackQueue = () => {
+    if (!runtimeRef || !shouldRun || fallbackQueue.length === 0) return;
+    const batch = fallbackQueue.shift();
+    if (!batch) return;
+    processSamples(batch);
   };
 
+  // 基于sab获取对应的pcm，并送入识别器处理
+  // const drainSharedBuffer = () => {
+  //   if (!sharedAudio) return;
+  //   const chunk = readSharedBufferFrame(sharedAudio, DEFAULT_SHARED_BATCH_SIZE);
+  //   if (!chunk || chunk.length === 0) return;
+  //   processSamples(chunk);
+  // };
+
   const stopTimers = () => {
-    if (sharedPollTimer != null) {
-      clearInterval(sharedPollTimer);
-      sharedPollTimer = null;
+    if (fallbackTimer != null) {
+      clearInterval(fallbackTimer);
+      fallbackTimer = null;
     }
   };
 
   const startTimers = () => {
-    if (sharedAudio && sharedPollTimer == null) {
-      sharedPollTimer = setInterval(() => {
-        drainSharedBuffer();
-      }, DEFAULT_POLL_INTERVAL_MS);
+    if (fallbackTimer == null) {
+      fallbackTimer = setInterval(() => {
+        drainFallbackQueue();
+      }, DEFAULT_POLL_INTERVAL_MS * 2);
     }
   };
 
   const stopRuntime = () => {
     assembler.clear();
     stopTimers();
-    if (sharedAudio?.headerBuffer) {
-      try {
-        const header = new Int32Array(sharedAudio.headerBuffer);
-        Atomics.store(header, 5, 0);
-        Atomics.store(header, 6, 0);
-      } catch {
-        // ignore
-      }
-    }
-
+    fallbackQueue = [];
     if (!runtimeRef) {
       emitMicState(MIC_STATES.OFF);
       return;
@@ -337,7 +364,6 @@ export const registerAsrIpc = () => {
 
     const target = runtimeRef;
     runtimeRef = null;
-    sharedAudio = null;
     transport = 'idle';
 
     if (typeof target.recognizer?.reset === 'function') {
@@ -348,35 +374,34 @@ export const registerAsrIpc = () => {
     emitMicState(MIC_STATES.OFF);
   };
 
-  const attachSharedBuffer = (sharedBufferInfo) => {
-    if (!sharedBufferInfo || typeof sharedBufferInfo !== 'object') return false;
-    const { headerBuffer, dataBuffer } = sharedBufferInfo;
-    if (!(headerBuffer instanceof SharedArrayBuffer) || !(dataBuffer instanceof SharedArrayBuffer)) {
-      return false;
-    }
+  // const attachSharedBuffer = (sharedBufferInfo) => {
+  //   if (!sharedBufferInfo || typeof sharedBufferInfo !== 'object') return false;
+  //   const { headerBuffer, dataBuffer } = sharedBufferInfo;
+  //   if (!(headerBuffer instanceof SharedArrayBuffer) || !(dataBuffer instanceof SharedArrayBuffer)) {
+  //     return false;
+  //   }
 
-    sharedAudio = {
-      headerBuffer,
-      dataBuffer,
-      headerSize: pickFirstNumber(sharedBufferInfo, ['headerSize'], 8),
-      sampleRate: pickFirstNumber(sharedBufferInfo, ['sampleRate'], DEFAULT_SAMPLE_RATE),
-      channels: pickFirstNumber(sharedBufferInfo, ['channels'], 1),
-      capacitySamples: pickFirstNumber(sharedBufferInfo, ['capacitySamples'], new Float32Array(dataBuffer).length),
-    };
+  //   sharedAudio = {
+  //     headerBuffer,
+  //     dataBuffer,
+  //     headerSize: pickFirstNumber(sharedBufferInfo, ['headerSize'], 8),
+  //     sampleRate: pickFirstNumber(sharedBufferInfo, ['sampleRate'], DEFAULT_SAMPLE_RATE),
+  //     channels: pickFirstNumber(sharedBufferInfo, ['channels'], 1),
+  //     capacitySamples: pickFirstNumber(sharedBufferInfo, ['capacitySamples'], new Float32Array(dataBuffer).length),
+  //   };
 
-    if (runtimeRef) {
-      startTimers();
-      transport = 'sab';
-      logPetEvent('asr.transport.attach', { transport, capacitySamples: sharedAudio.capacitySamples }, { level: 'info' });
-      return true;
-    }
+  //   if (runtimeRef) {
+  //     startTimers();
+  //     transport = 'sab';
+  //     logPetEvent('asr.transport.attach', { transport, capacitySamples: sharedAudio.capacitySamples }, { level: 'info' });
+  //     return true;
+  //   }
 
-    return true;
-  };
+  //   return true;
+  // };
 
   const startRuntime = (options = {}) => {
     if (runtimeRef) {
-      if (options.sharedBufferInfo) attachSharedBuffer(options.sharedBufferInfo);
       return;
     }
 
@@ -400,23 +425,11 @@ export const registerAsrIpc = () => {
         lastPartialText: '',
       };
       lastError = null;
-      assembler.clear();
-
-      if (options.sharedBufferInfo) {
-        attachSharedBuffer(options.sharedBufferInfo);
-      }
-      transport = sharedAudio ? 'sab' : 'idle';
+      assembler.clear();  
+      transport = 'fallback';
 
       startTimers();
 
-      if (sharedAudio?.headerBuffer) {
-        try {
-          const header = new Int32Array(sharedAudio.headerBuffer);
-          Atomics.store(header, 5, 1);
-        } catch {
-          // ignore
-        }
-      }
 
       logPetEvent('asr.runtime.start', {
         asrModelDir: modelPaths.asrModelDir,
@@ -436,6 +449,32 @@ export const registerAsrIpc = () => {
     }
   };
 
+  const pushAudioChunk = (payload) => {
+    if (!shouldRun || !runtimeRef) return false;
+    const candidate = payload?.samples?.samples ?? payload?.samples ?? payload?.buffer ?? payload?.data ?? payload;
+    const samples = bufferToFloat32Array(candidate);
+    if (!samples || samples.length === 0) {
+      const now = Date.now();
+      if (now - lastInvalidChunkLogAt >= 2000) {
+        lastInvalidChunkLogAt = now;
+        logPetEvent('asr.fallback.chunkInvalid', {
+          transport,
+          payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+          nestedPayloadKeys: payload?.samples && typeof payload.samples === 'object' ? Object.keys(payload.samples) : [],
+          candidateType: candidate == null ? 'nullish' : typeof candidate,
+        }, { level: 'warn' });
+      }
+      return false;
+    }
+
+    fallbackQueue.push(samples);
+    if (fallbackQueue.length > DEFAULT_FALLBACK_QUEUE_LIMIT) {
+      fallbackQueue.splice(0, fallbackQueue.length - DEFAULT_FALLBACK_QUEUE_LIMIT);
+      emitAsrThrottle(true, { queueLength: fallbackQueue.length });
+    }
+    return true;
+  };
+
   const getStatus = () => ({
     enabled: shouldRun,
     running: Boolean(runtimeRef),
@@ -446,17 +485,18 @@ export const registerAsrIpc = () => {
 
   ipcMain.handle('pet:asr:getStatus', () => getStatus());
 
-  ipcMain.handle('pet:asr:attachSharedBuffer', (_event, sharedBufferInfo) => {
-    const attached = attachSharedBuffer(sharedBufferInfo);
-    if (attached) {
-      logPetEvent('asr.sharedBuffer.attach', {
-        hasBuffer: Boolean(sharedAudio),
-        capacitySamples: sharedAudio?.capacitySamples ?? 0,
-      }, { level: 'info' });
-    }
-    return attached;
-  });
+  // ipcMain.handle('pet:asr:attachSharedBuffer', (_event, sharedBufferInfo) => {
+  //   const attached = attachSharedBuffer(sharedBufferInfo);
+  //   if (attached) {
+  //     logPetEvent('asr.sharedBuffer.attach', {
+  //       hasBuffer: Boolean(sharedAudio),
+  //       capacitySamples: sharedAudio?.capacitySamples ?? 0,
+  //     }, { level: 'info' });
+  //   }
+  //   return attached;
+  // });
 
+  ipcMain.handle('pet:asr:pushAudioChunk', (_event, payload) => pushAudioChunk(payload));
 
   ipcMain.handle('pet:asr:start', (_event, options = {}) => {
     shouldRun = true;

@@ -437,16 +437,7 @@ declare global {
   type PetAsrEvent = PetAsrPartialEvent | PetAsrFinalEvent | PetAsrErrorEvent | PetAsrThrottleEvent | PetMicStateEvent;
 
   interface PetAsrAPI {
-    // sab链路下的音频处理
-    getSharedBufferInfo?: (options?: { sampleRate?: number; channels?: number; capacitySamples?: number }) => {
-      headerBuffer: SharedArrayBuffer;
-      dataBuffer: SharedArrayBuffer;
-      headerSize: number;
-      sampleRate: number;
-      channels: number;
-      capacitySamples: number;
-    } | null;
-    attachSharedBuffer?: (sharedBufferInfo: PetAsrStartOptions['sharedBufferInfo']) => Promise<boolean | undefined>;
+    pushAudioChunk?: (payload: { samples: Float32Array | number[] }) => Promise<boolean | undefined>;
     getStatus?: () => Promise<PetAsrStatus | undefined>;
     start?: (options?: PetAsrStartOptions) => Promise<PetAsrStatus | undefined>;
     stop?: () => Promise<PetAsrStatus | undefined>;

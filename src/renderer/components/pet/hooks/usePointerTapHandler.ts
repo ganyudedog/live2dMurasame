@@ -97,13 +97,10 @@ export const usePointerTapHandler = ({
 
     const releasePointerCapture = () => {
       if (pointerId === null || !captureTarget) return;
-      try {
-        if (captureTarget.hasPointerCapture?.(pointerId)) {
-          captureTarget.releasePointerCapture(pointerId);
-        }
-      } catch {
-        // ignore pointer capture release errors
+      if (captureTarget.hasPointerCapture?.(pointerId)) {
+        captureTarget.releasePointerCapture(pointerId);
       }
+     
       captureTarget = null;
     };
 

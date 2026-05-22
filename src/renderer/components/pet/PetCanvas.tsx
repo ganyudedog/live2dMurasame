@@ -42,7 +42,6 @@ import { useTtsPlaybackFeedbackMutation } from '../../../../api/hooks/liveKitHoo
 import type { ChatConfig, ChatRequest } from '../../shared/sharedStateTypes';
 import {
   CONTEXT_ZONE_LATCH_MS,
-  DEFAULT_TOUCH_PRIORITY,
 } from './const';
 
 import { clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '../../utils/math';
@@ -138,53 +137,39 @@ const PetCanvas: React.FC = () => {
     : '';
 
   useEffect(() => {
-    try {
-      window.SystemAPI?.debugTrace?.({
-        kind: 'modelLoadInput',
-        profile: 'modelLoad',
-        level: 'info',
-        request: {
-          source: 'renderer.petCanvas',
-          phase: 'model-path-resolve',
-          ts: Date.now(),
-        },
-        model: {
-          hydrated: Boolean(hydrated),
-          hasActiveModelFileUrl: Boolean(activeModelFileUrl),
-          activeModelFileUrl: typeof activeModelFileUrl === 'string' ? activeModelFileUrl : null,
-          currentPath: typeof live2denvConfig?.CURRENT_PATH === 'string' ? live2denvConfig.CURRENT_PATH : null,
-          resolvedModelPath: modelPath || null,
-        },
-      });
-    } catch {
-      // ignore debug trace errors
-    }
+    window.SystemAPI?.debugTrace?.({
+      kind: 'modelLoadInput',
+      profile: 'modelLoad',
+      level: 'info',
+      request: {
+        source: 'renderer.petCanvas',
+        phase: 'model-path-resolve',
+        ts: Date.now(),
+      },
+      model: {
+        hydrated: Boolean(hydrated),
+        hasActiveModelFileUrl: Boolean(activeModelFileUrl),
+        activeModelFileUrl: typeof activeModelFileUrl === 'string' ? activeModelFileUrl : null,
+        currentPath: typeof live2denvConfig?.CURRENT_PATH === 'string' ? live2denvConfig.CURRENT_PATH : null,
+        resolvedModelPath: modelPath || null,
+      },
+    });
   }, [hydrated, activeModelFileUrl, live2denvConfig?.CURRENT_PATH, modelPath]);
   const modelPathRef = useRef(modelPath);
 
-  const touchPriority = useMemo((): string[] => {
-    const fromConfig = live2denvConfig?.VITE_TOUCH_PRIORITY;
-    if (Array.isArray(fromConfig) && fromConfig.length) return fromConfig;
-    return [...DEFAULT_TOUCH_PRIORITY];
-  }, [live2denvConfig?.VITE_TOUCH_PRIORITY]);
-
-  const touchPriorityRef = useRef(touchPriority);
-
-  const touchMapRef = useRef<number[] | null>(null);
+  const bubbleSettingsRef = useRef<{ symmetric?: boolean; headRatio?: number | null } | null>(null);
 
   const visualFrameRef = useRef<any | null>(null);
 
-  const bubbleSettingsRef = useRef<{ symmetric?: boolean; headRatio?: number | null } | null>(null);
-
-  const interactionZonesRef = useRef<Record<string, { heightRange?: [number, number]; motions?: string[] }> | null>(null);
+  const interactionZonesRef = useRef<{
+    actions: string[];
+    zones: { heightRange: [number, number]; motions: string[] }[];
+  } | null>(null);
 
   usePetCanvasConfigRefs({
     modelPath,
     modelPathRef,
-    touchPriority,
-    touchPriorityRef,
     persistedModelConfig,
-    touchMapRef,
     visualFrameRef,
     bubbleSettingsRef,
     interactionZonesRef,
@@ -747,7 +732,6 @@ const PetCanvas: React.FC = () => {
     hitAreasRef,
     visualFrameRef,
     bubbleSettingsRef,
-    touchMapRef,
     windowBoundsRef,
     dragSessionStateRef,
     lastBubbleUpdateRef,
@@ -934,14 +918,6 @@ const PetCanvas: React.FC = () => {
         name: (entry.Name ?? '').toLowerCase(),
       }))
       .filter(area => area.id && area.motion);
-    mapped.sort((a, b) => {
-      const order = touchPriorityRef.current;
-      const ai = order.indexOf(a.name);
-      const bi = order.indexOf(b.name);
-      const safeA = ai === -1 ? order.length : ai;
-      const safeB = bi === -1 ? order.length : bi;
-      return safeA - safeB;
-    });
     hitAreasRef.current = mapped;
   }, []);
 
@@ -1138,98 +1114,45 @@ const PetCanvas: React.FC = () => {
     if (!withinX || !withinY) return;
     const x = ((clientX - rect.left) / rect.width) * app.renderer.screen.width;
     const y = ((clientY - rect.top) / rect.height) * app.renderer.screen.height;
-    // 直接基于模型整体包围盒做矩形区域判断
     const bounds = model.getBounds?.();
     if (!bounds) return;
-    const nx = (x - bounds.x) / (bounds.width || 1); // 0..1
-    const ny = (y - bounds.y) / (bounds.height || 1); // 0..1  顶部=0 底部=1
+    const nx = (x - bounds.x) / (bounds.width || 1);
+    const ny = (y - bounds.y) / (bounds.height || 1);
     if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
-
-    // 默认分层百分比，可通过：
-    // 1) 模型配置 touchMap（offset.md）
-    // 2) window.LIVE2D_TOUCH_MAP（调试覆盖）
-    const DEFAULT_MAP = ((): number[] => {
-      const fromModelConfig = touchMapRef.current;
-      if (fromModelConfig) return fromModelConfig;
-      return [0.1, 0.19, 0.39, 0.53, 1];
-    })();
-    const customMap = Array.isArray((window as any).LIVE2D_TOUCH_MAP) && (window as any).LIVE2D_TOUCH_MAP.length === 5
-      ? (window as any).LIVE2D_TOUCH_MAP
-      : DEFAULT_MAP;
-    const [hairEnd, faceEnd, xiongbuEnd, qunziEnd, legEnd] = customMap.map((v: number) => Math.max(0, Math.min(1, v)));
 
     let group: string | null = null;
 
-    // 优先使用 interactionZones（offset.md）
-    const zones = interactionZonesRef.current;
-    if (zones) {
-      const order = touchPriorityRef.current;
-      const matches: Array<{ key: string; motions: string[] }> = [];
-      Object.entries(zones).forEach(([key, zone]) => {
-        const range = zone?.heightRange;
-        const motions = Array.isArray(zone?.motions) ? zone.motions.filter(Boolean) : [];
-        if (!Array.isArray(range) || range.length !== 2) return;
-        const start = Number(range[0]);
-        const end = Number(range[1]);
-        if (!Number.isFinite(start) || !Number.isFinite(end)) return;
-        const lo = Math.max(0, Math.min(1, Math.min(start, end)));
-        const hi = Math.max(0, Math.min(1, Math.max(start, end)));
-        if (ny < lo || ny > hi) return;
-        if (!motions.length) return;
-        matches.push({ key: String(key).toLowerCase(), motions });
+    // 使用 interactionZones.zones 匹配点击区域（自上而下堆叠的矩形）
+    const cfg = interactionZonesRef.current;
+    if (cfg?.zones?.length) {
+      const matches: { motions: string[]; index: number }[] = [];
+      cfg.zones.forEach((zone, i) => {
+        const lo = Math.max(0, Math.min(1, zone.heightRange[0] ?? 0));
+        const hi = Math.max(0, Math.min(1, zone.heightRange[1] ?? 1));
+        if (ny >= lo && ny <= hi && zone.motions.length) {
+          matches.push({ motions: zone.motions, index: i });
+        }
       });
-
       if (matches.length) {
-        matches.sort((a, b) => {
-          const ai = order.indexOf(a.key);
-          const bi = order.indexOf(b.key);
-          const safeA = ai === -1 ? order.length : ai;
-          const safeB = bi === -1 ? order.length : bi;
-          return safeA - safeB;
-        });
+        // 取最上层命中的区域（zones 数组顺序即堆叠顺序）
         const picked = matches[0];
-        const list = picked.motions;
-        const idx = Math.floor(Math.random() * list.length);
-        group = list[idx] ?? null;
+        group = picked.motions[Math.floor(Math.random() * picked.motions.length)] ?? null;
       }
     }
 
-    // 回退：按 touchMap 分段映射固定动作组
-    if (!group) {
-      if (ny <= hairEnd) group = 'Taphair';
-      else if (ny <= faceEnd) group = 'Tapface';
-      else if (ny <= xiongbuEnd) group = 'Tapxiongbu';
-      else if (ny <= qunziEnd) group = 'Tapqunzi';
-      else if (ny <= legEnd) group = 'Tapleg';
-    }
-
-
     if (!group) return;
 
-    // 先尝试精确 hitTest 对应 id ，若失败仍执行基于矩形的动作
     const areaObj = hitAreasRef.current.find(a => a.motion.toLowerCase() === group.toLowerCase());
     let dispatched = false;
     if (areaObj) {
       try {
         const precise = (model as any).hitTest?.(areaObj.id, x, y);
-        if (precise) {
-          interruptMotion(group);
-          dispatched = true;
-        }
+        if (precise) { interruptMotion(group); dispatched = true; }
       } catch { /* swallow */ }
     }
-    if (!dispatched) {
-      interruptMotion(group);
-      dispatched = true;
-    }
+    if (!dispatched) { interruptMotion(group); dispatched = true; }
     if ((window as any).LIVE2D_MOTION_DEBUG === true) {
-      debug('pet.interaction', 'tap.dispatch', {
-        nx: Number(nx.toFixed(3)),
-        ny: Number(ny.toFixed(3)),
-        group,
-        preciseTried: !!areaObj,
-        map: customMap,
-      });
+      debug('pet.interaction', 'tap.dispatch', { nx: Number(nx.toFixed(3)), ny: Number(ny.toFixed(3)), group, preciseTried: !!areaObj });
     }
   }, [interruptMotion]);
 

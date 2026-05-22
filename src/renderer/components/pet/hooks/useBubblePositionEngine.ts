@@ -38,7 +38,6 @@ export interface UseBubblePositionEngineParams {
   hitAreasRef: RefObject<Array<{ id: string; motion: string; name: string }>>;
   visualFrameRef: RefObject<any | null>;
   bubbleSettingsRef: RefObject<{ symmetric?: boolean; headRatio?: number | null } | null>;
-  touchMapRef: RefObject<number[] | null>;
   windowBoundsRef: RefObject<{ x: number; y: number; width: number; height: number } | null>;
   dragSessionStateRef: RefObject<DragSessionState>;
 
@@ -60,7 +59,6 @@ export const useBubblePositionEngine = ({
   hitAreasRef,
   visualFrameRef,
   bubbleSettingsRef,
-  touchMapRef,
   windowBoundsRef,
   dragSessionStateRef,
   lastBubbleUpdateRef,
@@ -109,14 +107,12 @@ export const useBubblePositionEngine = ({
       model,
       faceAreaId: faceEntry?.id ?? null,
       visualFrame: visualFrameRef.current,
-      touchMap: touchMapRef.current,
     });
 
     const vfBase = getBaseFrame(bounds, screen, canvasRect, {
       model,
       faceAreaId: faceEntry?.id ?? null,
       visualFrame: visualFrameRef.current,
-      touchMap: touchMapRef.current,
     });
 
     const modelHeightDom = (bounds.height / screen.height) * canvasRect.height;
@@ -193,7 +189,6 @@ export const useBubblePositionEngine = ({
       bubbleSettings: {
         symmetric: bubbleSettingsRef.current?.symmetric === true,
         headRatio: bubbleSettingsRef.current?.headRatio ?? null,
-        touchMap: touchMapRef.current,
       },
       symmetry: {
         centerDom,
@@ -244,13 +239,6 @@ export const useBubblePositionEngine = ({
 
     let headAnchorRatio = 0.085;
     {
-      const ratios = touchMapRef.current;
-      if (ratios && ratios.length > 0) {
-        const hairEnd = ratios[0];
-        if (Number.isFinite(hairEnd)) headAnchorRatio = clamp(hairEnd * 0.85, 0, 1);
-      }
-    }
-    {
       const rawHeadRatio = bubbleSettingsRef.current?.headRatio;
       if (typeof rawHeadRatio === 'number' && Number.isFinite(rawHeadRatio)) {
         headAnchorRatio = clamp(rawHeadRatio, 0, 1);
@@ -265,14 +253,7 @@ export const useBubblePositionEngine = ({
     const unscaledTailY = bubbleHeight > 0 ? ((headAnchorDomY - containerRect.top - targetY) / s) : 0;
     const nextTailY = bubbleHeight > 0 ? clamp(unscaledTailY, tailSize, Math.max(tailSize, unscaledHeight - tailSize)) : null;
 
-    let headTopRatio = headAnchorRatio;
-    {
-      const ratios = touchMapRef.current;
-      if (ratios && ratios.length > 1) {
-        const hairEnd = ratios[0];
-        if (Number.isFinite(hairEnd)) headTopRatio = clamp(hairEnd * 0.85, 0, 1);
-      }
-    }
+    const headTopRatio = headAnchorRatio;
     const headTopDom = modelTopDom + modelHeightDom * headTopRatio;
 
     const bubbleTopDom = targetY + containerRect.top;
@@ -306,7 +287,7 @@ export const useBubblePositionEngine = ({
       position: nextPosition,
       tailY: nextTailY,
     });
-  }, [scale, motionTextRef, lastBubbleUpdateRef, modelRef, appRef, canvasRef, bubbleLayoutCommitter, hitAreasRef, visualFrameRef, touchMapRef, windowBoundsRef, dragSessionStateRef, bubbleRef, bubbleSettingsRef, updateBubblePositionRef]);
+  }, [scale, motionTextRef, lastBubbleUpdateRef, modelRef, appRef, canvasRef, bubbleLayoutCommitter, hitAreasRef, visualFrameRef, windowBoundsRef, dragSessionStateRef, bubbleRef, bubbleSettingsRef, updateBubblePositionRef]);
 
   useLayoutEffect(() => {
     updateBubblePositionRef.current = updateBubblePosition;

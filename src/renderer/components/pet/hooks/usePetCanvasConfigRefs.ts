@@ -4,22 +4,19 @@ import { useEffect, type RefObject } from 'react';
 export interface UsePetCanvasConfigRefsParams {
   modelPath: string;
   modelPathRef: RefObject<string>;
-  touchPriority: string[];
-  touchPriorityRef: RefObject<string[]>;
   persistedModelConfig: unknown;
-  touchMapRef: RefObject<number[] | null>;
   visualFrameRef: RefObject<any | null>;
   bubbleSettingsRef: RefObject<{ symmetric?: boolean; headRatio?: number | null } | null>;
-  interactionZonesRef: RefObject<Record<string, { heightRange?: [number, number]; motions?: string[] }> | null>;
+  interactionZonesRef: RefObject<{
+    actions: string[];
+    zones: { heightRange: [number, number]; motions: string[] }[];
+  } | null>;
 }
 
 export const usePetCanvasConfigRefs = ({
   modelPath,
   modelPathRef,
-  touchPriority,
-  touchPriorityRef,
   persistedModelConfig,
-  touchMapRef,
   visualFrameRef,
   bubbleSettingsRef,
   interactionZonesRef,
@@ -27,18 +24,6 @@ export const usePetCanvasConfigRefs = ({
   useEffect(() => {
     modelPathRef.current = modelPath;
   }, [modelPath, modelPathRef]);
-
-  useEffect(() => {
-    touchPriorityRef.current = touchPriority;
-  }, [touchPriority, touchPriorityRef]);
-
-  useEffect(() => {
-    const raw = (persistedModelConfig as any)?.touchMap;
-    const ok = Array.isArray(raw)
-      && raw.length === 5
-      && raw.every((v: unknown) => typeof v === 'number' && Number.isFinite(v));
-    touchMapRef.current = ok ? (raw as number[]) : null;
-  }, [persistedModelConfig, touchMapRef]);
 
   useEffect(() => {
     const raw = (persistedModelConfig as any)?.visualFrame;
@@ -56,6 +41,9 @@ export const usePetCanvasConfigRefs = ({
       interactionZonesRef.current = null;
       return;
     }
-    interactionZonesRef.current = raw as Record<string, { heightRange?: [number, number]; motions?: string[] }>;
+    interactionZonesRef.current = raw as {
+      actions: string[];
+      zones: { heightRange: [number, number]; motions: string[] }[];
+    };
   }, [persistedModelConfig, interactionZonesRef]);
 };

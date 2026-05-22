@@ -5,12 +5,12 @@ import { getModelKeyFromPath } from '../utils/modelKey.js';
 import {
   DEFAULT_LIVE2DENV_CONFIG,
   DEFAULT_MODEL_CONFIG,
-  DEFAULT_TOUCH_PRIORITY,
   DEFAULT_GLOBAL_MODEL_CONFIG,
   normalizeLive2denvConfig,
   normalizeGlobalModelConfig,
   normalizeModelConfig,
 } from './globalConfig.js';
+import { parseModelInteractionZones } from '../main/modelConfigParser.js';
 
 const CONFIG_DIR_NAME = 'config';
 const GLOBAL_CONFIG_FILENAME = 'live2denv.json';
@@ -275,10 +275,15 @@ export const saveGlobalModelConfig = (settings) => {
 export const loadModelConfig = (modelDir) => {
   ensureConfigDirectories();
   const { configPath } = ensureModelStorageStructure(modelDir);
-  const config = normalizeModelConfig(readJsonFile(configPath, DEFAULT_MODEL_CONFIG));
-  if (!fs.existsSync(configPath)) {
-    writeJsonFile(configPath, config);
+
+  if (fs.existsSync(configPath)) {
+    return normalizeModelConfig(readJsonFile(configPath, DEFAULT_MODEL_CONFIG));
   }
+
+  // 无持久化配置 → 从模型 JSON 自动生成 interactionZones 默认值
+  const zones = parseModelInteractionZones(modelDir);
+  const config = normalizeModelConfig({ interactionZones: zones });
+  writeJsonFile(configPath, config);
   return config;
 };
 
@@ -389,7 +394,6 @@ export const listModelConfigs = () => {
 export {
   DEFAULT_LIVE2DENV_CONFIG,
   DEFAULT_MODEL_CONFIG,
-  DEFAULT_TOUCH_PRIORITY,
   DEFAULT_MODEL_MEMORY_RECENT,
   DEFAULT_MODEL_MEMORY_SUMMARY,
   DEFAULT_MODEL_MEMORY_META,

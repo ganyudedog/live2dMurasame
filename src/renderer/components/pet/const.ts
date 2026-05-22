@@ -12,5 +12,3 @@ export const STARTUP_ENLARGE_BASEFRAME_RATIO_GUARD = 0.9; // baseFrame 接近容
 export const ENLARGE_CONFIRM_DELTA_PX = 40; // 放大量两帧确认允许波动
 export const ENLARGE_CONFIRM_WINDOW_MS = 260; // 两帧确认最大时间窗
 export const CONTEXT_ZONE_LATCH_MS = 1400; // keep context-menu zone active briefly after leaving
-
-export const DEFAULT_TOUCH_PRIORITY = ['hair', 'face', 'xiongbu', 'qunzi', 'leg'] as const;

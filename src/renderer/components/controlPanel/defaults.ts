@@ -10,7 +10,6 @@ export const DEFAULT_GLOBAL_UI_SETTINGS: GlobalUiSettings = {
 };
 
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
-  touchMap: [0.1, 0.19, 0.39, 0.53, 1],
   visualFrame: {
     ratio: 0.7,
     minPx: 100,
@@ -23,7 +22,7 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     symmetric: true,
     headRatio: null,
   },
-  interactionZones: {},
+  interactionZones: { actions: [], zones: [] },
   rag: {
     profile: {
       personal: '',

@@ -1,21 +1,12 @@
 import { useMemo } from 'react';
 import type { ModelConfig } from '../types';
 
-const buildSegments = (touchMap: number[]) => {
-  const safe = Array.isArray(touchMap) ? touchMap.filter((n) => Number.isFinite(n)) : [];
-  const sorted = [...safe].sort((a, b) => a - b);
-  const capped = sorted.map((v) => Math.max(0, Math.min(1, v)));
-  const edges = [0, ...capped];
-  if (edges[edges.length - 1] !== 1) edges.push(1);
-
-  const segments: Array<{ start: number; end: number; index: number }> = [];
-  for (let i = 0; i < edges.length - 1; i += 1) {
-    const start = edges[i];
-    const end = edges[i + 1];
-    if (end <= start) continue;
-    segments.push({ start, end, index: segments.length });
-  }
-  return segments;
+const buildSegments = (zones: { heightRange: [number, number] }[]) => {
+  return zones.map((zone, i) => ({
+    start: zone.heightRange[0] ?? 0,
+    end: zone.heightRange[1] ?? 1,
+    index: i,
+  }));
 };
 
 function TouchMapVisualizer({
@@ -25,12 +16,13 @@ function TouchMapVisualizer({
   modelConfig: ModelConfig;
   segmentActions: string[];
 }) {
-  const segments = useMemo(() => buildSegments(modelConfig.touchMap), [modelConfig.touchMap]);
+  const zones = modelConfig.interactionZones?.zones ?? [];
+  const segments = useMemo(() => buildSegments(zones), [zones]);
 
   return (
     <div className="rounded-box border border-base-300 bg-base-100 p-4">
       <div className="text-sm font-medium">交互区域可视化</div>
-      <div className="text-xs text-base-content/60 mt-1">从上到下按 touchMap 分段（0~1）</div>
+      <div className="text-xs text-base-content/60 mt-1">自上而下按交互区域堆叠（0~1）</div>
 
       <div className="mt-4 flex justify-center">
         <div className="w-full max-w-130">
@@ -54,7 +46,6 @@ function TouchMapVisualizer({
                 </div>
               );
             })}
-
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute inset-0 border border-base-300 rounded-box" />
             </div>
@@ -78,71 +69,51 @@ export default function InteractionPage({
   actions: string[];
   onActionsChange: (next: string[]) => void;
 }) {
-  const segments = useMemo(() => buildSegments(modelConfig.touchMap), [modelConfig.touchMap]);
+  void onActionsChange; // unused in current iteration, kept for API compatibility
+  const zones = modelConfig.interactionZones?.zones ?? [];
+  const segments = useMemo(() => buildSegments(zones), [zones]);
   const showTouchMapVisualizer = false;
 
   return (
     <div className="p-4 space-y-4">
       <div>
         <h1 className="text-lg font-semibold">交互设置</h1>
-        <p className="text-xs text-base-content/60">touchMap 仅用于分段；动作列表本地可修改</p>
+        <p className="text-xs text-base-content/60">动作列表由模型 Motions 自动解析；区域自上而下堆叠</p>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <section className="rounded-box border border-base-300 bg-base-100 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-sm font-medium">动作列表</div>
-              <div className="text-xs text-base-content/60">用于分配到各段（仅本地）</div>
+              <div className="text-sm font-medium">可用动作</div>
+              <div className="text-xs text-base-content/60">来自模型 model3.json 的 Motions</div>
             </div>
-            <button
-              type="button"
-              className="btn btn-sm btn-outline"
-              onClick={() => onActionsChange([...actions, `Action${actions.length + 1}`])}
-            >
-              新增
-            </button>
           </div>
 
           <div className="mt-3 space-y-2">
-            {actions.map((action, idx) => (
+            {(modelConfig.interactionZones?.actions ?? []).map((action, idx) => (
               <div key={`${idx}-${action}`} className="flex gap-2">
                 <input
                   className="input input-sm input-bordered flex-1"
                   value={action}
-                  onChange={(e) => {
-                    const next = [...actions];
-                    next[idx] = e.target.value;
-                    onActionsChange(next);
-                  }}
+                  readOnly
                 />
-                <button
-                  type="button"
-                  className="btn btn-sm btn-ghost"
-                  onClick={() => {
-                    const next = actions.filter((_, i) => i !== idx);
-                    onActionsChange(next);
-                  }}
-                  title="删除"
-                >
-                  删除
-                </button>
               </div>
             ))}
-            {!actions.length && (
-              <div className="text-xs text-base-content/60">暂无动作，请先新增。</div>
+            {!(modelConfig.interactionZones?.actions?.length) && (
+              <div className="text-xs text-base-content/60">暂无动作数据（请选择包含 Motions 的模型）。</div>
             )}
           </div>
         </section>
 
         <section className="rounded-box border border-base-300 bg-base-100 p-4">
-          <div className="text-sm font-medium">分段动作分配</div>
-          <div className="text-xs text-base-content/60 mt-1">段数由 touchMap 决定</div>
+          <div className="text-sm font-medium">交互区域</div>
+          <div className="text-xs text-base-content/60 mt-1">自上而下堆叠，与配置的 zones 对应</div>
 
           <div className="mt-3 space-y-2">
             {segments.map((seg) => (
               <div key={seg.index} className="flex items-center gap-3">
-                <div className="w-20 text-xs text-base-content/70">段 {seg.index + 1}</div>
+                <div className="w-20 text-xs text-base-content/70">区域 {seg.index + 1}</div>
                 <select
                   className="select select-sm select-bordered flex-1"
                   value={segmentActions[seg.index] ?? ''}
@@ -168,8 +139,8 @@ export default function InteractionPage({
         <TouchMapVisualizer modelConfig={modelConfig} segmentActions={segmentActions} />
       ) : (
         <section className="rounded-box border border-base-300 bg-base-100 p-4">
-          <div className="text-sm font-medium">交互区域可视化（暂未启用）</div>
-          <div className="text-xs text-base-content/60 mt-1">该功能将在后续交互阶段实装，当前先聚焦 RAG 与动作链路。</div>
+          <div className="text-sm font-medium">交互区域可视化（后续迭代）</div>
+          <div className="text-xs text-base-content/60 mt-1">将展示人形轮廓 + 自上而下堆叠的矩形交互区域</div>
         </section>
       )}
     </div>

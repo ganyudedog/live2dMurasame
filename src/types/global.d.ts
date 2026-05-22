@@ -28,7 +28,6 @@ declare global {
 
   // 此处对应live2denv.json中的字段
   interface PetLive2denvConfig {
-    VITE_TOUCH_PRIORITY: string[];
     VITE_MODEL_PATHS: string[];
     CURRENT_PATH: string | null;
     [key: string]: unknown;
@@ -97,18 +96,16 @@ declare global {
   }
 
   // 交互区配置
-  interface PetInteractionZoneConfig {
-    heightRange?: [number, number];
-    motions?: string[];
+  interface PetInteractionZonesConfig {
+    actions?: string[];
+    zones?: { heightRange: [number, number]; motions: string[] }[];
     [key: string]: unknown;
   }
 
-   // 模型配置总览（包含所有字段，供内部使用）
   interface PetModelConfig {
-    touchMap?: number[];
     visualFrame?: PetVisualFrameConfig;
     bubble?: PetBubbleConfig;
-    interactionZones?: Record<string, PetInteractionZoneConfig>;
+    interactionZones?: PetInteractionZonesConfig;
     rag?: PetRagConfig;
     tts?: PetTtsConfig;
     [key: string]: unknown;
@@ -341,6 +338,7 @@ declare global {
   interface PetModelAPI {
     getConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
     updateConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
+    removeConfig?: (modelPath: string) => Promise<boolean | undefined>;
     onConfigUpdated?: (callback: (payload: { modelPath?: string | null; modelFileUrl?: string | null; modelKey?: string | null; config?: PetModelConfig | null; configOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
     listModelPaths?: () => Promise<string[] | undefined>;
     pickModelFile?: () => Promise<string | null | undefined>;

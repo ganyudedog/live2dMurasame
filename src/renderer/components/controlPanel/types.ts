@@ -64,10 +64,9 @@ export type BubbleConfig = {
 };
 
 export type ModelConfig = {
-  touchMap: number[];
   visualFrame: VisualFrameConfig;
   bubble: BubbleConfig;
-  interactionZones: Record<string, { heightRange: [number, number]; motions: string[] }>;
+  interactionZones: { actions: string[]; zones: { heightRange: [number, number]; motions: string[] }[] };
   rag: {
     profile: {
       personal: string;

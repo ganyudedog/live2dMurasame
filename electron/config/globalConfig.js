@@ -1,5 +1,3 @@
-export const DEFAULT_TOUCH_PRIORITY = ['hair', 'face', 'xiongbu', 'qunzi', 'leg'];
-
 export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   scale: 1.0,
   ignoreMouse: false,
@@ -10,21 +8,17 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   apiKey: '',
   baseURL: '',
   displayLang: 'zh',
-  // 破坏性迁移：TTS 输出格式改为全局配置。
   ttsMediaType: 'wav',
-  // 破坏性迁移：TTS 流式开关改为全局配置。
   ttsStreamingMode: true,
 };
 
 // Live2denvConfig: liv2denv.json（模型列表/当前模型等），不包含全局模型设置。
 export const DEFAULT_LIVE2DENV_CONFIG = {
-  VITE_TOUCH_PRIORITY: DEFAULT_TOUCH_PRIORITY,
   VITE_MODEL_PATHS: [],
   CURRENT_PATH: null,
 };
 
 export const DEFAULT_MODEL_CONFIG = {
-  touchMap: [0.1, 0.19, 0.39, 0.53, 1],
   visualFrame: {
     ratio: 0.7,
     minPx: 100,
@@ -37,7 +31,10 @@ export const DEFAULT_MODEL_CONFIG = {
     symmetric: true,
     headRatio: null,
   },
-  interactionZones: {},
+  interactionZones: {
+    actions: [],
+    zones: [],
+  },
   rag: {
     profile: {
       personal: '',
@@ -177,15 +174,24 @@ const normalizeTtsConfig = (input = {}) => {
   return next;
 };
 
+const normalizeInteractionZones = (input) => {
+  const def = { actions: [], zones: [] };
+  if (!input || typeof input !== 'object') return def;
+  return {
+    actions: Array.isArray(input.actions)
+      ? input.actions.filter((v) => typeof v === 'string')
+      : [],
+    zones: Array.isArray(input.zones)
+      ? input.zones.filter((z) => z && Array.isArray(z.heightRange) && Array.isArray(z.motions))
+      : [],
+  };
+};
+
 export const normalizeModelConfig = (input = {}) => {
   const next = {
     ...DEFAULT_MODEL_CONFIG,
     ...(input || {}),
   };
-
-  next.touchMap = Array.isArray(next.touchMap)
-    ? next.touchMap.filter((v) => Number.isFinite(v))
-    : [...DEFAULT_MODEL_CONFIG.touchMap];
 
   next.visualFrame = {
     ...DEFAULT_MODEL_CONFIG.visualFrame,
@@ -197,9 +203,7 @@ export const normalizeModelConfig = (input = {}) => {
     ...((input && input.bubble) || {}),
   };
 
-  next.interactionZones = (input && input.interactionZones && typeof input.interactionZones === 'object')
-    ? input.interactionZones
-    : {};
+  next.interactionZones = normalizeInteractionZones(input && input.interactionZones);
 
   next.rag = normalizeRagConfig(input && input.rag);
   next.tts = normalizeTtsConfig(input && input.tts);
@@ -252,14 +256,8 @@ export const normalizeLive2denvConfig = (input = {}) => {
   next.VITE_MODEL_PATHS = Array.isArray(next.VITE_MODEL_PATHS)
     ? next.VITE_MODEL_PATHS.filter(Boolean)
     : [];
-  next.VITE_TOUCH_PRIORITY = Array.isArray(next.VITE_TOUCH_PRIORITY)
-    ? next.VITE_TOUCH_PRIORITY.filter(Boolean)
-    : DEFAULT_TOUCH_PRIORITY;
   if (next.CURRENT_PATH && typeof next.CURRENT_PATH !== 'string') {
     next.CURRENT_PATH = null;
   }
-
-  // 兼容旧配置文件：如果存在 GLOBAL/legacy 字段，读取时会由 configManager 迁移到 globalModelConfig.json。
-  // normalizeLive2denvConfig 本身不再生成/持久化这些字段。
   return next;
 };

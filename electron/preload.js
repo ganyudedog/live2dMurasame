@@ -48,6 +48,7 @@ const ConfigAPI = {
 const ModelAPI = {
   getConfig: (modelPath) => ipcRenderer.invoke('pet:getModelConfig', modelPath),
   updateConfig: (payload) => ipcRenderer.invoke('pet:updateModelConfig', payload),
+  removeConfig: (modelPath) => ipcRenderer.invoke('pet:removeModelConfig', modelPath),
   onConfigUpdated: snapshotStore.onModelConfigUpdated,
   listModelPaths: () => ipcRenderer.invoke('pet:listModelPaths'),
   pickModelFile: () => ipcRenderer.invoke('pet:pickModelFile'),

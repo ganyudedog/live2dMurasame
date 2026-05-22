@@ -21,6 +21,7 @@ import { registerConfigIpc } from './main/configIpc.js';
 import { createWindowDragController } from './main/windowDragController.js';
 import { createWindowIntentController } from './main/windowIntentController.js';
 import { registerAsrIpc } from './main/asrIpc.js';
+import { detectModelFilePath } from './utils/path.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

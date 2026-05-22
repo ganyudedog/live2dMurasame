@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { getConfigSnapshot, getLive2denvConfigCache, applyLive2denvConfigPatch, getModelConfigState, applyModelConfigPatch, listModelPaths, getLastConfigOverrides, getDefaultModelConfig } from '../runtime/allEnv.js';
 import { ensureGlobalModelConfigLoaded, overrideGlobalModelConfigCache, persistGlobalModelConfig, invalidateGlobalModelConfigCache, getGlobalModelConfigSnapshot } from '../config/live2dGlobal.js';
 import { setDebugTracePolicy } from '../utils/log.js';
+import { removeModelConfig } from '../config/configManager.js';
 
 export const registerConfigIpc = ({
   getMainWindow,
@@ -185,6 +186,12 @@ export const registerConfigIpc = ({
   });
 
   ipcMain.handle('pet:listModelPaths', () => listModelPaths());
+
+  ipcMain.handle('pet:removeModelConfig', (_event, modelPath) => {
+    if (typeof modelPath !== 'string' || !modelPath) return false;
+    removeModelConfig(modelPath);
+    return true;
+  });
 
   return {
     broadcastConfigSnapshot,

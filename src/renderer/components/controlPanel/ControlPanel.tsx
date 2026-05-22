@@ -25,13 +25,6 @@ import { useTtsPlaybackFeedbackMutation } from '../../../../api/hooks/liveKitHoo
 import { info, warn } from '../../utils/log';
 import { toast } from 'react-hot-toast';
 
-const buildInitialSegmentActions = (touchMap: number[], actions: string[]) => {
-  const count = Array.isArray(touchMap) ? touchMap.length : 0;
-  if (!count) return [];
-  if (!actions.length) return Array.from({ length: count }, () => '');
-  return Array.from({ length: count }, (_, idx) => actions[idx % actions.length] ?? '');
-};
-
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null;
 };
@@ -296,17 +289,17 @@ const ControlPanel: React.FC = () => {
 
   // 交互设置
   const segmentActions = useMemo(() => {
-    const desired = buildInitialSegmentActions(modelConfig.touchMap, actions);
+    const zones = modelConfig.interactionZones?.zones ?? [];
+    const desired = Array.from({ length: zones.length }, () => '');
     const stored = segmentActionsByModel[segmentActionsKey];
     const base = Array.isArray(stored) && stored.length ? stored : desired;
 
-    const next = desired.map((fallback, idx) => {
+    return desired.map((fallback, idx) => {
       const prev = base[idx] ?? '';
       if (prev && actions.includes(prev)) return prev;
       return fallback && actions.includes(fallback) ? fallback : '';
     });
-    return next;
-  }, [actions, modelConfig.touchMap, segmentActionsByModel, segmentActionsKey]);
+  }, [actions, modelConfig.interactionZones, segmentActionsByModel, segmentActionsKey]);
 
   const selectedModel: ModelEntry = useMemo(() => {
     const pick = currentModelPath ?? modelPaths[0] ?? '';
@@ -472,6 +465,8 @@ const ControlPanel: React.FC = () => {
     }).catch(() => {
       // ignore
     });
+    // 同时清理对应模型的配置文件目录
+    window.ModelAPI?.removeConfig?.(removePath);
   };
 
   const handleActionsChange = (nextActions: string[]) => {

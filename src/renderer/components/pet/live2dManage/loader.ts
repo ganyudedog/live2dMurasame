@@ -57,14 +57,11 @@ export async function loadModel(modelPath: string) {
   }
   // 禁用自动交互注册，避免在 Pixi v7 上依赖 legacy interaction manager
   const model = await Live2DModel.from(modelPath, { autoInteract: false });
-  try {
-    const groups = Object.keys((model as any).internalModel?.settings?.motions || {});
-    debug('pet.live2d', 'model.load.ok', {
-      motionGroupCount: groups.length,
-      motionGroupsPreview: groups.slice(0, 5),
-    });
-  } catch {
-    // ignore motion group inspection
-  }
+  const groups = Object.keys((model as any).internalModel?.settings?.motions || {});
+  debug('pet.live2d', 'model.load.ok', {
+    motionGroupCount: groups.length,
+    motionGroupsPreview: groups.slice(0, 5),
+  });
+  
   return model;
 }

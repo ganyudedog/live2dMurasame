@@ -73,7 +73,7 @@ const isAbortError = (value: unknown): boolean => {
   return String(value).includes('AbortError');
 };
 
-type PlaybackFeedbackReporter = (request: {
+export type PlaybackFeedbackReporter = (request: {
   baseUrl: string;
   sessionId: string;
   requestId: string;

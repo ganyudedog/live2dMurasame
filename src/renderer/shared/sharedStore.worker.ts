@@ -1,14 +1,12 @@
 /// <reference lib="webworker" />
 
-import type { PatchOp, SharedState, WorkerInboundMsg, WorkerOutboundMsg } from './sharedStateTypes';
+import type { ChatRequest, ChatResponse, PatchOp, SharedState, WorkerInboundMsg, WorkerOutboundMsg } from './sharedStateTypes';
 
 const ports = new Set<MessagePort>();
 
 let state: SharedState = {
   rev: 0,
-  global: {
-    scale: 1,
-  },
+  global: { scale: 1 },
   asr: {
     enabled: false,
     state: 'off',
@@ -17,6 +15,8 @@ let state: SharedState = {
     throttled: false,
     lastUpdatedAt: 0,
   },
+  config: { apiKey: '', baseURL: '', displayLang: 'zh', ttsMediaType: 'wav', ttsStreamingMode: true },
+  chat: { request: null, response: null },
 };
 
 let flushTimer: number | null = null;
@@ -97,13 +97,43 @@ const applyOp = (op: PatchOp) => {
 
   if (op.path === 'asr.lastUpdatedAt') {
     const next = Number.isFinite(op.value) ? Number(op.value) : Date.now();
-    state = {
-      ...state,
-      asr: {
-        ...state.asr,
-        lastUpdatedAt: next,
-      },
-    };
+    state = { ...state, asr: { ...state.asr, lastUpdatedAt: next } };
+    return;
+  }
+
+  // ── config（标量字段）──
+  if (op.path === 'config.apiKey' && typeof op.value === 'string') {
+    state = { ...state, config: { ...state.config, apiKey: op.value } };
+    return;
+  }
+  if (op.path === 'config.baseURL' && typeof op.value === 'string') {
+    state = { ...state, config: { ...state.config, baseURL: op.value } };
+    return;
+  }
+  if (op.path === 'config.displayLang') {
+    const next = (op.value === 'en' || op.value === 'ja' || op.value === 'ko') ? op.value : 'zh';
+    state = { ...state, config: { ...state.config, displayLang: next } };
+    return;
+  }
+  if (op.path === 'config.ttsMediaType') {
+    const next = (op.value === 'ogg' || op.value === 'aac') ? op.value : 'wav';
+    state = { ...state, config: { ...state.config, ttsMediaType: next } };
+    return;
+  }
+  if (op.path === 'config.ttsStreamingMode') {
+    state = { ...state, config: { ...state.config, ttsStreamingMode: Boolean(op.value) } };
+    return;
+  }
+
+  // ── chat.request（完整对象）──
+  if (op.path === 'chat.request' && typeof op.value === 'object' && op.value !== null) {
+    state = { ...state, chat: { ...state.chat, request: op.value as ChatRequest } };
+    return;
+  }
+
+  // ── chat.response（完整对象）──
+  if (op.path === 'chat.response' && typeof op.value === 'object' && op.value !== null) {
+    state = { ...state, chat: { ...state.chat, response: op.value as ChatResponse } };
   }
 };
 
@@ -116,11 +146,7 @@ const dedupeOps = (ops: PatchOp[]): PatchOp[] => {
 
 const broadcast = (msg: WorkerOutboundMsg) => {
   ports.forEach((port) => {
-    try {
-      port.postMessage(msg);
-    } catch {
-      // 忽略单个端口异常
-    }
+    port.postMessage(msg);
   });
 };
 
@@ -153,11 +179,7 @@ const scheduleFlush = () => {
 
     if (msg.type === 'bye') {
       cleanup();
-      try {
-        port.close();
-      } catch {
-        // ignore
-      }
+      port.close();
       return;
     }
 
@@ -178,15 +200,11 @@ const scheduleFlush = () => {
 
   port.addEventListener('message', onMessage as EventListener);
 
-  port.addEventListener('messageerror', () => {
-    // ignore
-  });
+  port.addEventListener('messageerror', () => { });
 
   // 端口关闭时从集合移除
   const cleanup = () => {
     ports.delete(port);
-    try {
-      port.removeEventListener('message', onMessage as EventListener);
-    } catch { /* empty */ }
+    port.removeEventListener('message', onMessage as EventListener);
   };
 };

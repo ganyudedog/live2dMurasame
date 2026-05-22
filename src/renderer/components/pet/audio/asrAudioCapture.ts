@@ -1,3 +1,5 @@
+import { info } from "../../../utils/log";
+
 export type AsrSharedBufferInfo = {
   headerBuffer: SharedArrayBuffer;
   dataBuffer: SharedArrayBuffer;
@@ -7,18 +9,11 @@ export type AsrSharedBufferInfo = {
   capacitySamples: number;
 };
 
-export type AsrCaptureLogger = {
-  debug?: (ns: string, event: string, data?: Record<string, unknown>, msg?: string) => void;
-  info?: (ns: string, event: string, data?: Record<string, unknown>, msg?: string) => void;
-  warn?: (ns: string, event: string, data?: Record<string, unknown>, msg?: string) => void;
-  error?: (ns: string, event: string, data?: Record<string, unknown>, msg?: string) => void;
-};
 
 export type AsrAudioCaptureStartOptions = {
   sharedBufferInfo?: AsrSharedBufferInfo | null;
   targetSampleRate?: number;
   onFallbackChunk?: (payload: { samples: Float32Array; sampleRate: number }) => void;
-  logger?: AsrCaptureLogger;
 };
 
 type StartOptions = AsrAudioCaptureStartOptions;
@@ -77,7 +72,6 @@ const downsampleToTargetRate = (samples: Float32Array, sourceSampleRate: number,
 
 
 export const createAsrAudioCaptureController = (initialOptions: StartOptions = {}) => {
-  const logger = initialOptions.logger ?? {};
   const defaultTargetSampleRate = initialOptions.targetSampleRate ?? DEFAULT_TARGET_SAMPLE_RATE;
 
   let audioContext: AudioContext | null = null;
@@ -118,7 +112,7 @@ export const createAsrAudioCaptureController = (initialOptions: StartOptions = {
       workletModuleUrl = null;
     }
 
-    logger.info?.('pet.asr.audio', 'capture.stop', { transport });
+    info('pet.asr.audio', 'capture.stop', { transport });
     return { running: false, transport: 'idle' as const };
   };
 
@@ -128,14 +122,13 @@ export const createAsrAudioCaptureController = (initialOptions: StartOptions = {
     }
 
     const onFallbackChunk = options.onFallbackChunk ?? initialOptions.onFallbackChunk;
-    const loggerRef = options.logger ?? logger;
     const targetSampleRate = options.targetSampleRate ?? defaultTargetSampleRate;
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       throw new Error('当前环境不支持麦克风采集');
     }
 
-    loggerRef.info?.('pet.asr.audio', 'capture.start', {
+    info('pet.asr.audio', 'capture.start', {
       transport: 'fallback',
       targetSampleRate,
     });
@@ -179,7 +172,7 @@ export const createAsrAudioCaptureController = (initialOptions: StartOptions = {
 
     running = true;
     transport = 'fallback';
-    loggerRef.info?.('pet.asr.audio', 'capture.ready', { transport });
+    info('pet.asr.audio', 'capture.ready', { transport });
     return { running: true, transport };
   };
 

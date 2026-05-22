@@ -282,7 +282,7 @@ export const registerAsrIpc = () => {
       ts: nowTs(),
     };
     broadcast(payload);
-    logPetEvent('asr.final', payload, { level: 'info' });
+    // logPetEvent('asr.final', payload, { level: 'info' });
   };
 
   const getSession = () => runtimeRef;

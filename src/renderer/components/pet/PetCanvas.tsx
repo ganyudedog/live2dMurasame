@@ -37,6 +37,9 @@ import { useConfigStore } from '../../store/useConfigStore';
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
 import { getSharedWorkerAsrSnapshot, subscribeSharedWorkerAsr } from '../../shared/sharedWorkerAsrStore';
+import { useChatRuntime } from './hooks/useChatRuntime';
+import { useTtsPlaybackFeedbackMutation } from '../../../../api/hooks/liveKitHooks';
+import type { ChatConfig, ChatRequest } from '../../shared/sharedStateTypes';
 import {
   CONTEXT_ZONE_LATCH_MS,
   DEFAULT_TOUCH_PRIORITY,
@@ -208,6 +211,15 @@ const PetCanvas: React.FC = () => {
 
   const asrCaptureRef = useRef<ReturnType<typeof createAsrAudioCaptureController> | null>(null);
   const asrRunningRef = useRef(false);
+
+  const { mutateAsync: reportPlaybackFeedback } = useTtsPlaybackFeedbackMutation();
+
+  const reportPlaybackFeedbackBridge = useCallback(
+    async (request: Parameters<typeof reportPlaybackFeedback>[0]): Promise<void> => {
+      await reportPlaybackFeedback(request);
+    },
+    [reportPlaybackFeedback],
+  );
 
   const workerScale = useSyncExternalStore(
     subscribeSharedWorkerScale,
@@ -427,9 +439,7 @@ const PetCanvas: React.FC = () => {
 
   useEffect(() => {
     if (asrCaptureRef.current) return;
-    asrCaptureRef.current = createAsrAudioCaptureController({
-      logger: { debug, info, warn, error },
-    });
+    asrCaptureRef.current = createAsrAudioCaptureController();
     return () => {
       try {
         asrCaptureRef.current?.stop();
@@ -482,7 +492,6 @@ const PetCanvas: React.FC = () => {
               warn('pet.asr', 'fallback.chunkFailed', { err: String(error instanceof Error ? error.message : error) });
             }
           },
-          logger: { debug, info, warn, error },
         });
         asrRunningRef.current = true;       
       } catch (e) {
@@ -497,6 +506,80 @@ const PetCanvas: React.FC = () => {
       disposed = true;
     };
   }, [asrSnapshot.enabled]);
+
+  // ─── Chat 管道（LLM + TTS）─────────────────────────────────
+
+  const { processChatRequest } = useChatRuntime({ reportPlaybackFeedback: reportPlaybackFeedbackBridge });
+
+  // SharedWorker 配置同步：从 Worker 读取 AI 配置快照
+  const workerConfigRef = useRef<ChatConfig>({
+    apiKey: '', baseURL: '', displayLang: 'zh', ttsMediaType: 'wav', ttsStreamingMode: true,
+  });
+
+  useEffect(() => {
+    let disposed = false;
+    sharedStoreClient.getInitialState().then((s) => {
+      if (disposed || !s?.config) return;
+      workerConfigRef.current = { ...s.config };
+    });
+    const unsub = sharedStoreClient.subscribe((msg) => {
+      if (disposed || msg.type !== 'patched') return;
+      for (const op of msg.ops) {
+        if (op.path.startsWith('config.')) {
+          sharedStoreClient.getInitialState().then((s) => {
+            if (!disposed && s?.config) workerConfigRef.current = { ...s.config };
+          });
+          break;
+        }
+      }
+    });
+    return () => { disposed = true; unsub(); };
+  }, []);
+
+  // SharedWorker chat.request 订阅：处理 ControlPanel 文字输入
+  useEffect(() => {
+    let disposed = false;
+    const unsub = sharedStoreClient.subscribe((msg) => {
+      if (disposed || msg.type !== 'patched') return;
+      for (const op of msg.ops) {
+        if (op.path === 'chat.request' && op.value && typeof op.value === 'object') {
+          const req = op.value as ChatRequest;
+          if (req.status === 'pending' && req.source === 'text' && req.text?.trim()) {
+            info('pet.chat', 'request.received', { id: req.id, source: req.source });
+            void processChatRequest(req, workerConfigRef.current);
+          }
+        }
+      }
+    });
+    return () => { disposed = true; unsub(); };
+  }, [processChatRequest]);
+
+  // ASR 最终识别结果 → Chat 管道
+  useEffect(() => {
+    const api = window.WindowAPI;
+    if (!api?.on) return;
+    let disposed = false;
+    const off = api.on('pet:asr:event', (event: unknown) => {
+      if (disposed || !event || typeof event !== 'object') return;
+      const e = event as { type?: string; utteranceId?: string; text?: string };
+      if (e.type !== 'asr.final' || !e.text?.trim()) return;
+
+      const request: ChatRequest = {
+        id: `asr_${e.utteranceId || Date.now().toString(36)}`,
+        text: e.text.trim(), source: 'asr', status: 'pending', createdAt: Date.now(),
+      };
+
+      // 广播到 SharedWorker → ControlPanel 展示用户消息
+      sharedStoreClient.dispatchPatch([{ path: 'chat.request', value: request }]);
+
+      // PetCanvas 本地直调 LLM → TTS
+      info('pet.chat', 'asr.final', { utteranceId: e.utteranceId });
+      void processChatRequest(request, workerConfigRef.current);
+    });
+    return () => { disposed = true; if (typeof off === 'function') off(); };
+  }, [processChatRequest]);
+
+  // ─── Chat 管道结束 ────────────────────────────────────────
 
 
   // 上下文区域

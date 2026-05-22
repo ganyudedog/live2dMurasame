@@ -14,9 +14,10 @@ import { useDebouncedRemoteDraft } from './hooks/useDebouncedRemoteDraft';
 import { useThemeMode } from './theme';
 import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from './chatCache';
 import type { ChatMessage, ChatSessionCache, ControlPanelTabKey, ModelConfig, ModelEntry, GlobalUiSettings } from './types';
+import type { ChatRequest, ChatResponse } from '../../shared/sharedStateTypes';
 import { sharedStoreClient } from '../../shared/sharedStoreClient';
 import { getSharedWorkerScaleSnapshot, subscribeSharedWorkerScale } from '../../shared/sharedWorkerScaleStore';
-import { getSharedWorkerAsrSnapshot, setSharedWorkerAsrEnabled, subscribeSharedWorkerAsr, type PetAsrEvent } from '../../shared/sharedWorkerAsrStore';
+import { getSharedWorkerAsrSnapshot, setSharedWorkerAsrEnabled, subscribeSharedWorkerAsr } from '../../shared/sharedWorkerAsrStore';
 import { useConfigStore } from '../../store/useConfigStore';
 import { createStage2Runtime } from '../../../AI/core/stage2Runtime';
 import { createFrontendTtsRuntime } from '../../../AI/tts/runtime';
@@ -86,8 +87,6 @@ const isSameGlobalAiDraft = (
 };
 
 const createChatMessageId = (): string => `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-const createAsrRequestId = (utteranceId: string): string => `asr_${utteranceId}`;
-
 const createChatSessionCache = (patch?: Partial<ChatSessionCache>): ChatSessionCache => ({
   draftText: patch?.draftText ?? '',
   messages: patch?.messages ?? [],
@@ -126,9 +125,7 @@ const ControlPanel: React.FC = () => {
   // 首次挂载拉一次主进程快照（非必须，但能确保控制面板与主窗口一致）。
   useEffect(() => {
     if (hydrated) return;
-    refresh().catch(() => {
-      // ignore
-    });
+    refresh();
   }, [hydrated, refresh]);
 
   const workerScale = useSyncExternalStore(
@@ -229,17 +226,11 @@ const ControlPanel: React.FC = () => {
 
     return () => {
       mountedRef.current = false;
-      try {
-        stage2RuntimeRef.current?.dispose();
-      } catch {
-        // ignore
-      }
+
+      stage2RuntimeRef.current?.dispose();
       stage2RuntimeRef.current = null;
-      try {
-        ttsRuntimeRef.current?.dispose();
-      } catch {
-        // ignore
-      }
+    
+      ttsRuntimeRef.current?.dispose();
       ttsRuntimeRef.current = null;
     };
   }, []);
@@ -279,6 +270,14 @@ const ControlPanel: React.FC = () => {
           ttsMediaType: next.ttsMediaType,
           ttsStreamingMode: next.ttsStreamingMode,
         });
+        // 同步到 SharedWorker → PetCanvas 实时读取
+        sharedStoreClient.dispatchPatch([
+          { path: 'config.apiKey', value: next.apiKey },
+          { path: 'config.baseURL', value: next.apiBaseUrl },
+          { path: 'config.displayLang', value: next.displayLang },
+          { path: 'config.ttsMediaType', value: next.ttsMediaType },
+          { path: 'config.ttsStreamingMode', value: next.ttsStreamingMode },
+        ]);
       } catch (e) {
         toast.error(String(e instanceof Error ? e.message : e));
         warn('controlPanel', 'aiSettings.persistGlobalFailed', { err: String(e) });
@@ -338,95 +337,84 @@ const ControlPanel: React.FC = () => {
     }));
   }, [chatCacheScope, chatDraft, chatMessages]);
 
+  // SharedWorker Chat 订阅：接收 PetCanvas 的 ASR 识别结果 + LLM 回复
   useEffect(() => {
-    const api = window.WindowAPI;
-    if (!api?.on) return;
-
     let disposed = false;
-    const off = api.on('pet:asr:event', (event: PetAsrEvent) => {
-      if (!mountedRef.current || disposed || !event) return;
+    const seenAsrRequests = new Set<string>();
 
-      if (event.type === 'mic.state') {
-        if (event.state !== 'error' && event.state !== 'denied') {
-          setChatError(null);
+    const unsubscribe = sharedStoreClient.subscribe((msg) => {
+      if (disposed) return;
+      if (msg.type !== 'patched') return;
+
+      msg.ops.forEach((op) => {
+        // ── PetCanvas ASR 识别 → 创建用户消息 ──
+        if (op.path === 'chat.request' && op.value && typeof op.value === 'object') {
+          const req = op.value as ChatRequest;
+          if (req.source === 'asr' && req.status === 'pending' && !seenAsrRequests.has(req.id)) {
+            seenAsrRequests.add(req.id);
+            setChatMessages((prev) => {
+              if (prev.some((m) => m.requestId === req.id && m.source === 'asr')) return prev;
+              return [...prev, {
+                id: createChatMessageId(), role: 'user', text: req.text,
+                status: 'done', source: 'asr', createdAt: req.createdAt,
+                requestId: req.id,
+              }];
+            });
+          }
+          return;
         }
-        return;
-      }
 
-      if (event.type === 'asr.error') {
-        setChatError(event.message);
-        return;
-      }
+        // ── PetCanvas/ControlPanel LLM 回复 → 创建/更新 assistant 消息 ──
+        if (op.path === 'chat.response' && op.value && typeof op.value === 'object') {
+          const resp = op.value as ChatResponse;
+          const requestId = resp.id;
 
-      if (event.type === 'asr.partial') {
-        const requestId = createAsrRequestId(event.utteranceId);
-        setChatMessages((prev) => {
-          const found = prev.some((item) => item.requestId === requestId && item.source === 'asr');
-          if (!found) {
-            return [
-              ...prev,
-              {
-                id: createChatMessageId(),
-                role: 'user',
-                text: event.text,
-                status: 'sending',
-                source: 'asr',
-                createdAt: Date.now(),
-                requestId,
-              },
-            ];
-          }
-
-          return prev.map((item) => {
-            if (item.requestId !== requestId || item.source !== 'asr') return item;
-            return {
-              ...item,
-              text: event.text,
-              status: 'sending',
-              error: undefined,
-            };
+          setChatMessages((prev) => {
+            const hasAssistant = prev.some(
+              (m) => m.requestId === requestId && m.role === 'assistant',
+            );
+            if (!hasAssistant && resp.displayText) {
+              return [...prev, {
+                id: createChatMessageId(), role: 'assistant', text: resp.displayText,
+                status: resp.status === 'streaming' ? 'sending'
+                      : resp.status === 'error' ? 'error' : 'done',
+                source: 'assistant', createdAt: Date.now(),
+                requestId, error: resp.error ?? undefined,
+              }];
+            }
+            return prev.map((item) => {
+              if (item.requestId !== requestId || item.role !== 'assistant') return item;
+              return {
+                ...item, text: resp.displayText || item.text,
+                status: resp.status === 'streaming' ? 'sending'
+                      : resp.status === 'error' ? 'error' : 'done',
+                error: resp.error ?? undefined,
+              };
+            });
           });
-        });
-        return;
-      }
 
-      if (event.type === 'asr.final') {
-        const requestId = createAsrRequestId(event.utteranceId);
-        setChatMessages((prev) => {
-          const found = prev.some((item) => item.requestId === requestId && item.source === 'asr');
-          if (!found) {
-            return [
-              ...prev,
-              {
-                id: createChatMessageId(),
-                role: 'user',
-                text: event.text,
-                status: 'done',
-                source: 'asr',
-                createdAt: Date.now(),
-                requestId,
-              },
-            ];
+          if (resp.status === 'done' || resp.status === 'error') {
+            setChatSending(false);
           }
-
-          return prev.map((item) => {
-            if (item.requestId !== requestId || item.source !== 'asr') return item;
-            return {
-              ...item,
-              text: event.text,
-              status: 'done',
-              error: undefined,
-            };
-          });
-        });
-      }
+        }
+      });
     });
 
-    return () => {
-      disposed = true;
-      if (typeof off === 'function') off();
-    };
+    return () => { disposed = true; unsubscribe(); };
   }, []);
+
+  // 首次挂载时将配置同步到 SharedWorker → PetCanvas 读取
+  useEffect(() => {
+    if (!hydrated) return;
+    sharedStoreClient.dispatchPatch([
+      { path: 'config.apiKey', value: remoteApiKey },
+      { path: 'config.baseURL', value: remoteApiBaseUrl },
+      { path: 'config.displayLang', value: remoteDisplayLang },
+      { path: 'config.ttsMediaType', value: remoteTtsMediaType },
+      { path: 'config.ttsStreamingMode', value: remoteTtsStreamingMode },
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated]);
 
   const persistGlobalSettings = async (patch: Partial<GlobalUiSettings>) => {
     try {
@@ -452,9 +440,7 @@ const ControlPanel: React.FC = () => {
     updateLive2denvConfig({
       CURRENT_PATH: nextPath,
       LAST_SELECTED_AT: Date.now(),
-    }).catch(() => {
-      // ignore
-    });
+    })
   };
 
   const handleAddModel = async () => {
@@ -585,6 +571,11 @@ const ControlPanel: React.FC = () => {
               error: undefined,
             };
           }));
+          // 同步到 SharedWorker → PetCanvas 展示
+          sharedStoreClient.dispatchPatch([{
+            path: 'chat.response',
+            value: { id: requestId, displayText: nextText, status: 'streaming', error: null, updatedAt: Date.now() },
+          }]);
         },
       });
       if (!mountedRef.current) return;
@@ -630,6 +621,12 @@ const ControlPanel: React.FC = () => {
           error: undefined,
         };
       }));
+
+      // 同步最终 display_text 到 SharedWorker
+      sharedStoreClient.dispatchPatch([{
+        path: 'chat.response',
+        value: { id: requestId, displayText, status: 'done', error: null, updatedAt: Date.now() },
+      }]);
 
       // 唯一触发约束：只在千问返回文本后发起 TTS。
       const ttsRuntime = ensureTtsRuntime();

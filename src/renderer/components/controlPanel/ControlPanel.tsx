@@ -350,7 +350,7 @@ const ControlPanel: React.FC = () => {
         // ── PetCanvas ASR 识别 → 创建用户消息 ──
         if (op.path === 'chat.request' && op.value && typeof op.value === 'object') {
           const req = op.value as ChatRequest;
-          if (req.source === 'asr' && req.status === 'pending' && !seenAsrRequests.has(req.id)) {
+          if (req.source === 'asr'  && !seenAsrRequests.has(req.id)) {
             seenAsrRequests.add(req.id);
             setChatMessages((prev) => {
               if (prev.some((m) => m.requestId === req.id && m.source === 'asr')) return prev;

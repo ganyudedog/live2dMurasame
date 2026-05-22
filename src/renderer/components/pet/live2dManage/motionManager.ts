@@ -118,8 +118,8 @@ export class MotionManager {
     }
     // 先彻底停止 -> idle(可选) -> 目标（多形态调用，尽量兼容不同版本）
     const FORCE_PRIORITY = 3 as const;
-    try { mm?.stopAllMotions?.(); } catch { /* swallow */ }
-    try { if (mm?._currentAudio) { mm._currentAudio.pause(); mm._currentAudio.currentTime = 0; } } catch { /* swallow */ }
+    mm?.stopAllMotions?.();
+    if (mm?._currentAudio) { mm._currentAudio.pause(); mm._currentAudio.currentTime = 0; }
 
     const callForce = (group: string, index: number) => {
       // 依次尝试多种调用签名

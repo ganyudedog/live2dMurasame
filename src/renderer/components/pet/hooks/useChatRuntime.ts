@@ -5,6 +5,7 @@ import type { PlaybackFeedbackReporter } from '../../../../AI/tts/runtime';
 import { sharedStoreClient } from '../../../shared/sharedStoreClient';
 import type { ChatConfig, ChatRequest, ChatResponse } from '../../../shared/sharedStateTypes';
 import { info, warn, error } from '../../../utils/log';
+import { useTtsQueue, type UseTtsQueueResult } from './useTtsQueue';
 
 interface UseChatRuntimeOptions {
   reportPlaybackFeedback: PlaybackFeedbackReporter;
@@ -19,16 +20,16 @@ interface UseChatRuntimeResult {
  *
  * 职责：
  *   ① 管理 Stage2Runtime + TtsRuntime 生命周期
- *   ② processChatRequest：调 LLM → 流式回写 chat.response → TTS 合成
+ *   ② processChatRequest：调 LLM（JSON Lines 流式）→ 逐句 dispatch chat.response → 逐句 TTS
  */
 export const useChatRuntime = (options: UseChatRuntimeOptions): UseChatRuntimeResult => {
   const { reportPlaybackFeedback } = options;
   const stage2Ref = useRef<Stage2Runtime | null>(null);
   const ttsRef = useRef<FrontendTtsRuntime | null>(null);
   const processingRef = useRef(false);
+  const ttsQueue = useTtsQueue();
 
   useEffect(() => {
-    // PetCanvas 没有 Live2D 动作能力，LLM 回复中的 action intent 直接丢弃
     stage2Ref.current = createStage2Runtime({
       dispatchAction: () => ({ ok: false, state: 'dropped', reason: 'no-capability' }),
       getActionCapability: () => ({ canShakeHead: false, canBlink: false, canMouth: false }),
@@ -43,6 +44,49 @@ export const useChatRuntime = (options: UseChatRuntimeOptions): UseChatRuntimeRe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * TTS 消费轮询：边进边出，不等待 LLM 流式结束。
+   * 有句子时立即发送 → 等待后端反馈 → 立刻检查下一个；
+   * 无句子时 50ms 轮询。
+   */
+  const startTtsConsumer = useCallback((requestId: string, queue: UseTtsQueueResult, done: { current: boolean }) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const pump = async () => {
+      const tts = ttsRef.current;
+      if (!tts) return;
+
+      const next = queue.getNextSpeak();
+      if (next) {
+        try {
+          await tts.speakFromQwenReply({
+            requestId: `${requestId}_s${next.index}`,
+            speakText: next.speakText,
+            displayText: next.displayText,
+          });
+          queue.advanceSend();
+          // 后端反馈后立刻尝试下一个（无延迟）
+          pump();
+          return;
+        } catch (e) {
+          warn('pet.chat', 'tts.sentence.failed', { requestId, index: next.index, err: String(e) });
+          queue.advanceSend();
+        }
+      }
+
+      // 无句子 → 50ms 轮询
+      if (!done.current) {
+        timer = setTimeout(pump, 50);
+      }
+    };
+
+    pump();
+
+    return () => {
+      if (timer != null) clearTimeout(timer);
+    };
+  }, []);
+  
   const processChatRequest = useCallback(
     async (request: ChatRequest, config: ChatConfig): Promise<void> => {
       if (processingRef.current) return;
@@ -54,7 +98,6 @@ export const useChatRuntime = (options: UseChatRuntimeOptions): UseChatRuntimeRe
 
       processingRef.current = true;
 
-      // 标记处理中
       sharedStoreClient.dispatchPatch([{
         path: 'chat.request',
         value: { ...request, status: 'processing' } satisfies ChatRequest,
@@ -62,25 +105,38 @@ export const useChatRuntime = (options: UseChatRuntimeOptions): UseChatRuntimeRe
 
       info('pet.chat', 'request.processing', { id: request.id, source: request.source });
 
+      let accumulatedDisplay = '';
+      const ttsDoneRef = { current: false };
+      const stopConsumer = startTtsConsumer(request.id, ttsQueue, ttsDoneRef);
+
       try {
-        // 流式 LLM 请求
         const result = await stage2.ask(text, {
           apiKey: config.apiKey,
           baseURL: config.baseURL,
-          onDisplayTextStreaming: (streamingDisplayText: string) => {
-            const nextText = String(streamingDisplayText ?? '').trim();
-            if (!nextText) return;
+          onSentenceStreaming: (sentence) => {
+            // 累积 displayText
+            accumulatedDisplay = accumulatedDisplay
+              ? `${accumulatedDisplay}\n${sentence.displayText}`
+              : sentence.displayText;
+
+            // 流式更新 chat.response
             sharedStoreClient.dispatchPatch([{
               path: 'chat.response',
               value: {
-                id: request.id, displayText: nextText,
+                id: request.id, displayText: accumulatedDisplay,
                 status: 'streaming', error: null, updatedAt: Date.now(),
               } satisfies ChatResponse,
             }]);
+
+            // speakText → TTS 队列（门控发送）
+            ttsQueue.pushSentence(sentence.speakText, sentence.displayText);
           },
         });
 
-        if (!result?.ok || !result.reply?.speak_text) {
+        // LLM 流式结束
+        ttsQueue.finishStreaming();
+
+        if (!result?.ok) {
           const message = result?.error ?? '对话请求失败';
           warn('pet.chat', 'request.failed', { id: request.id, err: message });
           sharedStoreClient.dispatchPatch([
@@ -91,24 +147,16 @@ export const useChatRuntime = (options: UseChatRuntimeOptions): UseChatRuntimeRe
           return;
         }
 
-        const speakText = result.reply.speak_text.trim();
-        const displayText = result.reply.display_text?.trim() ?? text;
-
         // 最终响应
-        sharedStoreClient.dispatchPatch([
-          { path: 'chat.request', value: { ...request, status: 'done' } satisfies ChatRequest },
-          { path: 'chat.response', value: { id: request.id, displayText, status: 'done', error: null, updatedAt: Date.now() } satisfies ChatResponse },
-        ]);
-
-        info('pet.chat', 'request.done', { id: request.id, hasSpeakText: Boolean(speakText) });
-
-        // TTS 合成 → LiveKit 播放
-        const tts = ttsRef.current;
-        if (tts && speakText) {
-          void tts.speakFromQwenReply({ requestId: request.id, speakText, displayText })
-            .then((r) => info('pet.chat', 'tts.done', { id: request.id, ok: r.ok, streamed: r.streamed }))
-            .catch((e) => warn('pet.chat', 'tts.failed', { id: request.id, err: String(e) }));
+        if (accumulatedDisplay) {
+          sharedStoreClient.dispatchPatch([
+            { path: 'chat.request', value: { ...request, status: 'done' } satisfies ChatRequest },
+            { path: 'chat.response', value: { id: request.id, displayText: accumulatedDisplay, status: 'done', error: null, updatedAt: Date.now() } satisfies ChatResponse },
+          ]);
         }
+
+        info('pet.chat', 'request.done', { id: request.id });
+
       } catch (e) {
         const message = String(e instanceof Error ? e.message : e);
         error('pet.chat', 'request.exception', { id: request.id, err: message });
@@ -118,9 +166,11 @@ export const useChatRuntime = (options: UseChatRuntimeOptions): UseChatRuntimeRe
         ]);
       } finally {
         processingRef.current = false;
+        ttsDoneRef.current = true;
+        stopConsumer();
       }
     },
-    [],
+    [startTtsConsumer, ttsQueue],
   );
 
   return { processChatRequest };

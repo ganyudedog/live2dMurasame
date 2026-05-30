@@ -316,7 +316,6 @@ const createMainWindow = () => {
     });
 
     loadMainWindow(mainWindow);
-    mainWindow.webContents.openDevTools(true ,{ mode: 'detach' });
 
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
         controlPanelWindow.setParentWindow(mainWindow);

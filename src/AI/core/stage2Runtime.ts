@@ -1,6 +1,6 @@
 import { info, warn } from '../../renderer/utils/log';
 import { requestStage2LLM } from '../llm/client';
-import { parseStage2Reply, parseStage2StreamPreview } from '../llm/parse';
+import { parseStage2Reply, parseStage2StreamPreview, parseSentenceStreamPreview, type ParsedSentence } from '../llm/parse';
 import { buildRollingSummary } from '../memory/rollingSummary';
 import { buildRagContext, normalizeRuntimeRagConfig, type RuntimeRagConfig } from '../rag/contextBuilder';
 import type { ActionCapability, ActionDispatchResult, ActionIntentInput } from '../types/action';
@@ -13,6 +13,8 @@ interface Stage2AskOptions {
   baseURL?: string;
   // 流式显示回调：仅用于 UI 文本实时更新，不触发语音。
   onDisplayTextStreaming?: (displayText: string) => void;
+  // 流式句子回调：JSON Lines 中每行 JSON 解析完成后立即触发
+  onSentenceStreaming?: (sentence: ParsedSentence) => void;
 }
 
 interface Stage2RuntimeOptions {
@@ -192,6 +194,7 @@ export class Stage2Runtime {
       const start = performance.now();
       let firstDeltaLatencyMs = -1;
       let streamedDisplayText = '';
+      let processedSentenceCount = 0;
 
       // 发起对话
       const llmResult = await requestStage2LLM(
@@ -217,7 +220,16 @@ export class Stage2Runtime {
               });
             }
 
-            // 流式阶段只做 UI 预览文本，避免 speak_text 未稳定时误触发语音。
+            // JSON Lines 句子解析：每行 JSON 完整后立即回调
+            const sentences = parseSentenceStreamPreview(aggregateText, processedSentenceCount);
+            if (sentences.length > 0) {
+              processedSentenceCount += sentences.length;
+              for (const s of sentences) {
+                options.onSentenceStreaming?.(s);
+              }
+            }
+
+            // 兼容旧路径：单对象 JSON 的 display_text 预览
             const preview = parseStage2StreamPreview(aggregateText);
             const nextDisplay = normalizeReplyText(preview.display_text);
             if (!nextDisplay || nextDisplay === streamedDisplayText) return;

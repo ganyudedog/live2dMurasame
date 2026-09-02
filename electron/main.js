@@ -13,12 +13,13 @@ import {
     ensureGlobalModelConfigLoaded,
     applyAutoLaunchSetting,
 } from './config/live2dGlobal.js';
-import { logDebugTrace, setDebugTracePolicy } from './utils/log.js';
+import { setDebugTracePolicy } from './utils/log.js';
+import { createLogIngestService } from './services/logging/LogIngestService.js';
 import { createAutoLaunchScheduler } from './main/autoLaunch.js';
 import { createRagFileService } from './main/ragFileService.js';
 import { registerModelMemoryIpc } from './main/modelMemoryIpc.js';
 import { registerConfigIpc } from './main/configIpc.js';
-import { createWindowDragController } from './main/windowDragController.js';
+import { createWindowDragService } from './services/window/WindowDragService.js';
 import { createWindowIntentController } from './main/windowIntentController.js';
 import { registerAsrIpc } from './main/asrIpc.js';
 import { detectModelFilePath } from './utils/path.js';
@@ -29,6 +30,7 @@ const __dirname = path.dirname(__filename);
 let mainWindow = null;
 let controlPanelWindow = null;
 let isQuitting = false;
+const logIngestService = createLogIngestService();
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const appBaseDir = (() => {
@@ -227,10 +229,13 @@ const { readRagTextFile } = createRagFileService();
 const { scheduleApplyAutoLaunchSetting, flushPendingAutoLaunchSetting } = createAutoLaunchScheduler({
     getControlPanelWindow: () => controlPanelWindow,
 });
-const { handleWindowIntent, scheduleEmitMainWindowBounds } = createWindowIntentController({
+const { handleWindowIntent, scheduleEmitMainWindowBounds, setNativeDragSession } = createWindowIntentController({
     getMainWindow: () => mainWindow,
 });
-const { handleWindowDrag } = createWindowDragController();
+const windowDragService = createWindowDragService({
+    onSessionChange: setNativeDragSession,
+    onSessionSettled: () => scheduleEmitMainWindowBounds('moved'),
+});
 const { broadcastConfigSnapshot } = registerConfigIpc({
     getMainWindow: () => mainWindow,
     getControlPanelWindow: () => controlPanelWindow,
@@ -331,7 +336,7 @@ const createMainWindow = () => {
         menu?.popup({ window: mainWindow ?? undefined });
     });
 
-    // 在拖动过程中首选“move”更新;保留“move”作为后备。
+    // Native drag facts are suppressed by the intent service until release.
     mainWindow.on('move', () => scheduleEmitMainWindowBounds('move'));
     mainWindow.on('moved', () => scheduleEmitMainWindowBounds('moved'));
     mainWindow.on('resize', () => scheduleEmitMainWindowBounds('resize'));
@@ -408,10 +413,9 @@ ipcMain.handle('pet:ai:tts:pickRefAudioPath', async () => {
     });
 });
 
-ipcMain.on('pet:debugTrace', (_event, payload = {}) => {
+ipcMain.on('pet:debugTrace', (event, payload = {}) => {
     try {
-        if (payload && typeof payload === 'object' && payload.kind === 'policy.patch') return;
-        logDebugTrace(payload);
+        logIngestService.ingestRendererTrace(event, payload);
     } catch { }
 });
 
@@ -454,6 +458,7 @@ ipcMain.handle('pet:readRagTextFile', (_event, payload = {}) => {
 
 app.on('before-quit', () => {
     isQuitting = true;
+    windowDragService.dispose();
     asrRuntime?.dispose?.();
     flushPendingAutoLaunchSetting();
 });
@@ -509,8 +514,9 @@ app.whenReady().then(async () => {
     try {
         const snapshot = initializeRuntimeConfig();
         console.log('[pet] config loaded', {
-            live2denvConfig: snapshot.live2denvConfig,
-            globalModelConfig: snapshot.globalModelConfig,
+            activeModelPath: snapshot.activeModelPath,
+            displayLang: snapshot.globalModelConfig?.displayLang,
+            aiConfigured: Boolean(snapshot.globalModelConfig?.apiKey),
         });
     } catch (error) {
         console.warn('[pet] failed to initialize config directories', error);
@@ -535,5 +541,33 @@ ipcMain.handle('pet:windowIntent', (_event, intent = {}) => {
 });
 
 ipcMain.on('pet:windowDrag', (event, payload = {}) => {
-    handleWindowDrag(event, payload);
+    windowDragService.handleWindowDrag(event, payload);
+});
+
+ipcMain.handle('pet:getWindowGeometry', (event) => {
+    try {
+        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+        if (!target || target.isDestroyed()) return null;
+        const bounds = target.getBounds();
+        const rawContentBounds = target.getContentBounds();
+        // Windows can report a minimized/off-screen sentinel with a 0x0 content area for
+        // transparent frameless windows. Their content area follows the outer bounds.
+        const contentBounds = Number.isFinite(rawContentBounds?.x)
+            && Number.isFinite(rawContentBounds?.y)
+            && rawContentBounds.width > 0
+            && rawContentBounds.height > 0
+            ? rawContentBounds
+            : bounds;
+        const display = screen.getDisplayMatching(bounds);
+        return {
+            bounds,
+            contentBounds,
+            workArea: display.workArea,
+            displayId: display.id,
+            scaleFactor: display.scaleFactor,
+        };
+    } catch (error) {
+        console.warn('[pet] getWindowGeometry failed', error);
+        return null;
+    }
 });

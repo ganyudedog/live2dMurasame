@@ -30,6 +30,8 @@ export const DEFAULT_MODEL_CONFIG = {
   bubble: {
     symmetric: true,
     headRatio: null,
+    side: 'auto',
+    sideWidth: 100,
   },
   interactionZones: {
     actions: [],
@@ -202,6 +204,8 @@ export const normalizeModelConfig = (input = {}) => {
     ...DEFAULT_MODEL_CONFIG.bubble,
     ...((input && input.bubble) || {}),
   };
+  next.bubble.side = ['auto', 'left', 'right'].includes(next.bubble.side) ? next.bubble.side : 'auto';
+  next.bubble.sideWidth = clampNumber(next.bubble.sideWidth, 100, 50, 150);
 
   next.interactionZones = normalizeInteractionZones(input && input.interactionZones);
 

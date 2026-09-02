@@ -14,6 +14,7 @@ const WindowAPI = {
   setMousePassthrough: (enabled) => ipcRenderer.invoke('pet:setMousePassthrough', enabled),
   getCursorScreenPoint: () => ipcRenderer.invoke('pet:getCursorScreenPoint'),
   getWindowBounds: () => ipcRenderer.invoke('pet:getWindowBounds'),
+  getWindowGeometry: () => ipcRenderer.invoke('pet:getWindowGeometry'),
   isDevToolsOpened: () => {
     try {
       return Boolean(ipcRenderer.sendSync('pet:isDevToolsOpenedSync'));

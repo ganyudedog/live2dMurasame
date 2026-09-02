@@ -44,7 +44,7 @@ const isPlainObject = (value) => typeof value === 'object' && value !== null && 
 const ALLOWED_GROUP_FIELDS = {
 	request: ['source', 'rid', 'requestId', 'phase', 'ts', 'status', 'reason'],
 	resizeCore: ['requiredWidth', 'requiredWindowWidth', 'enforcedWindowWidth', 'normalizedWidth', 'targetWidth', 'targetHeight', 'desiredHeight', 'stableHeight', 'isEnlarge', 'resizeInFlight', 'priority', 'intentEpoch'],
-	window: ['innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'screenX', 'screenY', 'boundsWidth', 'boundsHeight', 'boundsX', 'boundsY', 'targetWindowWidth', 'pendingWidth', 'predictedBoundsX', 'predictedBoundsY', 'predictedBoundsWidth', 'predictedBoundsHeight', 'anchorCenter', 'anchorRight', 'targetX', 'targetY', 'mode', 'epoch', 'currentX', 'currentY', 'currentWidth', 'currentHeight', 'nextX', 'nextY', 'nextWidth', 'nextHeight', 'factX', 'factY', 'factWidth', 'factHeight', 'effectiveX', 'effectiveY', 'effectiveWidth', 'effectiveHeight', 'dragActiveUntil', 'settleUntil', 'settleApplied', 'lastAppliedIntentId', 'dragSessionState'],
+	window: ['innerWidth', 'innerHeight', 'outerWidth', 'outerHeight', 'screenX', 'screenY', 'boundsWidth', 'boundsHeight', 'boundsX', 'boundsY', 'targetWindowWidth', 'pendingWidth', 'predictedBoundsX', 'predictedBoundsY', 'predictedBoundsWidth', 'predictedBoundsHeight', 'anchorCenter', 'anchorRight', 'targetX', 'targetY', 'mode', 'epoch', 'currentX', 'currentY', 'currentWidth', 'currentHeight', 'nextX', 'nextY', 'nextWidth', 'nextHeight', 'factX', 'factY', 'factWidth', 'factHeight', 'effectiveX', 'effectiveY', 'effectiveWidth', 'effectiveHeight', 'dragActiveUntil', 'settleUntil', 'settleApplied', 'lastAppliedIntentId', 'dragSessionState', 'senderId', 'moveCount', 'intervalMs', 'durationMs', 'maxCursorStep', 'maxApplyGapMs', 'sizeCorrectionCount', 'writeMode'],
 	layout: ['baseFrameWidthDom', 'baseFrameLeftDom', 'visibleFrameWidthDom', 'visibleFrameCenterDomX', 'boundsWidthDom', 'boundsHeightDom', 'screenWidthDom', 'screenHeightDom', 'canvasRectWidthDom', 'canvasRectHeightDom', 'zoneTarget', 'gapEffective', 'effectiveContainerWidth', 'leftCapacity', 'rightCapacity', 'leftShortfallPx', 'rightShortfallPx', 'capacityShortfall', 'boundsToScreenRatio', 'kind', 'source', 'reason', 'stateFrom', 'stateTo', 'moveOnly', 'policySuppressed'],
 	model: [
 		'scaleUsed',
@@ -157,8 +157,10 @@ const pickRendererGroup = (rawGroup) => {
 	const msg = typeof rawGroup.msg === 'string' && rawGroup.msg ? rawGroup.msg : undefined;
 	const t = isFiniteNumber(rawGroup.t) ? rawGroup.t : undefined;
 	const seq = isFiniteNumber(rawGroup.seq) ? rawGroup.seq : undefined;
+	const webContentsId = isFiniteNumber(rawGroup.webContentsId) ? rawGroup.webContentsId : undefined;
+	const windowKind = typeof rawGroup.windowKind === 'string' ? rawGroup.windowKind : undefined;
 	const data = pickRendererData(rawGroup.data);
-	const output = { ns, event, msg, t, seq, data };
+	const output = { ns, event, msg, t, seq, webContentsId, windowKind, data };
 	return Object.values(output).some((v) => v != null) ? output : undefined;
 };
 
@@ -249,6 +251,12 @@ const shouldPassSample = (normalized) => {
 
 const withDedupe = (normalized) => {
 	const profile = normalized?.profile ?? 'default';
+	if (profile === 'renderer') {
+		const namespace = normalized?.renderer?.ns ?? 'unknown';
+		const event = normalized?.renderer?.event ?? 'unknown';
+		const windowKind = normalized?.renderer?.windowKind ?? 'unknown';
+		return withDedupeSignature(`${profile}|${windowKind}|${namespace}|${event}`);
+	}
 	const phase = normalized?.request?.phase ?? 'na';
 	const rid = normalized?.request?.rid ?? normalized?.request?.requestId ?? 'no-rid';
 	const width = normalized?.resizeCore?.normalizedWidth ?? normalized?.resizeCore?.targetWidth ?? 'na';
@@ -260,6 +268,10 @@ const withDedupe = (normalized) => {
 	const signature = profile === 'windowJump'
 		? `${profile}|${phase}|${reason}|${rid}|${jumpX}|${jumpY}|${jumpWidth}|${jumpHeight}`
 		: `${profile}|${phase}|${rid}|${width}`;
+	return withDedupeSignature(signature);
+};
+
+const withDedupeSignature = (signature) => {
 	const now = Date.now();
 	const existing = dedupeState.get(signature);
 	if (!existing) {

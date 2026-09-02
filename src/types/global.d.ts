@@ -92,6 +92,8 @@ declare global {
   interface PetBubbleConfig {
     symmetric?: boolean;
     headRatio?: number | null;
+    side?: 'auto' | 'left' | 'right';
+    sideWidth?: number;
     [key: string]: unknown;
   }
 
@@ -137,14 +139,13 @@ declare global {
     intentId: string;
     epoch?: number;
     source: string;
-    kind: 'position' | 'size' | 'bounds' | 'drag-state';
+    kind: 'position' | 'size' | 'bounds';
     payload?: {
       x?: number;
       y?: number;
       width?: number;
       height?: number;
       anchorCenter?: number;
-      phase?: 'start' | 'move' | 'end';
       final?: boolean;
       [key: string]: unknown;
     };
@@ -159,6 +160,7 @@ declare global {
     status: 'applied' | 'rejected' | 'superseded';
     reason?: string;
     appliedBounds?: { x: number; y: number; width: number; height: number };
+    appliedGeometry?: PetWindowGeometry;
     ts?: number;
   }
 
@@ -170,13 +172,23 @@ declare global {
     eventHint?: 'move' | 'moved' | 'resize' | null;
     lastAppliedIntentId?: string | null;
     bounds: { x: number; y: number; width: number; height: number };
+    geometry?: PetWindowGeometry;
     ts?: number;
+  }
+
+  interface PetWindowGeometry {
+    bounds: { x: number; y: number; width: number; height: number };
+    contentBounds: { x: number; y: number; width: number; height: number };
+    workArea: { x: number; y: number; width: number; height: number };
+    displayId: number;
+    scaleFactor: number;
   }
 
   interface PetWindowDragPayload {
     action: 'start' | 'end';
-    screenX: number;
-    screenY: number;
+    // Pointer coordinates are optional diagnostics only. Electron owns cursor sampling.
+    screenX?: number;
+    screenY?: number;
     source?: 'renderer' | 'main';
     reason?: string;
   }
@@ -320,6 +332,7 @@ declare global {
     setMousePassthrough?: (enabled: boolean) => Promise<boolean | undefined>;
     getCursorScreenPoint?: () => Promise<{ x: number; y: number } | null | undefined>;
     getWindowBounds?: () => Promise<{ x: number; y: number; width: number; height: number } | null | undefined>;
+    getWindowGeometry?: () => Promise<PetWindowGeometry | null | undefined>;
     isDevToolsOpened?: () => boolean;
     on?: <K extends keyof PetWindowEventMap>(channel: K, callback: (payload: PetWindowEventMap[K]) => void) => (() => void) | void;
     off?: <K extends keyof PetWindowEventMap>(channel: K, callback: (payload: PetWindowEventMap[K]) => void) => void;

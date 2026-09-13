@@ -76,7 +76,8 @@ export class StateBusService {
       this.connected = true;
     });
 
-    this.seedFromPersistedConfig();
+    // Reopening the panel must not replace a live scale with persisted state.
+    if (this.windowKind === 'pet' && this.revision === 0) this.seedFromPersistedConfig();
     if (this.windowKind === 'pet') {
       this.unsubscribeAsr = this.bridge.asrApi?.onEvent?.((event) => this.applyAsrEvent(event)) ?? null;
     }
@@ -142,6 +143,7 @@ export class StateBusService {
       this.applyState(message.state);
       return;
     }
+    if (message.rev <= this.revision) return;
     runInAction(() => {
       this.revision = message.rev;
       this.applyPatchOps(message.ops);
@@ -149,6 +151,7 @@ export class StateBusService {
   }
 
   private applyState(state: SharedState): void {
+    if (state.rev < this.revision) return;
     runInAction(() => {
       this.revision = state.rev;
       this.scale = state.global.scale;

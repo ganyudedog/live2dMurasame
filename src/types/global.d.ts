@@ -130,6 +130,7 @@ declare global {
     height?: number;
     requestId?: string;
     anchorCenter?: number;
+    anchorBottom?: number;
     anchorRightEdge?: number;
     [key: string]: unknown;
   }
@@ -137,15 +138,22 @@ declare global {
   // 状态机意图负载
   interface PetWindowIntentPayload {
     intentId: string;
+    /** Monotonic renderer revision used to discard superseded size intents. */
+    revision?: number;
     epoch?: number;
     source: string;
     kind: 'position' | 'size' | 'bounds';
     payload?: {
+      /** Shared numeric layout; desktop coordinates remain owned by Main. */
+      layout?: import('../../shared/live2dLayout.js').Live2dLayoutInput;
+      /** Diagnostic only; does not participate in layout calculation. */
+      layoutTrace?: boolean;
       x?: number;
       y?: number;
       width?: number;
       height?: number;
       anchorCenter?: number;
+      anchorBottom?: number;
       final?: boolean;
       [key: string]: unknown;
     };
@@ -156,6 +164,9 @@ declare global {
   // 状态机意图响应结构
   interface PetWindowIntentAck {
     intentId: string;
+    revision?: number;
+    /** Main-process compatibility alias for older intent controller traces. */
+    sequence?: number;
     epoch: number;
     status: 'applied' | 'rejected' | 'superseded';
     reason?: string;
@@ -169,8 +180,12 @@ declare global {
     epoch: number;
     source: 'system' | 'intent' | 'user' | 'user:move' | 'user:moved' | 'user:resize';
     kind?: 'position' | 'size' | 'bounds';
-    eventHint?: 'move' | 'moved' | 'resize' | null;
+    eventHint?: 'move' | 'moved' | 'resize' | 'drag-settled' | null;
     lastAppliedIntentId?: string | null;
+    /** Monotonic size revision, when the fact came from a renderer intent. */
+    revision?: number | null;
+    /** Legacy/additive alias retained for native diagnostics. */
+    intentSequence?: number | null;
     bounds: { x: number; y: number; width: number; height: number };
     geometry?: PetWindowGeometry;
     ts?: number;
@@ -182,6 +197,8 @@ declare global {
     workArea: { x: number; y: number; width: number; height: number };
     displayId: number;
     scaleFactor: number;
+    /** Stable layout baseline injected by Electron; independent of current scale. */
+    baseContentSize?: { width: number; height: number };
   }
 
   interface PetWindowDragPayload {

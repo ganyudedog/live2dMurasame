@@ -3,6 +3,7 @@ import { ServiceContainer } from './di/container';
 import type { WindowKind } from './di/module';
 import { registerServiceModules } from './loadServiceModules';
 import { TOKENS } from './serviceTokens';
+import { reaction } from 'mobx';
 
 export interface RendererApplication {
   readonly container: ServiceContainer;
@@ -25,6 +26,20 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
   for (const token of eagerTokens) container.resolve(token);
   await container.startServices();
 
+  // Cross-service subscriptions belong to the composition root, not the React tree.
+  const bindings: Array<() => void> = [];
+  if (windowKind === 'pet') {
+    const live2d = container.resolve(TOKENS.live2d);
+    const electron = container.resolve(TOKENS.electron);
+    const config = container.resolve(TOKENS.config);
+    bindings.push(
+      reaction(() => electron.drag.active, (active) => live2d.setWindowDragging(active), { fireImmediately: true }),
+      reaction(() => config.modelConfig?.bubble,
+        (settings) => live2d.configureBubble(settings ?? {}),
+        { fireImmediately: true }),
+    );
+  }
+
   logger.info('app.bootstrap', 'ready', {
     windowKind,
     hasConfigSnapshot: Boolean(configSnapshot),
@@ -39,6 +54,7 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
       if (disposed) return;
       disposed = true;
       logger.info('app.bootstrap', 'dispose', { windowKind });
+      bindings.forEach(dispose => dispose());
       await container.dispose();
     },
   };

@@ -21,6 +21,10 @@ import { registerModelMemoryIpc } from './main/modelMemoryIpc.js';
 import { registerConfigIpc } from './main/configIpc.js';
 import { createWindowDragService } from './services/window/WindowDragService.js';
 import { createWindowIntentController } from './main/windowIntentController.js';
+import {
+    PET_WINDOW_BASE_CONTENT_HEIGHT,
+    PET_WINDOW_BASE_CONTENT_WIDTH,
+} from '../shared/live2dLayout.js';
 import { registerAsrIpc } from './main/asrIpc.js';
 import { detectModelFilePath } from './utils/path.js';
 
@@ -234,7 +238,7 @@ const { handleWindowIntent, scheduleEmitMainWindowBounds, setNativeDragSession }
 });
 const windowDragService = createWindowDragService({
     onSessionChange: setNativeDragSession,
-    onSessionSettled: () => scheduleEmitMainWindowBounds('moved'),
+    onSessionSettled: () => scheduleEmitMainWindowBounds('drag-settled'),
 });
 const { broadcastConfigSnapshot } = registerConfigIpc({
     getMainWindow: () => mainWindow,
@@ -300,8 +304,8 @@ const buildMainContextMenu = () => {
 
 const createMainWindow = () => {
     mainWindow = new BrowserWindow({
-        width: 500,
-        height: 900,
+        width: PET_WINDOW_BASE_CONTENT_WIDTH,
+        height: PET_WINDOW_BASE_CONTENT_HEIGHT,
         hasShadow: false,
         transparent: true,
         resizable: true,
@@ -565,6 +569,10 @@ ipcMain.handle('pet:getWindowGeometry', (event) => {
             workArea: display.workArea,
             displayId: display.id,
             scaleFactor: display.scaleFactor,
+            baseContentSize: {
+                width: PET_WINDOW_BASE_CONTENT_WIDTH,
+                height: PET_WINDOW_BASE_CONTENT_HEIGHT,
+            },
         };
     } catch (error) {
         console.warn('[pet] getWindowGeometry failed', error);

@@ -203,9 +203,8 @@ export class ControlPanelService {
   }
 
   async persistGlobalSettings(patch: Partial<GlobalUiSettings>): Promise<void> {
-    if (typeof patch.scale === 'number' && Math.abs(this.stateBus.scale - patch.scale) > 0.0001) {
-      this.stateBus.publishScale(patch.scale);
-    }
+    // Scale preview is published by the interaction itself. Persistence must
+    // not replay an older draft into the live SharedWorker stream.
     try {
       await this.config.updateGlobalModelConfig(patch);
     } catch (error) {

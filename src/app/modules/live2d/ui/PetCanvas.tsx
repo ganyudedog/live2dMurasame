@@ -2,7 +2,6 @@
 import React, { useRef, useCallback, useState, useLayoutEffect, useMemo, useEffect } from 'react';
 import { observer } from 'mobx-react-lite';
 import { ChatBubble } from './components/ChatBubble';
-import DebugRedLine from './components/DebugRedLine';
 import DebugSymmetricMasks from './components/DebugSymmetricMasks';
 import DebugVisualMasks from './components/DebugVisualMasks';
 import OpenTheMenu from './components/OpenTheMenu';
@@ -15,26 +14,16 @@ import { useBubbleLifecycle } from './hooks/useBubbleLifecycle';
 import { usePetCanvasConfigRefs } from './hooks/usePetCanvasConfigRefs';
 import { bindPointerGestures } from './imperative/bindPointerGestures';
 import { usePetCanvasBootstrap } from '../runtime/hooks/usePetCanvasBootstrap';
-import { usePetResizeOrchestrator } from '../runtime/hooks/usePetResizeOrchestrator';
-import { createBubblePositionEngine } from '../runtime/layout/createBubblePositionEngine';
-import { useBaselineController } from '../runtime/geometry/BaselineController';
-import { useDragSessionController } from '../runtime/geometry/DragSessionController';
-import { useGeometryRuntime } from '../runtime/geometry/GeometryRuntime';
-import { createWindowCommandGateway } from '../runtime/geometry/WindowCommandGateway';
+import { useWindowDragGesture } from './hooks/useWindowDragGesture';
 import { useLayoutCommitter } from '../runtime/geometry/commit/LayoutCommitter';
-import { useBubbleLayoutCommitter } from '../runtime/geometry/commit/BubbleLayoutCommitter';
-import { createModelLayoutCommitter } from '../runtime/geometry/commit/ModelLayoutCommitter';
 import { solveContextZoneLayout } from '../runtime/geometry/solvers/ContextZoneLayoutSolver';
 import { solveInteractivity } from '../runtime/geometry/solvers/InteractivitySolver';
 import { solveContextZoneActivity } from '../runtime/geometry/solvers/ContextZoneActivitySolver';
-import { solveModelLayout } from '../runtime/geometry/solvers/ModelLayoutSolver';
 import { debug, info } from '@app/shared/logging/compat';
 import { useService } from '@app/core/useService';
 import { TOKENS } from '@app/core/serviceTokens';
 import {
-  BUBBLE_SIDE_WIDTH,
   CONTEXT_ZONE_LATCH_MS,
-  resolveBubbleSideWidth,
 } from '../domain/constants';
 
 import { clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '@app/shared/utils/math';
@@ -48,17 +37,6 @@ const toFiniteNumber = (raw: unknown, fallback: number): number => {
   return fallback;
 };
 
-const isDevToolsOpenedNow = (windowApi: PetWindowAPI | undefined): boolean => {
-  try {
-    if (typeof windowApi?.isDevToolsOpened === 'function') {
-      return Boolean(windowApi.isDevToolsOpened());
-    }
-    return false;
-  } catch {
-    return false;
-  }
-};
-
 const PetCanvas: React.FC = observer(() => {
   // 来自主进程的配置快照（offset.md 数据流真值）
   const configService = useService(TOKENS.config);
@@ -66,9 +44,8 @@ const PetCanvas: React.FC = observer(() => {
   const electronService = useService(TOKENS.electron);
   useService(TOKENS.ai);
   const windowApi = electronService.bridge.windowApi;
-  const windowGeometry = live2dService.windowGeometry;
-  const windowGeometryRef = useRef(windowGeometry);
-  windowGeometryRef.current = windowGeometry;
+  // Local sizes come from the shared numeric layout; desktop position is native metadata.
+  const windowGeometry = live2dService.renderGeometry ?? live2dService.nativeGeometry;
   const contentBounds = windowGeometry?.contentBounds ?? windowGeometry?.bounds ?? {
     x: 0,
     y: 0,
@@ -78,39 +55,22 @@ const PetCanvas: React.FC = observer(() => {
   const windowWidth = Math.max(1, contentBounds.width);
   const windowHeight = Math.max(1, contentBounds.height);
   const getWindowSnapshot = useCallback(() => {
-    const geometry = windowGeometryRef.current;
+    const geometry = live2dService.renderGeometry ?? live2dService.nativeGeometry;
     const content = geometry?.contentBounds ?? geometry?.bounds ?? {
       x: 0,
       y: 0,
       width: 500,
       height: 900,
     };
+    const desktop = live2dService.nativeGeometry?.contentBounds ?? content;
     return {
       width: Math.max(1, content.width),
       height: Math.max(1, content.height),
       outerWidth: geometry?.bounds.width ?? content.width,
-      screenLeft: content.x,
-      screenTop: content.y,
+      screenLeft: desktop.x,
+      screenTop: desktop.y,
     };
-  }, []);
-  const getWindowMetrics = useCallback(() => {
-    const viewport = getWindowSnapshot();
-    const left = Number.isFinite(viewport.screenLeft) ? viewport.screenLeft : 0;
-    const width = Number.isFinite(viewport.width) ? viewport.width : 0;
-    return { left, width, right: left + width, center: left + width / 2 };
-  }, [getWindowSnapshot]);
-  const getWindowCenter = useCallback(() => getWindowMetrics().center, [getWindowMetrics]);
-  const projectWindowResize = useCallback(
-    (intentId: string, desired: { width: number; height: number; anchorCenter?: number }) => {
-      const projected = live2dService.projectWindowResize(intentId, desired);
-      // MobX schedules the observer render later; the imperative layout in this call
-      // must already see the same complete projected snapshot.
-      if (projected) windowGeometryRef.current = projected;
-      return projected;
-    },
-    [live2dService],
-  );
-  const isDevToolsOpened = useCallback(() => isDevToolsOpenedNow(windowApi), [windowApi]);
+  }, [live2dService]);
   const live2denvConfig = configService.live2denvConfig;
   const globalModelConfig = configService.globalModelConfig;
   const activeModelFileUrl = configService.activeModelFileUrl;
@@ -152,12 +112,6 @@ const PetCanvas: React.FC = observer(() => {
   }, [hydrated, activeModelFileUrl, live2denvConfig?.CURRENT_PATH, modelPath]);
   const modelPathRef = useRef(modelPath);
 
-  const bubbleSettingsRef = useRef<{
-    symmetric?: boolean;
-    headRatio?: number | null;
-    side?: 'auto' | 'left' | 'right';
-    sideWidth?: number;
-  } | null>(null);
 
   const interactionZonesRef = useRef<{
     actions: string[];
@@ -168,7 +122,6 @@ const PetCanvas: React.FC = observer(() => {
     modelPath,
     modelPathRef,
     persistedModelConfig,
-    bubbleSettingsRef,
     interactionZonesRef,
   });
 
@@ -195,11 +148,13 @@ const PetCanvas: React.FC = observer(() => {
     (status: 'idle' | 'loading' | 'loaded' | 'error', loadError?: string) => live2dService.setModelLoadStatus(status, loadError),
     [live2dService],
   );
-  const scale = live2dService.scale;
-  const scaleRef = useRef(scale);
-  const bubbleMeasurementRef = useRef(live2dService.bubbleMeasurement);
-  scaleRef.current = scale;
-  bubbleMeasurementRef.current = live2dService.bubbleMeasurement;
+  // UI consumes the scale that belongs to renderGeometry. The requested bus
+  // value is allowed to wait until Live2dLayout commits its next atomic frame.
+  const scale = live2dService.renderScale;
+  const getModelMiddleRect = useCallback(
+    () => live2dService.layout.middleRect,
+    [live2dService],
+  );
 
   // 动作相关
   const motionText = live2dService.playingMotionText;
@@ -211,6 +166,9 @@ const PetCanvas: React.FC = observer(() => {
   // 鼠标相关
   const ignoreMouse = Boolean(globalModelConfig?.ignoreMouse);
   const debugModeEnabled = Boolean(globalModelConfig?.debugModeEnabled);
+  useLayoutEffect(() => {
+    live2dService.layout.setDebug(debugModeEnabled);
+  }, [live2dService, debugModeEnabled]);
 
   const pointerX = useRef(0); // 鼠标 X 坐标
   const pointerY = useRef(0); // 鼠标 Y 坐标
@@ -222,11 +180,6 @@ const PetCanvas: React.FC = observer(() => {
   const dragHandleHoverRef = useRef(false); // 拖拽手柄是否处于悬停状态
   const dragHandleActiveRef = useRef(false); // 拖拽手柄是否处于激活状态
 
-  // 原生窗口拖动（WebkitAppRegion: drag）不会可靠触发 JS 拖拽状态，
-  // 这里通过 boundsChanged 的“移动特征”来抑制拖动期间的自动扩缩窗。
-  const suppressAutoResizeUntilRef = useRef(0);
-  const ignoreUserMoveDetectUntilRef = useRef(0);
-  const lastObservedBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   // 鼠标穿透
   const mousePassthroughRef = useRef<boolean | null>(null); // 鼠标穿透状态
@@ -237,83 +190,28 @@ const PetCanvas: React.FC = observer(() => {
   // 气泡对话框
   const bubbleTimerRef = useRef<number | null>(null); // 气泡定时器
   const motionTextRef = useRef(motionText); // 动作文本引用
-  const bubblePositionRef = useRef<{ left: number; top: number } | null>(null); // 气泡位置
-  const lastBubbleUpdateRef = useRef(0); // 上次气泡更新时间
-  const layoutBubbleMeasureRafRef = useRef<number | null>(null); // 布局后延迟测量的动画帧 ID
-  const [bubblePosition, setBubblePosition] = useState<{ left: number; top: number } | null>(null); // 气泡位置状态
-  const [bubbleAlignment, setBubbleAlignment] = useState<'left' | 'right'>('left'); // 气泡对齐方式
-  const [bubbleReady, setBubbleReady] = useState(false); // 气泡是否准备就绪
-  const bubbleReadyRef = useRef(false); // 气泡准备状态引用
-  const bubbleAlignmentRef = useRef<'left' | 'right' | null>(null); // 气泡对齐方式引用
-  const [bubbleTailY, setBubbleTailY] = useState<number | null>(null); // 气泡尾巴对齐 Y
-
-  // 视觉中心红线（仅用于调试/对称对齐可视化）
-  const redLineLeftRef = useRef<number | null>(null);
-  const [redLineLeft, setRedLineLeft] = useState<number | null>(null);
-  const visibleFrameMetricsRef = useRef<{ left: number; width: number } | null>(null);
-  const [visibleFrameMetrics, setVisibleFrameMetrics] = useState<{ left: number; width: number } | null>(null);
-  const baseFrameMetricsRef = useRef<{ left: number; width: number } | null>(null);
-  const [baseFrameMetrics, setBaseFrameMetrics] = useState<{ left: number; width: number } | null>(null);
-  const bubbleZoneMetricsRef = useRef<{
-    left: { left: number; width: number; targetWidth: number };
-    right: { left: number; width: number; targetWidth: number };
-    active: 'left' | 'right';
-    symmetricWidth: number;
-    symmetricCapacity: number;
-    widthShortfall: boolean;
-    awaitingResize: boolean;
-    requiredWindowWidth: number;
-  } | null>(null);
-  const [bubbleZoneMetrics, setBubbleZoneMetrics] = useState<{
-    left: { left: number; width: number; targetWidth: number };
-    right: { left: number; width: number; targetWidth: number };
-    active: 'left' | 'right';
-    symmetricWidth: number;
-    symmetricCapacity: number;
-    widthShortfall: boolean;
-    awaitingResize: boolean;
-    requiredWindowWidth: number;
-  } | null>(null);
+  const bubblePosition = live2dService.bubble.position;
+  const bubbleAlignment = live2dService.bubble.alignment;
+  const bubbleTailY = live2dService.bubble.tailY;
+  const visibleFrameMetrics = live2dService.bubble.visibleFrame;
+  const baseFrameMetrics = live2dService.bubble.baseFrame;
+  const bubbleZoneMetrics = live2dService.bubble.zones;
+  const [bubbleReady, setBubbleReady] = useState(false);
+  const bubbleReadyRef = useRef(false);
 
   // pixi相关
   const appRef = useRef<Application | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // 布局相关
-  const baseWindowSizeRef = useRef<{ width: number; height: number } | null>(null);
-  const lastResizeAtRef = useRef(0); // 上次调整大小的时间戳
-  const lastRequestedSizeRef = useRef<{ w: number; h: number } | null>(null); // 最后请求的尺寸
-
-  // Phase 1: inFlight gating (single outstanding resize) + latest-wins desired merge.
-  const resizeInFlightRequestIdRef = useRef<string | null>(null);
-  const latestResizeDesiredRef = useRef<{ width: number; height: number; anchorCenter?: number } | null>(null);
-  const lastSentResizeDesiredRef = useRef<{ width: number; height: number; anchorCenter?: number } | null>(null);
-
-  const targetWindowWidthRef = useRef<number | null>(null); // 当前 scale 对应的目标窗口宽度
-  const pendingResizeRef = useRef<{ width: number; height: number } | null>(null); // 待处理的调整尺寸
-  const pendingBoundsPredictionRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null); // 预测中的窗口 bounds（尚未收到主进程广播）
-  const pendingResizeIssuedAtRef = useRef<number | null>(null); // 发起调整的时间戳
-
-  const {
-    getBaseline,
-    ensureBaseline,
-    commitBaseline,
-    commitBaselineFromBounds,
-  } = useBaselineController();
   // 动画与帧数
   const frameCountRef = useRef(0); // 帧计数器
 
-  // 主进程广播的窗口 bounds（用于屏幕边缘判断与定位）
-  const windowBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const paramCacheRef = useRef<string[] | null>(null); // 参数缓存
   const detachEyeHandlerRef = useRef<(() => void) | null>(null); // 眼部追踪处理器解绑函数
 
   usePetCanvasBootstrap({
-    windowApi,
     hydrated,
     refreshConfigSnapshot,
-    windowBoundsRef,
-    initializeBaselineFromBounds: commitBaselineFromBounds,
   });
 
   // 上下文区域
@@ -386,108 +284,24 @@ const PetCanvas: React.FC = observer(() => {
     return soundPath;
   }, []);
 
-  const windowCommandGateway = useMemo(() => createWindowCommandGateway(windowApi), [windowApi]);
-  const modelLayoutCommitter = useMemo(() => createModelLayoutCommitter(), []);
-
   const {
-    dragSessionStateRef,
     isWindowDragActiveRef,
-    onPendingDragStart,
-    onPendingDragCancel,
     onDragStart: onModelDragStart,
     onDragEnd: onModelDragEnd,
-  } = useDragSessionController({
+  } = useWindowDragGesture({
     setNativeWindowDragActive: electronService.drag.setActive,
     recomputeWindowPassthroughRef,
     dragHandleActiveRef,
     pointerInsideHandleRef,
     pointerInsideModelRef,
-    suppressAutoResizeUntilRef,
-    ignoreUserMoveDetectUntilRef,
-    windowBoundsRef,
     updateBubblePosition: updateBubblePositionFromRef,
     updateDragHandlePosition: updateDragHandlePositionFromRef,
   });
 
-  const {
-    requestResize,
-    centerAlignOrchestratorDeps,
-    ackFollowupOrchestratorDeps,
-  } = usePetResizeOrchestrator({
-    getWindowSnapshot,
-    getWindowCenter,
-    getBaseline,
-    ensureBaseline,
-    commitBaseline,
-    commitBaselineFromBounds,
-    sendWindowIntent: windowCommandGateway.sendWindowIntent,
-    projectWindowResize,
-    lastResizeAtRef,
-    lastRequestedSizeRef,
-    resizeInFlightRequestIdRef,
-    latestResizeDesiredRef,
-    lastSentResizeDesiredRef,
-    targetWindowWidthRef,
-    pendingResizeRef,
-    pendingBoundsPredictionRef,
-    pendingResizeIssuedAtRef,
-    suppressAutoResizeUntilRef,
-    ignoreUserMoveDetectUntilRef,
-    isWindowDragActiveRef,
-    dragSessionStateRef,
-    lastObservedBoundsRef,
-    windowBoundsRef,
-  });
-
-  useGeometryRuntime({
-    windowApi,
-    windowBoundsRef,
-    isWindowDragActiveRef,
-    dragSessionStateRef,
-    updateBubblePosition: updateBubblePositionFromRef,
-    updateDragHandlePosition: updateDragHandlePositionFromRef,
-    centerAlignOrchestratorDeps,
-    ackFollowupOrchestratorDeps,
-  });
-
-  const bubbleLayoutCommitter = useBubbleLayoutCommitter({
-    redLineLeftRef,
-    visibleFrameMetricsRef,
-    baseFrameMetricsRef,
-    bubbleZoneMetricsRef,
-    bubbleAlignmentRef,
-    bubblePositionRef,
-    setRedLineLeft,
-    setVisibleFrameMetrics,
-    setBaseFrameMetrics,
-    setBubbleZoneMetrics,
-    setBubblePosition,
-    setBubbleAlignment,
-    setBubbleTailY,
-    commitBubbleReady,
-  });
-
-  const { updateBubblePosition } = useMemo(() => createBubblePositionEngine({
-    scaleRef,
-    motionTextRef,
-    modelRef,
-    appRef,
-    bubbleMeasurementRef,
-    bubbleSettingsRef,
-    windowGeometryRef,
-    lastBubbleUpdateRef,
-    bubbleLayoutCommitter,
-  }), [
-    appRef,
-    bubbleLayoutCommitter,
-    bubbleSettingsRef,
-    bubbleMeasurementRef,
-    lastBubbleUpdateRef,
-    modelRef,
-    motionTextRef,
-    scaleRef,
-    windowGeometryRef,
-  ]);
+  const updateBubblePosition = useCallback((force = false) => {
+    live2dService.updateBubblePosition(force);
+    commitBubbleReady(live2dService.bubble.position !== null);
+  }, [live2dService, commitBubbleReady]);
 
   useLayoutEffect(() => {
     updateBubblePositionRef.current = updateBubblePosition;
@@ -544,7 +358,7 @@ const PetCanvas: React.FC = observer(() => {
     if (!force && now - lastInteractiveZonesUpdateRef.current < 32) return;
     lastInteractiveZonesUpdateRef.current = now;
 
-    const bounds = model.getBounds?.();
+    const bounds = getModelMiddleRect();
     if (!bounds) return;
 
     const screen = app.renderer.screen;
@@ -601,7 +415,7 @@ const PetCanvas: React.FC = observer(() => {
     });
 
     const measurement = live2dService.bubbleMeasurement;
-    const measuredPosition = bubblePositionRef.current;
+    const measuredPosition = bubblePosition;
     const visualScale = Math.max(0.3, Math.min(2, scale || 1));
     // Bubble hit testing reuses the numeric measurement sent by the isolated UI root.
     const bubbleRect = motionText && measurement?.text === motionText && measuredPosition
@@ -648,6 +462,8 @@ const PetCanvas: React.FC = observer(() => {
     applyContextZoneDecision,
     contentBounds.width,
     contentBounds.x,
+    bubblePosition,
+    getModelMiddleRect,
     live2dService.bubbleMeasurement,
     motionText,
     scale,
@@ -698,148 +514,23 @@ const PetCanvas: React.FC = observer(() => {
     );
   }, []);
 
-  // 布局函数：右下角贴边并按窗口高度自适应
-  const applyLayout = useCallback(() => {
-    const m = modelRef.current;
+  // UI only attaches the Pixi resource; scale scheduling belongs to the service.
+  useLayoutEffect(() => {
     const app = appRef.current;
-    if (!m || !app) return;
-    const activeGeometry = windowGeometryRef.current;
-    const initialContentBounds = activeGeometry?.contentBounds;
-    // Prediction and confirmation are complete snapshots. Do not combine them with
-    // Pixi dimensions from a different native-window resize frame.
-    const initialWindowWidth = initialContentBounds?.width ?? app.renderer.screen.width;
-    const initialWindowHeight = initialContentBounds?.height ?? app.renderer.screen.height;
-    const devToolsOpened = isDevToolsOpened();
-    // 移除右缘补偿，避免气泡出现时模型水平漂移
-    const stored = baseWindowSizeRef.current;
-    if (!stored) {
-      baseWindowSizeRef.current = { width: initialWindowWidth, height: initialWindowHeight };
-    } else {
-      const nextWidth = Math.min(stored.width, initialWindowWidth);
-      const nextHeight = Math.min(stored.height, initialWindowHeight);
-      if (nextWidth !== stored.width || nextHeight !== stored.height) {
-        baseWindowSizeRef.current = { width: nextWidth, height: nextHeight };
-      }
-    }
-    const reference = baseWindowSizeRef.current ?? {
-      width: initialWindowWidth,
-      height: initialWindowHeight,
-    };
-    const lb = m.getLocalBounds();
-    const liveWindowCenter = getWindowCenter();
-    const baselineScreen = ensureBaseline(liveWindowCenter);
-    const solveForGeometry = (geometry: PetWindowGeometry | null) => {
-      const geometryContent = geometry?.contentBounds;
-      const resolvedWindowWidth = geometryContent?.width ?? app.renderer.screen.width;
-      const resolvedWindowHeight = geometryContent?.height ?? app.renderer.screen.height;
-      const boundsSnapshot = devToolsOpened
-        ? windowBoundsRef.current
-        : geometry?.bounds ?? windowBoundsRef.current;
-      const resolvedWindowLeft = Number.isFinite(geometryContent?.x)
-        ? geometryContent!.x
-        : Number.isFinite(boundsSnapshot?.x)
-          ? (boundsSnapshot as { x: number }).x
-          : getWindowMetrics().left;
-      return {
-        winW: resolvedWindowWidth,
-        winH: resolvedWindowHeight,
-        windowLeft: resolvedWindowLeft,
-        layout: solveModelLayout({
-          windowWidth: resolvedWindowWidth,
-          windowHeight: resolvedWindowHeight,
-          scale: scale || 1,
-          baselineScreen,
-          windowLeft: resolvedWindowLeft,
-          localBounds: lb,
-          baseWindowSize: reference,
-        }),
-      };
-    };
+    const model = live2dService.model;
+    if (!app || !model) return;
+    return live2dService.layout.attach(app, model, (snapshot) => {
+      live2dService.setRenderSnapshot(snapshot);
+      updateBubblePositionFromRef(true);
+      updateDragHandlePositionFromRef(true);
+    }, () => ({
+      // Browser observations stay in the UI adapter; layout receives numbers only.
+      x: window.screenX, y: window.screenY,
+      innerWidth: window.innerWidth, innerHeight: window.innerHeight, dpr: window.devicePixelRatio,
+    }));
+  }, [live2dService, live2dService.model, updateBubblePositionFromRef, updateDragHandlePositionFromRef]);
 
-    let resolved = solveForGeometry(activeGeometry);
-    const rawSideWidth = Number(bubbleSettingsRef.current?.sideWidth);
-    const sideWidth = resolveBubbleSideWidth(
-      Number.isFinite(rawSideWidth) ? rawSideWidth : BUBBLE_SIDE_WIDTH,
-      scale || 1,
-    );
-    const unclampedTargetWidth = Math.ceil(resolved.layout.scaledWidth + sideWidth * 2);
-    const targetWidth = activeGeometry?.workArea.width
-      ? Math.min(unclampedTargetWidth, activeGeometry.workArea.width)
-      : unclampedTargetWidth;
-    targetWindowWidthRef.current = targetWidth;
-    if (Math.abs(targetWidth - resolved.winW) >= 2) {
-      // Window width follows the three-rectangle contract; dragging remains position-only
-      // because requestResize is suppressed by the existing drag-session policy.
-      const projectedGeometry = requestResize(targetWidth, resolved.winH, {
-        preserveCenterLine: true,
-        source: 'three-rect-layout',
-      });
-      if (projectedGeometry) {
-        // The IPC command has been dispatched, but React has not rendered the MobX
-        // update yet. Re-solve now so this paint already uses the optimistic snapshot.
-        resolved = solveForGeometry(projectedGeometry);
-      }
-    }
-
-    baseWindowSizeRef.current = resolved.layout.nextBaseWindowSize;
-    // Model transform writes are committed through the runtime commit layer.
-    modelLayoutCommitter.commitModelLayout(m, resolved.layout);
-    debug('pet.layout', 'petCanvas.applyLayout.trace', {
-      windowWidth: resolved.winW,
-      windowHeight: resolved.winH,
-      referenceWidth: reference.width,
-      referenceHeight: reference.height,
-      baselineScreen,
-      windowLeft: resolved.windowLeft,
-      geometryPhase: live2dService.windowGeometryPhase,
-      modelScaleX: resolved.layout.modelScale,
-      modelScaleY: resolved.layout.modelScale,
-      modelX: resolved.layout.positionX,
-      modelScreenCenter: resolved.windowLeft + resolved.layout.positionX,
-      centerError: resolved.windowLeft + resolved.layout.positionX - baselineScreen,
-      modelY: resolved.layout.positionY,
-      pivotX: resolved.layout.pivotX,
-      pivotY: resolved.layout.pivotY,
-      localBoundsWidth: lb.width,
-      localBoundsHeight: lb.height,
-      rendererWidth: app.renderer.screen.width,
-      rendererHeight: app.renderer.screen.height,
-    });
-    if (layoutBubbleMeasureRafRef.current !== null) {
-      window.cancelAnimationFrame(layoutBubbleMeasureRafRef.current);
-    }
-    layoutBubbleMeasureRafRef.current = window.requestAnimationFrame(() => {
-      layoutBubbleMeasureRafRef.current = null;
-      updateBubblePosition(true);
-    });
-    updateDragHandlePosition(true);
-  }, [
-    ensureBaseline,
-    getWindowCenter,
-    getWindowMetrics,
-    isDevToolsOpened,
-    modelLayoutCommitter,
-    requestResize,
-    scale,
-    updateBubblePosition,
-    updateDragHandlePosition,
-    live2dService.windowGeometryPhase,
-  ]);
-
-  // 合帧调度：同一帧内多次触发布局（scale/resize/bounds 等）只执行一次 applyLayout。
-  const applyLayoutRafRef = useRef<number | null>(null);
-  const scheduleApplyLayout = useCallback(() => {
-    if (applyLayoutRafRef.current !== null) return;
-    applyLayoutRafRef.current = window.requestAnimationFrame(() => {
-      applyLayoutRafRef.current = null;
-      applyLayout();
-    });
-  }, [applyLayout]);
-
-  useEffect(() => {
-    ensureBaseline(getWindowCenter());
-    scheduleApplyLayout();
-  }, [ensureBaseline, getWindowCenter, persistedModelConfig, scale, scheduleApplyLayout, windowHeight, windowWidth]);
+  const scheduleApplyLayout = live2dService.layout.schedule;
 
   // Live2D 模型生命周期（封装于自定义 Hook）
   usePetModel({
@@ -880,12 +571,12 @@ const PetCanvas: React.FC = observer(() => {
     const withinX = clientX >= 0 && clientX <= screen.width;
     const withinY = clientY >= 0 && clientY <= screen.height;
     if (!withinX || !withinY) return false;
-    const bounds = model.getBounds?.();
+    const bounds = getModelMiddleRect();
     if (!bounds) return false;
     const nx = (clientX - bounds.x) / (bounds.width || 1);
     const ny = (clientY - bounds.y) / (bounds.height || 1);
     return nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1;
-  }, []);
+  }, [getModelMiddleRect]);
 
   const handlePointerTap = useCallback((clientX: number, clientY: number) => {
     const model = modelRef.current;
@@ -895,7 +586,7 @@ const PetCanvas: React.FC = observer(() => {
     const withinX = clientX >= 0 && clientX <= screen.width;
     const withinY = clientY >= 0 && clientY <= screen.height;
     if (!withinX || !withinY) return;
-    const bounds = model.getBounds?.();
+    const bounds = getModelMiddleRect();
     if (!bounds) return;
     // PointerEvent.clientX/Y and the explicit Pixi renderer both use content-area DIP.
     const nx = (clientX - bounds.x) / (bounds.width || 1);
@@ -936,14 +627,12 @@ const PetCanvas: React.FC = observer(() => {
     if ((window as any).LIVE2D_MOTION_DEBUG === true) {
       debug('pet.interaction', 'tap.dispatch', { nx: Number(nx.toFixed(3)), ny: Number(ny.toFixed(3)), group, preciseTried: !!areaObj });
     }
-  }, [interruptMotion]);
+  }, [getModelMiddleRect, interruptMotion]);
 
   useEffect(() => bindPointerGestures({
     handlePointerTap,
     canStartDrag: canStartModelDrag,
     subscribeNativeDragEnd: (listener) => electronService.drag.subscribeNativeEnd(listener),
-    onPendingDragStart,
-    onPendingDragCancel,
     onDragStart: onModelDragStart,
     onDragEnd: onModelDragEnd,
   }), [
@@ -951,8 +640,6 @@ const PetCanvas: React.FC = observer(() => {
     handlePointerTap,
     onModelDragEnd,
     onModelDragStart,
-    onPendingDragCancel,
-    onPendingDragStart,
     electronService,
   ]);
 
@@ -962,7 +649,6 @@ const PetCanvas: React.FC = observer(() => {
     motionTextRef,
     modelRef,
     surrogateAudioRef,
-    pendingResizeIssuedAtRef,
     updateBubblePosition,
     updateDragHandlePosition,
     scheduleBubbleDismiss,
@@ -1002,7 +688,7 @@ const PetCanvas: React.FC = observer(() => {
       <div
         className="absolute inset-0 z-0 pointer-events-auto perspective-normal"
       >
-        <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full" />
+        <canvas ref={canvasRef} className="absolute left-0 top-0 block" />
         {debugModeEnabled && visualMasks && <DebugVisualMasks visualMasks={visualMasks} />}
         {debugModeEnabled && symmetricMasks && (
           <DebugSymmetricMasks
@@ -1011,7 +697,6 @@ const PetCanvas: React.FC = observer(() => {
           />
         )}
         {/* 视觉中心红线：位于最上层、无事件、始终显示 */}
-        {debugModeEnabled && redLineLeft !== null && <DebugRedLine redLineLeft={redLineLeft} />}
 
         {motionText && (
           <div

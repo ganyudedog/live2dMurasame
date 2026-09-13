@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { Application, Ticker } from 'pixi.js';
 import { loadModel } from '../live2d/loader';
 import { Live2DModel } from '../live2d/runtime';
@@ -122,6 +122,7 @@ export const usePetModel = ({
           backgroundAlpha: 0,
           autoStart: true,
           antialias: true,
+          autoDensity: true,
         });
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
@@ -197,32 +198,6 @@ export const usePetModel = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded, canvasRef]);
 
-  useLayoutEffect(() => {
-    const app = appRef.current;
-    if (!app) return;
-    const nextWidth = Math.max(1, windowWidth);
-    const nextHeight = Math.max(1, windowHeight);
-    const currentScreen = app.renderer.screen;
-    const previousWidth = currentScreen.width;
-    const previousHeight = currentScreen.height;
-    const withinVisualDeadband = Math.abs(previousWidth - nextWidth) <= 2
-      && Math.abs(previousHeight - nextHeight) <= 2;
-    if (!withinVisualDeadband) {
-      app.renderer.resize(nextWidth, nextHeight);
-    }
-    applyLayoutRef.current?.();
-    // renderer.resize clears the transparent WebGL surface. Repaint in the same task
-    // so the native window never presents an empty frame between ticker updates.
-    if (!withinVisualDeadband) app.render();
-    logDebug('pet.model', 'renderer.geometryCommitted', {
-      previousWidth,
-      previousHeight,
-      nextWidth,
-      nextHeight,
-      bufferResized: withinVisualDeadband ? 0 : 1,
-      correctionAbsorbed: withinVisualDeadband ? 1 : 0,
-    });
-  }, [appRef, windowHeight, windowWidth]);
 
   // 2) 模型加载/切换：仅替换 model，不重建 Pixi app/canvas。
   useEffect(() => {
@@ -488,6 +463,9 @@ export const usePetModel = ({
         }
         modelRef.current = model;
         (model as any).eventMode = 'none';
+        // The auto-start ticker must not expose the loader's default transform.
+        // Live2dLayout makes the model visible after viewport and transform agree.
+        model.visible = false;
         app.stage.addChild(model as any);
         applyLayoutRef.current?.();
         setModel(model);

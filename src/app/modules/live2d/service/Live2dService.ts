@@ -3,11 +3,9 @@ import type { Live2DModel } from '../runtime/live2d/runtime';
 import { MotionManager } from '../runtime/live2d/motionManager';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
-import {
-  getWindowContentGeometryError,
-  getWindowGeometryError,
-  projectWindowGeometry,
-} from '../../../../../shared/windowGeometryPolicy.js';
+import { Live2dLayout, type LayoutSnapshot } from './Live2dLayout';
+import { BubblePresentation } from './BubblePresentation';
+import { createBubblePositionEngine } from '../runtime/layout/createBubblePositionEngine';
 
 export type ModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 export type BubbleMeasurement = {
@@ -18,30 +16,11 @@ export type BubbleMeasurement = {
   maxWidth: number;
 };
 
-export type WindowResizeProjectionInput = {
-  width: number;
-  height: number;
-  anchorCenter?: number;
-};
-
-type WindowGeometryProjection = {
-  intentId: string;
-  revision: number;
-  geometry: PetWindowGeometry;
-};
-
-type ConfirmedGeometryCandidate = {
-  intentId: string;
-  revision: number;
-  geometry: PetWindowGeometry;
-  source: 'ack' | 'fact';
-  sourceTs: number;
-};
-
-const GEOMETRY_RECONCILE_DEBOUNCE_MS = 64;
-const GEOMETRY_VISUAL_DEADBAND_DIP = 2;
-
 export class Live2dService {
+  readonly layout: Live2dLayout;
+  readonly bubble = new BubblePresentation();
+  private bubbleSettings: { side?: 'auto' | 'left' | 'right'; sideWidth?: number; headRatio?: number | null } = {};
+  private readonly bubbleEngine: ReturnType<typeof createBubblePositionEngine>;
   model: Live2DModel | null = null;
   modelLoadStatus: ModelLoadStatus = 'idle';
   modelLoadError: string | null = null;
@@ -50,10 +29,12 @@ export class Live2dService {
   playingMotionText: string | null = null;
   playingMotionSound: string | null = null;
   scale = 1;
-  confirmedWindowGeometry: PetWindowGeometry | null = null;
-  projectedWindowGeometry: WindowGeometryProjection | null = null;
-  windowGeometry: PetWindowGeometry | null = null;
-  windowGeometryPhase: 'confirmed' | 'predicted' = 'confirmed';
+  /** Scale belonging to renderGeometry; UI reads this instead of pending input. */
+  renderScale = 1;
+  /** Latest native fact owned by Electron; never used as a competing render snapshot. */
+  nativeGeometry: PetWindowGeometry | null = null;
+  /** The complete snapshot used by Pixi, bubbles and interaction layout. */
+  renderGeometry: PetWindowGeometry | null = null;
   bubbleMeasurementRequestId = 0;
   bubbleMeasurement: BubbleMeasurement | null = null;
 
@@ -64,19 +45,36 @@ export class Live2dService {
   private readonly windowApi: PetWindowAPI | undefined;
   private scaleReaction: IReactionDisposer | null = null;
   private removeWindowFactListener: (() => void) | null = null;
-  private removeWindowAckListener: (() => void) | null = null;
-  private geometryReconcileTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingConfirmedCandidate: ConfirmedGeometryCandidate | null = null;
-  private geometryRevision = 0;
-  private confirmedGeometryRevision = 0;
-  private confirmedGeometrySourceTs = 0;
-  private readonly intentRevisions = new Map<string, number>();
   private disposed = false;
+  private nativeSourceTs = -Infinity;
 
   constructor(stateBus: StateBusService, log: LogService, windowApi?: PetWindowAPI) {
     this.stateBus = stateBus;
     this.log = log;
     this.windowApi = windowApi;
+    this.layout = new Live2dLayout({
+      geometry: () => this.nativeGeometry,
+      send: (intent) => {
+        if (!this.windowApi?.sendWindowIntent) return Promise.reject(new Error('Window IPC unavailable'));
+        return this.windowApi.sendWindowIntent(intent);
+      },
+      log,
+    });
+    // The position engine is created once, so its read-only refs close over the
+    // owning service instead of introducing a second mutable geometry store.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const service = this;
+    this.bubbleEngine = createBubblePositionEngine({
+      scaleRef: { get current() { return service.renderScale; } },
+      motionTextRef: { get current() { return service.playingMotionText; } },
+      bubbleMeasurementRef: { get current() { return service.bubbleMeasurement; } },
+      bubbleSettingsRef: { get current() { return service.bubbleSettings; } },
+      // Native position selects a bubble side; rectangles come from the layout.
+      windowGeometryRef: { get current() { return service.nativeGeometry; } },
+      layoutRef: { get current() { return service.layout.snapshot?.presentation ?? null; } },
+      lastBubbleUpdateRef: { current: 0 },
+      bubbleLayoutCommitter: this.bubble,
+    });
     makeObservable(this, {
       model: observableRef,
       modelLoadStatus: observable,
@@ -86,10 +84,9 @@ export class Live2dService {
       playingMotionText: observable,
       playingMotionSound: observable,
       scale: observable,
-      confirmedWindowGeometry: observableRef,
-      projectedWindowGeometry: observableRef,
-      windowGeometry: observableRef,
-      windowGeometryPhase: observable,
+      renderScale: observable,
+      nativeGeometry: observableRef,
+      renderGeometry: observableRef,
       bubbleMeasurementRequestId: observable,
       bubbleMeasurement: observableRef,
     });
@@ -104,6 +101,7 @@ export class Live2dService {
           this.scale = Math.min(2, Math.max(0.3, scale));
         });
         this.log.debug('live2d.service', 'scale.applied', { scale: this.scale });
+        this.layout.setScale(this.scale);
       },
       { fireImmediately: true },
     );
@@ -112,6 +110,7 @@ export class Live2dService {
   }
 
   setModel(model: Live2DModel | null): void {
+    if (!model) this.layout.detach();
     this.motionManager.dispose();
     if (model) this.motionManager.attach(model);
     runInAction(() => {
@@ -122,6 +121,10 @@ export class Live2dService {
       this.playingMotionSound = null;
       this.bubbleMeasurementRequestId += 1;
       this.bubbleMeasurement = null;
+      if (!model) {
+        this.renderGeometry = null;
+        this.renderScale = this.scale;
+      }
     });
     this.log.info('live2d.service', model ? 'model.attached' : 'model.detached', {
       motionCount: this.availableMotions.length,
@@ -130,6 +133,23 @@ export class Live2dService {
 
   clearModel(): void {
     this.setModel(null);
+  }
+
+  configureBubble(settings: typeof this.bubbleSettings): void {
+    this.bubbleSettings = settings;
+    this.layout.setSideWidth(settings.sideWidth ?? 100);
+    this.updateBubblePosition(true);
+  }
+
+  updateBubblePosition = (force = false): void => {
+    if (!force && this.layout.framePending) return;
+    runInAction(() => this.bubbleEngine.updateBubblePosition(force));
+  };
+
+  setWindowDragging(active: boolean): void {
+    this.layout.setDragging(active);
+    // Drag changes only Electron's desktop anchor; local layout stays unchanged.
+    this.log.debug('live2d.service', 'drag.state', { active });
   }
 
   setModelLoadStatus(status: ModelLoadStatus, error?: string): void {
@@ -169,47 +189,21 @@ export class Live2dService {
   }
 
   setWindowGeometry(geometry: PetWindowGeometry): void {
-    this.acceptConfirmedGeometry(geometry, null, 'fact', Date.now());
+    runInAction(() => { this.nativeGeometry = this.normalizeGeometry(geometry); });
   }
 
-  /** Creates the optimistic geometry before IPC; UI always consumes the complete snapshot. */
-  projectWindowResize(intentId: string, input: WindowResizeProjectionInput): PetWindowGeometry | null {
-    const confirmed = this.confirmedWindowGeometry ?? this.windowGeometry;
-    if (!confirmed) {
-      this.log.warn('live2d.geometry', 'projection.skipped', { intentId, reason: 'missing-confirmed-geometry' });
-      return null;
-    }
-
-    const projected = projectWindowGeometry(confirmed, intentId, {
-      kind: 'size',
-      payload: input,
-    });
-    if (!projected) return null;
-
-    const revision = ++this.geometryRevision;
-    this.intentRevisions.set(intentId, revision);
-    this.trimIntentRevisions();
-    this.clearGeometryReconcileTimer();
-    // A newer optimistic intent invalidates every candidate waiting to settle.
-    this.pendingConfirmedCandidate = null;
+  /** Called by the layout transaction during the Pixi layout commit. */
+  setRenderSnapshot(snapshot: LayoutSnapshot): void {
     runInAction(() => {
-      this.projectedWindowGeometry = {
-        intentId,
-        revision,
-        geometry: projected.geometry,
-      };
-      this.windowGeometry = projected.geometry;
-      this.windowGeometryPhase = 'predicted';
+      this.renderGeometry = snapshot.geometry;
+      this.renderScale = snapshot.scale;
     });
-    this.log.debug('live2d.geometry', 'projection.applied', {
-      intentId,
-      revision,
-      boundsX: projected.geometry.bounds.x,
-      boundsWidth: projected.geometry.bounds.width,
-      contentX: projected.geometry.contentBounds.x,
-      contentWidth: projected.geometry.contentBounds.width,
+    this.log.debug('live2d.geometry', 'render.snapshot', {
+      revision: snapshot.revision,
+      width: snapshot.target.width,
+      height: snapshot.target.height,
+      x: snapshot.geometry.contentBounds.x,
     });
-    return projected.geometry;
   }
 
   submitBubbleMeasurement(measurement: BubbleMeasurement): void {
@@ -229,181 +223,29 @@ export class Live2dService {
 
   dispose(): void {
     this.disposed = true;
+    this.layout.detach();
     this.scaleReaction?.();
     this.scaleReaction = null;
     this.removeWindowFactListener?.();
     this.removeWindowFactListener = null;
-    this.removeWindowAckListener?.();
-    this.removeWindowAckListener = null;
-    this.clearGeometryReconcileTimer();
-    this.pendingConfirmedCandidate = null;
-    this.intentRevisions.clear();
     this.motionManager.dispose();
     this.log.info('live2d.service', 'disposed');
   }
 
   private startWindowGeometrySync(): void {
-    const factDisposer = this.windowApi?.on?.('pet:windowFact', (fact) => {
-      if (!fact.geometry) return;
-      this.acceptConfirmedGeometry(fact.geometry, fact.lastAppliedIntentId ?? null, 'fact', fact.ts);
+    const disposer = this.windowApi?.on?.('pet:windowFact', (fact) => {
+      const ts = fact.ts ?? Date.now();
+      if (this.disposed || !fact.geometry || ts < this.nativeSourceTs) return;
+      this.nativeSourceTs = ts;
+      // Native metadata is useful for bubble-side selection and diagnostics.
+      // It never schedules a layout or changes the model's local coordinates.
+      this.setWindowGeometry(fact.geometry);
+      this.updateBubblePosition(true);
     });
-    this.removeWindowFactListener = typeof factDisposer === 'function' ? factDisposer : null;
-
-    const ackDisposer = this.windowApi?.on?.('pet:windowIntentAck', (ack) => {
-      const confirmsActualGeometry = ack.status === 'applied' || ack.reason === 'below-threshold';
-      if (confirmsActualGeometry && ack.appliedGeometry) {
-        this.acceptConfirmedGeometry(ack.appliedGeometry, ack.intentId, 'ack', ack.ts);
-        return;
-      }
-      if (ack.status !== 'applied') this.rejectProjection(ack.intentId, ack.reason ?? ack.status);
-    });
-    this.removeWindowAckListener = typeof ackDisposer === 'function' ? ackDisposer : null;
-
+    this.removeWindowFactListener = typeof disposer === 'function' ? disposer : null;
     void this.windowApi?.getWindowGeometry?.().then((geometry) => {
-      if (!this.disposed && geometry) this.acceptConfirmedGeometry(geometry, null, 'fact', Date.now());
-    }).catch((error) => {
-      this.log.warn('live2d.geometry', 'initial.read.failed', { error: String(error) });
-    });
-  }
-
-  private acceptConfirmedGeometry(
-    geometry: PetWindowGeometry,
-    intentId: string | null,
-    source: 'ack' | 'fact',
-    rawSourceTs?: number,
-  ): void {
-    const normalized = this.normalizeGeometry(geometry);
-    const sourceTs = Number.isFinite(rawSourceTs) ? Number(rawSourceTs) : Date.now();
-    const activeProjection = this.projectedWindowGeometry;
-    if (activeProjection && !intentId) {
-      this.log.debug('live2d.geometry', 'confirmation.stale', {
-        intentId: null,
-        projectedIntentId: activeProjection.intentId,
-        projectedRevision: activeProjection.revision,
-        reason: 'unversioned-during-projection',
-        source,
-      });
-      return;
-    }
-    const revision = intentId ? this.intentRevisions.get(intentId) : undefined;
-    const olderRevision = revision !== undefined && revision < this.confirmedGeometryRevision;
-    const olderSameRevision = revision !== undefined
-      && revision === this.confirmedGeometryRevision
-      && sourceTs < this.confirmedGeometrySourceTs;
-    if (olderRevision || olderSameRevision) {
-      this.log.debug('live2d.geometry', 'confirmation.stale', {
-        intentId,
-        revision,
-        confirmedRevision: this.confirmedGeometryRevision,
-        sourceTs,
-        confirmedSourceTs: this.confirmedGeometrySourceTs,
-        reason: olderRevision ? 'older-revision' : 'older-source-time',
-        source,
-      });
-      return;
-    }
-
-    if (revision !== undefined) {
-      this.confirmedGeometryRevision = revision;
-      this.confirmedGeometrySourceTs = sourceTs;
-    }
-    runInAction(() => {
-      this.confirmedWindowGeometry = normalized;
-    });
-
-    const projection = this.projectedWindowGeometry;
-    if (!projection) {
-      runInAction(() => {
-        this.windowGeometry = normalized;
-        this.windowGeometryPhase = 'confirmed';
-      });
-      return;
-    }
-
-    if (!intentId || intentId !== projection.intentId || revision !== projection.revision) {
-      this.log.debug('live2d.geometry', 'confirmation.deferred', {
-        intentId,
-        revision: revision ?? null,
-        projectedIntentId: projection.intentId,
-        projectedRevision: projection.revision,
-        source,
-      });
-      return;
-    }
-
-    const pendingCandidate = this.pendingConfirmedCandidate;
-    if (pendingCandidate
-      && pendingCandidate.revision === revision
-      && sourceTs < pendingCandidate.sourceTs) {
-      this.log.debug('live2d.geometry', 'confirmation.stale', {
-        intentId,
-        revision,
-        sourceTs,
-        pendingSourceTs: pendingCandidate.sourceTs,
-        reason: 'older-pending-candidate',
-        source,
-      });
-      return;
-    }
-
-    this.pendingConfirmedCandidate = {
-      intentId,
-      revision,
-      geometry: normalized,
-      source,
-      sourceTs,
-    };
-    this.scheduleGeometryReconciliation();
-  }
-
-  private scheduleGeometryReconciliation(): void {
-    this.clearGeometryReconcileTimer();
-    this.geometryReconcileTimer = setTimeout(() => {
-      this.geometryReconcileTimer = null;
-      const candidate = this.pendingConfirmedCandidate;
-      const projection = this.projectedWindowGeometry;
-      if (!candidate || !projection
-        || candidate.intentId !== projection.intentId
-        || candidate.revision !== projection.revision) {
-        return;
-      }
-
-      const geometryError = getWindowGeometryError(projection.geometry, candidate.geometry);
-      const contentError = getWindowContentGeometryError(projection.geometry, candidate.geometry);
-      const absorbVisualCorrection = contentError <= GEOMETRY_VISUAL_DEADBAND_DIP;
-      runInAction(() => {
-        // The confirmed geometry remains authoritative for future predictions. A tiny
-        // native rounding error still updates local model placement, but the renderer
-        // can absorb its buffer-size delta without a clear/reallocation.
-        this.windowGeometry = candidate.geometry;
-        this.projectedWindowGeometry = null;
-        this.windowGeometryPhase = 'confirmed';
-      });
-      this.pendingConfirmedCandidate = null;
-      this.log.debug('live2d.geometry', 'confirmation.committed', {
-        intentId: candidate.intentId,
-        revision: candidate.revision,
-        source: candidate.source,
-        geometryErrorDip: geometryError,
-        contentErrorDip: contentError,
-        visualCorrection: absorbVisualCorrection ? 0 : 1,
-        correctionAbsorbed: absorbVisualCorrection ? 1 : 0,
-        visualDeadbandDip: GEOMETRY_VISUAL_DEADBAND_DIP,
-      });
-    }, GEOMETRY_RECONCILE_DEBOUNCE_MS);
-  }
-
-  private rejectProjection(intentId: string, reason: string): void {
-    const projection = this.projectedWindowGeometry;
-    if (!projection || projection.intentId !== intentId) return;
-    this.clearGeometryReconcileTimer();
-    this.pendingConfirmedCandidate = null;
-    runInAction(() => {
-      this.projectedWindowGeometry = null;
-      this.windowGeometry = this.confirmedWindowGeometry;
-      this.windowGeometryPhase = 'confirmed';
-    });
-    this.log.warn('live2d.geometry', 'projection.rejected', { intentId, reason });
+      if (!this.disposed && geometry && !this.nativeGeometry) this.setWindowGeometry(geometry);
+    }).catch((error) => this.log.warn('live2d.geometry', 'initial.read.failed', { error: String(error) }));
   }
 
   private normalizeGeometry(geometry: PetWindowGeometry): PetWindowGeometry {
@@ -422,20 +264,6 @@ export class Live2dService {
       contentBounds: { ...(validContent ? geometry.contentBounds : geometry.bounds) },
       workArea: { ...geometry.workArea },
     };
-  }
-
-  private clearGeometryReconcileTimer(): void {
-    if (this.geometryReconcileTimer === null) return;
-    clearTimeout(this.geometryReconcileTimer);
-    this.geometryReconcileTimer = null;
-  }
-
-  private trimIntentRevisions(): void {
-    while (this.intentRevisions.size > 64) {
-      const oldest = this.intentRevisions.keys().next().value;
-      if (typeof oldest !== 'string') break;
-      this.intentRevisions.delete(oldest);
-    }
   }
 
   private applyMotion(group: string, interrupt: boolean): void {

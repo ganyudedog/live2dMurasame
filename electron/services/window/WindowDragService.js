@@ -66,7 +66,6 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
         durationMs: Number.isFinite(payload?.durationMs) ? payload.durationMs : undefined,
         maxCursorStep: Number.isFinite(payload?.maxCursorStep) ? payload.maxCursorStep : undefined,
         maxApplyGapMs: Number.isFinite(payload?.maxApplyGapMs) ? payload.maxApplyGapMs : undefined,
-        sizeCorrectionCount: Number.isFinite(payload?.sizeCorrectionCount) ? payload.sizeCorrectionCount : undefined,
         writeMode: typeof payload?.writeMode === 'string' ? payload.writeMode : undefined,
       },
       layout: {
@@ -94,46 +93,6 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
       }
     }
     state.releaseHooks = [];
-  };
-
-  const restoreLockedSize = (state, targetWindow) => {
-    if (!state || !targetWindow || targetWindow.isDestroyed?.()) return null;
-    const bounds = targetWindow.getBounds();
-    if (Math.abs(bounds.width - state.lockWidth) <= 1 && Math.abs(bounds.height - state.lockHeight) <= 1) {
-      return bounds;
-    }
-    state.sizeCorrectionCount += 1;
-    const corrected = {
-      x: bounds.x,
-      y: bounds.y,
-      width: state.lockWidth,
-      height: state.lockHeight,
-    };
-    targetWindow.setBounds(corrected);
-    return corrected;
-  };
-
-  const attachSizeLock = (state, targetWindow) => {
-    const onResize = () => {
-      if (state.sizeCorrectionTimer !== null) return;
-      state.sizeCorrectionTimer = setTimeout(() => {
-        state.sizeCorrectionTimer = null;
-        restoreLockedSize(state, targetWindow);
-      }, 0);
-    };
-    state.resizeHandler = onResize;
-    targetWindow.on('resize', onResize);
-  };
-
-  const detachSizeLock = (state) => {
-    if (state?.sizeCorrectionTimer !== null) {
-      clearTimeout(state.sizeCorrectionTimer);
-      state.sizeCorrectionTimer = null;
-    }
-    if (state?.resizeHandler && state.targetWindow && !state.targetWindow.isDestroyed?.()) {
-      state.targetWindow.removeListener('resize', state.resizeHandler);
-    }
-    state.resizeHandler = null;
   };
 
   const notifyRendererDragEnd = ({ targetWindow, reason, screenX, screenY }) => {
@@ -164,7 +123,12 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
     }) ?? { x: state.lastScreenX, y: state.lastScreenY };
     stopPolling(state);
     detachReleaseHooks(state);
-    restoreLockedSize(state, targetWindow);
+
+    // Include the last cursor movement before handing the desktop anchor back.
+    if (targetWindow && !targetWindow.isDestroyed?.()) {
+      applyDragPosition({ state, senderId, targetWindow,
+        screenX: finalPoint.x, screenY: finalPoint.y, now: Date.now() });
+    }
 
     if (options.notifyRenderer) {
       notifyRendererDragEnd({
@@ -184,15 +148,11 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
       durationMs: Math.max(0, Date.now() - state.startedAt),
       maxCursorStep: state.maxCursorStep,
       maxApplyGapMs: state.maxApplyGapMs,
-      sizeCorrectionCount: state.sizeCorrectionCount,
     };
     if (options.publishLifecycle !== false) onSessionChange?.(lifecycle);
 
-    // setResizable(true) can change outer bounds on mixed-DPI Windows displays.
-    const finalBounds = restoreLockedSize(state, targetWindow);
-    detachSizeLock(state);
     dragStates.delete(senderId);
-    const summary = { ...lifecycle, bounds: finalBounds, sizeCorrectionCount: state.sizeCorrectionCount };
+    const summary = { ...lifecycle };
     if (options.publishSettled !== false) onSessionSettled?.(summary);
     debugDrag('windowDrag.end', { ...summary, screenX: finalPoint.x, screenY: finalPoint.y }, 'info');
     return state;
@@ -232,9 +192,13 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
     state.lastScreenY = screenY;
     state.lastApplyAt = now;
 
-    if (nextX !== state.lastWindowX || nextY !== state.lastWindowY) {
-      // Position-only writes avoid resize and compositor work on every drag frame.
-      targetWindow.setPosition(nextX, nextY);
+    const actual = targetWindow.getBounds();
+    if (Math.abs(nextX - actual.x) > 1 || Math.abs(nextY - actual.y) > 1
+      || Math.abs(actual.width - state.width) > 1 || Math.abs(actual.height - state.height) > 1) {
+      // At fractional DPI, setPosition can round-trip the current native size
+      // and accumulate growth. Reuse the gesture's fixed outer dimensions;
+      // the window controller already defers scale-driven resizes until release.
+      targetWindow.setBounds({ x: nextX, y: nextY, width: state.width, height: state.height });
       state.lastWindowX = nextX;
       state.lastWindowY = nextY;
     }
@@ -251,8 +215,7 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
         nextY,
         maxCursorStep: state.maxCursorStep,
         maxApplyGapMs: state.maxApplyGapMs,
-        sizeCorrectionCount: state.sizeCorrectionCount,
-        writeMode: 'position-only',
+        writeMode: 'fixed-size-bounds',
       });
     }
   };
@@ -269,7 +232,14 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
         debugDrag('windowDrag.cursorUnavailable', { senderId }, 'warn');
         return;
       }
-      if (state.lastScreenX === point.x && state.lastScreenY === point.y) return;
+      // A resize issued just before drag may finish late. Even a stationary
+      // cursor must retain position ownership, without restoring old width/height.
+      const actual = targetWindow.getBounds();
+      const expectedX = Math.round(state.originWindowX + point.x - state.originCursorX);
+      const expectedY = Math.round(state.originWindowY + point.y - state.originCursorY);
+      if (state.lastScreenX === point.x && state.lastScreenY === point.y
+        && Math.abs(actual.x - expectedX) <= 1 && Math.abs(actual.y - expectedY) <= 1
+        && Math.abs(actual.width - state.width) <= 1 && Math.abs(actual.height - state.height) <= 1) return;
       applyDragPosition({
         state,
         senderId,
@@ -314,6 +284,8 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
         originCursorY: cursor.y,
         originWindowX: bounds.x,
         originWindowY: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
         lastScreenX: cursor.x,
         lastScreenY: cursor.y,
         lastWindowX: bounds.x,
@@ -321,11 +293,6 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
         moveCount: 0,
         maxCursorStep: 0,
         maxApplyGapMs: 0,
-        sizeCorrectionCount: 0,
-        sizeCorrectionTimer: null,
-        resizeHandler: null,
-        lockWidth: bounds.width,
-        lockHeight: bounds.height,
         startedAt: now,
         lastApplyAt: now,
         lastTraceAt: now,
@@ -334,7 +301,8 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
         releaseHooks: [],
       };
       dragStates.set(senderId, state);
-      attachSizeLock(state, targetWindow);
+      // Main defers layout resize during this gesture, so fixed dimensions have
+      // one owner until the final position has been applied.
       onSessionChange?.({
         active: true,
         senderId,
@@ -352,7 +320,7 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled } = 
         currentX: bounds.x,
         currentY: bounds.y,
         intervalMs: POLL_INTERVAL_MS,
-        writeMode: 'position-only',
+        writeMode: 'fixed-size-bounds',
       }, 'info');
       return;
     }

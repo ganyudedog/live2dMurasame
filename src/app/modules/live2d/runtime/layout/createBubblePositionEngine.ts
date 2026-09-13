@@ -1,13 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { debug } from '@app/shared/logging/compat';
 import { clamp } from '@app/shared/utils/math';
+import type { ThreeRectLayout } from '../../../../../../shared/live2dLayout.js';
 import type { BubbleMeasurement } from '../../service/Live2dService';
-import type { BubbleLayoutCommitter } from '../geometry/commit/BubbleLayoutCommitter';
+import type { BubblePresentationSink } from '../../service/BubblePresentation';
 import {
   BUBBLE_GAP,
   BUBBLE_PADDING,
-  BUBBLE_SIDE_WIDTH,
-  resolveBubbleSideWidth,
 } from '../../domain/constants';
 
 type ValueRef<T> = { current: T };
@@ -22,13 +20,12 @@ interface BubbleSettings {
 export interface BubblePositionEngineParams {
   scaleRef: ValueRef<number>;
   motionTextRef: ValueRef<string | null>;
-  modelRef: ValueRef<any | null>;
-  appRef: ValueRef<any | null>;
   bubbleMeasurementRef: ValueRef<BubbleMeasurement | null>;
   bubbleSettingsRef: ValueRef<BubbleSettings | null>;
   windowGeometryRef: ValueRef<PetWindowGeometry | null>;
+  layoutRef: ValueRef<ThreeRectLayout | null>;
   lastBubbleUpdateRef: ValueRef<number>;
-  bubbleLayoutCommitter: BubbleLayoutCommitter;
+  bubbleLayoutCommitter: BubblePresentationSink;
 }
 
 const chooseBubbleSide = (
@@ -56,11 +53,10 @@ const chooseBubbleSide = (
 export const createBubblePositionEngine = ({
   scaleRef,
   motionTextRef,
-  modelRef,
-  appRef,
   bubbleMeasurementRef,
   bubbleSettingsRef,
   windowGeometryRef,
+  layoutRef,
   lastBubbleUpdateRef,
   bubbleLayoutCommitter,
 }: BubblePositionEngineParams) => {
@@ -72,56 +68,31 @@ export const createBubblePositionEngine = ({
     if (text && !force && now - lastBubbleUpdateRef.current < 32) return;
     lastBubbleUpdateRef.current = now;
 
-    const model = modelRef.current;
-    const app = appRef.current;
     const bubbleMeasurement = bubbleMeasurementRef.current;
     const windowGeometry = windowGeometryRef.current;
-    const bounds = model?.getBounds?.();
-    const screen = app?.renderer?.screen;
-    if (!model || !app || !bounds || !screen?.width || !screen?.height) {
+    const layout = layoutRef.current;
+    if (!layout) {
       bubbleLayoutCommitter.clearBubblePresentation();
       return;
     }
 
+    const bounds = layout.model;
+    const screen = layout;
     const modelLeft = bounds.x;
     const modelRight = bounds.x + bounds.width;
-    const modelCenter = modelLeft + bounds.width / 2;
-    bubbleLayoutCommitter.commitRedLine(modelCenter);
     bubbleLayoutCommitter.commitVisibleFrameMetrics({ left: modelLeft, width: bounds.width });
     bubbleLayoutCommitter.commitBaseFrameMetrics({ left: modelLeft, width: bounds.width });
 
     const scale = scaleRef.current;
     const visualScale = clamp(Number.isFinite(scale) ? scale : 1, 0.3, 2);
-    const configuredSideWidth = Number(bubbleSettingsRef.current?.sideWidth);
-    const sideWidth = resolveBubbleSideWidth(
-      Number.isFinite(configuredSideWidth) ? configuredSideWidth : BUBBLE_SIDE_WIDTH,
-      visualScale,
-    );
+    const sideWidth = layout.left.width;
     const configuredSide = bubbleSettingsRef.current?.side ?? 'auto';
     const side = chooseBubbleSide(configuredSide, bounds, windowGeometry);
-    const leftCapacity = Math.max(0, modelLeft);
-    const rightCapacity = Math.max(0, screen.width - modelRight);
-    const symmetricCapacity = Math.min(leftCapacity, rightCapacity);
-    const symmetricWidth = Math.min(sideWidth, symmetricCapacity);
-    const requiredWindowWidth = Math.ceil(bounds.width + sideWidth * 2);
-
     bubbleLayoutCommitter.commitBubbleZoneMetrics({
-      left: {
-        left: modelLeft - Math.min(sideWidth, leftCapacity),
-        width: Math.min(sideWidth, leftCapacity),
-        targetWidth: sideWidth,
-      },
-      right: {
-        left: modelRight,
-        width: Math.min(sideWidth, rightCapacity),
-        targetWidth: sideWidth,
-      },
-      active: side,
-      symmetricWidth,
-      symmetricCapacity,
-      widthShortfall: symmetricWidth + 0.5 < sideWidth,
-      awaitingResize: screen.width + 0.5 < requiredWindowWidth,
-      requiredWindowWidth,
+      left: { left: layout.left.x, width: sideWidth, targetWidth: sideWidth },
+      right: { left: layout.right.x, width: sideWidth, targetWidth: sideWidth },
+      active: side, symmetricWidth: sideWidth, symmetricCapacity: sideWidth,
+      widthShortfall: false,
     });
 
     if (!text || !bubbleMeasurement
@@ -164,7 +135,6 @@ export const createBubblePositionEngine = ({
       modelWidth: bounds.width,
       bubbleWidth,
       bubbleHeight,
-      requiredWindowWidth,
     });
   };
 

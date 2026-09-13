@@ -134,10 +134,20 @@ export default function HomePage({
             max={2}
             step={0.01}
             value={scaleDraft}
-            onPointerDown={() => {
+            onPointerDown={(event) => {
               scaleDraggingRef.current = true;
+              // Keep the range owner alive when the pointer leaves the thumb.
+              // Without capture, pointerup can be lost and the next gesture
+              // appears to require an extra click before it starts.
+              event.currentTarget.setPointerCapture?.(event.pointerId);
             }}
-            onPointerUp={finishScaleGesture}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+                event.currentTarget.releasePointerCapture?.(event.pointerId);
+              }
+              finishScaleGesture();
+            }}
+            onLostPointerCapture={finishScaleGesture}
             onPointerCancel={finishScaleGesture}
             onBlur={finishScaleGesture}
             onChange={(e) => {

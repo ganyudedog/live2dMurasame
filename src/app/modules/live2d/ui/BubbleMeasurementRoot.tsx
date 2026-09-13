@@ -15,7 +15,7 @@ export const BubbleMeasurementRoot = observer(() => {
   const measureRef = useRef<HTMLDivElement | null>(null);
   const text = live2d.playingMotionText;
   const requestId = live2d.bubbleMeasurementRequestId;
-  const scale = live2d.scale;
+  const scale = live2d.renderScale;
   const configuredSideWidth = Number(config.modelConfig?.bubble?.sideWidth);
   const maxWidth = resolveBubbleContentMaxWidth(
     Number.isFinite(configuredSideWidth) ? configuredSideWidth : BUBBLE_SIDE_WIDTH,

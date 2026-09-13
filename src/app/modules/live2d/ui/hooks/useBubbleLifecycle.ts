@@ -8,7 +8,6 @@ export interface UseBubbleLifecycleParams {
   motionTextRef: RefObject<string | null>;
   modelRef: RefObject<Live2DModelType | null>;
   surrogateAudioRef: RefObject<HTMLAudioElement | null>;
-  pendingResizeIssuedAtRef: RefObject<number | null>;
   updateBubblePosition: (force?: boolean) => void;
   updateDragHandlePosition: (force?: boolean) => void;
   scheduleBubbleDismiss: (requestedMs?: number | null, fallbackMs?: number) => void;
@@ -28,7 +27,6 @@ export const useBubbleLifecycle = ({
   motionTextRef,
   modelRef,
   surrogateAudioRef,
-  pendingResizeIssuedAtRef,
   updateBubblePosition,
   updateDragHandlePosition,
   scheduleBubbleDismiss,
@@ -64,7 +62,6 @@ export const useBubbleLifecycle = ({
       };
     }
 
-    pendingResizeIssuedAtRef.current = null;
     let readyTimeoutId: number | null = null;
     let layoutRafId: number | null = null;
 
@@ -167,7 +164,6 @@ export const useBubbleLifecycle = ({
     motionTextRef,
     modelRef,
     surrogateAudioRef,
-    pendingResizeIssuedAtRef,
     updateBubblePosition,
     updateDragHandlePosition,
     scheduleBubbleDismiss,

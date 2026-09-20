@@ -44,8 +44,6 @@ const DEFAULT_CONFIG: TtsRuntimeConfig = {
   topK: 20,
   topP: 0.8,
   temperature: 0.5,
-  mediaType: 'ogg',
-  streamingMode: true,
 };
 
 export class TtsTestService {
@@ -73,7 +71,7 @@ export class TtsTestService {
   }
 
   updateConfig(patch: Partial<TtsRuntimeConfig>): void {
-    this.config = { ...this.config, ...patch, mediaType: 'ogg', streamingMode: true };
+    this.config = { ...this.config, ...patch };
     saveConfig(this.config);
     this.log.debug('ttsTest.service', 'config.changed', { keys: Object.keys(patch) });
   }
@@ -132,8 +130,6 @@ export class TtsTestService {
         });
         await this.player.playResponse(response, {
           requestId: task.requestId,
-          preferredMediaType: 'ogg',
-          streamingMode: true,
           signal: controller.signal,
           onChunk: () => {
             if (firstChunkMs >= 0) return;
@@ -189,7 +185,7 @@ const loadConfig = (): TtsRuntimeConfig => {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) as Partial<TtsRuntimeConfig> : {};
-    return { ...DEFAULT_CONFIG, ...parsed, mediaType: 'ogg', streamingMode: true };
+    return { ...DEFAULT_CONFIG, ...parsed };
   } catch {
     return { ...DEFAULT_CONFIG };
   }

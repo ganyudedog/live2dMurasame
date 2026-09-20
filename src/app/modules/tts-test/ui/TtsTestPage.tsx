@@ -84,10 +84,6 @@ export const TtsTestPage = observer(() => {
           />
         </label>
 
-        <div className="md:col-span-2 text-xs text-slate-400">
-          固定参数：mediaType=ogg，streamingMode=true，textLang=ja，promptLang=ja，textSplitMode=cut0。
-        </div>
-
         <div className="md:col-span-2 flex flex-wrap gap-3 pt-2">
           <button
             className="rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-medium px-4 py-2 disabled:opacity-50"

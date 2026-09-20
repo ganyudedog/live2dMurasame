@@ -15,7 +15,7 @@ let state: SharedState = {
     throttled: false,
     lastUpdatedAt: 0,
   },
-  config: { apiKey: '', baseURL: '', displayLang: 'zh', ttsMediaType: 'wav', ttsStreamingMode: true },
+  config: { apiKey: '', baseURL: '', displayLang: 'zh' },
   chat: { request: null, response: null },
 };
 
@@ -115,16 +115,6 @@ const applyOp = (op: PatchOp) => {
     state = { ...state, config: { ...state.config, displayLang: next } };
     return;
   }
-  if (op.path === 'config.ttsMediaType') {
-    const next = (op.value === 'ogg' || op.value === 'aac') ? op.value : 'wav';
-    state = { ...state, config: { ...state.config, ttsMediaType: next } };
-    return;
-  }
-  if (op.path === 'config.ttsStreamingMode') {
-    state = { ...state, config: { ...state.config, ttsStreamingMode: Boolean(op.value) } };
-    return;
-  }
-
   // ── chat.request（完整对象）──
   if (op.path === 'chat.request' && typeof op.value === 'object' && op.value !== null) {
     state = { ...state, chat: { ...state.chat, request: op.value as ChatRequest } };

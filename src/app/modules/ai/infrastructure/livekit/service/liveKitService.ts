@@ -106,6 +106,7 @@ export const toSessionCreateServer = (
     capabilities: {
       livekit: payload?.capabilities?.livekit !== false,
       audio_downlink: payload?.capabilities?.audioDownlink !== false,
+      transport_mode: payload?.capabilities?.transportMode === 'loopback' ? 'loopback' : 'network',
     },
   };
 };
@@ -123,6 +124,7 @@ export const fromSessionCreateServer = (
       expiresIn: raw.livekit.expires_in,
     },
     serverTime: raw.server_time,
+    transportMode: raw.transport_mode === 'loopback' ? 'loopback' : 'network',
   };
 };
 
@@ -176,8 +178,6 @@ export const toTtsSpeakServer = (
       top_k: request.payload.topK,
       top_p: request.payload.topP,
       temperature: request.payload.temperature,
-      streaming_mode: request.payload.streamingMode,
-      media_type: request.payload.mediaType,
     },
   };
 };

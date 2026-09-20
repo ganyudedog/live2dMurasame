@@ -8,8 +8,6 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   apiKey: '',
   baseURL: '',
   displayLang: 'zh',
-  ttsMediaType: 'wav',
-  ttsStreamingMode: true,
 };
 
 // Live2denvConfig: liv2denv.json（模型列表/当前模型等），不包含全局模型设置。
@@ -242,12 +240,6 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   }
   if (settings.displayLang === 'zh' || settings.displayLang === 'en' || settings.displayLang === 'ja' || settings.displayLang === 'ko') {
     next.displayLang = settings.displayLang;
-  }
-  if (settings.ttsMediaType === 'wav' || settings.ttsMediaType === 'ogg' || settings.ttsMediaType === 'aac') {
-    next.ttsMediaType = settings.ttsMediaType;
-  }
-  if (typeof settings.ttsStreamingMode === 'boolean') {
-    next.ttsStreamingMode = settings.ttsStreamingMode;
   }
   return next;
 };

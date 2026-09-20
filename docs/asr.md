@@ -134,8 +134,6 @@ interface ChatConfig {
   apiKey: string;
   baseURL: string;
   displayLang: 'zh' | 'en' | 'ja' | 'ko';
-  ttsMediaType: 'wav' | 'ogg' | 'aac';
-  ttsStreamingMode: boolean;
 }
 
 type SharedState = {

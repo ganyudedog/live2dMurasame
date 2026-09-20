@@ -26,8 +26,6 @@ const DEFAULT_CHAT_CONFIG: ChatConfig = {
   apiKey: '',
   baseURL: '',
   displayLang: 'zh',
-  ttsMediaType: 'wav',
-  ttsStreamingMode: true,
 };
 
 export class StateBusService {
@@ -98,8 +96,6 @@ export class StateBusService {
       { path: 'config.apiKey', value: config.apiKey },
       { path: 'config.baseURL', value: config.baseURL },
       { path: 'config.displayLang', value: config.displayLang },
-      { path: 'config.ttsMediaType', value: config.ttsMediaType },
-      { path: 'config.ttsStreamingMode', value: config.ttsStreamingMode },
     ], 'ai.config');
   }
 
@@ -124,8 +120,6 @@ export class StateBusService {
       apiKey: typeof globalConfig?.apiKey === 'string' ? globalConfig.apiKey : '',
       baseURL: typeof globalConfig?.baseURL === 'string' ? globalConfig.baseURL : '',
       displayLang: normalizeDisplayLang(globalConfig?.displayLang),
-      ttsMediaType: normalizeMediaType(globalConfig?.ttsMediaType),
-      ttsStreamingMode: globalConfig?.ttsStreamingMode !== false,
     });
   }
 
@@ -176,8 +170,6 @@ export class StateBusService {
       else if (op.path === 'config.apiKey' && typeof op.value === 'string') nextConfig = { ...nextConfig, apiKey: op.value };
       else if (op.path === 'config.baseURL' && typeof op.value === 'string') nextConfig = { ...nextConfig, baseURL: op.value };
       else if (op.path === 'config.displayLang' && typeof op.value === 'string') nextConfig = { ...nextConfig, displayLang: normalizeDisplayLang(op.value) };
-      else if (op.path === 'config.ttsMediaType' && typeof op.value === 'string') nextConfig = { ...nextConfig, ttsMediaType: normalizeMediaType(op.value) };
-      else if (op.path === 'config.ttsStreamingMode') nextConfig = { ...nextConfig, ttsStreamingMode: Boolean(op.value) };
       else if (op.path === 'chat.request') this.chatRequest = op.value as ChatRequest;
       else if (op.path === 'chat.response') this.chatResponse = op.value as ChatResponse;
     }
@@ -236,8 +228,4 @@ export class StateBusService {
 
 const normalizeDisplayLang = (value: unknown): ChatConfig['displayLang'] => (
   value === 'en' || value === 'ja' || value === 'ko' ? value : 'zh'
-);
-
-const normalizeMediaType = (value: unknown): ChatConfig['ttsMediaType'] => (
-  value === 'ogg' || value === 'aac' ? value : 'wav'
 );

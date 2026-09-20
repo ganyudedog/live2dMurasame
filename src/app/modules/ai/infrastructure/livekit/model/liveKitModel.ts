@@ -28,6 +28,7 @@ export interface LiveKitSessionCreatePayload {
   capabilities?: {
     livekit?: boolean;
     audioDownlink?: boolean;
+    transportMode?: 'loopback' | 'network';
   };
 }
 
@@ -37,6 +38,7 @@ export interface LiveKitSessionCreatePayloadServer {
   capabilities: {
     livekit: boolean;
     audio_downlink: boolean;
+    transport_mode: 'loopback' | 'network';
   };
 }
 
@@ -50,6 +52,7 @@ export interface LiveKitSessionCreateResponseServer {
     expires_in: number;
   };
   server_time: number;
+  transport_mode?: 'loopback' | 'network';
 }
 
 export interface LiveKitSessionCreateResponse {
@@ -62,6 +65,7 @@ export interface LiveKitSessionCreateResponse {
     expiresIn: number;
   };
   serverTime: number;
+  transportMode: 'loopback' | 'network';
 }
 
 export interface LiveKitModelSwitchPayload {
@@ -125,8 +129,6 @@ export interface LiveKitTtsSpeakPayload {
   topK: number;
   topP: number;
   temperature: number;
-  streamingMode: boolean;
-  mediaType: "wav" | "ogg" | "aac" | "raw";
 }
 
 export interface LiveKitTtsSpeakPayloadServer {
@@ -142,8 +144,6 @@ export interface LiveKitTtsSpeakPayloadServer {
   top_k: number;
   top_p: number;
   temperature: number;
-  streaming_mode: boolean;
-  media_type: "wav" | "ogg" | "aac" | "raw";
 }
 
 export interface LiveKitTtsSpeakRequest {
@@ -210,7 +210,9 @@ export interface LiveKitPlaybackFeedbackPayload {
   state: LiveKitPlaybackFeedbackState;
   bufferMs: number;
   lowWaterMs: number;
+  targetWaterMs?: number;
   highWaterMs: number;
+  transportMode?: 'loopback' | 'network';
   source?: string;
   latencyMs?: number;
   jitterMs?: number;
@@ -224,7 +226,9 @@ export interface LiveKitPlaybackFeedbackPayloadServer {
   state: LiveKitPlaybackFeedbackState;
   buffer_ms: number;
   low_water_ms: number;
+  target_water_ms?: number;
   high_water_ms: number;
+  transport_mode?: 'loopback' | 'network';
   source?: string;
   latency_ms?: number;
   jitter_ms?: number;

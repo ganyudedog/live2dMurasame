@@ -336,8 +336,6 @@ const createWarmupFingerprint = (config: ConfigService): string => {
     tts?.baseUrl,
     tts?.gptWeightsPath,
     tts?.sovitsWeightsPath,
-    config.globalModelConfig?.ttsMediaType,
-    config.globalModelConfig?.ttsStreamingMode,
   ]);
 };
 

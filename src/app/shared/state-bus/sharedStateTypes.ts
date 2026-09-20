@@ -36,8 +36,6 @@ export interface ChatConfig {
   apiKey: string;
   baseURL: string;
   displayLang: 'zh' | 'en' | 'ja' | 'ko';
-  ttsMediaType: 'wav' | 'ogg' | 'aac';
-  ttsStreamingMode: boolean;
 }
 
 export type SharedState = {
@@ -72,7 +70,6 @@ export type PatchOp = {
     | 'asr.error' | 'asr.throttled' | 'asr.lastUpdatedAt'
     // config（标量独立字段）
     | 'config.apiKey' | 'config.baseURL' | 'config.displayLang'
-    | 'config.ttsMediaType' | 'config.ttsStreamingMode'
     // chat 对象
     | 'chat.request' | 'chat.response';
   value: number | boolean | string | null | ChatRequest | ChatResponse;

@@ -18,10 +18,6 @@ declare global {
     apiKey?: string;
     baseURL?: string;
     displayLang?: 'zh' | 'en' | 'ja' | 'ko';
-    // 全局 TTS 输出格式
-    ttsMediaType?: 'wav' | 'ogg' | 'aac';
-    // 全局 TTS 流式开关
-    ttsStreamingMode?: boolean;
   }
 
   type PetGlobalModelConfig = PetGlobalModelConfigPayload;

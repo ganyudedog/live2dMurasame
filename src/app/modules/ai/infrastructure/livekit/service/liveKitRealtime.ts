@@ -19,6 +19,13 @@ import type {
   LiveKitSessionCreateResponseServer,
 } from '../model/liveKitModel';
 import { fromSessionCreateServer, normalizeBaseUrl, postRequest, toSessionCreateServer } from './liveKitService';
+import {
+  applyReceiverBufferingProfile,
+  detectTtsTransportMode,
+  resolveLiveKitTransportProfile,
+  type LiveKitTransportMode,
+  type LiveKitTransportProfile,
+} from './liveKitTransportAdapter';
 
 export type LiveKitV3EventEnvelopeServer<TPayload = unknown> = {
   type: string;
@@ -49,6 +56,7 @@ type RoomCache = {
   audioEl: HTMLAudioElement;
   attachedAudioTrackSid: string | null;
   attachedAudioTrack: RemoteTrack | null;
+  transportProfile: LiveKitTransportProfile;
   playbackEstimator: {
     trackSid: string | null;
     lastTickAt: number;
@@ -68,9 +76,6 @@ export type LiveKitPlaybackFeedbackSnapshot = LiveKitPlaybackFeedbackPayload & {
 };
 
 const DEFAULT_EVENT_TOPIC = 'v3.event';
-const DEFAULT_FEEDBACK_LOW_WATER_MS = 300;
-const DEFAULT_FEEDBACK_HIGH_WATER_MS = 900;
-
 const sessionByBaseUrl = new Map<string, SessionCache>();
 const roomByBaseUrl = new Map<string, RoomCache>();
 const connectPromiseByBaseUrl = new Map<string, Promise<RoomCache>>();
@@ -206,10 +211,12 @@ const classifyPlaybackState = (
   bufferMs: number,
   lowWaterMs: number,
   highWaterMs: number,
+  transportMode: LiveKitTransportMode,
 ): LiveKitPlaybackFeedbackState => {
   if (audioEl.ended) return 'draining';
   if (audioEl.paused && !audioEl.ended) return 'paused';
   if (bufferMs < 0) return 'unknown';
+  if (transportMode === 'loopback') return 'ok';
   if (bufferMs <= lowWaterMs) return 'low';
   if (bufferMs >= highWaterMs) return 'high';
   return 'ok';
@@ -219,8 +226,12 @@ const readPlaybackSnapshot = async (cache: RoomCache): Promise<LiveKitPlaybackFe
   const { audioEl } = cache;
   if (!audioEl) return null;
 
-  const lowWaterMs = DEFAULT_FEEDBACK_LOW_WATER_MS;
-  const highWaterMs = DEFAULT_FEEDBACK_HIGH_WATER_MS;
+  const {
+    mode: transportMode,
+    lowWaterMs,
+    targetWaterMs,
+    highWaterMs,
+  } = cache.transportProfile;
   const hasAudioTrack = Boolean(cache.attachedAudioTrackSid);
   if (!hasAudioTrack) return null;
 
@@ -295,10 +306,12 @@ const readPlaybackSnapshot = async (cache: RoomCache): Promise<LiveKitPlaybackFe
         : -1;
 
   const snapshot: LiveKitPlaybackFeedbackSnapshot = {
-    state: classifyPlaybackState(audioEl, resolvedBufferMs, lowWaterMs, highWaterMs),
+    state: classifyPlaybackState(audioEl, resolvedBufferMs, lowWaterMs, highWaterMs, transportMode),
     bufferMs: resolvedBufferMs,
     lowWaterMs,
+    targetWaterMs,
     highWaterMs,
+    transportMode,
     source: 'frontend',
     latencyMs: -1,
     jitterMs,
@@ -350,6 +363,7 @@ export const ensureLiveKitSession = async (
       capabilities: {
         livekit: true,
         audioDownlink: true,
+        transportMode: detectTtsTransportMode(key),
       },
     },
   );
@@ -431,6 +445,10 @@ const attachAudioTrack = (
     cache.attachedAudioTrack = track;
     resetPlaybackEstimator(cache);
     cache.playbackEstimator.trackSid = publication.trackSid;
+    applyReceiverBufferingProfile(
+      (track as RemoteTrack & { receiver?: RTCRtpReceiver }).receiver,
+      cache.transportProfile,
+    );
     track.attach(cache.audioEl);
     void cache.audioEl.play().catch(() => {
       // 浏览器/系统可能限制 autoplay；这里只记日志不抛错。
@@ -440,6 +458,7 @@ const attachAudioTrack = (
     info('livekit.realtime', 'audio.track.attached', {
       trackSid: publication.trackSid,
       participant: participant.identity,
+      transportMode: cache.transportProfile.mode,
     });
   } catch (e) {
     warn('livekit.realtime', 'audio.track.attachFailed', {
@@ -571,6 +590,7 @@ export const ensureLiveKitRoomConnected = async (
 
     const room = new Room();
     const audioEl = reuseAudioEl;
+    const transportProfile = resolveLiveKitTransportProfile(key, wsUrl, session.transportMode);
 
     const cache: RoomCache = {
       room,
@@ -582,6 +602,7 @@ export const ensureLiveKitRoomConnected = async (
       audioEl,
       attachedAudioTrackSid: null,
       attachedAudioTrack: null,
+      transportProfile,
       playbackEstimator: {
         trackSid: null,
         lastTickAt: 0,
@@ -624,6 +645,7 @@ export const ensureLiveKitRoomConnected = async (
       baseUrl: key,
       state: room.state,
       identity: room.localParticipant?.identity,
+      transportMode: transportProfile.mode,
     });
 
     roomByBaseUrl.set(key, cache);
@@ -686,7 +708,9 @@ export const publishLiveKitPlaybackFeedback = async (
       state: request.payload.state,
       buffer_ms: request.payload.bufferMs,
       low_water_ms: request.payload.lowWaterMs,
+      target_water_ms: request.payload.targetWaterMs,
       high_water_ms: request.payload.highWaterMs,
+      transport_mode: request.payload.transportMode,
       source: request.payload.source ?? 'frontend',
       latency_ms: request.payload.latencyMs ?? -1,
       jitter_ms: request.payload.jitterMs ?? -1,
@@ -723,6 +747,7 @@ export const subscribeLiveKitV3Events = (baseUrl: string, handler: LiveKitV3Even
     audioEl: ensureHiddenAudioElement(key),
     attachedAudioTrackSid: null,
     attachedAudioTrack: null,
+    transportProfile: resolveLiveKitTransportProfile(key, '', 'network'),
     playbackEstimator: {
       trackSid: null,
       lastTickAt: 0,

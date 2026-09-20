@@ -3,7 +3,6 @@ export { createFrontendTtsRuntime, FrontendTtsRuntime } from './runtime';
 export { TtsStreamPlayer } from './streamPlayer';
 export type {
   QwenTtsTriggerInput,
-  TtsMediaType,
   TtsPlaybackOptions,
   TtsPlaybackResult,
   TtsRunResult,

@@ -197,8 +197,6 @@ export class ControlPanelService {
     }, 250);
     this.log.debug('controlPanel.service', 'aiSettings.changed', {
       displayLang: next.displayLang,
-      ttsMediaType: next.ttsMediaType,
-      ttsStreamingMode: next.ttsStreamingMode,
     });
   }
 
@@ -388,8 +386,6 @@ export class ControlPanelService {
         apiKey: current.apiKey,
         baseURL: current.baseURL,
         displayLang: current.displayLang,
-        ttsMediaType: current.ttsMediaType,
-        ttsStreamingMode: current.ttsStreamingMode,
       });
       runInAction(() => {
         this.aiSettingsPending = false;
@@ -471,8 +467,6 @@ const toChatConfig = (config: PetGlobalModelConfig | null): ChatConfig => ({
   displayLang: config?.displayLang === 'en' || config?.displayLang === 'ja' || config?.displayLang === 'ko'
     ? config.displayLang
     : 'zh',
-  ttsMediaType: config?.ttsMediaType === 'ogg' || config?.ttsMediaType === 'aac' ? config.ttsMediaType : 'wav',
-  ttsStreamingMode: config?.ttsStreamingMode !== false,
 });
 
 const buildRagConfig = (persisted: unknown, defaults: ModelConfig['rag']): ModelConfig['rag'] => {

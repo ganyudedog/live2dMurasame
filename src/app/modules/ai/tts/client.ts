@@ -22,6 +22,7 @@ import type {
 import type { TtsCancelRequest, TtsSynthesisRequest } from './types';
 import toast from 'react-hot-toast';
 import { info, warn } from '@app/shared/logging/compat';
+import { detectTtsTransportMode } from '@app/modules/ai/infrastructure/livekit/service/liveKitTransportAdapter';
 
 type V3RuntimeState = {
   sessionId: string;
@@ -53,28 +54,6 @@ const clampNumber = (value: unknown, fallback: number, min: number, max: number)
 
 const clampInteger = (value: unknown, fallback: number, min: number, max: number): number => {
   return Math.round(clampNumber(value, fallback, min, max));
-};
-
-const normalizeTransport = (
-  mediaType: unknown,
-  streamingMode: unknown,
-): { mediaType: 'wav' | 'ogg' | 'aac'; streamingMode: boolean } => {
-  const normalizedMediaType = mediaType === 'ogg' || mediaType === 'aac' ? mediaType : 'wav';
-  const normalizedStreamingMode = streamingMode !== false;
-
-  // GPT-SoVITS 在 wav + streaming_mode 下通常返回 chunked wav 片段，浏览器端难以稳定直接播放。
-  // 这里在不改 Python 的前提下做兼容：wav 强制走非流式，确保最终可播放。
-  if (normalizedMediaType === 'wav' && normalizedStreamingMode) {
-    return {
-      mediaType: normalizedMediaType,
-      streamingMode: false,
-    };
-  }
-
-  return {
-    mediaType: normalizedMediaType,
-    streamingMode: normalizedStreamingMode,
-  };
 };
 
 // 映射到python该字段的定义
@@ -153,6 +132,7 @@ const ensureSession = async (baseUrl: string, signal?: AbortSignal): Promise<str
       capabilities: {
         livekit: true,
         audioDownlink: true,
+        transportMode: detectTtsTransportMode(baseUrl),
       },
     },
     signal,
@@ -403,7 +383,6 @@ const buildTtsPayload = (
   sessionId: string,
   config: TtsSynthesisRequest['config'],
 ) => {
-  const transport = normalizeTransport(config.mediaType, config.streamingMode);
   const request: LiveKitTtsSpeakRequest = {
     sessionId,
     requestId,
@@ -421,15 +400,13 @@ const buildTtsPayload = (
       topK: clampInteger(config.topK, 20, 1, 100),
       topP: clampNumber(config.topP, 0.8, 0, 1),
       temperature: clampNumber(config.temperature, 0.5, 0, 1),
-      streamingMode: transport.streamingMode,
-      mediaType: transport.mediaType,
     },
   };
 
   return toTtsSpeakServer(request);
 };
 
-// 语音合成接口，返回原始 Response 以支持流式处理与多种媒体类型。
+// 主链路固定由 LiveKit/WebRTC 传输 Opus，HTTP 回退固定为 Ogg/Opus。
 export const requestTtsSynthesis = async ({
   requestId,
   speakText,

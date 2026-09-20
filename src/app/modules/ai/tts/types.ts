@@ -1,5 +1,3 @@
-export type TtsMediaType = 'wav' | 'ogg' | 'aac';
-
 export interface TtsRuntimeConfig {
   enabled: boolean;
   baseUrl: string;
@@ -16,8 +14,6 @@ export interface TtsRuntimeConfig {
   topK: number;
   topP: number;
   temperature: number;
-  mediaType: TtsMediaType;
-  streamingMode: boolean;
 }
 
 export interface QwenTtsTriggerInput {
@@ -45,8 +41,6 @@ export interface TtsCancelRequest {
 
 export interface TtsPlaybackOptions {
   requestId: string;
-  preferredMediaType: TtsMediaType;
-  streamingMode: boolean;
   signal?: AbortSignal;
   onChunk?: (receivedBytes: number) => void;
 }

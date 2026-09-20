@@ -1,5 +1,7 @@
 import toast from 'react-hot-toast';
-import type { TtsMediaType, TtsPlaybackOptions, TtsPlaybackResult } from './types';
+import type { TtsPlaybackOptions, TtsPlaybackResult } from './types';
+
+const OGG_OPUS_MIME = 'audio/ogg; codecs=opus';
 
 const isAbortError = (error: unknown): boolean => {
   if (error instanceof DOMException && error.name === 'AbortError') return true;
@@ -7,12 +9,6 @@ const isAbortError = (error: unknown): boolean => {
 };
 
 const trimText = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
-
-const mapMediaTypeToMime = (mediaType: TtsMediaType): string => {
-  if (mediaType === 'ogg') return 'audio/ogg';
-  if (mediaType === 'aac') return 'audio/aac';
-  return 'audio/wav';
-};
 
 const parseMimeFromContentType = (contentType: string | null): string | null => {
   if (!contentType) return null;
@@ -38,7 +34,7 @@ const decodeBase64ToBlob = (base64: string, mimeType: string): Blob => {
   return new Blob([bytes], { type: mimeType });
 };
 
-const pickMimeCandidates = (contentType: string | null, preferred: TtsMediaType): string[] => {
+const pickMimeCandidates = (contentType: string | null): string[] => {
   const candidates: string[] = [];
   const parsed = parseMimeFromContentType(contentType);
   if (parsed) {
@@ -46,20 +42,14 @@ const pickMimeCandidates = (contentType: string | null, preferred: TtsMediaType)
     if (parsed === 'audio/x-wav') candidates.push('audio/wav');
   }
 
-  if (preferred === 'ogg') {
-    candidates.push('audio/ogg; codecs=opus', 'audio/ogg');
-  } else if (preferred === 'aac') {
-    candidates.push('audio/mp4; codecs="mp4a.40.2"', 'audio/aac');
-  } else {
-    candidates.push('audio/wav', 'audio/wave', 'audio/x-wav', 'audio/mpeg');
-  }
+  candidates.push(OGG_OPUS_MIME, 'audio/ogg');
 
   return Array.from(new Set(candidates));
 };
 
-const selectMediaSourceMime = (contentType: string | null, preferred: TtsMediaType): string | null => {
+const selectMediaSourceMime = (contentType: string | null): string | null => {
   if (typeof MediaSource === 'undefined' || typeof MediaSource.isTypeSupported !== 'function') return null;
-  const candidates = pickMimeCandidates(contentType, preferred);
+  const candidates = pickMimeCandidates(contentType);
   for (const item of candidates) {
     if (MediaSource.isTypeSupported(item)) return item;
   }
@@ -121,9 +111,7 @@ export class TtsStreamPlayer {
       return this.playJsonResponse(response, options, mimeType);
     }
 
-    const streamMime = options.streamingMode
-      ? selectMediaSourceMime(contentType, options.preferredMediaType)
-      : null;
+    const streamMime = selectMediaSourceMime(contentType);
 
     if (streamMime && response.body) {
       const fallbackResponse = response.clone();
@@ -134,12 +122,12 @@ export class TtsStreamPlayer {
         return this.playBuffered(
           fallbackResponse,
           options,
-          mimeType ?? mapMediaTypeToMime(options.preferredMediaType),
+          mimeType ?? OGG_OPUS_MIME,
         );
       }
     }
 
-    return this.playBuffered(response, options, mimeType ?? mapMediaTypeToMime(options.preferredMediaType));
+    return this.playBuffered(response, options, mimeType ?? OGG_OPUS_MIME);
   }
 
   private async playJsonResponse(
@@ -168,7 +156,7 @@ export class TtsStreamPlayer {
     const mimeType = trimText((payload as { mime_type?: unknown; mimeType?: unknown }).mime_type)
       || trimText((payload as { mime_type?: unknown; mimeType?: unknown }).mimeType)
       || defaultMimeType
-      || mapMediaTypeToMime(options.preferredMediaType);
+      || OGG_OPUS_MIME;
 
     const blob = decodeBase64ToBlob(audioBase64, mimeType);
     await this.playByBlob(blob, options.signal);

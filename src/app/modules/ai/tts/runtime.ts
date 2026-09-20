@@ -21,11 +21,6 @@ const normalizeText = (value: unknown): string => {
   return value.trim();
 };
 
-const normalizeMediaType = (value: unknown): 'wav' | 'ogg' | 'aac' => {
-  if (value === 'ogg' || value === 'aac') return value;
-  return 'wav';
-};
-
 const normalizeTextSplitMode = (value: unknown): string => {
   const normalized = normalizeText(value).toLowerCase();
   if (!normalized) return 'cut5';
@@ -40,12 +35,8 @@ const normalizeTextSplitMode = (value: unknown): string => {
   return 'cut5';
 };
 
-const normalizeTtsConfig = (raw: unknown, globalRaw: unknown): TtsRuntimeConfig => {
+const normalizeTtsConfig = (raw: unknown): TtsRuntimeConfig => {
   const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  const globalSource = globalRaw && typeof globalRaw === 'object' ? (globalRaw as Record<string, unknown>) : {};
-
-  const globalMediaType = normalizeMediaType(globalSource.ttsMediaType);
-  const globalStreamingMode = globalSource.ttsStreamingMode !== false;
 
   return {
     enabled: Boolean(source.enabled),
@@ -63,8 +54,6 @@ const normalizeTtsConfig = (raw: unknown, globalRaw: unknown): TtsRuntimeConfig 
     topK: clampInteger(source.topK, 20, 1, 100),
     topP: clampNumber(source.topP, 0.8, 0, 1),
     temperature: clampNumber(source.temperature, 0.5, 0, 1),
-    mediaType: globalMediaType,
-    streamingMode: globalStreamingMode,
   };
 };
 
@@ -242,7 +231,7 @@ export class FrontendTtsRuntime {
     }
 
     const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
-    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts, snapshot?.globalModelConfig);
+    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
 
     if (!ttsConfig.enabled) {
       return {
@@ -295,7 +284,7 @@ export class FrontendTtsRuntime {
     const requestId = this.activeRequestId;
     if (requestId) {
       const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
-      const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts, snapshot?.globalModelConfig);
+      const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
       if (ttsConfig.baseUrl) {
         void cancelTtsSynthesis({
           requestId,
@@ -346,7 +335,7 @@ export class FrontendTtsRuntime {
     }
 
     const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
-    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts, snapshot?.globalModelConfig);
+    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
 
     if (!ttsConfig.enabled) {
       info('ai.tts', 'request.skip.disabled', {
@@ -372,8 +361,6 @@ export class FrontendTtsRuntime {
     const controller = new AbortController();
     this.activeAbortController = controller;
     this.activeRequestId = requestId;
-    const effectiveStreamingMode = ttsConfig.mediaType === 'wav' ? false : ttsConfig.streamingMode;
-
     const session = await ensureLiveKitSession(
       ttsConfig.baseUrl,
       {
@@ -394,9 +381,8 @@ export class FrontendTtsRuntime {
       requestId,
       textLength: speakText.length,
       displayLength: normalizeText(input.displayText).length,
-      streamRequested: ttsConfig.streamingMode,
-      streamEffective: effectiveStreamingMode,
-      mediaType: ttsConfig.mediaType,
+      transport: 'livekit-opus',
+      streaming: true,
       textLang: ttsConfig.textLang,
       promptLang: ttsConfig.promptLang,
     });
@@ -435,8 +421,6 @@ export class FrontendTtsRuntime {
 
       const playbackResult = await this.player.playResponse(response, {
         requestId,
-        preferredMediaType: ttsConfig.mediaType,
-        streamingMode: effectiveStreamingMode,
         signal: controller.signal,
         onChunk: (receivedBytes) => {
           if (firstChunkLogged) return;

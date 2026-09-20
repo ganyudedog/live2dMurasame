@@ -90,14 +90,10 @@ const ControlPanel: React.FC = observer(() => {
           apiBaseUrl={service.aiSettings.baseURL}
           apiKey={service.aiSettings.apiKey}
           displayLang={service.aiSettings.displayLang}
-          ttsMediaType={service.aiSettings.ttsMediaType}
-          ttsStreamingMode={service.aiSettings.ttsStreamingMode}
           onChange={(next) => service.setAiSettings({
             apiKey: next.apiKey,
             baseURL: next.apiBaseUrl,
             displayLang: next.displayLang,
-            ttsMediaType: next.ttsMediaType,
-            ttsStreamingMode: next.ttsStreamingMode,
           })}
         />
       )}

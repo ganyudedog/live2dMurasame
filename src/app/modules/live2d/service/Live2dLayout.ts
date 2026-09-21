@@ -45,9 +45,7 @@ export class Live2dLayout {
   private readOrigin: (() => SurfaceObservation) | null = null;
   private anchor: { x: number; y: number } | null = null;
   private dragging = false;
-  // Keep Pixi's backing buffer stable. Native/CSS viewport changes must not
-  // trigger Live2D's sensitive viewport recalculation during scale gestures.
-  private fixedRenderSize: { width: number; height: number } | null = null;
+  // Pixi follows the native content viewport for the experimental dynamic path.
 
   private traceFrame = 0;
   private traceUntil = 0;
@@ -144,13 +142,6 @@ export class Live2dLayout {
     this.readOrigin = readOrigin;
     this.visualScaleTarget = this.scale;
     this.visualKey = "";
-    this.fixedRenderSize = {
-      width: Math.max(app.renderer.screen.width, 1200),
-      height: Math.max(app.renderer.screen.height, 1600),
-    };
-    app.renderer.resize(this.fixedRenderSize.width, this.fixedRenderSize.height);
-    const fixedView = app.view as HTMLCanvasElement | undefined;
-    if (fixedView) fixedView.style.transformOrigin = 'top left';
     const native = this.ports.geometry()?.contentBounds;
     const origin = readOrigin();
     this.anchor = {
@@ -208,7 +199,6 @@ export class Live2dLayout {
     this.trace('beforeCommit');
     const app = this.app, model = this.model, metrics = this.metrics;
     if (!app || !model || !metrics || !this.readOrigin || this.dragging) return;
-    this.commitVisual();
     if (this.phase === 'rendering') return;
     if (this.phase === 'idle') {
       if (!this.dirty) return;
@@ -253,46 +243,42 @@ export class Live2dLayout {
     if (!geometry) return;
     // Native acknowledgement completes only the window transaction. Never
     // restore its older scale over the latest visual input.
+    this.visualKey = '';
+    this.commitVisual(geometry, transaction.target, transaction.scale);
     const applied = geometry.contentBounds;
     const presentation = placeInViewport(transaction.target, applied.width, applied.height, applied.width / 2);
     this.emitRevisionTimeline(transaction, presentation);
     this.phase = 'rendering';
   };
 
-  private commitVisual(): void {
+  private commitVisual(
+    geometryOverride?: PetWindowGeometry,
+    targetOverride?: ThreeRectLayout,
+    scaleOverride?: number,
+  ): void {
     const app = this.app, model = this.model, metrics = this.metrics;
-    const fixed = this.fixedRenderSize, geometry = this.ports.geometry();
-    if (!app || !model || !metrics || !fixed || !geometry) return;
+    const geometry = geometryOverride ?? this.ports.geometry();
+    if (!app || !model || !metrics || !geometry) return;
     const native = geometry.contentBounds;
-    const scale = this.visualScaleTarget;
+    const scale = scaleOverride ?? this.visualScaleTarget;
     const key = [scale, this.sideWidth, native.x, native.y, native.width, native.height, this.debugEnabled].join(':');
     if (key === this.visualKey) return;
     this.visualKey = key;
     const baseScale = this.referenceHeight * 0.95 / metrics.height;
-    const target = calculateLive2dLayout({ baseWidth: metrics.width * baseScale,
+    const target = targetOverride ?? calculateLive2dLayout({ baseWidth: metrics.width * baseScale,
       baseHeight: metrics.height * baseScale, scale, sideWidth: this.sideWidth });
     // Visual layout comes from the same scale formula as Main, never from
     // delayed native dimensions. The red line moves with this local center.
     const presentation = target;
-    const pivotX = fixed.width / 2, pivotY = fixed.height - 40;
-    const view = app.view as HTMLCanvasElement;
-    // One uniform CSS transform maps the fixed internal model to DIP space.
-    // All visual writes occur together on this ticker, before native scheduling.
-    view.style.width = fixed.width + 'px';
-    view.style.height = fixed.height + 'px';
-    view.style.position = 'absolute';
-    view.style.left = '0';
-    view.style.top = '0';
-    view.style.transformOrigin = '0 0';
-    view.style.transform = 'translate(' + (presentation.centerX - pivotX * scale) + 'px, ' +
-      (presentation.bottomY - pivotY * scale) + 'px) scale(' + scale + ')';
-    model.scale.set(baseScale);
+    const pivotX = native.width / 2, pivotY = native.height;
+    app.renderer.resize(native.width, native.height);
+    model.scale.set(baseScale * scale);
     model.pivot.set(metrics.x + metrics.width / 2, metrics.y + metrics.height);
-    model.position.set(pivotX, pivotY);
+    model.position.set(presentation.centerX, presentation.bottomY);
     model.visible = true;
     this.guide?.clear().lineStyle(1 / scale, 0xff3333, 1)
-      .moveTo(pivotX, Math.max(0, pivotY - presentation.bottomY / scale))
-      .lineTo(pivotX, fixed.height);
+      .moveTo(pivotX, Math.max(0, pivotY - presentation.bottomY))
+      .lineTo(pivotX, native.height);
     if (this.guide) this.guide.visible = this.debugEnabled;
     const snapshot = { geometry, target, presentation, scale,
       modelScale: baseScale * scale, modelBounds: metrics, revision: this.sequence };
@@ -300,8 +286,8 @@ export class Live2dLayout {
     this.afterPaint?.(snapshot);
     this.ports.log.debug('live2d.layout', 'visual.committed', {
       scale, activeRevision: this.active?.revision,
-      frame: this.traceFrame, width: fixed.width, height: fixed.height,
-      cssScale: scale, nativeWidth: native.width, nativeHeight: native.height,
+      frame: this.traceFrame, width: native.width, height: native.height,
+      cssScale: 1, nativeWidth: native.width, nativeHeight: native.height,
     });
   }
 

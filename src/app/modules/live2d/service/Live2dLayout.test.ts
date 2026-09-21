@@ -35,6 +35,7 @@ function harness() {
   };
   let tick = () => {};
   const app = {
+    view: { style: {} },
     ticker: { add: vi.fn((fn: () => void) => { tick = fn; }), remove: vi.fn() },
     stage: { addChild: vi.fn() },
     renderer: { on: vi.fn(), off: vi.fn(), screen: { width: 500, height: 900 }, resize(w: number, h: number) {

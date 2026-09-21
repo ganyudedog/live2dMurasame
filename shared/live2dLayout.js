@@ -15,11 +15,11 @@ export function calculateLive2dLayout({ baseWidth, baseHeight, scale, sideWidth 
   const side = calculateSideWidth(sideWidth, scale);
   // Even widths prevent alternating half-DIP centers when the native x is rounded.
   const width = 2 * Math.ceil((modelWidth + 2 * side) / 2);
-  const height = Math.ceil(modelHeight + 40);
+  const height = Math.ceil(modelHeight);
   const left = (width - modelWidth) / 2;
   return {
-    width, height, centerX: width / 2, bottomY: height - 40,
-    model: { x: left, y: height - 40 - modelHeight, width: modelWidth, height: modelHeight },
+    width, height, centerX: width / 2, bottomY: height,
+    model: { x: left, y: height - modelHeight, width: modelWidth, height: modelHeight },
     left: { x: left - side, y: 0, width: side, height },
     right: { x: left + modelWidth, y: 0, width: side, height },
   };

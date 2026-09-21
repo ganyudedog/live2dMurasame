@@ -13,6 +13,8 @@ describe('shared three-rectangle layout', () => {
       expect(layout.right.x + layout.right.width).toBeLessThanOrEqual(layout.width);
       expect(layout.model.y).toBeGreaterThanOrEqual(0);
       expect(layout.model.y + layout.model.height).toBe(layout.bottomY);
+      expect(layout.bottomY).toBe(layout.height);
+      expect(layout.height - layout.model.height).toBeLessThan(1);
       expect(layout.centerX).toBe(layout.width / 2);
       expect(layout.width % 2).toBe(0);
     }

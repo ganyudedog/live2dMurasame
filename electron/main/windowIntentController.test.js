@@ -17,7 +17,7 @@ beforeEach(() => {
   win = {
     isDestroyed: () => false,
     getBounds: () => ({ ...rect }), getContentBounds: () => ({ ...rect }),
-    setContentBounds: vi.fn((next) => { rect = { ...next }; }),
+    setContentSize: vi.fn((width, height) => { rect = { ...rect, width, height }; }),
     webContents: { send: vi.fn() },
   };
   controller = createWindowIntentController({ getMainWindow: () => win });
@@ -51,19 +51,19 @@ describe('numeric window layout', () => {
   it('ignores an old version without waiting for any native acknowledgement', () => {
     controller.handleWindowIntent(intent(1.2, 9));
     expect(controller.handleWindowIntent(intent(0.3, 8)).status).toBe('superseded');
-    expect(win.setContentBounds).toHaveBeenCalledTimes(1);
+    expect(win.setContentSize).toHaveBeenCalledTimes(1);
   });
   it('does not react to native resize observations by issuing more resizes', () => {
     controller.handleWindowIntent(intent(1, 1));
     rect.x += 12; rect.width += 2;
     controller.scheduleEmitMainWindowBounds('resize');
-    expect(win.setContentBounds).toHaveBeenCalledTimes(1);
+    expect(win.setContentSize).toHaveBeenCalledTimes(1);
   });
   it('applies only the newest drag-time scale at the final desktop anchor', () => {
     controller.setNativeDragSession({ active: true });
     controller.handleWindowIntent(intent(1.2, 1));
     controller.handleWindowIntent(intent(0.5, 2));
-    expect(win.setContentBounds).not.toHaveBeenCalled();
+    expect(win.setContentSize).not.toHaveBeenCalled();
     rect.x = 300; rect.y = 80;
     controller.setNativeDragSession({ active: false });
     expect(rect.x + rect.width / 2).toBe(550);
@@ -77,6 +77,6 @@ describe('numeric window layout', () => {
   it('rejects invalid input before a native write', () => {
     const bad = intent(1, 1); bad.payload.layout.baseHeight = NaN;
     expect(controller.handleWindowIntent(bad).status).toBe('rejected');
-    expect(win.setContentBounds).not.toHaveBeenCalled();
+    expect(win.setContentSize).not.toHaveBeenCalled();
   });
 });

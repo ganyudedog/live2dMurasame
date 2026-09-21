@@ -9,5 +9,5 @@ it('keeps guide, model and side zones at the anchor even in a narrow viewport', 
   expect(actual.model.x + actual.model.width / 2).toBe(actual.centerX);
   expect(actual.left.x + actual.left.width).toBe(actual.model.x);
   expect(actual.right.x).toBe(actual.model.x + actual.model.width);
-  expect(actual.model.y + actual.model.height).toBe(860);
+  expect(actual.model.y + actual.model.height).toBe(900);
 });

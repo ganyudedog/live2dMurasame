@@ -8,8 +8,8 @@ export function placeInViewport(target: ThreeRectLayout, width: number, height: 
   // A narrow transitional viewport may clip, but must not push the scale anchor
   // sideways and then move it back when the native window catches up.
   const centerX = Number.isFinite(center) ? center : width / 2;
-  const model = { ...target.model, x: centerX - half, y: height - 40 - target.model.height };
-  return { width, height, centerX, bottomY: height - 40, model,
+  const model = { ...target.model, x: centerX - half, y: height - target.model.height };
+  return { width, height, centerX, bottomY: height, model,
     left: { ...target.left, x: model.x - target.left.width, height },
     right: { ...target.right, x: model.x + model.width, height } };
 }

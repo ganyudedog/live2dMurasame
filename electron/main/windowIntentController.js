@@ -67,7 +67,8 @@ export const createWindowIntentController = ({ getMainWindow }) => {
     const win = getMainWindow();
     if (!win || win.isDestroyed()) return;
     if (!anchor) captureAnchor(win);
-    const current = win.getContentBounds();
+    const currentGeometry = readGeometry(win);
+    const current = currentGeometry.contentBounds;
     const rect = {
       x: current.x,
       y: current.y,
@@ -78,8 +79,7 @@ export const createWindowIntentController = ({ getMainWindow }) => {
     if (rect.width !== current.width || rect.height !== current.height) {
       trace('setContentSize.begin', { target: rect });
       await resizeWindowAroundCenter(win, rect.width, rect.height);
-      const applied = win.getContentBounds();
-      trace('setContentSize.return', { applied, originDeltaX: applied.x - current.x, originDeltaY: applied.y - current.y });
+      trace('setContentSize.return', { predicted: rect, originDeltaX: 0, originDeltaY: 0 });
     }
     // API return is only a native observation, never a presented-frame ACK.
     trace('afterSetContentSize', { applySource: source, applyRevision: revision });
@@ -89,6 +89,11 @@ export const createWindowIntentController = ({ getMainWindow }) => {
       window: { nextX: rect.x, nextY: rect.y, nextWidth: rect.width, nextHeight: rect.height },
       layout: { kind: 'three-rect', revision },
     });
+    return {
+      ...currentGeometry,
+      bounds: { ...currentGeometry.bounds, width: rect.width, height: rect.height },
+      contentBounds: { ...rect },
+    };
   };
 
   const handleWindowIntent = async (intent = {}) => {
@@ -114,13 +119,14 @@ export const createWindowIntentController = ({ getMainWindow }) => {
       const update = { target, revision, source: intent.source, preserveHeight: intent.payload.preserveHeight === true };
       // Resize also moves the native window around its anchor. During a gesture
       // retain only the latest scale, then apply it at the final native anchor.
+      let appliedGeometry;
       if (dragging) pending = update;
       else {
         applyChain = applyChain.then(() => apply(update));
-        await applyChain;
+        appliedGeometry = await applyChain;
       }
       return { ...ack('applied', dragging ? 'deferred-drag' : 'submitted'),
-        appliedGeometry: dragging ? undefined : readGeometry(win) };
+        appliedGeometry: dragging ? undefined : appliedGeometry };
     } catch (error) {
       logDebugTrace({
         kind: 'windowIntent', profile: 'singleWriter', level: 'error',

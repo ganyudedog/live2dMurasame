@@ -1,4 +1,4 @@
-import { info } from '@app/shared/logging/compat';
+import type { LogService } from '@app/shared/logging/LogService';
 
 export type AsrSharedBufferInfo = {
   headerBuffer: SharedArrayBuffer;
@@ -17,6 +17,10 @@ export type AsrAudioCaptureStartOptions = {
 };
 
 type StartOptions = AsrAudioCaptureStartOptions;
+
+export type AsrAudioCaptureLogger = {
+  log: LogService;
+};
 
 type CaptureStatus = {
   running: boolean;
@@ -71,7 +75,7 @@ const downsampleToTargetRate = (samples: Float32Array, sourceSampleRate: number,
 };
 
 
-export const createAsrAudioCaptureController = (initialOptions: StartOptions = {}) => {
+export const createAsrAudioCaptureController = (logger: AsrAudioCaptureLogger, initialOptions: StartOptions = {}) => {
   const defaultTargetSampleRate = initialOptions.targetSampleRate ?? DEFAULT_TARGET_SAMPLE_RATE;
 
   let audioContext: AudioContext | null = null;
@@ -112,7 +116,13 @@ export const createAsrAudioCaptureController = (initialOptions: StartOptions = {
       workletModuleUrl = null;
     }
 
-    info('pet.asr.audio', 'capture.stop', { transport });
+    const context = logger.log.contextRegistry.register('AsrAudioCapture', {
+      relation: 'capture',
+      params: { transport },
+      behavior: '停止浏览器音频采集并释放 AudioContext',
+    });
+    context.beginTrace('stop').end({ running: false, transport: 'idle' });
+    context.dispose();
     return { running: false, transport: 'idle' as const };
   };
 
@@ -128,11 +138,17 @@ export const createAsrAudioCaptureController = (initialOptions: StartOptions = {
       throw new Error('当前环境不支持麦克风采集');
     }
 
-    info('pet.asr.audio', 'capture.start', {
+    const context = logger.log.contextRegistry.register('AsrAudioCapture', {
+      relation: 'capture',
+      params: { transport: 'fallback', targetSampleRate },
+      behavior: '启动麦克风采集并把音频发送到 ASR 后端',
+    });
+    const trace = context.beginTrace('start', {
       transport: 'fallback',
       targetSampleRate,
     });
 
+    try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -172,8 +188,14 @@ export const createAsrAudioCaptureController = (initialOptions: StartOptions = {
 
     running = true;
     transport = 'fallback';
-    info('pet.asr.audio', 'capture.ready', { transport });
+    trace.end({ transport });
+    context.dispose();
     return { running: true, transport };
+    } catch (error) {
+      trace.fail('麦克风采集启动失败', { transport, targetSampleRate }, error);
+      context.dispose();
+      throw error;
+    }
   };
 
 

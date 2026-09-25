@@ -1,4 +1,4 @@
-import { info, warn } from '@app/shared/logging/compat';
+import type { TraceScope } from '@app/shared/logging/LogService';
 import { requestStage2LLM } from '../llm/client';
 import { parseStage2Reply, parseStage2StreamPreview, parseSentenceStreamPreview, type ParsedSentence } from '../llm/parse';
 import { buildRollingSummary } from '../memory/rollingSummary';
@@ -7,6 +7,7 @@ import type { ActionCapability, ActionDispatchResult, ActionIntentInput } from '
 import type { Stage2AskResult, Stage2LLMConfig } from '../types/llm';
 
 interface Stage2AskOptions {
+  trace: TraceScope;
   model?: string;
   temperature?: number;
   apiKey?: string;
@@ -186,7 +187,7 @@ export class Stage2Runtime {
     };
   }
 
-  async ask(userText: string, options: Stage2AskOptions = {}): Promise<Stage2AskResult> {
+  async ask(userText: string, options: Stage2AskOptions): Promise<Stage2AskResult> {
     const cleanText = String(userText ?? '').trim();
     if (!cleanText) {
       return { ok: false, error: '请输入有效文本' };
@@ -220,7 +221,7 @@ export class Stage2Runtime {
           onStreamDelta: ({ deltaText, aggregateText }) => {
             if (firstDeltaLatencyMs < 0 && String(deltaText).trim()) {
               firstDeltaLatencyMs = Math.round(performance.now() - start);
-              info('ai.stage2', 'ask.stream.firstDelta', {
+              options.trace.record('ask.stream.firstDelta', {
                 latencyMs: firstDeltaLatencyMs,
               });
             }
@@ -265,7 +266,7 @@ export class Stage2Runtime {
 
       await this.persistConversationMemory(ragRuntime, cleanText, displayText);
 
-      info('ai.stage2', 'ask.ok', {
+      options.trace.record('ask.ok', {
         model: reply.meta.model,
         latencyMs: reply.meta.latency_ms,
         firstDeltaMs: firstDeltaLatencyMs >= 0 ? firstDeltaLatencyMs : undefined,
@@ -291,7 +292,7 @@ export class Stage2Runtime {
       };
     } catch (e) {
       const message = String(e instanceof Error ? e.message : e);
-      warn('ai.stage2', 'ask.failed', { err: message });
+      options.trace.record('ask.failed', { err: message });
       return {
         ok: false,
         error: message,
@@ -336,8 +337,8 @@ export class Stage2Runtime {
         modelPath,
         memoryState,
       };
-    } catch (e) {
-      warn('ai.stage3', 'rag.resolve.failed', { err: String(e) });
+    } catch {
+      // The owning Stage2 trace records the failure at the request boundary.
       return { contextText: '', chunkCount: 0, modelPath: null, memoryState: null };
     }
   }
@@ -408,8 +409,8 @@ export class Stage2Runtime {
           : (ragRuntime.memoryState?.summary ?? null),
         meta: nextMeta,
       };
-    } catch (error) {
-      warn('ai.stage3', 'memory.persist.failed', { err: String(error) });
+    } catch {
+      // Memory persistence is best effort; the owning request records its result.
     }
   }
 
@@ -426,7 +427,7 @@ export class Stage2Runtime {
     const result = await window.AIAPI?.readRagTextFile?.({ knowledgeBasePath, modelPath }) as RagTextFileResult | undefined;
     if (!result?.ok || !result.content) {
       if (result?.error) {
-        warn('ai.stage3', 'rag.file.readFailed', { path: result.path ?? knowledgeBasePath, err: result.error });
+        // RAG read failures are returned as an empty context and recorded by the request trace.
       }
       return '';
     }

@@ -1,6 +1,6 @@
 import { Graphics, UPDATE_PRIORITY, type Application } from 'pixi.js';
 import type { Live2DModel } from '../runtime/live2d/runtime';
-import type { LogService } from '@app/shared/logging/LogService';
+import type { ContextRegistration, LogService, TraceScope } from '@app/shared/logging/LogService';
 import { calculateLive2dLayout, PET_WINDOW_BASE_CONTENT_HEIGHT, type ThreeRectLayout } from '../../../../../shared/live2dLayout.js';
 import { placeInViewport } from '../domain/placeInViewport';
 
@@ -51,6 +51,8 @@ export class Live2dLayout {
   private traceUntil = 0;
   private traceRows: string[] = [];
   private traceTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly scaleContext?: ContextRegistration;
+  private activeTrace: TraceScope | null = null;
 
   // Samples are serialized immediately: DevTools must not show a later mutable
   // object. Batch output avoids a console stack and mirror IPC on every frame.
@@ -84,7 +86,7 @@ export class Live2dLayout {
     this.traceTimer = null;
     if (!this.traceRows.length) return;
     const rows = this.traceRows.splice(0);
-    this.ports.log.info('live2d.layout', 'frames', {
+    this.activeTrace?.record('render.frames', {
       instanceId: this.instanceId, rows,
       measurement: 'renderer-observation-not-desktop-presentation',
     });
@@ -94,7 +96,7 @@ export class Live2dLayout {
     const geometry = transaction.geometry;
     const native = geometry?.contentBounds;
     const screen = this.app?.renderer.screen;
-    this.ports.log.info('live2d.layout', 'revision.timeline', {
+    this.activeTrace?.record('revision.timeline', {
       revision: transaction.revision,
       scale: transaction.scale,
       target: { width: transaction.target.width, height: transaction.target.height, centerX: transaction.target.centerX },
@@ -116,14 +118,24 @@ export class Live2dLayout {
     // A completed Pixi render releases the application-level transaction only.
     // It is not a desktop presentation acknowledgement.
     if (this.phase === 'rendering') {
-      this.ports.log.debug('live2d.layout', 'version.rendered', { revision: this.active?.revision });
+      const revision = this.active?.revision;
+      this.activeTrace?.record('version.rendered', { revision });
+      this.activeTrace?.end({ revision, scale: this.active?.scale });
+      this.activeTrace = null;
       this.active = null;
       this.phase = 'idle';
 
     }
   };
 
-  constructor(ports: LayoutPorts) { this.ports = ports; }
+  constructor(ports: LayoutPorts) {
+    this.ports = ports;
+    this.scaleContext = ports.log.contextRegistry?.register('Live2dLayout', {
+      relation: 'scale',
+      params: { instanceId: this.instanceId },
+      behavior: 'scale 变化后重新计算模型布局并同步窗口尺寸',
+    });
+  }
 
   get surface(): Application | null { return this.app; }
   get snapshot(): LayoutSnapshot | null { return this.renderSnapshot; }
@@ -185,6 +197,8 @@ export class Live2dLayout {
     // Abandon an interrupted transaction; late replies cannot publish it.
     // A pending scale is retried at Main's final drag anchor.
     if (active && this.active) {
+      this.activeTrace?.end({ status: 'interrupted', reason: 'window-drag-started' });
+      this.activeTrace = null;
       this.generation++;
       this.active = null;
       this.phase = 'idle';
@@ -210,10 +224,17 @@ export class Live2dLayout {
       const transaction = { revision: ++this.sequence, scale: this.scale,
         modelScale: baseScale * this.scale, target: calculateLive2dLayout(input), started: performance.now() };
       this.active = transaction;
+      this.scaleContext?.update({ instanceId: this.instanceId, revision: transaction.revision, scale: transaction.scale });
+      this.activeTrace = this.scaleContext?.beginTrace('scale.apply', {
+        revision: transaction.revision,
+        scale: transaction.scale,
+        input,
+        target: transaction.target,
+      }) ?? null;
       this.phase = 'waiting';
       const generation = this.generation;
       const intentId = this.instanceId + ':' + transaction.revision;
-      this.ports.log.debug('live2d.layout', 'version.waiting', { revision: transaction.revision, scale: transaction.scale });
+      this.activeTrace?.record('version.waiting', { revision: transaction.revision, scale: transaction.scale });
       void Promise.resolve().then(() => {
         if (generation !== this.generation) return;
         return this.ports.send({ intentId, source: 'live2d.layout.' + this.instanceId,
@@ -284,7 +305,7 @@ export class Live2dLayout {
       modelScale: baseScale * scale, modelBounds: metrics, revision: this.sequence };
     this.renderSnapshot = snapshot;
     this.afterPaint?.(snapshot);
-    this.ports.log.debug('live2d.layout', 'visual.committed', {
+    this.activeTrace?.record('visual.committed', {
       scale, activeRevision: this.active?.revision,
       frame: this.traceFrame, width: native.width, height: native.height,
       cssScale: 1, nativeWidth: native.width, nativeHeight: native.height,
@@ -292,6 +313,11 @@ export class Live2dLayout {
   }
 
   private failVersion(reason: string): void {
+    this.activeTrace?.fail('live2d layout version failed', {
+      revision: this.active?.revision,
+      reason,
+    });
+    this.activeTrace = null;
     this.ports.log.warn('live2d.layout', 'version.failed', { revision: this.active?.revision, reason });
     this.active = null;
     // Keep the newest user input so the next transaction can recover after a
@@ -303,6 +329,8 @@ export class Live2dLayout {
   detach(): void {
     this.app?.renderer.off('prerender', this.beforeRender);
     this.app?.renderer.off('postrender', this.afterRender);
+    this.activeTrace?.end({ status: 'detached' });
+    this.activeTrace = null;
     this.flushTrace();
     this.traceUntil = 0;
     this.generation += 1;

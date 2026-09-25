@@ -121,7 +121,16 @@ export class ConfigService {
       this.loading = true;
       this.lastError = null;
     });
-    this.log.info('config.service', 'refresh.start');
+    const context = this.log.contextRegistry.register('ConfigService', {
+      relation: 'config.refresh',
+      params: { activeModelPath: this.activeModelPath, modelKey: this.modelKey },
+      behavior: '读取并合并 renderer 配置、模型配置和覆盖项',
+    });
+    const trace = context.beginTrace('refresh');
+    trace.record('refresh.started', {
+      activeModelPath: this.activeModelPath,
+      modelKey: this.modelKey,
+    });
     try {
       const [live2denvConfig, globalModelConfig, modelBundle] = await Promise.all([
         this.bridge.configApi?.getLive2denvConfig?.(),
@@ -144,7 +153,7 @@ export class ConfigService {
         this.hydrated = true;
       });
       this.syncLoggerMode();
-      this.log.info('config.service', 'refresh.ok', {
+      trace.end({
         activeModelPath: this.activeModelPath,
         modelKey: this.modelKey,
       });
@@ -153,12 +162,12 @@ export class ConfigService {
       runInAction(() => {
         this.lastError = message;
       });
-      this.log.error('config.service', 'refresh.failed', { err: message });
-      throw error;
+      throw trace.fail('配置刷新失败', { err: message }, error);
     } finally {
       runInAction(() => {
         this.loading = false;
       });
+      context.dispose();
     }
   }
 
@@ -297,7 +306,7 @@ export class ConfigService {
   }
 
   private syncLoggerMode(): void {
-    this.log.setMirrorEnabled(Boolean(this.globalModelConfig?.debugModeEnabled));
+    this.log.setDebugEnabled(Boolean(this.globalModelConfig?.debugModeEnabled));
   }
 
   private captureError(event: string, error: unknown): void {

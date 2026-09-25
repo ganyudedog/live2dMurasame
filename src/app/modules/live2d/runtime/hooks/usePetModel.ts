@@ -4,7 +4,8 @@ import { Application, Ticker } from 'pixi.js';
 import { loadModel } from '../live2d/loader';
 import { Live2DModel } from '../live2d/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2d/runtime';
-import { debug as logDebug, error, warn } from '@app/shared/logging/compat';
+import { useService } from '@app/core/useService';
+import { TOKENS } from '@app/core/serviceTokens';
 import { createLive2DActionController, type Live2DActionController } from '@app/modules/ai/core/actionController';
 
 export interface UsePetModelParams {
@@ -63,6 +64,7 @@ export const usePetModel = ({
   clampAngleY,
   modelPath,
 }: UsePetModelParams): void => {
+  const logService = useService(TOKENS.log);
   const applyLayoutRef = useRef(scheduleApplyLayout);
   const actionControllerRef = useRef<Live2DActionController | null>(null);
   const appCleanupRef = useRef<(() => void) | null>(null);
@@ -127,7 +129,13 @@ export const usePetModel = ({
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
         setModelLoadStatus('error', message);
-        error('pet.model', 'renderer.init.failed', { err: message });
+        const context = logService.contextRegistry.register('PetModel', {
+          relation: 'renderer.init',
+          params: { windowWidth, windowHeight },
+          behavior: '初始化 Pixi renderer 和 Live2D 绘制表面',
+        });
+        context.beginTrace('renderer.init.failed').fail('Pixi renderer 初始化失败', { err: message }, cause);
+        context.dispose();
         return;
       }
       appRef.current = app;
@@ -269,9 +277,9 @@ export const usePetModel = ({
             const ids: string[] = [];
             for (let i = 0; i < count; i++) ids.push(core.getParameterId?.(i));
             paramCacheRef.current = ids;
-            logDebug('pet.eye', 'paramIds.cached', { count: ids.length, preview: ids.slice(0, 10) });
+            logService.contextRegistry.register('PetModel', { relation: 'eye', params: { count: ids.length }, behavior: '缓存 Live2D 眼球参数' }).beginTrace('paramIds.cached').end({ count: ids.length, preview: ids.slice(0, 10) });
           } catch (e) {
-            logDebug('pet.eye', 'paramIds.cacheFailed', { err: String(e) });
+            logService.contextRegistry.register('PetModel', { relation: 'eye', params: {}, behavior: '缓存 Live2D 眼球参数' }).beginTrace('paramIds.cacheFailed').fail('眼球参数缓存失败', { err: String(e) }, e);
           }
         }
 
@@ -312,7 +320,7 @@ export const usePetModel = ({
         core.setParameterValueById?.('ParamAngleY', clampedAngleY);
 
         if (debugMotion && frameCountRef.current % 60 === 0) {
-          logDebug('pet.eye', 'blendTick', {
+          logService.contextRegistry.register('PetModel', { relation: 'eye', params: {}, behavior: '每帧写入眼球参数' }).beginTrace('blendTick').end({
             idle,
             blend,
             targetX,
@@ -383,7 +391,7 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamAngleX', writeAX);
               core.setParameterValueById?.('ParamAngleY', clampedAY);
               if (debug() && frameCountRef.current % 60 === 0) {
-                logDebug('pet.eye', 'guard.afterMotion', { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
+                logService.contextRegistry.register('PetModel', { relation: 'eye', params: {}, behavior: '动作后恢复眼球参数' }).beginTrace('guard.afterMotion').end({ idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
               }
             } catch { /* swallow */ }
           }
@@ -394,7 +402,7 @@ export const usePetModel = ({
 
       const ok = wrap('updateMotion') || wrap('update');
       if (ok) (motionMgr as any).__eyeGuardPatched = true;
-      if (debug()) logDebug('pet.eye', 'guard.motionManagerPatched', { ok });
+      if (debug()) logService.contextRegistry.register('PetModel', { relation: 'eye', params: {}, behavior: '安装动作管理器补丁' }).beginTrace('guard.motionManagerPatched').end({ ok });
     };
 
     const installInternalAfterUpdatePatch = (modelInstance: Live2DModelType) => {
@@ -440,12 +448,12 @@ export const usePetModel = ({
           core.setParameterValueById?.('ParamAngleX', writeAX);
           core.setParameterValueById?.('ParamAngleY', clampedAY);
           if (((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) && frameCountRef.current % 60 === 0) {
-            logDebug('pet.eye', 'patch.afterInternalUpdate', { idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
+            logService.contextRegistry.register('PetModel', { relation: 'eye', params: {}, behavior: '内部更新后写入眼球参数' }).beginTrace('patch.afterInternalUpdate').end({ idleNow, blend, writeX, writeY: clampedY, writeAX, writeAY: clampedAY });
           }
         } catch { /* swallow */ }
       };
       if ((window as any).LIVE2D_MOTION_DEBUG === true || (window as any).LIVE2D_EYE_DEBUG === true) {
-        logDebug('pet.eye', 'patch.internalUpdatePatched');
+        logService.contextRegistry.register('PetModel', { relation: 'eye', params: {}, behavior: '安装内部更新补丁' }).beginTrace('patch.internalUpdatePatched').end();
       }
     };
 
@@ -472,7 +480,7 @@ export const usePetModel = ({
         setModelLoadStatus('loaded');
         updateHitAreas(model);
 
-        const actionController = createLive2DActionController();
+        const actionController = createLive2DActionController({ log: logService });
         actionControllerRef.current = actionController;
 
         attachEyeFollow(model);
@@ -514,14 +522,14 @@ export const usePetModel = ({
               core.setParameterValueById?.('ParamAngleX', writeAngleX);
               core.setParameterValueById?.('ParamAngleY', writeAngleY);
               if (debugEnabled && frameCountRef.current % 60 === 0) {
-                logDebug('pet.eye', 'forceAfter', { idleNow, blend, writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY });
+                logService.contextRegistry.register('PetModel', { relation: 'eye', params: {}, behavior: '强制写入眼球参数' }).beginTrace('forceAfter').end({ idleNow, blend, writeEyeX, writeEyeY: clampedEyeY, writeAngleX, writeAngleY: clampedAngleY });
               }
             }
 
             try {
               actionControllerRef.current?.tick(core, performance.now());
             } catch (e) {
-              warn('ai.action', 'tick.failed', { err: String(e) });
+              logService.contextRegistry.register('PetModel', { relation: 'action', params: {}, behavior: '执行 Live2D 动作控制器 tick' }).beginTrace('tick.failed').fail('Live2D 动作 tick 失败', { err: String(e) }, e);
             }
 
             if (!debugEnabled || frameCountRef.current % 30 !== 0) return;
@@ -534,7 +542,7 @@ export const usePetModel = ({
                 isIdle: idleNow,
                 forceAlways,
               };
-              logDebug('pet.motion', 'postUpdate', {
+              logService.contextRegistry.register('PetModel', { relation: 'motion', params: {}, behavior: '调试动作更新状态' }).beginTrace('postUpdate').end({
                 EyeBallX: core.getParameterValueById?.('ParamEyeBallX'),
                 EyeBallY: core.getParameterValueById?.('ParamEyeBallY'),
                 AngleX: core.getParameterValueById?.('ParamAngleX'),
@@ -545,7 +553,13 @@ export const usePetModel = ({
           });
         }
       } catch (err) {
-        error('pet.model', 'load.failed', { modelPath, err: String(err) });
+        const context = logService.contextRegistry.register('PetModel', {
+          relation: 'model.load',
+          params: { modelPath },
+          behavior: '加载 Live2D 模型并初始化渲染和动作链路',
+        });
+        context.beginTrace('load.failed').fail('Live2D 模型加载失败', { modelPath, err: String(err) }, err);
+        context.dispose();
         setModelLoadStatus('error', (err as Error).message);
       }
     })();

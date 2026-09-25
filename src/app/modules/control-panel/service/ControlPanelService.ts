@@ -11,7 +11,7 @@ import type {
 } from '../domain/types';
 import type { ChatConfig, ChatRequest, ChatResponse } from '@app/shared/state-bus/sharedStateTypes';
 import type { LiveKitTtsPreheatRequest, LiveKitTtsPreheatResponseServer } from '@app/modules/ai/infrastructure/livekit/model/liveKitModel';
-import { ensureLiveKitRoomConnected, ensureLiveKitSession } from '@app/modules/ai/infrastructure/livekit/service/liveKitRealtime';
+import type { LiveKitService } from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
 import {
   fromTtsPreheatServer,
   normalizeBaseUrl,
@@ -38,13 +38,15 @@ export class ControlPanelService {
   readonly stateBus: StateBusService;
   readonly interactionZones: InteractionZoneManager;
   private readonly log: LogService;
+  private readonly liveKit: LiveKitService;
   private reactions: IReactionDisposer[] = [];
   private aiPersistTimer: number | null = null;
 
-  constructor(config: ConfigService, stateBus: StateBusService, log: LogService) {
+  constructor(config: ConfigService, stateBus: StateBusService, log: LogService, liveKit: LiveKitService) {
     this.config = config;
     this.stateBus = stateBus;
     this.log = log;
+    this.liveKit = liveKit;
     this.aiSettings = toChatConfig(config.globalModelConfig);
     this.interactionZones = new InteractionZoneManager({
       persist: (commit) => this.persistInteractionZones(commit),
@@ -114,10 +116,10 @@ export class ControlPanelService {
       ),
     );
     this.stateBus.publishChatConfig(this.aiSettings);
-    this.log.info('controlPanel.service', 'started', {
+    this.logTrace('lifecycle', 'start', {
       modelPath: this.currentModelPath,
       modelCount: this.modelPaths.length,
-    });
+    }).end({ started: true });
   }
 
   get globalSettings(): GlobalUiSettings {
@@ -172,7 +174,7 @@ export class ControlPanelService {
 
   setActiveTab(tab: ControlPanelTabKey): void {
     this.activeTab = tab;
-    this.log.debug('controlPanel.service', 'tab.changed', { tab });
+    this.logTrace('navigation', 'tab.changed', { tab }).end({ activeTab: tab });
   }
 
   setChatDraft(value: string): void {
@@ -183,7 +185,7 @@ export class ControlPanelService {
     this.chatMessages = [];
     this.chatDraft = '';
     this.chatError = null;
-    this.log.info('controlPanel.service', 'chat.cleared');
+    this.logTrace('chat', 'clear').end({ messageCount: 0 });
   }
 
   setAiSettings(next: ChatConfig): void {
@@ -195,9 +197,9 @@ export class ControlPanelService {
       this.aiPersistTimer = null;
       void this.persistAiSettings();
     }, 250);
-    this.log.debug('controlPanel.service', 'aiSettings.changed', {
+    this.logTrace('aiSettings', 'update', {
       displayLang: next.displayLang,
-    });
+    }).end({ pending: true });
   }
 
   async persistGlobalSettings(patch: Partial<GlobalUiSettings>): Promise<void> {
@@ -239,7 +241,7 @@ export class ControlPanelService {
   async selectModelPath(path: string): Promise<void> {
     await this.interactionZones.flush();
     await this.config.updateLive2denvConfig({ CURRENT_PATH: path, LAST_SELECTED_AT: Date.now() });
-    this.log.info('controlPanel.service', 'model.selected', { path });
+    this.logTrace('model', 'select', { path }).end({ selectedPath: path });
   }
 
   async addModel(): Promise<void> {
@@ -253,7 +255,7 @@ export class ControlPanelService {
       LAST_SELECTED_AT: Date.now(),
     });
     await this.config.refresh();
-    this.log.info('controlPanel.service', 'model.added', { modelDir, count: nextPaths.length });
+    this.logTrace('model', 'add', { modelDir }).end({ count: nextPaths.length });
   }
 
   async removeModel(path: string): Promise<void> {
@@ -266,7 +268,7 @@ export class ControlPanelService {
       LAST_SELECTED_AT: Date.now(),
     });
     await this.config.removeModelConfig(path);
-    this.log.info('controlPanel.service', 'model.removed', { path, count: nextPaths.length });
+    this.logTrace('model', 'remove', { path }).end({ count: nextPaths.length });
   }
 
   async toggleAsr(enabled: boolean): Promise<void> {
@@ -276,7 +278,7 @@ export class ControlPanelService {
     });
     try {
       this.stateBus.setAsrEnabled(enabled);
-      this.log.info('controlPanel.service', 'asr.toggle', { enabled });
+      this.logTrace('asr', 'toggle', { enabled }).end({ enabled });
     } catch (error) {
       this.captureError('asr.toggle.failed', error);
     } finally {
@@ -309,7 +311,7 @@ export class ControlPanelService {
       ];
     });
     this.stateBus.publishChatRequest(request);
-    this.log.info('controlPanel.service', 'chat.submitted', { requestId, textLength: text.length });
+    this.logTrace('chat', 'submit', { requestId, textLength: text.length }).end({ status: 'pending' });
   }
 
   async dispose(): Promise<void> {
@@ -320,7 +322,7 @@ export class ControlPanelService {
       this.aiPersistTimer = null;
       if (this.aiSettingsPending) await this.persistAiSettings();
     }
-    this.log.info('controlPanel.service', 'disposed');
+    this.logTrace('lifecycle', 'dispose').end({ disposed: true });
   }
 
   private async persistInteractionZones(commit: InteractionZonesCommit): Promise<void> {
@@ -328,10 +330,10 @@ export class ControlPanelService {
       modelPath: commit.modelPath ?? undefined,
       patch: { interactionZones: commit.interactionZones },
     });
-    this.log.info('controlPanel.service', 'interactionZones.updated', {
+    this.logTrace('interactionZones', 'persist', {
       modelPath: commit.modelPath,
       zoneCount: commit.interactionZones.zones.length,
-    });
+    }).end({ persisted: true });
   }
 
   private loadChatCache(): void {
@@ -390,7 +392,7 @@ export class ControlPanelService {
       runInAction(() => {
         this.aiSettingsPending = false;
       });
-      this.log.info('controlPanel.service', 'aiSettings.persist.ok');
+      this.logTrace('aiSettings', 'persist').end({ persisted: true });
     } catch (error) {
       this.captureError('aiSettings.persist.failed', error);
     }
@@ -402,7 +404,17 @@ export class ControlPanelService {
       this.ttsPreheatState = 'pending';
       this.ttsPreheatMessage = '配置已保存，正在预热';
     });
-    this.log.info('controlPanel.tts', 'settings.preheat.start', {
+    const context = this.log.contextRegistry.register('ControlPanelService', {
+      relation: 'tts.preheat',
+      params: {
+        requestId,
+        textLang: config.textLang,
+        refAudioPath: trimText(config.refAudioPath),
+        hasRefAudioText: Boolean(trimText(config.refAudioText)),
+      },
+      behavior: '保存 TTS 配置后预热 LiveKit 和后端 TTS 模型',
+    });
+    const trace = context.beginTrace('settings.preheat', {
       requestId,
       textLang: config.textLang,
       refAudioPath: trimText(config.refAudioPath),
@@ -411,11 +423,11 @@ export class ControlPanelService {
 
     try {
       const baseUrl = normalizeBaseUrl(config.baseUrl);
-      await ensureLiveKitRoomConnected(baseUrl, {
+      await this.liveKit.ensureRoomConnected(baseUrl, {
         eventTopic: 'v3.event',
         reason: 'tts-config-preheat',
       });
-      const session = await ensureLiveKitSession(baseUrl, {
+      const session = await this.liveKit.ensureSession(baseUrl, {
         client: 'desktop',
         version: '0.1.0',
         capabilities: { livekit: true, audioDownlink: true },
@@ -437,7 +449,7 @@ export class ControlPanelService {
         this.ttsPreheatState = 'ok';
         this.ttsPreheatMessage = `预热完成：${result.state}`;
       });
-      this.log.info('controlPanel.tts', 'settings.preheat.ok', {
+      trace.end({
         requestId: result.requestId,
         state: result.state,
         warmed: result.warmed,
@@ -448,7 +460,9 @@ export class ControlPanelService {
         this.ttsPreheatState = 'failed';
         this.ttsPreheatMessage = `预热失败：${message}`;
       });
-      this.log.warn('controlPanel.tts', 'settings.preheat.failed', { requestId, err: message });
+      trace.fail('TTS 配置预热失败', { requestId, err: message }, error);
+    } finally {
+      context.dispose();
     }
   }
 
@@ -457,7 +471,29 @@ export class ControlPanelService {
     runInAction(() => {
       this.chatError = message;
     });
-    this.log.error('controlPanel.service', event, { err: message });
+    const context = this.log.contextRegistry.register('ControlPanelService', {
+      relation: event,
+      params: { err: message },
+      behavior: '记录控制面板操作失败并更新可见错误状态',
+    });
+    context.beginTrace(event).fail(message, { err: message }, error);
+    context.dispose();
+  }
+
+  private logTrace(relation: string, operation: string, params: Record<string, unknown> = {}) {
+    const context = this.log.contextRegistry.register('ControlPanelService', {
+      relation,
+      params,
+      behavior: '记录控制面板状态变化及其结果',
+    });
+    const trace = context.beginTrace(operation, params);
+    const end = trace.end.bind(trace);
+    return {
+      end: (data?: Record<string, unknown>) => {
+        end(data);
+        context.dispose();
+      },
+    };
   }
 }
 

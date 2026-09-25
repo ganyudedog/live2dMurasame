@@ -3,20 +3,26 @@ import type { LogService } from '@app/shared/logging/LogService';
 type AnyRecord = Record<string, unknown>;
 
 let activeLogger: LogService | null = null;
+const pendingCalls: Array<[
+  'debug' | 'info' | 'warn' | 'error',
+  string,
+  string,
+  AnyRecord | undefined,
+  string | undefined,
+]> = [];
 
 export const bindLogService = (logger: LogService): void => {
   if (activeLogger && activeLogger !== logger) {
     throw new Error('Renderer LogService was already bound');
   }
   activeLogger = logger;
+  for (const [level, ns, event, data, msg] of pendingCalls.splice(0)) {
+    logger[level](ns, event, data, msg);
+  }
 };
 
 const fallback = (level: 'debug' | 'info' | 'warn' | 'error', ns: string, event: string, data?: AnyRecord, msg?: string) => {
-  const entry = { level, ns, event, data, msg };
-  if (level === 'error') console.error(entry);
-  else if (level === 'warn') console.warn(entry);
-  else if (level === 'debug') console.debug(entry);
-  else console.info(entry);
+  pendingCalls.push([level, ns, event, data, msg]);
 };
 
 export const debug = (ns: string, event: string, data?: AnyRecord, msg?: string): void => activeLogger?.debug(ns, event, data, msg) ?? fallback('debug', ns, event, data, msg);

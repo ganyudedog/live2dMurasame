@@ -1,9 +1,9 @@
 import toast from 'react-hot-toast';
-import { error, info, warn } from '@app/shared/logging/compat';
 import { cancelTtsSynthesis, requestTtsSynthesis, warmupTtsModel } from './client';
 import { TtsStreamPlayer } from './streamPlayer';
 import type { LiveKitPlaybackFeedbackPayload } from '@app/modules/ai/infrastructure/livekit/model/liveKitModel';
-import { ensureLiveKitSession, getLiveKitPlaybackSnapshot, publishLiveKitPlaybackFeedback } from '@app/modules/ai/infrastructure/livekit/service/liveKitRealtime';
+import type { LiveKitService } from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
+import type { LogService, TraceScope } from '@app/shared/logging/LogService';
 import type { QwenTtsTriggerInput, TtsRunResult, TtsRuntimeConfig, TtsWarmupResult } from './types';
 
 // 规范化数据
@@ -71,6 +71,8 @@ export type PlaybackFeedbackReporter = (request: {
 }) => Promise<void> | void;
 
 export interface FrontendTtsRuntimeOptions {
+  log: LogService;
+  liveKit: LiveKitService;
   reportPlaybackFeedback?: PlaybackFeedbackReporter;
   getConfigSnapshot?: () => PetConfigSnapshot | null | undefined;
 }
@@ -82,6 +84,9 @@ export class FrontendTtsRuntime {
 
   private readonly reportPlaybackFeedback?: PlaybackFeedbackReporter;
   private readonly getConfigSnapshot?: FrontendTtsRuntimeOptions['getConfigSnapshot'];
+  private readonly log: LogService;
+  private readonly liveKit: LiveKitService;
+  private activeTrace: TraceScope | null = null;
 
   private activeAbortController: AbortController | null = null;
 
@@ -98,9 +103,11 @@ export class FrontendTtsRuntime {
   // 当前是否已调用 dispose，dispose 后实例不应再接受新的 speak 请求，且会中止所有未完成的请求。 
   private disposed = false;
 
-  constructor(options?: FrontendTtsRuntimeOptions) {
-    this.reportPlaybackFeedback = options?.reportPlaybackFeedback;
-    this.getConfigSnapshot = options?.getConfigSnapshot;
+  constructor(options: FrontendTtsRuntimeOptions) {
+    this.log = options.log;
+    this.liveKit = options.liveKit;
+    this.reportPlaybackFeedback = options.reportPlaybackFeedback;
+    this.getConfigSnapshot = options.getConfigSnapshot;
   }
 
   private stopPlaybackFeedbackBridge(): void {
@@ -128,7 +135,7 @@ export class FrontendTtsRuntime {
       payload: LiveKitPlaybackFeedbackPayload;
       signal?: AbortSignal;
     }) => {
-      await publishLiveKitPlaybackFeedback(request.baseUrl, {
+      await this.liveKit.publishPlaybackFeedback(request.baseUrl, {
         sessionId: request.sessionId,
         requestId: request.requestId,
         ts: Date.now(),
@@ -144,7 +151,7 @@ export class FrontendTtsRuntime {
       if (signal?.aborted || this.disposed) return;
       if (this.playbackFeedbackInFlight) return;
 
-      const snapshot = await getLiveKitPlaybackSnapshot(baseUrl);
+      const snapshot = await this.liveKit.getPlaybackSnapshot(baseUrl);
       if (!snapshot) return;
 
       const fingerprint = [
@@ -168,7 +175,7 @@ export class FrontendTtsRuntime {
         this.playbackFeedbackLastFingerprint = fingerprint;
         this.playbackFeedbackLastSentAt = now;
 
-        info('ai.tts.feedback', 'publish.start', {
+        this.activeTrace?.record('playback.feedback.publish.start', {
           requestId,
           state: snapshot.state,
           bufferMs: snapshot.bufferMs,
@@ -183,14 +190,14 @@ export class FrontendTtsRuntime {
           payload: snapshot,
         });
 
-        info('ai.tts.feedback', 'publish.ok', {
+        this.activeTrace?.record('playback.feedback.publish.ok', {
           requestId,
           state: snapshot.state,
           bufferMs: snapshot.bufferMs,
           reason,
         });
       } catch (e) {
-        warn('ai.tts.feedback', 'publish.failed', {
+        this.activeTrace?.record('playback.feedback.publish.failed', {
           requestId,
           err: String(e instanceof Error ? e.message : e),
         });
@@ -249,14 +256,8 @@ export class FrontendTtsRuntime {
       };
     }
 
-    const startedAt = performance.now();
     try {
-      await warmupTtsModel(ttsConfig, { reason });
-      const latencyMs = Math.round(performance.now() - startedAt);
-      info('ai.tts', 'warmup.ok', {
-        reason,
-        latencyMs,
-      });
+      await warmupTtsModel({ log: this.log, liveKit: this.liveKit }, ttsConfig, { reason });
       return {
         ok: true,
       };
@@ -269,10 +270,6 @@ export class FrontendTtsRuntime {
         };
       }
 
-      warn('ai.tts', 'warmup.failed', {
-        reason,
-        err: String(rawError instanceof Error ? rawError.message : rawError),
-      });
       return {
         ok: false,
         reason: 'warmup-failed',
@@ -286,16 +283,11 @@ export class FrontendTtsRuntime {
       const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
       const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
       if (ttsConfig.baseUrl) {
-        void cancelTtsSynthesis({
+        void cancelTtsSynthesis({ log: this.log, liveKit: this.liveKit }, {
           requestId,
           reason,
           config: ttsConfig,
-        }).catch((e) => {
-          warn('ai.tts', 'request.cancel.remoteFailed', {
-            requestId,
-            err: String(e instanceof Error ? e.message : e),
-          });
-        });
+        }).catch(() => undefined);
       }
     }
 
@@ -311,7 +303,7 @@ export class FrontendTtsRuntime {
     this.activeRequestId = null;
     this.stopPlaybackFeedbackBridge();
     this.player.stop();
-    info('ai.tts', 'request.cancel', { reason });
+    this.activeTrace?.record('request.cancelled', { requestId, reason });
   }
 
   async speakFromQwenReply(input: QwenTtsTriggerInput): Promise<TtsRunResult> {
@@ -338,10 +330,6 @@ export class FrontendTtsRuntime {
     const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
 
     if (!ttsConfig.enabled) {
-      info('ai.tts', 'request.skip.disabled', {
-        requestId,
-        textLength: speakText.length,
-      });
       return {
         ok: false,
         skipped: true,
@@ -361,7 +349,21 @@ export class FrontendTtsRuntime {
     const controller = new AbortController();
     this.activeAbortController = controller;
     this.activeRequestId = requestId;
-    const session = await ensureLiveKitSession(
+    const context = this.log.contextRegistry.register('FrontendTtsRuntime', {
+      relation: 'tts.request',
+      params: { requestId, baseUrl: ttsConfig.baseUrl, textLength: speakText.length },
+      behavior: '执行 TTS 合成、LiveKit 下行播放和播放反馈闭环',
+    });
+    const trace = context.beginTrace('speakFromQwenReply', {
+      requestId,
+      textLength: speakText.length,
+      displayLength: displayText.length,
+      transport: 'livekit-opus',
+      textLang: ttsConfig.textLang,
+      promptLang: ttsConfig.promptLang,
+    });
+    this.activeTrace = trace;
+    const session = await this.liveKit.ensureSession(
       ttsConfig.baseUrl,
       {
         client: 'desktop',
@@ -373,25 +375,16 @@ export class FrontendTtsRuntime {
       },
       controller.signal,
     );
+    trace.record('session.ready', { sessionId: session.sessionId });
 
     // 反馈闭环只对实时房间链路有意义；先启动轮询，音轨出现后就会有缓冲快照。
     this.startPlaybackFeedbackBridge(ttsConfig.baseUrl, session.sessionId, requestId, controller.signal);
-
-    info('ai.tts', 'request.start', {
-      requestId,
-      textLength: speakText.length,
-      displayLength: normalizeText(input.displayText).length,
-      transport: 'livekit-opus',
-      streaming: true,
-      textLang: ttsConfig.textLang,
-      promptLang: ttsConfig.promptLang,
-    });
 
     let firstChunkLogged = false;
     const startedAt = performance.now();
 
     try {
-      const response = await requestTtsSynthesis({
+      const response = await requestTtsSynthesis({ log: this.log, liveKit: this.liveKit }, {
         requestId,
         speakText,
         displayText,
@@ -406,10 +399,11 @@ export class FrontendTtsRuntime {
 
       if (isRealtimeResponse) {
         const latencyMs = Math.round(performance.now() - startedAt);
-        info('ai.tts', 'request.ok.realtime', {
+        trace.end({
           requestId,
           state: realtimeState || 'unknown',
           latencyMs,
+          transport: 'livekit',
         });
         return {
           ok: true,
@@ -425,7 +419,7 @@ export class FrontendTtsRuntime {
         onChunk: (receivedBytes) => {
           if (firstChunkLogged) return;
           firstChunkLogged = true;
-          info('ai.tts', 'stream.firstChunk', {
+          trace.record('stream.firstChunk', {
             requestId,
             receivedBytes,
           });
@@ -433,7 +427,7 @@ export class FrontendTtsRuntime {
       });
 
       const latencyMs = Math.round(performance.now() - startedAt);
-      info('ai.tts', 'request.ok', {
+      trace.end({
         requestId,
         streamed: playbackResult.streamed,
         bytesReceived: playbackResult.bytesReceived,
@@ -449,9 +443,10 @@ export class FrontendTtsRuntime {
       };
     } catch (rawError) {
       if (controller.signal.aborted || isAbortError(rawError)) {
-        warn('ai.tts', 'request.aborted', {
+        trace.end({
           requestId,
           activeRequestId: this.activeRequestId,
+          status: 'aborted',
         });
         return {
           ok: false,
@@ -461,10 +456,10 @@ export class FrontendTtsRuntime {
       }
 
       const message = String(rawError instanceof Error ? rawError.message : rawError);
-      error('ai.tts', 'request.failed', {
+      trace.fail('TTS 请求执行失败', {
         requestId,
         err: message,
-      });
+      }, rawError);
       toast.error(`TTS 请求失败: ${message}`);
       throw rawError;
     } finally {
@@ -473,10 +468,12 @@ export class FrontendTtsRuntime {
         this.activeRequestId = null;
       }
       this.stopPlaybackFeedbackBridge();
+      if (this.activeTrace === trace) this.activeTrace = null;
+      context.dispose();
     }
   }
 }
 
-export const createFrontendTtsRuntime = (options?: FrontendTtsRuntimeOptions): FrontendTtsRuntime => {
+export const createFrontendTtsRuntime = (options: FrontendTtsRuntimeOptions): FrontendTtsRuntime => {
   return new FrontendTtsRuntime(options);
 };

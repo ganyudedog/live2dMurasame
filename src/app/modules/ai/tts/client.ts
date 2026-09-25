@@ -7,13 +7,9 @@ import {
   toTtsSpeakServer,
 } from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
 import {
-  disconnectLiveKitRoom,
-  ensureLiveKitRoomConnected,
-  ensureLiveKitSession,
-  publishLiveKitV3Event,
-  subscribeLiveKitV3Events,
+  type LiveKitService,
   type LiveKitV3EventEnvelopeServer,
-} from '@app/modules/ai/infrastructure/livekit/service/liveKitRealtime';
+} from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
 import type {
   LiveKitModelSwitchRequest,
   LiveKitModelSwitchResponseServer,
@@ -21,7 +17,7 @@ import type {
 } from '@app/modules/ai/infrastructure/livekit/model/liveKitModel';
 import type { TtsCancelRequest, TtsSynthesisRequest } from './types';
 import toast from 'react-hot-toast';
-import { info, warn } from '@app/shared/logging/compat';
+import type { LogService, TraceScope } from '@app/shared/logging/LogService';
 import { detectTtsTransportMode } from '@app/modules/ai/infrastructure/livekit/service/liveKitTransportAdapter';
 
 type V3RuntimeState = {
@@ -36,6 +32,11 @@ type RealtimeSpeakTerminalState = 'tts.finished' | 'tts.canceled' | 'tts.error';
 type RealtimeSpeakResult = {
   state: RealtimeSpeakTerminalState;
   rawEvent: LiveKitV3EventEnvelopeServer;
+};
+
+export type TtsClientDependencies = {
+  log: LogService;
+  liveKit: LiveKitService;
 };
 
 const stateByBaseUrl = new Map<string, V3RuntimeState>();
@@ -97,19 +98,25 @@ const buildConfigVersion = (config: TtsSynthesisRequest['config']): string => {
 };
 
 // 确保与后端的实时连接已建立，部分后端实现会在模型切换前校验连接状态与 participant identity
-const ensureRealtimeConnected = async (baseUrl: string, reason: string, signal?: AbortSignal): Promise<boolean> => {
+const ensureRealtimeConnected = async (
+  dependencies: TtsClientDependencies,
+  baseUrl: string,
+  reason: string,
+  signal?: AbortSignal,
+  trace?: TraceScope,
+): Promise<boolean> => {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   if (!normalizedBaseUrl) return false;
   try {
-    await ensureLiveKitRoomConnected(normalizedBaseUrl, {
+    await dependencies.liveKit.ensureRoomConnected(normalizedBaseUrl, {
       signal,
       reason,
       eventTopic: 'v3.event',
     });
+    trace?.record('livekit.connected', { baseUrl: normalizedBaseUrl, reason });
     return true;
   } catch (e) {
-    // 连接失败时不直接 toast，由上层决定是否降级/提示。
-    warn('ai.tts.v3', 'livekit.connect.failed', {
+    trace?.record('livekit.connect.failed', {
       baseUrl: normalizedBaseUrl,
       reason,
       err: String(e instanceof Error ? e.message : e),
@@ -118,13 +125,18 @@ const ensureRealtimeConnected = async (baseUrl: string, reason: string, signal?:
   }
 };
 
-const ensureSession = async (baseUrl: string, signal?: AbortSignal): Promise<string> => {
+const ensureSession = async (
+  dependencies: TtsClientDependencies,
+  baseUrl: string,
+  signal?: AbortSignal,
+  trace?: TraceScope,
+): Promise<string> => {
   const cached = stateByBaseUrl.get(baseUrl);
   if (cached && cached.expiresAt > Date.now() + 5000) {
     return cached.sessionId;
   }
 
-  const session = await ensureLiveKitSession(
+  const session = await dependencies.liveKit.ensureSession(
     baseUrl,
     {
       client: 'desktop',
@@ -149,7 +161,8 @@ const ensureSession = async (baseUrl: string, signal?: AbortSignal): Promise<str
 
   // 关键：v3 链路可能依赖 LiveKit participant identity。
   // 这里做“尽力而为”的 room connect：失败只记日志，避免阻塞 HTTP fallback。
-  await ensureRealtimeConnected(baseUrl, 'session-created', signal);
+  trace?.record('session.resolved', { sessionId: session.sessionId, expiresInMs });
+  await ensureRealtimeConnected(dependencies, baseUrl, 'session-created', signal, trace);
 
   return session.sessionId;
 };
@@ -157,6 +170,7 @@ const ensureSession = async (baseUrl: string, signal?: AbortSignal): Promise<str
 const createAbortError = (): DOMException => new DOMException('The operation was aborted', 'AbortError');
 
 const waitRealtimeSpeakTerminalEvent = async (
+  dependencies: TtsClientDependencies,
   baseUrl: string,
   requestId: string,
   sessionId: string,
@@ -173,7 +187,7 @@ const waitRealtimeSpeakTerminalEvent = async (
       reject(createAbortError());
     };
 
-    const off = subscribeLiveKitV3Events(baseUrl, (event) => {
+    const off = dependencies.liveKit.subscribeEvents(baseUrl, (event) => {
       if (event.request_id !== requestId) return;
       if (event.session_id && event.session_id !== sessionId) return;
 
@@ -250,12 +264,14 @@ const createRealtimeSyntheticResponse = (payload: RealtimeSpeakResult): Response
 
 // 取消tts.speak的实时链路，通知后端中断合成并清理房间状态，避免残留音轨叠加导致回声/金属音。
 const cancelRealtimeSpeakBestEffort = async (
+  dependencies: TtsClientDependencies,
   baseUrl: string,
   sessionId: string,
   requestId: string,
+  trace?: TraceScope,
 ): Promise<void> => {
   try {
-    await publishLiveKitV3Event(baseUrl, {
+    await dependencies.liveKit.publishEvent(baseUrl, {
       type: 'tts.cancel',
       session_id: sessionId,
       request_id: requestId,
@@ -268,12 +284,12 @@ const cancelRealtimeSpeakBestEffort = async (
       reason: 'tts.speak.fallback-cancel',
     });
 
-    info('ai.tts.v3', 'realtime.speak.fallbackCancel.ok', {
+    trace?.record('realtime.speak.fallbackCancel.ok', {
       requestId,
       sessionId,
     });
   } catch (e) {
-    warn('ai.tts.v3', 'realtime.speak.fallbackCancel.failed', {
+    trace?.record('realtime.speak.fallbackCancel.failed', {
       requestId,
       sessionId,
       err: String(e instanceof Error ? e.message : e),
@@ -300,12 +316,14 @@ const waitUntilModelReady = async (baseUrl: string, sessionId: string, signal?: 
 };
 
 const ensureModelReady = async (
+  dependencies: TtsClientDependencies,
   baseUrl: string,
   sessionId: string,
   requestId: string,
   config: TtsSynthesisRequest['config'],
   options?: { silent?: boolean },
   signal?: AbortSignal,
+  trace?: TraceScope,
 ): Promise<void> => {
   const configVersion = buildConfigVersion(config);
   const cached = stateByBaseUrl.get(baseUrl);
@@ -314,7 +332,7 @@ const ensureModelReady = async (
   }
 
   // 先确保 LiveKit 已连接（部分后端实现会在模型切换前校验 identity 是否入房）。
-  await ensureRealtimeConnected(baseUrl, 'model-switch', signal);
+  await ensureRealtimeConnected(dependencies, baseUrl, 'model-switch', signal, trace);
 
   // 构建模型切换请求，通知后端加载模型权重并准备就绪。后端接口会根据请求中的权重路径等信息判断是否需要重新加载模型。
   const request: LiveKitModelSwitchRequest = {
@@ -338,6 +356,11 @@ const ensureModelReady = async (
     toModelSwitchServer(request),
     signal,
   );
+  trace?.record('model.switch.response', {
+    requestId: request.requestId,
+    configVersion,
+    modelReady: Boolean(raw.model_ready),
+  });
 
   let modelReady = Boolean(raw.model_ready);
   if (!modelReady) {
@@ -361,19 +384,31 @@ const ensureModelReady = async (
 
 // 模型预热
 export const warmupTtsModel = async (
+  dependencies: TtsClientDependencies,
   config: TtsSynthesisRequest['config'],
   options?: { reason?: string; signal?: AbortSignal },
 ): Promise<void> => {
   const baseUrl = normalizeBaseUrl(config.baseUrl);
   if (!baseUrl) return;
 
-  info('ai.tts.v3', 'warmup.connect.start', { baseUrl, reason: options?.reason });
-  const connected = await ensureRealtimeConnected(baseUrl, `warmup:${options?.reason || 'auto'}`, options?.signal);
-  if (connected) info('ai.tts.v3', 'warmup.connect.ok', { baseUrl, reason: options?.reason });
-
-  const sessionId = await ensureSession(baseUrl, options?.signal);
+  const context = dependencies.log.contextRegistry.register('TtsClient', {
+    relation: 'tts.warmup',
+    params: { baseUrl, reason: options?.reason },
+    behavior: '连接 LiveKit、创建后端会话并确保 TTS 模型可用',
+  });
+  const trace = context.beginTrace('warmup', { baseUrl, reason: options?.reason });
+  try {
+    await ensureRealtimeConnected(dependencies, baseUrl, `warmup:${options?.reason || 'auto'}`, options?.signal, trace);
+    const sessionId = await ensureSession(dependencies, baseUrl, options?.signal, trace);
   const requestId = `warmup_${(options?.reason || 'auto').replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now().toString(36)}`;
-  await ensureModelReady(baseUrl, sessionId, requestId, config, { silent: true }, options?.signal);
+    await ensureModelReady(dependencies, baseUrl, sessionId, requestId, config, { silent: true }, options?.signal, trace);
+    trace.end({ baseUrl, sessionId, requestId });
+  } catch (error) {
+    trace.fail('TTS 模型预热失败', { baseUrl, reason: options?.reason }, error);
+    throw error;
+  } finally {
+    context.dispose();
+  }
 };
 
 const buildTtsPayload = (
@@ -407,7 +442,7 @@ const buildTtsPayload = (
 };
 
 // 主链路固定由 LiveKit/WebRTC 传输 Opus，HTTP 回退固定为 Ogg/Opus。
-export const requestTtsSynthesis = async ({
+export const requestTtsSynthesis = async (dependencies: TtsClientDependencies, {
   requestId,
   speakText,
   displayText,
@@ -425,37 +460,50 @@ export const requestTtsSynthesis = async ({
     throw new Error('TTS 服务地址为空，请先在 TTS 设置中配置');
   }
 
-  // speak 前确保 room 已连接，保证 identity 门禁通过。
-  await ensureRealtimeConnected(baseUrl, 'tts.speak', signal);
+  const context = dependencies.log.contextRegistry.register('TtsClient', {
+    relation: 'tts.synthesis',
+    params: { requestId, baseUrl, preferRealtime },
+    behavior: '建立会话、发送 TTS 请求、等待后端终态并在需要时回退 HTTP',
+  });
+  const trace = context.beginTrace('requestTtsSynthesis', {
+    requestId,
+    speakLength: cleanSpeakText.length,
+    preferRealtime,
+  });
 
-  const sessionId = await ensureSession(baseUrl, signal);
-  await ensureModelReady(baseUrl, sessionId, requestId, config, undefined, signal);
+  try {
+
+  // speak 前确保 room 已连接，保证 identity 门禁通过。
+  await ensureRealtimeConnected(dependencies, baseUrl, 'tts.speak', signal, trace);
+
+  const sessionId = await ensureSession(dependencies, baseUrl, signal, trace);
+  await ensureModelReady(dependencies, baseUrl, sessionId, requestId, config, undefined, signal, trace);
 
   const payload = buildTtsPayload(requestId, cleanSpeakText, trimText(displayText) || cleanSpeakText, sessionId, config);
 
   // LiveKit 主链路：通过 DataChannel 发 tts.speak，并等待后端终态事件。
-  // 注意：真实音频播放由 livekit.realtime 中的 TrackSubscribed 自动处理。
+  // 注意：真实音频播放由 LiveKitService 中的 TrackSubscribed 自动处理。
   const realtimeEnvelope = buildRealtimeTtsEventEnvelope(requestId, sessionId, payload);
   const realtimeEnabled = preferRealtime
-    ? await ensureRealtimeConnected(baseUrl, 'tts.speak.realtime', signal)
+    ? await ensureRealtimeConnected(dependencies, baseUrl, 'tts.speak.realtime', signal, trace)
     : false;
   if (realtimeEnabled) {
-    info('ai.tts.v3', 'realtime.speak.publish.start', {
+    trace.record('realtime.speak.publish.start', {
       requestId,
       sessionId,
       eventTopic: 'v3.event',
     });
 
     try {
-      const terminalPromise = waitRealtimeSpeakTerminalEvent(baseUrl, requestId, sessionId, signal);
-      await publishLiveKitV3Event(baseUrl, realtimeEnvelope, {
+      const terminalPromise = waitRealtimeSpeakTerminalEvent(dependencies, baseUrl, requestId, sessionId, signal);
+      await dependencies.liveKit.publishEvent(baseUrl, realtimeEnvelope, {
         signal,
         eventTopic: 'v3.event',
         reason: 'tts.speak',
       });
 
       const terminal = await terminalPromise;
-      info('ai.tts.v3', 'realtime.speak.terminal', {
+      trace.record('realtime.speak.terminal', {
         requestId,
         state: terminal.state,
       });
@@ -464,26 +512,28 @@ export const requestTtsSynthesis = async ({
         throw new Error('实时 TTS 返回错误终态（tts.error）');
       }
 
-      return createRealtimeSyntheticResponse(terminal);
+      const response = createRealtimeSyntheticResponse(terminal);
+      trace.end({ requestId, sessionId, transport: 'livekit', terminalState: terminal.state });
+      return response;
     } catch (e) {
-      warn('ai.tts.v3', 'realtime.speak.failed.fallbackHttp', {
+      trace.record('realtime.speak.failed.fallbackHttp', {
         requestId,
         err: String(e instanceof Error ? e.message : e),
       });
 
       // 实时链路异常后，后端仍可能继续推送音轨。
       // fallback 到 HTTP 前先尝试 cancel 并断开本地房间，避免双路同播导致回音/金属音。
-      await cancelRealtimeSpeakBestEffort(baseUrl, sessionId, requestId);
-      disconnectLiveKitRoom(baseUrl);
+      await cancelRealtimeSpeakBestEffort(dependencies, baseUrl, sessionId, requestId, trace);
+      dependencies.liveKit.disconnectRoom(baseUrl);
       // 继续走 HTTP fallback
     }
   } else {
     // 直接走 HTTP 时，主动清理旧的 LiveKit 播放通道，避免残留音轨叠播。
-    disconnectLiveKitRoom(baseUrl);
+    dependencies.liveKit.disconnectRoom(baseUrl);
     if (!preferRealtime) {
-      info('ai.tts.v3', 'realtime.speak.skippedByCaller', { requestId, reason: 'preferRealtime=false' });
+      trace.record('realtime.speak.skippedByCaller', { requestId, reason: 'preferRealtime=false' });
     }
-    warn('ai.tts.v3', 'realtime.speak.disabled.fallbackHttp', { requestId });
+    trace.record('realtime.speak.disabled.fallbackHttp', { requestId });
   }
 
   const endpoint = `${baseUrl}/v3/tts/speak`;
@@ -504,21 +554,40 @@ export const requestTtsSynthesis = async ({
     throw new Error(`TTS 请求失败: HTTP ${response.status}${detail}`);
   }
 
+  trace.end({ requestId, sessionId, transport: 'http', status: response.status });
   return response;
+  } catch (error) {
+    trace.fail('TTS 合成请求失败', { requestId, baseUrl, preferRealtime }, error);
+    throw error;
+  } finally {
+    context.dispose();
+  }
 };
 
-export const cancelTtsSynthesis = async ({ requestId, reason, config, signal }: TtsCancelRequest): Promise<void> => {
+export const cancelTtsSynthesis = async (
+  dependencies: TtsClientDependencies,
+  { requestId, reason, config, signal }: TtsCancelRequest,
+): Promise<void> => {
   const baseUrl = normalizeBaseUrl(config.baseUrl);
   if (!baseUrl) return;
 
   const cached = stateByBaseUrl.get(baseUrl);
   if (!cached?.sessionId) return;
 
+  const context = dependencies.log.contextRegistry.register('TtsClient', {
+    relation: 'tts.cancel',
+    params: { requestId, sessionId: cached.sessionId, reason },
+    behavior: '取消实时或 HTTP TTS 请求并等待发送完成',
+  });
+  const trace = context.beginTrace('cancelTtsSynthesis', { requestId, reason });
+
+  try {
+
   // cancel 优先走 LiveKit DataChannel，确保实时链路可即时中断。
-  const realtimeEnabled = await ensureRealtimeConnected(baseUrl, 'tts.cancel.realtime', signal);
+  const realtimeEnabled = await ensureRealtimeConnected(dependencies, baseUrl, 'tts.cancel.realtime', signal, trace);
   if (realtimeEnabled) {
     try {
-      await publishLiveKitV3Event(baseUrl, {
+      await dependencies.liveKit.publishEvent(baseUrl, {
         type: 'tts.cancel',
         session_id: cached.sessionId,
         request_id: requestId,
@@ -532,10 +601,10 @@ export const cancelTtsSynthesis = async ({ requestId, reason, config, signal }: 
         reason: 'tts.cancel',
       });
 
-      info('ai.tts.v3', 'realtime.cancel.ok', { requestId });
+      trace.end({ requestId, transport: 'livekit' });
       return;
     } catch (e) {
-      warn('ai.tts.v3', 'realtime.cancel.failed.fallbackHttp', {
+      trace.record('realtime.cancel.failed.fallbackHttp', {
         requestId,
         err: String(e instanceof Error ? e.message : e),
       });
@@ -556,4 +625,11 @@ export const cancelTtsSynthesis = async ({ requestId, reason, config, signal }: 
     }),
     signal,
   );
+  trace.end({ requestId, transport: 'http' });
+  } catch (error) {
+    trace.fail('TTS 取消请求失败', { requestId, baseUrl }, error);
+    throw error;
+  } finally {
+    context.dispose();
+  }
 };

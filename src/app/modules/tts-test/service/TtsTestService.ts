@@ -3,6 +3,7 @@ import { requestTtsSynthesis, warmupTtsModel } from '@app/modules/ai/tts/client'
 import { TtsStreamPlayer } from '@app/modules/ai/tts/streamPlayer';
 import type { TtsRuntimeConfig } from '@app/modules/ai/tts/types';
 import type { LogService } from '@app/shared/logging/LogService';
+import type { LiveKitService } from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
 
 export interface TtsTestTask {
   index: number;
@@ -55,8 +56,11 @@ export class TtsTestService {
   private readonly player = new TtsStreamPlayer();
   private abortController: AbortController | null = null;
 
-  constructor(log: LogService) {
+  private readonly liveKit: LiveKitService;
+
+  constructor(log: LogService, liveKit: LiveKitService) {
     this.log = log;
+    this.liveKit = liveKit;
     makeObservable(this, {
       config: observableRef,
       running: observable,
@@ -67,22 +71,22 @@ export class TtsTestService {
   }
 
   start(): void {
-    this.log.info('ttsTest.service', 'started');
+    this.trace('lifecycle', 'start').end({ started: true });
   }
 
   updateConfig(patch: Partial<TtsRuntimeConfig>): void {
     this.config = { ...this.config, ...patch };
     saveConfig(this.config);
-    this.log.debug('ttsTest.service', 'config.changed', { keys: Object.keys(patch) });
+    this.trace('config', 'update').end({ keys: Object.keys(patch) });
   }
 
   async warmup(): Promise<void> {
-    this.log.info('ttsTest.service', 'warmup.start');
+    const trace = this.trace('warmup', 'warmup');
     try {
-      await warmupTtsModel(this.config, { reason: 'tts-test-service' });
-      this.log.info('ttsTest.service', 'warmup.ok');
+      await warmupTtsModel({ log: this.log, liveKit: this.liveKit }, this.config, { reason: 'tts-test-service' });
+      trace.end({ ok: true });
     } catch (error) {
-      this.log.error('ttsTest.service', 'warmup.failed', { err: toErrorMessage(error) });
+      trace.fail('TTS 测试预热失败', { err: toErrorMessage(error) }, error);
       throw error;
     }
   }
@@ -92,7 +96,7 @@ export class TtsTestService {
     this.abortController = null;
     this.player.stop();
     this.running = false;
-    this.log.info('ttsTest.service', 'batch.stopped');
+    this.trace('batch', 'stop').end({ stopped: true });
   }
 
   async runAll(): Promise<void> {
@@ -109,7 +113,7 @@ export class TtsTestService {
       this.tasks = initialTasks;
       this.running = true;
     });
-    this.log.info('ttsTest.service', 'batch.start', {
+    const batchTrace = this.trace('batch', 'runAll', {
       sentenceCount: initialTasks.length,
       baseUrl: this.config.baseUrl,
     });
@@ -120,7 +124,7 @@ export class TtsTestService {
       const startedAt = performance.now();
       let firstChunkMs = -1;
       try {
-        const response = await requestTtsSynthesis({
+        const response = await requestTtsSynthesis({ log: this.log, liveKit: this.liveKit }, {
           requestId: task.requestId,
           speakText: task.text,
           displayText: task.text,
@@ -143,7 +147,7 @@ export class TtsTestService {
           firstChunkMs: firstChunkMs >= 0 ? firstChunkMs : undefined,
           totalMs,
         });
-        this.log.info('ttsTest.service', 'sentence.done', {
+        batchTrace.record('sentence.done', {
           index: task.index,
           requestId: task.requestId,
           firstChunkMs,
@@ -153,7 +157,7 @@ export class TtsTestService {
         const message = controller.signal.aborted ? 'aborted' : toErrorMessage(error);
         this.updateTask(task.index, { status: 'failed', err: message });
         if (!controller.signal.aborted) {
-          this.log.warn('ttsTest.service', 'sentence.failed', {
+          batchTrace.record('sentence.failed', {
             index: task.index,
             requestId: task.requestId,
             err: message,
@@ -165,13 +169,31 @@ export class TtsTestService {
       this.running = false;
       this.abortController = null;
     });
-    this.log.info('ttsTest.service', 'batch.done');
+    batchTrace.end({ sentenceCount: initialTasks.length, running: false });
   }
 
   dispose(): void {
     this.stop();
     this.player.dispose();
-    this.log.info('ttsTest.service', 'disposed');
+    this.trace('lifecycle', 'dispose').end({ disposed: true });
+  }
+
+  private trace(relation: string, operation: string, params: Record<string, unknown> = {}) {
+    const context = this.log.contextRegistry.register('TtsTestService', {
+      relation,
+      params,
+      behavior: '记录 TTS 测试服务操作及其结果',
+    });
+    const trace = context.beginTrace(operation, params);
+    const end = trace.end.bind(trace);
+    const fail = trace.fail.bind(trace);
+    const record = trace.record.bind(trace);
+    return {
+      traceId: trace.traceId,
+      record,
+      end: (data?: Record<string, unknown>) => { end(data); context.dispose(); },
+      fail: (message: string, data?: Record<string, unknown>, cause?: unknown) => { const result = fail(message, data, cause); context.dispose(); return result; },
+    };
   }
 
   private updateTask(index: number, patch: Partial<TtsTestTask>): void {

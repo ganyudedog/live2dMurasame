@@ -1,4 +1,4 @@
-import { debug, warn } from '@app/shared/logging/compat';
+import type { LogService } from '@app/shared/logging/LogService';
 import { detectActionCapability } from '../action/capability';
 import { ActionExecutor } from '../action/executor';
 import { normalizeActionIntent } from '../action/normalize';
@@ -13,6 +13,7 @@ interface Live2DCoreModelLike {
 }
 
 interface ActionControllerOptions {
+  log: LogService;
   dedupeWindowMs?: number;
   maxQueueSize?: number;
 }
@@ -35,6 +36,7 @@ export class Live2DActionController {
   private readonly dedupeWindowMs: number;
   private readonly maxQueueSize: number;
   private readonly executor = new ActionExecutor();
+  private readonly log: LogService;
 
   private capability: ActionCapability = {
     canShakeHead: false,
@@ -47,7 +49,8 @@ export class Live2DActionController {
   private lastSignature = new Map<string, number>();
   private capabilityReady = false;
 
-  constructor(options: ActionControllerOptions = {}) {
+  constructor(options: ActionControllerOptions) {
+    this.log = options.log;
     this.dedupeWindowMs = options.dedupeWindowMs ?? DEFAULT_DEDUPE_WINDOW_MS;
     this.maxQueueSize = options.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
   }
@@ -55,7 +58,16 @@ export class Live2DActionController {
   dispatch(input: ActionIntentInput, source = 'unknown'): ActionDispatchResult {
     const parsed = actionIntentInputSchema.safeParse(input);
     if (!parsed.success) {
-      warn('ai.action', 'dispatch.invalid', { source, issues: parsed.error.issues.map((issue) => issue.message) });
+      const context = this.log.contextRegistry.register('Live2DActionController', {
+        relation: 'action',
+        params: { source },
+        behavior: '校验、去重并执行模型动作意图',
+      });
+      context.beginTrace('dispatch.invalid').fail('动作意图校验失败', {
+        source,
+        issues: parsed.error.issues.map((issue) => issue.message),
+      });
+      context.dispose();
       return { ok: false, state: 'dropped', reason: 'invalid' };
     }
 
@@ -107,11 +119,17 @@ export class Live2DActionController {
 
     const result = this.executor.tick(core, nowMs);
     if (result.finished && result.action) {
-      debug('ai.action', 'finished', {
+      const context = this.log.contextRegistry.register('Live2DActionController', {
+        relation: 'action',
+        params: { kind: result.action.kind },
+        behavior: '完成一次 Live2D 动作执行',
+      });
+      context.beginTrace('finished').end({
         kind: result.action.kind,
         intensity: result.action.intensity,
         durationMs: result.action.durationMs,
       });
+      context.dispose();
     }
   }
 
@@ -159,6 +177,6 @@ export class Live2DActionController {
   }
 }
 
-export const createLive2DActionController = (options?: ActionControllerOptions): Live2DActionController => {
+export const createLive2DActionController = (options: ActionControllerOptions): Live2DActionController => {
   return new Live2DActionController(options);
 };

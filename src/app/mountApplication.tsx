@@ -6,7 +6,8 @@ import { AppRoot } from './AppRoot';
 import { resolveWindowKind } from './core/resolveWindowKind';
 import { bootstrapRenderer } from './core/bootstrapRenderer';
 import { ServiceProvider } from './core/ServiceProvider';
-import { error, info } from './shared/logging/compat';
+import type { LogService } from './shared/logging/LogService';
+import { TOKENS } from './core/serviceTokens';
 import { BubbleMeasurementRoot } from './modules/live2d/ui/BubbleMeasurementRoot';
 
 const queryClient = new QueryClient({
@@ -16,25 +17,44 @@ const queryClient = new QueryClient({
   },
 });
 
-const installGlobalErrorLogging = (): void => {
+const installGlobalErrorLogging = (log: LogService): void => {
   window.addEventListener('error', (event) => {
     const message = event.error instanceof Error ? event.error.message : (event.message || '发生未知错误');
     toast.error(String(message));
-    error('renderer', 'uncaught.error', { err: String(message) });
+    log.captureException(event.error ?? new Error(String(message)), {
+      origin: 'window.error',
+      data: {
+        message: String(message),
+        source: event.filename,
+        line: event.lineno,
+        column: event.colno,
+      },
+    });
   });
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
     const message = reason instanceof Error ? reason.message : String(reason ?? 'Promise 未处理异常');
     toast.error(message);
-    error('renderer', 'unhandled.rejection', { err: message });
+    log.captureException(reason, {
+      origin: 'window.unhandledrejection',
+      data: { message },
+    });
   });
 };
 
 export const mountApplication = async (): Promise<void> => {
   const windowKind = resolveWindowKind(window.location.search);
-  installGlobalErrorLogging();
   const application = await bootstrapRenderer(windowKind);
-  info('renderer', 'boot', { windowKind, href: window.location.href });
+  const log = application.container.resolve(TOKENS.log);
+  installGlobalErrorLogging(log);
+  const mountContext = log.contextRegistry.register('renderer', {
+    relation: 'mount',
+    params: { windowKind, href: window.location.href },
+    behavior: '挂载 renderer 应用并完成 UI 初始化',
+  });
+  const mountTrace = mountContext.beginTrace('mountApplication');
+  mountTrace.end({ windowKind, href: window.location.href });
+  mountContext.dispose();
 
   const host = document.getElementById('root');
   if (!host) throw new Error('Application root element is missing');

@@ -7,6 +7,9 @@ export const serviceModule: ServiceModule = {
   windows: ['test'],
   eager: [TOKENS.ttsTest],
   register(container) {
-    container.registerSingleton(TOKENS.ttsTest, (scope) => new TtsTestService(scope.resolve(TOKENS.log)));
+    container.registerSingleton(TOKENS.ttsTest, (scope) => new TtsTestService(
+      scope.resolve(TOKENS.log),
+      scope.resolve(TOKENS.liveKit),
+    ));
   },
 };

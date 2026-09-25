@@ -40,11 +40,18 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
     );
   }
 
-  logger.info('app.bootstrap', 'ready', {
+  const readyContext = logger.contextRegistry.register('app.bootstrap', {
+    relation: 'bootstrap',
+    params: { windowKind, hasConfigSnapshot: Boolean(configSnapshot), serviceCount: eagerTokens.length },
+    behavior: '注册并启动 renderer 服务容器',
+  });
+  const readyTrace = readyContext.beginTrace('bootstrapRenderer');
+  readyTrace.end({
     windowKind,
     hasConfigSnapshot: Boolean(configSnapshot),
     serviceCount: eagerTokens.length,
   });
+  readyContext.dispose();
 
   let disposed = false;
   return {
@@ -53,7 +60,14 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
     async dispose() {
       if (disposed) return;
       disposed = true;
-      logger.info('app.bootstrap', 'dispose', { windowKind });
+      const disposeContext = logger.contextRegistry.register('app.bootstrap', {
+        relation: 'dispose',
+        params: { windowKind },
+        behavior: '释放 renderer 服务容器',
+      });
+      const disposeTrace = disposeContext.beginTrace('dispose');
+      disposeTrace.end({ windowKind });
+      disposeContext.dispose();
       bindings.forEach(dispose => dispose());
       await container.dispose();
     },

@@ -1,32 +1,24 @@
-import { app, BrowserWindow, ipcMain, Menu, screen, dialog, protocol } from 'electron';
+import { app, BrowserWindow, Menu, dialog, protocol } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-    initializeRuntimeConfig,
-    getLive2denvConfigCache,
-    applyLive2denvConfigPatch,
-    getModelConfigState,
-    applyModelConfigPatch,
-} from './runtime/allEnv.js';
-import {
-    ensureGlobalModelConfigLoaded,
-    applyAutoLaunchSetting,
-} from './config/live2dGlobal.js';
-import { setDebugTracePolicy } from './utils/log.js';
-import { createLogIngestService } from './services/logging/LogIngestService.js';
-import { createAutoLaunchScheduler } from './main/autoLaunch.js';
-import { createRagFileService } from './main/ragFileService.js';
-import { registerModelMemoryIpc } from './main/modelMemoryIpc.js';
-import { registerConfigIpc } from './main/configIpc.js';
-import { createWindowDragService } from './services/window/WindowDragService.js';
-import { createWindowIntentController } from './main/windowIntentController.js';
+import { applyAutoLaunchSetting } from './infrastructure/system/ElectronAutoLaunchAdapter.js';
+import { createAutoLaunchScheduler } from './infrastructure/system/AutoLaunchScheduler.js';
+import { createMemoryFileService } from './modules/modelenv/infrastructure/MemoryFileService.js';
+import { registerDomainIpc } from './interface/ipc/registerDomainIpc.js';
+import { JsonLive2dEnvironmentRepository } from './infrastructure/persistence/JsonLive2dEnvironmentRepository.js';
+import { JsonModelEnvironmentRepository } from './infrastructure/persistence/JsonModelEnvironmentRepository.js';
+import { JsonModelMemoryRepository } from './infrastructure/persistence/JsonModelMemoryRepository.js';
+import { Live2dEnvironmentService } from './modules/live2denv/application/Live2dEnvironmentService.js';
+import { ModelEnvironmentService } from './modules/modelenv/application/ModelEnvironmentService.js';
+import { WindowApplicationService } from './modules/window/WindowApplicationService.js';
+import { createBackendLogService } from './modules/logging/BackendLogService.js';
 import {
     PET_WINDOW_BASE_CONTENT_HEIGHT,
     PET_WINDOW_BASE_CONTENT_WIDTH,
 } from '../shared/live2dLayout.js';
-import { registerAsrIpc } from './main/asrIpc.js';
 import { detectModelFilePath } from './utils/path.js';
+import { configureConfigDao } from './dao/configDao.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,12 +26,13 @@ const __dirname = path.dirname(__filename);
 let mainWindow = null;
 let controlPanelWindow = null;
 let isQuitting = false;
-const logIngestService = createLogIngestService();
+const backendLog = createBackendLogService();
+configureConfigDao(backendLog);
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const appBaseDir = (() => {
   const distDir = path.join(__dirname, '..', 'dist');
-  try { if (fs.existsSync(distDir)) return distDir; } catch { /* ignore */ }
+  if (fs.existsSync(distDir)) return distDir;
   return path.join(__dirname, '..');
 })();
 const isDevServerMode = Boolean(devServerUrl);
@@ -113,7 +106,7 @@ const pickModelDirViaDialog = async (parentWindow) => {
         }
         return path.dirname(hit);
     } catch (error) {
-        console.warn('[pet] pick model file failed', error);
+        backendLog.error('electron', 'model.pick.failed', { message: String(error?.message ?? error) });
         return null;
     }
 };
@@ -128,7 +121,7 @@ const pickFilePathViaDialog = async (parentWindow, options = {}) => {
         if (!picked) return null;
         return path.normalize(picked);
     } catch (error) {
-        console.warn('[pet] pick file failed', error);
+        backendLog.error('electron', 'file.pick.failed', { message: String(error?.message ?? error) });
         return null;
     }
 };
@@ -154,9 +147,9 @@ const pickTtsFileWithFilters = async ({ title, filters }) => {
 
 const ensureModelSelectedOnStartup = async () => {
     try {
-        const cfg = getLive2denvConfigCache();
-        const list = Array.isArray(cfg?.VITE_MODEL_PATHS) ? cfg.VITE_MODEL_PATHS.filter(Boolean) : [];
-        const hasCurrent = typeof cfg?.CURRENT_PATH === 'string' && cfg.CURRENT_PATH.trim();
+        const cfg = live2dEnvironmentService.root.toPersistence();
+        const list = Array.isArray(cfg?.modelPaths) ? cfg.modelPaths.filter(Boolean) : [];
+        const hasCurrent = typeof cfg?.currentModelPath === 'string' && cfg.currentModelPath.trim();
         if (hasCurrent || list.length) return;
 
         const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
@@ -168,13 +161,13 @@ const ensureModelSelectedOnStartup = async () => {
         const dir = await pickModelDirViaDialog(parentWindow);
         if (!dir) return;
 
-        const snapshot = applyLive2denvConfigPatch({
-            VITE_MODEL_PATHS: [dir],
-            CURRENT_PATH: dir,
+        const snapshot = live2dEnvironmentService.update({
+            modelPaths: [dir],
+            currentModelPath: dir,
         });
-        broadcastConfigSnapshot(snapshot, { live2denv: true, model: true });
+        applicationIpc.publishSnapshot(snapshot, 'ddd:live2denv:snapshot:changed');
     } catch (error) {
-        console.warn('[pet] ensure model selected on startup failed', error);
+        backendLog.error('electron', 'model.startupSelection.failed', { message: String(error?.message ?? error) });
     }
 };
 
@@ -229,25 +222,49 @@ const ensureControlPanelWindow = () => {
 
 const isControlPanelVisible = () => Boolean(controlPanelWindow?.isVisible());
 
-const { readRagTextFile } = createRagFileService();
+const { readRagTextFile } = createMemoryFileService();
 const { scheduleApplyAutoLaunchSetting, flushPendingAutoLaunchSetting } = createAutoLaunchScheduler({
     getControlPanelWindow: () => controlPanelWindow,
+    apply: (enabled) => applyAutoLaunchSetting(enabled, backendLog),
 });
-const { handleWindowIntent, scheduleEmitMainWindowBounds, setNativeDragSession } = createWindowIntentController({
-    getMainWindow: () => mainWindow,
+const modelEnvironmentService = new ModelEnvironmentService({
+    repository: new JsonModelEnvironmentRepository({
+        fields: ['visualFrame', 'bubble', 'interactionZones', 'rag', 'tts'],
+    }),
+    memoryRepository: new JsonModelMemoryRepository(),
+    log: backendLog,
 });
-const windowDragService = createWindowDragService({
-    onSessionChange: setNativeDragSession,
-    onSessionSettled: () => scheduleEmitMainWindowBounds('drag-settled'),
+const live2dEnvironmentService = new Live2dEnvironmentService({
+    repository: new JsonLive2dEnvironmentRepository(),
+    modelEnvironmentService,
 });
-const { broadcastConfigSnapshot } = registerConfigIpc({
-    getMainWindow: () => mainWindow,
-    getControlPanelWindow: () => controlPanelWindow,
-    scheduleApplyAutoLaunchSetting,
-});
-registerModelMemoryIpc();
+let applicationIpc;
+let windowApplicationService;
 
-const asrRuntime = registerAsrIpc();
+windowApplicationService = new WindowApplicationService({
+    getMainWindow: () => mainWindow,
+    live2dEnvironmentService,
+    log: backendLog,
+});
+
+applicationIpc = registerDomainIpc({
+    live2dEnvironmentService,
+    modelEnvironmentService,
+    windowApplicationService,
+    pickModelFile: () => pickModelDirViaDialog(getBestDialogParentWindow()),
+    pickTtsPath: (kind) => pickTtsFileWithFilters({
+        title: kind === 'gpt' ? '选择 GPT 权重文件' : kind === 'sovits' ? '选择 SoVITS 权重文件' : '选择参考音频文件',
+        filters: [{
+            name: kind === 'ref' ? '音频文件' : '权重文件',
+            extensions: kind === 'ref' ? ['wav', 'ogg', 'mp3', 'flac', 'aac', 'm4a'] : ['ckpt', 'pt', 'bin', 'safetensors', 'pth'],
+        }, { name: '所有文件', extensions: ['*'] }],
+    }),
+    readRagTextFile,
+    scheduleAutoLaunchSetting: scheduleApplyAutoLaunchSetting,
+    getMainWindow: () => mainWindow,
+    logService: backendLog,
+});
+const asrRuntime = applicationIpc.asrRuntime;
 
 const hideControlPanel = () => {
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
@@ -326,6 +343,8 @@ const createMainWindow = () => {
 
     loadMainWindow(mainWindow);
 
+    windowApplicationService?.restore();
+
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
         controlPanelWindow.setParentWindow(mainWindow);
     }
@@ -341,128 +360,16 @@ const createMainWindow = () => {
     });
 
     // Native drag facts are suppressed by the intent service until release.
-    mainWindow.on('move', () => scheduleEmitMainWindowBounds('move'));
-    mainWindow.on('moved', () => scheduleEmitMainWindowBounds('moved'));
-    mainWindow.on('resize', () => scheduleEmitMainWindowBounds('resize'));
+    mainWindow.on('move', () => windowApplicationService?.scheduleBounds('move'));
+    mainWindow.on('moved', () => windowApplicationService?.scheduleBounds('moved'));
+    mainWindow.on('resize', () => windowApplicationService?.scheduleBounds('resize'));
 
     return mainWindow;
 };
 
-// 使用主进程原生对话框拿到真实文件路径。
-// 只允许选择 *.model3.json（UI 过滤只能做到 json，后缀校验在这里做）。
-// 返回值统一为“模型目录绝对路径”（符合 offset.md：VITE_MODEL_PATHS/CURRENT_PATH 存目录）。
-ipcMain.handle('pet:pickModelFile', async () => {
-    const parentWindow = getBestDialogParentWindow();
-    try {
-        parentWindow?.show();
-        parentWindow?.focus();
-    } catch { }
-    return pickModelDirViaDialog(parentWindow);
-});
-
-ipcMain.handle('pet:ai:tts:getConfig', (_event, payload = {}) => {
-    const modelPath = typeof payload?.modelPath === 'string' && payload.modelPath ? payload.modelPath : undefined;
-    const state = getModelConfigState(modelPath);
-    return state?.modelConfig?.tts ?? null;
-});
-
-ipcMain.handle('pet:ai:tts:updateConfig', (_event, payload = {}) => {
-    const modelPath = typeof payload?.modelPath === 'string' && payload.modelPath ? payload.modelPath : undefined;
-    const patch = payload && typeof payload === 'object' && payload.patch && typeof payload.patch === 'object'
-        ? payload.patch
-        : payload;
-    const snapshot = applyModelConfigPatch({
-        modelPath,
-        patch: {
-            tts: patch,
-        },
-    });
-    if (snapshot) {
-        broadcastConfigSnapshot(snapshot, { live2denv: false, model: true });
-    }
-    return {
-        modelPath: snapshot?.activeModelPath ?? null,
-        tts: snapshot?.modelConfig?.tts ?? null,
-        snapshot: snapshot ?? null,
-    };
-});
-
-ipcMain.handle('pet:ai:tts:pickGptWeightsPath', async () => {
-    return pickTtsFileWithFilters({
-        title: '选择 GPT 权重文件',
-        filters: [
-            { name: '权重文件', extensions: ['ckpt', 'pt', 'bin', 'safetensors'] },
-            { name: '所有文件', extensions: ['*'] },
-        ],
-    });
-});
-
-ipcMain.handle('pet:ai:tts:pickSovitsWeightsPath', async () => {
-    return pickTtsFileWithFilters({
-        title: '选择 SoVITS 权重文件',
-        filters: [
-            { name: '权重文件', extensions: ['pth', 'pt', 'ckpt', 'bin', 'safetensors'] },
-            { name: '所有文件', extensions: ['*'] },
-        ],
-    });
-});
-
-ipcMain.handle('pet:ai:tts:pickRefAudioPath', async () => {
-    return pickTtsFileWithFilters({
-        title: '选择参考音频文件',
-        filters: [
-            { name: '音频文件', extensions: ['wav', 'ogg', 'mp3', 'flac', 'aac', 'm4a'] },
-            { name: '所有文件', extensions: ['*'] },
-        ],
-    });
-});
-
-ipcMain.on('pet:debugTrace', (event, payload = {}) => {
-    try {
-        logIngestService.ingestRendererTrace(event, payload);
-    } catch { }
-});
-
-ipcMain.handle('pet:setMousePassthrough', (event, passthrough) => {
-    try {
-        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
-        if (!target || target.isDestroyed()) return;
-        const enabled = Boolean(passthrough);
-        target.setIgnoreMouseEvents(enabled, { forward: true });
-        return enabled;
-    } catch (error) {
-        console.warn('[pet] setMousePassthrough failed', error);
-        throw error;
-    }
-});
-
-ipcMain.handle('pet:getCursorScreenPoint', () => {
-    try {
-        return screen.getCursorScreenPoint();
-    } catch (error) {
-        console.warn('[pet] getCursorScreenPoint failed', error);
-        return null;
-    }
-});
-
-ipcMain.handle('pet:getWindowBounds', (event) => {
-    try {
-        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
-        if (!target || target.isDestroyed()) return null;
-        return target.getBounds();
-    } catch (error) {
-        console.warn('[pet] getWindowBounds failed', error);
-        return null;
-    }
-});
-
-ipcMain.handle('pet:readRagTextFile', (_event, payload = {}) => {
-    return readRagTextFile(payload);
-});
-
 app.on('before-quit', () => {
     isQuitting = true;
-    windowDragService.dispose();
+    windowApplicationService?.dispose();
     asrRuntime?.dispose?.();
     flushPendingAutoLaunchSetting();
 });
@@ -509,22 +416,16 @@ app.whenReady().then(async () => {
         });
     }
 
-    const loadedConfig = ensureGlobalModelConfigLoaded();
-    setDebugTracePolicy({
-        minLevel: loadedConfig?.debugModeEnabled ? 'debug' : 'info',
-        consoleVerbose: Boolean(loadedConfig?.debugModeEnabled),
-    });
-    applyAutoLaunchSetting(loadedConfig.autoLaunch);
+    let loadedConfig;
     try {
-        const snapshot = initializeRuntimeConfig();
-        console.log('[pet] config loaded', {
-            activeModelPath: snapshot.activeModelPath,
-            displayLang: snapshot.globalModelConfig?.displayLang,
-            aiConfigured: Boolean(snapshot.globalModelConfig?.apiKey),
-        });
+        live2dEnvironmentService.initialize();
+        loadedConfig = live2dEnvironmentService.root.settings;
     } catch (error) {
-        console.warn('[pet] failed to initialize config directories', error);
+        backendLog.error('bootstrap', 'config.initialize.failed', { message: String(error?.message ?? error) });
+        loadedConfig = {};
     }
+    backendLog.setDebugPolicy?.(loadedConfig?.debugModeEnabled);
+    applyAutoLaunchSetting(loadedConfig.autoLaunch, backendLog);
     createMainWindow();
     await ensureModelSelectedOnStartup();
     app.on('activate', () => {
@@ -537,45 +438,5 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
-    }
-});
-
-ipcMain.handle('pet:windowIntent', (_event, intent = {}) => {
-    return handleWindowIntent(intent);
-});
-
-ipcMain.on('pet:windowDrag', (event, payload = {}) => {
-    windowDragService.handleWindowDrag(event, payload);
-});
-
-ipcMain.handle('pet:getWindowGeometry', (event) => {
-    try {
-        const target = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
-        if (!target || target.isDestroyed()) return null;
-        const bounds = target.getBounds();
-        const rawContentBounds = target.getContentBounds();
-        // Windows can report a minimized/off-screen sentinel with a 0x0 content area for
-        // transparent frameless windows. Their content area follows the outer bounds.
-        const contentBounds = Number.isFinite(rawContentBounds?.x)
-            && Number.isFinite(rawContentBounds?.y)
-            && rawContentBounds.width > 0
-            && rawContentBounds.height > 0
-            ? rawContentBounds
-            : bounds;
-        const display = screen.getDisplayMatching(bounds);
-        return {
-            bounds,
-            contentBounds,
-            workArea: display.workArea,
-            displayId: display.id,
-            scaleFactor: display.scaleFactor,
-            baseContentSize: {
-                width: PET_WINDOW_BASE_CONTENT_WIDTH,
-                height: PET_WINDOW_BASE_CONTENT_HEIGHT,
-            },
-        };
-    } catch (error) {
-        console.warn('[pet] getWindowGeometry failed', error);
-        return null;
     }
 });

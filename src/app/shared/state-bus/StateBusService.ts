@@ -23,6 +23,7 @@ const DEFAULT_ASR_STATE: SharedState['asr'] = {
 };
 
 const DEFAULT_CHAT_CONFIG: ChatConfig = {
+  model: '',
   apiKey: '',
   baseURL: '',
   displayLang: 'zh',
@@ -117,6 +118,7 @@ export class StateBusService {
       this.publishScale(globalConfig.scale);
     }
     this.publishChatConfig({
+      model: typeof globalConfig?.model === 'string' ? globalConfig.model : '',
       apiKey: typeof globalConfig?.apiKey === 'string' ? globalConfig.apiKey : '',
       baseURL: typeof globalConfig?.baseURL === 'string' ? globalConfig.baseURL : '',
       displayLang: normalizeDisplayLang(globalConfig?.displayLang),

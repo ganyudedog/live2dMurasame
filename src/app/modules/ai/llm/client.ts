@@ -7,7 +7,6 @@ interface Stage2LLMClientResult {
   usedModel: string;
 }
 
-const DEFAULT_MODEL = 'deepseek-v4-flash';
 const DEFAULT_TIMEOUT_MS = 12000;
 
 const withTimeoutSignal = (timeoutMs: number): AbortSignal | undefined => {
@@ -26,7 +25,10 @@ export const requestStage2LLM = async (
     throw new Error('缺少 API Key，请先在控制面板 AI 页填写');
   }
 
-  const usedModel = req.model ?? cfg.model ?? DEFAULT_MODEL;
+  const usedModel = req.model ?? cfg.model ?? '';
+  if (!usedModel.trim()) {
+    throw new Error('未配置 AI 模型，请先在控制面板 AI 页填写');
+  }
   const timeoutMs = typeof cfg.timeoutMs === 'number' && Number.isFinite(cfg.timeoutMs)
     ? Math.max(1000, Math.floor(cfg.timeoutMs))
     : DEFAULT_TIMEOUT_MS;

@@ -33,6 +33,7 @@ export interface ChatResponse {
 
 /** 跨窗口 AI 配置快照，ControlPanel 修改后同步到 PetCanvas */
 export interface ChatConfig {
+  model: string;
   apiKey: string;
   baseURL: string;
   displayLang: 'zh' | 'en' | 'ja' | 'ko';

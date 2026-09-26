@@ -1,10 +1,10 @@
 export const createIpcEventBridge = ({ ipcRenderer }) => {
   const allowedIpcEvents = new Set([
-    'pet:windowDrag',
-    'pet:windowBoundsChanged',
-    'pet:windowFact',
-    'pet:windowIntentAck',
-    'pet:asr:event',
+    'ddd:window:drag',
+    'ddd:window:bounds-changed',
+    'ddd:window:fact',
+    'ddd:window:intent-ack',
+    'ddd:live2denv:asr:event',
   ]);
 
   const ipcEventListenerRegistry = new Map();

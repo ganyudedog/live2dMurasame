@@ -1,13 +1,16 @@
 export default function AiSettingsPage({
+  model,
   apiBaseUrl,
   apiKey,
   displayLang,
   onChange,
 }: {
+  model: string;
   apiBaseUrl: string;
   apiKey: string;
   displayLang: 'zh' | 'en' | 'ja' | 'ko';
   onChange: (next: {
+    model: string;
     apiBaseUrl: string;
     apiKey: string;
     displayLang: 'zh' | 'en' | 'ja' | 'ko';
@@ -23,12 +26,26 @@ export default function AiSettingsPage({
       <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
         <div className="text-sm font-medium">API</div>
         <div className="grid grid-cols-[120px_1fr] items-center gap-x-4 gap-y-3">
+          <div className="text-xs text-base-content/70 text-right">Model</div>
+          <input
+            className="input input-sm input-bordered w-full"
+            placeholder="https://example.com/api"
+            value={model}
+            onChange={(e) => onChange({
+              model: e.target.value,
+              apiBaseUrl,
+              apiKey,
+              displayLang,
+            })}
+          />
+
           <div className="text-xs text-base-content/70 text-right">Base URL</div>
           <input
             className="input input-sm input-bordered w-full"
             placeholder="https://example.com/api"
             value={apiBaseUrl}
             onChange={(e) => onChange({
+              model,
               apiBaseUrl: e.target.value,
               apiKey,
               displayLang,
@@ -41,6 +58,7 @@ export default function AiSettingsPage({
             placeholder="sk-..."
             value={apiKey}
             onChange={(e) => onChange({
+              model,
               apiBaseUrl,
               apiKey: e.target.value,
               displayLang,
@@ -52,6 +70,7 @@ export default function AiSettingsPage({
             className="select select-sm select-bordered w-full"
             value={displayLang}
             onChange={(e) => onChange({
+              model,
               apiBaseUrl,
               apiKey,
               displayLang: e.target.value as 'zh' | 'en' | 'ja' | 'ko',

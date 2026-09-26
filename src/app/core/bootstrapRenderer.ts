@@ -13,7 +13,7 @@ export interface RendererApplication {
 
 export const bootstrapRenderer = async (windowKind: WindowKind): Promise<RendererApplication> => {
   const container = new ServiceContainer();
-  const configSnapshot = window.ConfigAPI?.getSnapshot?.() ?? window.__PET_CONFIG__ ?? null;
+  const configSnapshot = window.SnapshotAPI?.getSnapshot?.() ?? window.__PET_CONFIG__ ?? null;
   container.registerValue(TOKENS.bootstrapContext, {
     windowKind,
     configSnapshot,

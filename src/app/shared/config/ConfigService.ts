@@ -56,9 +56,10 @@ export class ConfigService {
   }
 
   start(): void {
-    const configApi = this.bridge.configApi;
+    const snapshotApi = this.bridge.snapshotApi;
+    const globalApi = this.bridge.globalApi;
     const modelApi = this.bridge.modelApi;
-    const detachLive2denv = configApi?.onLive2denvConfigUpdated?.((payload) => {
+    const detachLive2denv = snapshotApi?.onLive2denvConfigUpdated?.((payload) => {
       runInAction(() => {
         this.live2denvConfig = payload.live2denvConfig ?? this.live2denvConfig;
         this.globalModelConfig = payload.globalModelConfig ?? this.globalModelConfig;
@@ -72,7 +73,7 @@ export class ConfigService {
         modelKey: this.modelKey,
       });
     });
-    const detachGlobal = configApi?.onGlobalModelConfigUpdated?.((config) => {
+    const detachGlobal = globalApi?.onConfigUpdated?.((config) => {
       runInAction(() => {
         this.globalModelConfig = config;
       });
@@ -133,8 +134,8 @@ export class ConfigService {
     });
     try {
       const [live2denvConfig, globalModelConfig, modelBundle] = await Promise.all([
-        this.bridge.configApi?.getLive2denvConfig?.(),
-        this.bridge.configApi?.getGlobalModelConfig?.(),
+        this.bridge.live2dEnvApi?.getLive2denvConfig?.(),
+        this.bridge.globalApi?.getConfig?.(),
         this.bridge.modelApi?.getConfig?.(),
       ]);
       runInAction(() => {
@@ -142,7 +143,7 @@ export class ConfigService {
         this.globalModelConfig = globalModelConfig ?? this.initialSnapshot?.globalModelConfig ?? this.globalModelConfig;
         this.modelConfig = modelBundle?.config ?? this.initialSnapshot?.modelConfig ?? this.modelConfig;
         this.activeModelPath = modelBundle?.modelPath
-          ?? live2denvConfig?.CURRENT_PATH
+          ?? live2denvConfig?.currentModelPath
           ?? this.initialSnapshot?.activeModelPath
           ?? this.activeModelPath;
         this.modelKey = modelBundle?.modelKey ?? this.initialSnapshot?.modelKey ?? this.modelKey;
@@ -171,8 +172,8 @@ export class ConfigService {
     }
   }
 
-  async updateGlobalModelConfig(patch: PetGlobalModelConfigPayload): Promise<PetGlobalModelConfig | null> {
-    const update = this.bridge.configApi?.updateGlobalModelConfig;
+  async updateGlobalConfig(patch: PetGlobalModelConfigPayload): Promise<PetGlobalModelConfig | null> {
+    const update = this.bridge.globalApi?.updateConfig;
     if (!update) {
       this.log.warn('config.service', 'global.update.missingApi');
       return null;
@@ -193,7 +194,7 @@ export class ConfigService {
   }
 
   async updateLive2denvConfig(patch: Partial<PetLive2denvConfig>): Promise<PetLive2denvConfig | null> {
-    const update = this.bridge.configApi?.updateLive2denvConfig;
+    const update = this.bridge.live2dEnvApi?.updateLive2denvConfig;
     if (!update) {
       this.log.warn('config.service', 'live2denv.update.missingApi');
       return null;
@@ -202,7 +203,7 @@ export class ConfigService {
       const next = await update(patch);
       runInAction(() => {
         this.live2denvConfig = next ?? this.live2denvConfig;
-        this.activeModelPath = next?.CURRENT_PATH ?? this.activeModelPath;
+        this.activeModelPath = next?.currentModelPath ?? this.activeModelPath;
         this.lastError = null;
       });
       this.log.info('config.service', 'live2denv.update.ok', { keys: Object.keys(patch) });

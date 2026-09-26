@@ -87,10 +87,12 @@ const ControlPanel: React.FC = observer(() => {
 
       {activeTab === 'ai-settings' && (
         <AiSettingsPage
+          model={service.aiSettings.model}
           apiBaseUrl={service.aiSettings.baseURL}
           apiKey={service.aiSettings.apiKey}
           displayLang={service.aiSettings.displayLang}
           onChange={(next) => service.setAiSettings({
+            model: next.model,
             apiKey: next.apiKey,
             baseURL: next.apiBaseUrl,
             displayLang: next.displayLang,

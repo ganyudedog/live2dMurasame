@@ -237,7 +237,7 @@ export class FrontendTtsRuntime {
       };
     }
 
-    const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
+    const snapshot = this.getConfigSnapshot?.() ?? window.SnapshotAPI?.getSnapshot?.();
     const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
 
     if (!ttsConfig.enabled) {
@@ -280,7 +280,7 @@ export class FrontendTtsRuntime {
   cancelActive(reason: string): void {
     const requestId = this.activeRequestId;
     if (requestId) {
-      const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
+      const snapshot = this.getConfigSnapshot?.() ?? window.SnapshotAPI?.getSnapshot?.();
       const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
       if (ttsConfig.baseUrl) {
         void cancelTtsSynthesis({ log: this.log, liveKit: this.liveKit }, {
@@ -326,7 +326,7 @@ export class FrontendTtsRuntime {
       };
     }
 
-    const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
+      const snapshot = this.getConfigSnapshot?.() ?? window.SnapshotAPI?.getSnapshot?.();
     const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
 
     if (!ttsConfig.enabled) {

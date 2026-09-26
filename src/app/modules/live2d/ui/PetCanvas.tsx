@@ -79,8 +79,8 @@ const PetCanvas: React.FC = observer(() => {
   const refreshConfigSnapshot = useCallback(() => configService.refresh(), [configService]);
   
 
-  const eyeMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.VITE_EYE_MAX_UP, 0.5), [live2denvConfig]);
-  const angleMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.VITE_ANGLE_MAX_UP, 20), [live2denvConfig]);
+  const eyeMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.eyeMaxUp, 0.5), [live2denvConfig]);
+  const angleMaxUpLimit = useMemo(() => toFiniteNumber((live2denvConfig as any)?.angleMaxUp, 20), [live2denvConfig]);
 
   const clampEyeBallY = useCallback((value: number): number => {
     const windowOverride = typeof window !== 'undefined' ? (window as any).LIVE2D_EYE_MAX_UP : undefined;
@@ -94,7 +94,7 @@ const PetCanvas: React.FC = observer(() => {
     return clampAngleYBase(value, limit);
   }, [angleMaxUpLimit]);
 
-  // 模型文件 URL 由主进程根据 CURRENT_PATH 解析并随快照下发（file://.../*.model3.json）。
+  // 模型文件 URL 由主进程根据 currentModelPath 解析并随快照下发（file://.../*.model3.json）。
   // 注意：Live2D loader 只接受可读取的 *.model3.json URL。目录路径会导致 fetch/解析失败。
   // 因此此处不再回退到目录路径，拿不到 file URL 时先等待下一次配置快照更新。
   const modelPath = (typeof activeModelFileUrl === 'string' && activeModelFileUrl.trim().length > 0)
@@ -106,10 +106,10 @@ const PetCanvas: React.FC = observer(() => {
       hydrated: Boolean(hydrated),
       hasActiveModelFileUrl: Boolean(activeModelFileUrl),
       activeModelFileUrl: typeof activeModelFileUrl === 'string' ? activeModelFileUrl : null,
-      currentPath: typeof live2denvConfig?.CURRENT_PATH === 'string' ? live2denvConfig.CURRENT_PATH : null,
+      currentPath: typeof live2denvConfig?.currentModelPath === 'string' ? live2denvConfig.currentModelPath : null,
       resolvedModelPath: modelPath || null,
     });
-  }, [hydrated, activeModelFileUrl, live2denvConfig?.CURRENT_PATH, modelPath]);
+  }, [hydrated, activeModelFileUrl, live2denvConfig?.currentModelPath, modelPath]);
   const modelPathRef = useRef(modelPath);
 
 

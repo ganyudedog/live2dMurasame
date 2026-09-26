@@ -100,10 +100,10 @@ export class ControlPanelService {
       ),
       reaction(
         () => this.config.globalModelConfig,
-        (globalConfig) => {
+        (aiConfig) => {
           if (this.aiSettingsPending) return;
           runInAction(() => {
-            this.aiSettings = toChatConfig(globalConfig);
+            this.aiSettings = toChatConfig(aiConfig);
           });
         },
       ),
@@ -154,12 +154,12 @@ export class ControlPanelService {
   }
 
   get modelPaths(): string[] {
-    const paths = this.config.live2denvConfig?.VITE_MODEL_PATHS;
+    const paths = this.config.live2denvConfig?.modelPaths;
     return Array.isArray(paths) ? paths.filter(Boolean) : [];
   }
 
   get currentModelPath(): string | null {
-    return this.config.activeModelPath ?? this.config.live2denvConfig?.CURRENT_PATH ?? null;
+    return this.config.activeModelPath ?? this.config.live2denvConfig?.currentModelPath ?? null;
   }
 
   get selectedModel(): ModelEntry {
@@ -206,7 +206,7 @@ export class ControlPanelService {
     // Scale preview is published by the interaction itself. Persistence must
     // not replay an older draft into the live SharedWorker stream.
     try {
-      await this.config.updateGlobalModelConfig(patch);
+      await this.config.updateGlobalConfig(patch);
     } catch (error) {
       this.captureError('globalSettings.persist.failed', error);
       throw error;
@@ -240,7 +240,7 @@ export class ControlPanelService {
 
   async selectModelPath(path: string): Promise<void> {
     await this.interactionZones.flush();
-    await this.config.updateLive2denvConfig({ CURRENT_PATH: path, LAST_SELECTED_AT: Date.now() });
+    await this.config.updateLive2denvConfig({ currentModelPath: path });
     this.logTrace('model', 'select', { path }).end({ selectedPath: path });
   }
 
@@ -250,9 +250,8 @@ export class ControlPanelService {
     await this.interactionZones.flush();
     const nextPaths = Array.from(new Set([...this.modelPaths, modelDir]));
     await this.config.updateLive2denvConfig({
-      VITE_MODEL_PATHS: nextPaths,
-      CURRENT_PATH: modelDir,
-      LAST_SELECTED_AT: Date.now(),
+      modelPaths: nextPaths,
+      currentModelPath: modelDir,
     });
     await this.config.refresh();
     this.logTrace('model', 'add', { modelDir }).end({ count: nextPaths.length });
@@ -263,9 +262,8 @@ export class ControlPanelService {
     if (path === this.currentModelPath) await this.interactionZones.flush();
     const nextPaths = this.modelPaths.filter((entry) => entry !== path);
     await this.config.updateLive2denvConfig({
-      VITE_MODEL_PATHS: nextPaths,
-      CURRENT_PATH: this.currentModelPath === path ? (nextPaths[0] ?? null) : this.currentModelPath,
-      LAST_SELECTED_AT: Date.now(),
+      modelPaths: nextPaths,
+      currentModelPath: this.currentModelPath === path ? (nextPaths[0] ?? null) : this.currentModelPath,
     });
     await this.config.removeModelConfig(path);
     this.logTrace('model', 'remove', { path }).end({ count: nextPaths.length });
@@ -384,11 +382,7 @@ export class ControlPanelService {
   private async persistAiSettings(): Promise<void> {
     const current = this.aiSettings;
     try {
-      await this.config.updateGlobalModelConfig({
-        apiKey: current.apiKey,
-        baseURL: current.baseURL,
-        displayLang: current.displayLang,
-      });
+      await this.config.updateGlobalConfig({ model: current.model, apiKey: current.apiKey, baseURL: current.baseURL, displayLang: current.displayLang });
       runInAction(() => {
         this.aiSettingsPending = false;
       });
@@ -497,7 +491,8 @@ export class ControlPanelService {
   }
 }
 
-const toChatConfig = (config: PetGlobalModelConfig | null): ChatConfig => ({
+const toChatConfig = (config: PetGlobalModelConfig | null | undefined): ChatConfig => ({
+  model: typeof config?.model === 'string' ? config.model : '',
   apiKey: typeof config?.apiKey === 'string' ? config.apiKey : '',
   baseURL: typeof config?.baseURL === 'string' ? config.baseURL : '',
   displayLang: config?.displayLang === 'en' || config?.displayLang === 'ja' || config?.displayLang === 'ko'

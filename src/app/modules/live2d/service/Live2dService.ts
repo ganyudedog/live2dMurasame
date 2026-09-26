@@ -233,7 +233,7 @@ export class Live2dService {
   }
 
   private startWindowGeometrySync(): void {
-    const disposer = this.windowApi?.on?.('pet:windowFact', (fact) => {
+    const disposer = this.windowApi?.on?.('ddd:window:fact', (fact) => {
       const ts = fact.ts ?? Date.now();
       if (this.disposed || !fact.geometry || ts < this.nativeSourceTs) return;
       this.nativeSourceTs = ts;

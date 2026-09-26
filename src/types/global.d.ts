@@ -15,17 +15,33 @@ declare global {
     autoLaunch?: boolean;
     forcedFollow?: boolean;
     debugModeEnabled?: boolean;
+    model?: string;
     apiKey?: string;
     baseURL?: string;
     displayLang?: 'zh' | 'en' | 'ja' | 'ko';
+    asr?: PetAsrConfig;
+  }
+
+  interface PetAsrConfig {
+    modelDir?: string;
+    sampleRate?: number;
+    featureDim?: number;
+    numThreads?: number;
+    provider?: string;
+    debug?: number;
+    rule1MinTrailingSilence?: number;
+    rule2MinTrailingSilence?: number;
+    rule3MinUtteranceLength?: number;
   }
 
   type PetGlobalModelConfig = PetGlobalModelConfigPayload;
 
   // 此处对应live2denv.json中的字段
   interface PetLive2denvConfig {
-    VITE_MODEL_PATHS: string[];
-    CURRENT_PATH: string | null;
+    modelPaths: string[];
+    currentModelPath: string | null;
+    settings?: PetGlobalModelConfig;
+    windowState?: { bounds: { x: number; y: number; width: number; height: number } | null; updatedAt: number };
     [key: string]: unknown;
   }
 
@@ -291,14 +307,15 @@ declare global {
   }
 
   interface PetWindowEventMap {
-    'pet:windowDrag': PetWindowDragPayload;
-    'pet:windowBoundsChanged': PetWindowBoundsChangedPayload;
-    'pet:windowFact': PetWindowFact;
-    'pet:windowIntentAck': PetWindowIntentAck;
-    'pet:asr:event': PetAsrEvent;
+    'ddd:window:drag': PetWindowDragPayload;
+    'ddd:window:bounds-changed': PetWindowBoundsChangedPayload;
+    'ddd:window:fact': PetWindowFact;
+    'ddd:window:intent-ack': PetWindowIntentAck;
+    'ddd:live2denv:asr:event': PetAsrEvent;
   }
 
   interface PetAIConfigPayload {
+    model?: string;
     apiKey?: string;
     baseURL?: string;
     displayLang?: 'zh' | 'en' | 'ja' | 'ko';
@@ -351,14 +368,20 @@ declare global {
     off?: <K extends keyof PetWindowEventMap>(channel: K, callback: (payload: PetWindowEventMap[K]) => void) => void;
   }
 
-  interface PetConfigAPI {
+  interface PetSnapshotAPI {
     getSnapshot?: () => PetConfigSnapshot | undefined;
+    onLive2denvConfigUpdated?: (callback: (payload: { live2denvConfig?: PetLive2denvConfig | null; globalModelConfig?: PetGlobalModelConfig | null; activeModelPath?: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
+  }
+
+  interface PetLive2dEnvAPI {
     getLive2denvConfig?: () => Promise<PetLive2denvConfig | undefined>;
     updateLive2denvConfig?: (patch: Partial<PetLive2denvConfig>) => Promise<PetLive2denvConfig | undefined>;
-    onLive2denvConfigUpdated?: (callback: (payload: { live2denvConfig?: PetLive2denvConfig | null; globalModelConfig?: PetGlobalModelConfig | null; activeModelPath?: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
-    getGlobalModelConfig?: () => Promise<PetGlobalModelConfigPayload | undefined>;
-    updateGlobalModelConfig?: (patch: PetGlobalModelConfigPayload) => Promise<PetGlobalModelConfigPayload | undefined>;
-    onGlobalModelConfigUpdated?: (callback: (config: PetGlobalModelConfigPayload) => void) => (() => void) | void;
+  }
+
+  interface PetGlobalAPI {
+    getConfig?: () => Promise<PetGlobalModelConfigPayload | undefined>;
+    updateConfig?: (patch: PetGlobalModelConfigPayload) => Promise<PetGlobalModelConfigPayload | undefined>;
+    onConfigUpdated?: (callback: (config: PetGlobalModelConfigPayload) => void) => (() => void) | void;
   }
 
   interface PetModelAPI {
@@ -373,6 +396,7 @@ declare global {
   interface PetMemoryAPI {
     get?: (payload?: { modelPath?: string }) => Promise<PetModelMemoryState | undefined>;
     update?: (payload: PetModelMemoryUpdatePayload) => Promise<PetModelMemoryState | undefined>;
+    readRagTextFile?: (payload: { knowledgeBasePath?: string; modelPath?: string }) => Promise<{ ok: boolean; path: string | null; content: string; error?: string } | undefined>;
     onUpdated?: (callback: (payload: PetModelMemoryState) => void) => (() => void) | void;
   }
 
@@ -380,7 +404,6 @@ declare global {
     getConfig?: () => Promise<PetAIConfigPayload | undefined>;
     updateConfig?: (patch: PetAIConfigPayload) => Promise<PetAIConfigPayload | undefined>;
     onConfigUpdated?: (callback: (config: PetAIConfigPayload) => void) => (() => void) | void;
-    readRagTextFile?: (payload: { knowledgeBasePath?: string; modelPath?: string }) => Promise<{ ok: boolean; path: string | null; content: string; error?: string } | undefined>;
     tts?: {
       getConfig?: (payload?: { modelPath?: string }) => Promise<PetTtsConfig | undefined>;
       updateConfig?: (payload: { modelPath?: string; patch?: Partial<PetTtsConfig> }) => Promise<{
@@ -405,20 +428,6 @@ declare global {
     running: boolean;
     state: PetMicState;
     lastError: string | null;
-  }
-
-  interface PetAsrStartOptions {
-    exePath?: string;
-    cwd?: string;
-    args?: string[];
-    sharedBufferInfo?: {
-      headerBuffer: SharedArrayBuffer;
-      dataBuffer: SharedArrayBuffer;
-      headerSize: number;
-      sampleRate: number;
-      channels: number;
-      capacitySamples: number;
-    };
   }
 
   interface PetAsrPartialEvent {
@@ -463,14 +472,16 @@ declare global {
   interface PetAsrAPI {
     pushAudioChunk?: (payload: { samples: Float32Array | number[] }) => Promise<boolean | undefined>;
     getStatus?: () => Promise<PetAsrStatus | undefined>;
-    start?: (options?: PetAsrStartOptions) => Promise<PetAsrStatus | undefined>;
+    start?: () => Promise<PetAsrStatus | undefined>;
     stop?: () => Promise<PetAsrStatus | undefined>;
     onEvent?: (callback: (event: PetAsrEvent) => void) => (() => void) | void;
   }
 
   interface Window {
     WindowAPI?: PetWindowAPI;
-    ConfigAPI?: PetConfigAPI;
+    SnapshotAPI?: PetSnapshotAPI;
+    Live2dEnvAPI?: PetLive2dEnvAPI;
+    GlobalAPI?: PetGlobalAPI;
     ModelAPI?: PetModelAPI;
     MemoryAPI?: PetMemoryAPI;
     AIAPI?: PetAIAPI;

@@ -51,7 +51,6 @@ interface ResolvedRagRuntime {
   memoryState: PetModelMemoryState | null;
 }
 
-const DEFAULT_MODEL ='deepseek-v4-flash';
 const RECENT_MEMORY_MAX_MESSAGES = 12;
 
 const isString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
@@ -136,12 +135,13 @@ const buildMetaMemoryPatch = (
 
 const readGlobalConfigFallback = (
   getConfigSnapshot?: () => PetConfigSnapshot | null | undefined,
-): { apiKey?: string; baseURL?: string } => {
+): { model?: string; apiKey?: string; baseURL?: string } => {
   try {
-    const snapshot = getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
+    const snapshot = getConfigSnapshot?.() ?? window.SnapshotAPI?.getSnapshot?.();
     const globalCfg = snapshot?.globalModelConfig;
     if (!globalCfg || typeof globalCfg !== 'object') return {};
-    const out: { apiKey?: string; baseURL?: string } = {};
+    const out: { model?: string; apiKey?: string; baseURL?: string } = {};
+    if (isString(globalCfg.model)) out.model = globalCfg.model.trim();
     if (isString(globalCfg.apiKey)) out.apiKey = globalCfg.apiKey.trim();
     if (isString(globalCfg.baseURL)) out.baseURL = globalCfg.baseURL.trim();
     return out;
@@ -182,7 +182,7 @@ export class Stage2Runtime {
     return {
       apiKey: this.config.apiKey ?? fallback.apiKey ?? '',
       baseURL: this.config.baseURL ?? fallback.baseURL ?? '',
-      model: this.config.model ?? DEFAULT_MODEL,
+      model: this.config.model ?? fallback.model ?? '',
       temperature: typeof this.config.temperature === 'number' ? this.config.temperature : 0.4,
     };
   }
@@ -314,8 +314,8 @@ export class Stage2Runtime {
 
   private async resolveRagRuntime(userText: string): Promise<ResolvedRagRuntime> {
     try {
-      // 获取总的配置，所以使用configAPI而非AIAPI，后者只包含AI相关的配置快照
-      const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
+      // 记忆和知识库属于同一套前端 RAG 编排，Electron 只提供持久化和文件读取。
+      const snapshot = this.getConfigSnapshot?.() ?? window.SnapshotAPI?.getSnapshot?.();
       const modelPath = snapshot?.activeModelPath ?? null;
       const rawRag = snapshot?.modelConfig?.rag;
       const ragConfig = normalizeRuntimeRagConfig(rawRag);
@@ -424,7 +424,7 @@ export class Stage2Runtime {
     const cached = this.knowledgeCache.get(cacheKey);
     if (typeof cached === 'string') return cached;
 
-    const result = await window.AIAPI?.readRagTextFile?.({ knowledgeBasePath, modelPath }) as RagTextFileResult | undefined;
+    const result = await window.MemoryAPI?.readRagTextFile?.({ knowledgeBasePath, modelPath }) as RagTextFileResult | undefined;
     if (!result?.ok || !result.content) {
       if (result?.error) {
         // RAG read failures are returned as an empty context and recorded by the request trace.
@@ -442,7 +442,7 @@ export class Stage2Runtime {
       ...options,
     };
 
-    if (!isString(merged.apiKey)) {
+    if (!isString(merged.apiKey) || !isString(merged.baseURL) || !isString(merged.model)) {
       try {
         const globalCfg = await window.AIAPI?.getConfig?.();
         if (isString(globalCfg?.apiKey)) {
@@ -451,14 +451,15 @@ export class Stage2Runtime {
         if (!isString(merged.baseURL) && isString(globalCfg?.baseURL)) {
           merged.baseURL = globalCfg.baseURL.trim();
         }
+        if (!isString(merged.model) && isString(globalCfg?.model)) {
+          merged.model = globalCfg.model.trim();
+        }
       } catch {
         // ignore runtime config probe errors
       }
     }
 
-    if (!isString(merged.model)) {
-      merged.model = DEFAULT_MODEL;
-    }
+    if (!isString(merged.model)) throw new Error('未配置 AI 模型，请先在控制面板 AI 页填写');
 
     const temperature = typeof merged.temperature === 'number' && Number.isFinite(merged.temperature)
       ? Math.max(0, Math.min(1.5, merged.temperature))
@@ -478,7 +479,7 @@ export class Stage2Runtime {
 
   private resolveLanguageProfile(): Stage2LanguageProfile {
     try {
-      const snapshot = this.getConfigSnapshot?.() ?? window.ConfigAPI?.getSnapshot?.();
+      const snapshot = this.getConfigSnapshot?.() ?? window.SnapshotAPI?.getSnapshot?.();
       const displayLang = normalizeDisplayLang(snapshot?.globalModelConfig?.displayLang);
       // speakText 语言直接跟随模型 TTS 配置（textLang）。
       const speakLang = normalizeSpeakLang(snapshot?.modelConfig?.tts?.textLang);

@@ -15,7 +15,7 @@ let state: SharedState = {
     throttled: false,
     lastUpdatedAt: 0,
   },
-  config: { apiKey: '', baseURL: '', displayLang: 'zh' },
+  config: { model: '', apiKey: '', baseURL: '', displayLang: 'zh' },
   chat: { request: null, response: null },
 };
 

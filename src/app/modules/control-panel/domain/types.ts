@@ -5,9 +5,23 @@ export type ControlPanelTabKey =
   | 'model-motions'
   | 'model-interaction'
   | 'ai-settings'
-  | 'ai-tts'
   | 'ai-rag'
   | 'ai-rag-params';
+
+export type AsrConfig = {
+  mode: 'local' | 'remote';
+  engine: 'sherpa-onnx' | string;
+  modelDir: string;
+  endpoint: string;
+  sampleRate: number;
+  featureDim: number;
+  numThreads: number;
+  provider: string;
+  debug: number;
+  rule1MinTrailingSilence: number;
+  rule2MinTrailingSilence: number;
+  rule3MinUtteranceLength: number;
+};
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -47,6 +61,7 @@ export type GlobalUiSettings = {
   showDragHandleOnHover: boolean;
   forcedFollow: boolean;
   debugModeEnabled: boolean;
+  asr?: AsrConfig;
 };
 
 export type VisualFrameConfig = {

@@ -23,7 +23,10 @@ declare global {
   }
 
   interface PetAsrConfig {
+    mode?: 'local' | 'remote';
+    engine?: string;
     modelDir?: string;
+    endpoint?: string;
     sampleRate?: number;
     featureDim?: number;
     numThreads?: number;

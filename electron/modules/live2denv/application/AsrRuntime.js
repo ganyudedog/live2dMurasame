@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { createAsrAdapter } from './asrAdapter.js';
 
 const require = createRequire(import.meta.url);
 
@@ -407,12 +408,8 @@ export const createAsrRuntime = ({ getConfig, eventChannel = 'pet:asr:event', lo
     emitMicState(MIC_STATES.REQUESTING);
 
     try {
-      const sherpaOnnx = loadSherpaOnnx();
-      const modelPaths = resolveModelPaths(options);
-      ensureModelFiles(modelPaths);
-
-      const recognizerConfig = createRecognizerConfig(modelPaths, options);
-      const recognizer = new sherpaOnnx.OnlineRecognizer(recognizerConfig);
+      const adapter = createAsrAdapter(options);
+      const recognizer = adapter.createRecognizer();
       const stream = recognizer.createStream();
       const sampleRate = recognizer.config?.featConfig?.sampleRate ?? DEFAULT_SAMPLE_RATE;
 

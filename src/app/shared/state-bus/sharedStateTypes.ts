@@ -70,7 +70,7 @@ export type PatchOp = {
     | 'asr.enabled' | 'asr.state' | 'asr.partialText'
     | 'asr.error' | 'asr.throttled' | 'asr.lastUpdatedAt'
     // config（标量独立字段）
-    | 'config.apiKey' | 'config.baseURL' | 'config.displayLang'
+    | 'config.model' | 'config.apiKey' | 'config.baseURL' | 'config.displayLang'
     // chat 对象
     | 'chat.request' | 'chat.response';
   value: number | boolean | string | null | ChatRequest | ChatResponse;

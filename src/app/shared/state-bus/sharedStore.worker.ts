@@ -106,6 +106,10 @@ const applyOp = (op: PatchOp) => {
     state = { ...state, config: { ...state.config, apiKey: op.value } };
     return;
   }
+  if (op.path === 'config.model' && typeof op.value === 'string') {
+    state = { ...state, config: { ...state.config, model: op.value } };
+    return;
+  }
   if (op.path === 'config.baseURL' && typeof op.value === 'string') {
     state = { ...state, config: { ...state.config, baseURL: op.value } };
     return;

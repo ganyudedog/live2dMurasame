@@ -10,7 +10,10 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   baseURL: '',
   displayLang: 'zh',
   asr: {
+    mode: 'local',
+    engine: 'sherpa-onnx',
     modelDir: '',
+    endpoint: '',
     sampleRate: 16000,
     featureDim: 80,
     numThreads: 2,
@@ -260,7 +263,10 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   const asr = settings.asr && typeof settings.asr === 'object' ? settings.asr : {};
   next.asr = {
     ...DEFAULT_GLOBAL_MODEL_CONFIG.asr,
+    mode: asr.mode === 'remote' ? 'remote' : 'local',
+    engine: typeof asr.engine === 'string' && asr.engine.trim() ? asr.engine.trim() : DEFAULT_GLOBAL_MODEL_CONFIG.asr.engine,
     modelDir: typeof asr.modelDir === 'string' ? asr.modelDir.trim() : '',
+    endpoint: typeof asr.endpoint === 'string' ? asr.endpoint.trim() : '',
     sampleRate: Number.isFinite(asr.sampleRate) && asr.sampleRate > 0 ? Math.floor(asr.sampleRate) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.sampleRate,
     featureDim: Number.isFinite(asr.featureDim) && asr.featureDim > 0 ? Math.floor(asr.featureDim) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.featureDim,
     numThreads: Number.isFinite(asr.numThreads) && asr.numThreads > 0 ? Math.floor(asr.numThreads) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.numThreads,

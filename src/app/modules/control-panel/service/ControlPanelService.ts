@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   ControlPanelTabKey,
   GlobalUiSettings,
+  AsrConfig,
   ModelConfig,
   ModelEntry,
 } from '../domain/types';
@@ -65,6 +66,7 @@ export class ControlPanelService {
       ttsPreheatMessage: observable,
       globalSettings: computed,
       modelConfig: computed,
+      asrConfig: computed,
       modelPaths: computed,
       currentModelPath: computed,
       selectedModel: computed,
@@ -151,6 +153,29 @@ export class ControlPanelService {
         ...(persisted.tts as Partial<ModelConfig['tts']>),
       },
     };
+  }
+
+  get asrConfig(): AsrConfig {
+    const raw = this.config.globalModelConfig?.asr ?? {};
+    const numberOr = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+    return {
+      mode: raw.mode === 'remote' ? 'remote' : 'local',
+      engine: typeof raw.engine === 'string' && raw.engine.trim() ? raw.engine : 'sherpa-onnx',
+      modelDir: typeof raw.modelDir === 'string' ? raw.modelDir : '',
+      endpoint: typeof raw.endpoint === 'string' ? raw.endpoint : '',
+      sampleRate: numberOr(raw.sampleRate, 16000),
+      featureDim: numberOr(raw.featureDim, 80),
+      numThreads: numberOr(raw.numThreads, 2),
+      provider: typeof raw.provider === 'string' ? raw.provider : 'cpu',
+      debug: numberOr(raw.debug, 0),
+      rule1MinTrailingSilence: numberOr(raw.rule1MinTrailingSilence, 2.4),
+      rule2MinTrailingSilence: numberOr(raw.rule2MinTrailingSilence, 1.2),
+      rule3MinUtteranceLength: numberOr(raw.rule3MinUtteranceLength, 20),
+    };
+  }
+
+  async persistAsrConfig(next: AsrConfig): Promise<void> {
+    await this.persistGlobalSettings({ asr: next });
   }
 
   get modelPaths(): string[] {

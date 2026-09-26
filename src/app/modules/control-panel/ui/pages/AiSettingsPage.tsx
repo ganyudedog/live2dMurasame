@@ -1,9 +1,21 @@
+import { useState } from 'react';
+import TTSSettingsPage from './TTSSettingsPage';
+import AsrSettingsPage from './AsrSettingsPage';
+import type { ModelConfig, AsrConfig } from '../../domain/types';
+
 export default function AiSettingsPage({
   model,
   apiBaseUrl,
   apiKey,
   displayLang,
   onChange,
+  modelConfig,
+  asrConfig,
+  preheatState,
+  preheatMessage,
+  onTtsConfigChange,
+  onPickPath,
+  onAsrConfigChange,
 }: {
   model: string;
   apiBaseUrl: string;
@@ -15,15 +27,40 @@ export default function AiSettingsPage({
     apiKey: string;
     displayLang: 'zh' | 'en' | 'ja' | 'ko';
   }) => void;
+  modelConfig: ModelConfig;
+  asrConfig: AsrConfig;
+  preheatState: 'idle' | 'pending' | 'ok' | 'failed';
+  preheatMessage: string;
+  onTtsConfigChange: (next: ModelConfig['tts']) => Promise<void>;
+  onPickPath: (kind: 'gpt' | 'sovits' | 'ref') => Promise<string | null>;
+  onAsrConfigChange: (next: AsrConfig) => Promise<void>;
 }) {
+  const [tab, setTab] = useState<'text' | 'asr' | 'tts'>('text');
   return (
     <div className="p-4 space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">AI设置</h1>
-        <p className="text-xs text-base-content/60">apiKey、Base URL 与展示语言会写入 globalModelConfig（全局生效）。</p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold">AI 设置</h1>
+          <p className="text-xs text-base-content/60">文字 AI、语音识别和语音合成共享同一套 AI 设置入口。</p>
+        </div>
+        <div role="tablist" className="tabs tabs-boxed">
+          <button type="button" role="tab" className={tab === 'text' ? 'tab tab-active' : 'tab'} onClick={() => setTab('text')}>文字 AI</button>
+          <button type="button" role="tab" className={tab === 'asr' ? 'tab tab-active' : 'tab'} onClick={() => setTab('asr')}>ASR</button>
+          <button type="button" role="tab" className={tab === 'tts' ? 'tab tab-active' : 'tab'} onClick={() => setTab('tts')}>TTS</button>
+        </div>
       </div>
 
-      <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
+      {tab === 'asr' && <AsrSettingsPage config={asrConfig} onChange={onAsrConfigChange} />}
+      {tab === 'tts' && (
+        <TTSSettingsPage
+          modelConfig={modelConfig}
+          preheatState={preheatState}
+          preheatMessage={preheatMessage}
+          onTtsConfigChange={onTtsConfigChange}
+          onPickPath={onPickPath}
+        />
+      )}
+      {tab === 'text' && <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
         <div className="text-sm font-medium">API</div>
         <div className="grid grid-cols-[120px_1fr] items-center gap-x-4 gap-y-3">
           <div className="text-xs text-base-content/70 text-right">Model</div>
@@ -83,7 +120,7 @@ export default function AiSettingsPage({
           </select>
 
         </div>
-      </section>
+      </section>}
     </div>
   );
 }

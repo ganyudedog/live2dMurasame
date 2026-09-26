@@ -94,6 +94,7 @@ export class StateBusService {
 
   publishChatConfig(config: ChatConfig): void {
     this.dispatch([
+      { path: 'config.model', value: config.model },
       { path: 'config.apiKey', value: config.apiKey },
       { path: 'config.baseURL', value: config.baseURL },
       { path: 'config.displayLang', value: config.displayLang },
@@ -169,6 +170,7 @@ export class StateBusService {
       else if (op.path === 'asr.error') nextAsr = { ...nextAsr, error: typeof op.value === 'string' ? op.value : null };
       else if (op.path === 'asr.throttled') nextAsr = { ...nextAsr, throttled: Boolean(op.value) };
       else if (op.path === 'asr.lastUpdatedAt' && typeof op.value === 'number') nextAsr = { ...nextAsr, lastUpdatedAt: op.value };
+      else if (op.path === 'config.model' && typeof op.value === 'string') nextConfig = { ...nextConfig, model: op.value };
       else if (op.path === 'config.apiKey' && typeof op.value === 'string') nextConfig = { ...nextConfig, apiKey: op.value };
       else if (op.path === 'config.baseURL' && typeof op.value === 'string') nextConfig = { ...nextConfig, baseURL: op.value };
       else if (op.path === 'config.displayLang' && typeof op.value === 'string') nextConfig = { ...nextConfig, displayLang: normalizeDisplayLang(op.value) };

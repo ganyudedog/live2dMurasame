@@ -13,7 +13,6 @@ import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
 import RagSettingsPage from './pages/RagSettingsPage';
 import RagParamsPage from './pages/RagParamsPage';
-import TTSSettingsPage from './pages/TTSSettingsPage';
 
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);
@@ -97,12 +96,8 @@ const ControlPanel: React.FC = observer(() => {
             baseURL: next.apiBaseUrl,
             displayLang: next.displayLang,
           })}
-        />
-      )}
-
-      {activeTab === 'ai-tts' && (
-        <TTSSettingsPage
           modelConfig={service.modelConfig}
+          asrConfig={service.asrConfig}
           preheatState={service.ttsPreheatState}
           preheatMessage={service.ttsPreheatMessage}
           onTtsConfigChange={(next) => service.persistTtsConfig(next)}
@@ -110,6 +105,7 @@ const ControlPanel: React.FC = observer(() => {
             reportError(error);
             return null;
           })}
+          onAsrConfigChange={(next) => service.persistAsrConfig(next).catch(reportError)}
         />
       )}
 

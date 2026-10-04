@@ -13,15 +13,6 @@ export const buildConfigOverrides = (live2denvConfig, modelPath, modelConfig) =>
     configMap.touchMap = modelConfig.touchMap.join(',');
   }
 
-  if (modelConfig?.visualFrame) {
-    const { ratio, minPx, paddingPx, offsetPx, offsetRatio } = modelConfig.visualFrame;
-    if (ratio !== undefined) configMap.visualFrameRatio = String(ratio);
-    if (minPx !== undefined) configMap.visualFrameMinPx = String(minPx);
-    if (paddingPx !== undefined) configMap.visualFramePaddingPx = String(paddingPx);
-    if (offsetPx !== undefined) configMap.visualFrameOffsetPx = String(offsetPx);
-    if (offsetRatio !== undefined) configMap.visualFrameOffsetRatio = String(offsetRatio);
-  }
-
   if (modelConfig?.bubble) {
     const { symmetric, headRatio } = modelConfig.bubble;
     if (symmetric !== undefined) configMap.bubbleSymmetric = symmetric ? '1' : '0';

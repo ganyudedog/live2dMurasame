@@ -9,6 +9,7 @@ import type { ElectronService } from '../shared/electron/ElectronService';
 import type { LogService } from '../shared/logging/LogService';
 import type { StateBusService } from '../shared/state-bus/StateBusService';
 import type { LiveKitService } from '../modules/ai/infrastructure/livekit/service/liveKitService';
+import type { PluginRuntime } from './plugin/PluginRuntime';
 
 export const TOKENS = {
   bootstrapContext: createServiceToken<BootstrapContext>('BootstrapContext'),
@@ -21,4 +22,5 @@ export const TOKENS = {
   ai: createServiceToken<AiService>('AiService'),
   controlPanel: createServiceToken<ControlPanelService>('ControlPanelService'),
   ttsTest: createServiceToken<TtsTestService>('TtsTestService'),
+  pluginRuntime: createServiceToken<PluginRuntime>('PluginRuntime'),
 } as const;

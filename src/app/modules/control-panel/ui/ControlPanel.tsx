@@ -13,6 +13,7 @@ import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
 import RagSettingsPage from './pages/RagSettingsPage';
 import RagParamsPage from './pages/RagParamsPage';
+import { PluginPanelHost } from '@app/core/plugin/PluginPanelHost';
 
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);
@@ -122,6 +123,8 @@ const ControlPanel: React.FC = observer(() => {
           onModelConfigChange={(next) => service.persistModelConfig(next).catch(reportError)}
         />
       )}
+
+      <PluginPanelHost slot="control-panel" />
     </ControlPanelLayout>
   );
 });

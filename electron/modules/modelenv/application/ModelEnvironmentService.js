@@ -29,12 +29,14 @@ export class ModelEnvironmentService {
     const configuration = {
       ...base,
       ...patch,
-      visualFrame: merge('visualFrame'),
       bubble: merge('bubble'),
       interaction: Object.prototype.hasOwnProperty.call(patch, 'interaction') ? patch.interaction : base.interaction,
       rag: merge('rag'),
       tts: merge('tts'),
     };
+    // visualFrame was a legacy, renderer-only tuning block. Do not carry it
+    // forward when an old model environment is updated.
+    delete configuration.visualFrame;
     const saved = this.repository.save(environment.updateConfiguration(configuration));
     this.cache.set(modelPath, saved);
     return saved;

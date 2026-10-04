@@ -9,6 +9,8 @@ import type { LogService } from '@app/shared/logging/LogService';
 import { LiveKitService } from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import { TtsSentenceQueue } from './TtsSentenceQueue';
+import type { AiRegister } from '@app/core/plugin/registers';
+import type { Disposable, TextAiInput, TextAiResponse, TextAiResult } from '@app/core/plugin/types';
 
 export class AiService {
   processing = false;
@@ -28,6 +30,8 @@ export class AiService {
   private unsubscribeAsr: (() => void) | null = null;
   private warmupTimer: number | null = null;
   private disposed = false;
+  private extensionRegister: AiRegister | null = null;
+  private responseListeners = new Set<(response: TextAiResponse) => void>();
 
   constructor(
     config: ConfigService,
@@ -108,6 +112,31 @@ export class AiService {
     context.dispose();
   }
 
+  registerExtensions(register: AiRegister): void {
+    this.extensionRegister = register;
+  }
+
+  getExtensionRegister(): AiRegister | null {
+    return this.extensionRegister;
+  }
+
+  submitText(input: TextAiInput): TextAiResult {
+    const requestId = input.requestId ?? `plugin_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    this.stateBus.publishChatRequest({
+      id: requestId,
+      text: input.text,
+      source: 'text',
+      status: 'pending',
+      createdAt: Date.now(),
+    });
+    return { requestId, conversationId: input.conversationId, accepted: true };
+  }
+
+  onTextResponse(listener: (response: TextAiResponse) => void): Disposable {
+    this.responseListeners.add(listener);
+    return () => this.responseListeners.delete(listener);
+  }
+
   async processChatRequest(request: ChatRequest): Promise<void> {
     if (this.disposed) return;
     if (this.processing) {
@@ -162,6 +191,7 @@ export class AiService {
             error: null,
             updatedAt: Date.now(),
           });
+          this.emitTextResponse({ requestId: request.id, text: accumulatedDisplay, status: 'streaming' });
           queue.push(sentence.speakText, sentence.displayText);
           trace.record('sentence.received', {
             requestId: request.id,
@@ -185,6 +215,7 @@ export class AiService {
         error: null,
         updatedAt: Date.now(),
       });
+      this.emitTextResponse({ requestId: request.id, text: finalDisplay, status: 'done' });
       await consumer.done;
       trace.end({
         requestId: request.id,
@@ -205,6 +236,7 @@ export class AiService {
         error: message,
         updatedAt: Date.now(),
       });
+      this.emitTextResponse({ requestId: request.id, text: message, status: 'error', error: message });
       trace.fail('AI 对话请求失败', { requestId: request.id, err: message }, error);
     } finally {
       consumer.stop();
@@ -378,6 +410,10 @@ export class AiService {
       context.beginTrace('asr.start.failed').fail('ASR 启动失败', { err: toErrorMessage(error) }, error);
       context.dispose();
     }
+  }
+
+  private emitTextResponse(response: TextAiResponse): void {
+    this.responseListeners.forEach((listener) => listener(response));
   }
 
   private scheduleWarmup(): void {

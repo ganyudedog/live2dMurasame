@@ -2,7 +2,7 @@ import type { ServiceContainer } from './di/container';
 import type { ServiceModule, WindowKind } from './di/module';
 import type { ServiceToken } from './di/token';
 
-const discoveredModules = import.meta.glob(['../modules/**/module.ts', '../shared/**/module.ts'], {
+const discoveredModules = import.meta.glob(['../modules/**/module.ts','./plugin/module.ts', '../shared/**/module.ts'], {
   eager: true,
   import: 'serviceModule',
 }) as Record<string, ServiceModule>;

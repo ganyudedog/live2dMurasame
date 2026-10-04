@@ -33,18 +33,11 @@ export const DEFAULT_LIVE2DENV_CONFIG = {
 };
 
 export const DEFAULT_MODEL_CONFIG = {
-  visualFrame: {
-    ratio: 0.7,
-    minPx: 100,
-    paddingPx: 0,
-    offsetPx: 0,
-    offsetRatio: -0.16,
-  },
   bubble: {
     symmetric: true,
     headRatio: null,
     side: 'auto',
-    sideWidth: 100,
+    sideWidth: 260,
   },
   rag: {
     profile: {
@@ -209,18 +202,14 @@ export const normalizeModelConfig = (input = {}) => {
     ...(input || {}),
   };
 
-  next.visualFrame = {
-    ...DEFAULT_MODEL_CONFIG.visualFrame,
-    ...((input && input.visualFrame) || {}),
-  };
-  delete next.visualFrame.center;
+  delete next.visualFrame;
 
   next.bubble = {
     ...DEFAULT_MODEL_CONFIG.bubble,
     ...((input && input.bubble) || {}),
   };
   next.bubble.side = ['auto', 'left', 'right'].includes(next.bubble.side) ? next.bubble.side : 'auto';
-  next.bubble.sideWidth = clampNumber(next.bubble.sideWidth, 100, 50, 150);
+  next.bubble.sideWidth = clampNumber(next.bubble.sideWidth, 260, 220, 320);
 
   delete next.interactionZones;
   const interaction = normalizeInteraction(input && input.interaction);

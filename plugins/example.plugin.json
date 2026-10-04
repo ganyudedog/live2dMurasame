@@ -1,0 +1,18 @@
+{
+  "id": "com.live2dmurasame.example",
+  "name": "Live2D Murasame Example Plugin",
+  "version": "0.1.0",
+  "apiVersion": "1.0.0",
+  "hosts": ["desktop", "cli"],
+  "activationEvents": ["onStartup"],
+  "entry": {
+    "service": "./dist/service.js",
+    "ui": "./dist/ui.js"
+  },
+  "contributes": {
+    "controlPanel": {
+      "panels": []
+    },
+    "commands": []
+  }
+}

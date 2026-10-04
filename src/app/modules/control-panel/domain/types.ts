@@ -64,14 +64,6 @@ export type GlobalUiSettings = {
   asr?: AsrConfig;
 };
 
-export type VisualFrameConfig = {
-  ratio: number;
-  minPx: number;
-  paddingPx: number;
-  offsetPx: number;
-  offsetRatio: number;
-};
-
 export type BubbleConfig = {
   symmetric: boolean;
   headRatio: number | null;
@@ -80,7 +72,6 @@ export type BubbleConfig = {
 };
 
 export type ModelConfig = {
-  visualFrame: VisualFrameConfig;
   bubble: BubbleConfig;
   interaction?: PetInteractionBindings;
   rag: {

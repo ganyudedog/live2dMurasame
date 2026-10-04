@@ -12,6 +12,7 @@ import {
   BUBBLE_LAYOUT_SIDE_MIN_WIDTH,
   BUBBLE_SIDE_MAX_WIDTH,
 } from '../domain/constants';
+import type { Live2dRegister } from '@app/core/plugin/registers';
 
 export type ModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 export type BubbleMeasurement = {
@@ -57,6 +58,7 @@ export class Live2dService {
   private removePreviewListener: (() => void) | null = null;
   private disposed = false;
   private nativeSourceTs = -Infinity;
+  private extensionRegister: Live2dRegister | null = null;
 
   constructor(stateBus: StateBusService, log: LogService, windowApi?: PetWindowAPI, modelApi?: PetModelAPI) {
     this.stateBus = stateBus;
@@ -160,6 +162,18 @@ export class Live2dService {
       : BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH;
     this.layoutService.setSideWidth(this.configuredBubbleSideWidth);
     this.updateBubblePosition(true);
+  }
+
+  registerExtensions(register: Live2dRegister): void {
+    this.extensionRegister = register;
+  }
+
+  getExtensionRegister(): Live2dRegister | null {
+    return this.extensionRegister;
+  }
+
+  getAvailableMotionsSnapshot(): readonly string[] {
+    return [...this.availableMotions];
   }
 
   configureInteraction(view: PetModelInteractionView | null): void {

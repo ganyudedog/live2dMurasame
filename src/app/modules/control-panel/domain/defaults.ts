@@ -10,13 +10,6 @@ export const DEFAULT_GLOBAL_UI_SETTINGS: GlobalUiSettings = {
 };
 
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
-  visualFrame: {
-    ratio: 0.7,
-    minPx: 100,
-    paddingPx: 0,
-    offsetPx: 0,
-    offsetRatio: -0.16,
-  },
   bubble: {
     symmetric: true,
     headRatio: null,

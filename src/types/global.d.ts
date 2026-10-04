@@ -93,15 +93,6 @@ declare global {
     [key: string]: unknown;
   }
 
-  interface PetVisualFrameConfig {
-    ratio?: number;
-    minPx?: number;
-    paddingPx?: number;
-    offsetPx?: number;
-    offsetRatio?: number;
-    [key: string]: unknown;
-  }
-
   // 气泡配置
   interface PetBubbleConfig {
     symmetric?: boolean;
@@ -133,7 +124,6 @@ declare global {
   }
 
   interface PetModelConfig {
-    visualFrame?: PetVisualFrameConfig;
     bubble?: PetBubbleConfig;
     interaction?: PetInteractionBindings;
     rag?: PetRagConfig;

@@ -6,6 +6,7 @@ export const createLive2dSnapshotStore = ({ ipcRenderer }) => {
     modelKey: null,
     activeModelFileUrl: null,
     modelConfig: null,
+    modelInteraction: null,
     configOverrides: {},
   };
 
@@ -22,6 +23,7 @@ export const createLive2dSnapshotStore = ({ ipcRenderer }) => {
       configSnapshot.modelKey = initial.modelKey ?? null;
       configSnapshot.activeModelFileUrl = initial.activeModelFileUrl ?? null;
       configSnapshot.modelConfig = initial.modelConfig ?? null;
+      configSnapshot.modelInteraction = initial.modelInteraction ?? null;
       configSnapshot.configOverrides = initial.configOverrides ?? {};
     }
   } catch (error) {
@@ -98,6 +100,9 @@ export const createLive2dSnapshotStore = ({ ipcRenderer }) => {
       const raw = payload.configOverrides;
       configSnapshot.configOverrides = raw && typeof raw === 'object' ? { ...raw } : {};
     }
+    if (Object.prototype.hasOwnProperty.call(payload, 'modelInteraction')) {
+      configSnapshot.modelInteraction = payload.modelInteraction ?? null;
+    }
 
     const snapshotForListeners = { ...configSnapshot };
     live2denvConfigListeners.forEach((listener) => {
@@ -122,6 +127,7 @@ export const createLive2dSnapshotStore = ({ ipcRenderer }) => {
           modelFileUrl: snapshotForListeners.activeModelFileUrl,
           modelKey: snapshotForListeners.modelKey,
           config: snapshotForListeners.modelConfig,
+          modelInteraction: snapshotForListeners.modelInteraction,
           configOverrides: snapshotForListeners.configOverrides,
           snapshot: snapshotForListeners,
         });

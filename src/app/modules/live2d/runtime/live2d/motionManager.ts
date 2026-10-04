@@ -104,10 +104,12 @@ export class MotionManager {
    * 打断当前动作：立即停止当前 motion & 声音 -> 播放基础 idle -> 再播放目标动作
    * 若当前未播放或与目标相同则直接播放目标动作
    */
-  interruptAndPlay(targetGroup: string) {
+  interruptAndPlay(targetGroup: string, requestedIndex?: number) {
     if (!this.model) return null;
     if (!this.allGroups.includes(targetGroup)) return null;
-    const targetIndex = this.pickRandomIndex(targetGroup);
+    const count = this.groupMotionCounts[targetGroup] ?? 0;
+    const targetIndex = requestedIndex === undefined ? this.pickRandomIndex(targetGroup) : requestedIndex;
+    if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= count) return null;
     const internal = (this.model as any).internalModel;
     const mm = internal?.motionManager;
     // 判断是否正在播放：优先使用 Cubism 的 isFinished()

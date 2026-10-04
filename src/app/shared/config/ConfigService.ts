@@ -8,6 +8,7 @@ type ModelConfigUpdateResult = {
   modelKey?: string | null;
   activeModelFileUrl?: string | null;
   config: PetModelConfig | null;
+  modelInteraction: PetModelInteractionView | null;
   configOverrides: Record<string, string>;
 };
 
@@ -15,6 +16,7 @@ export class ConfigService {
   live2denvConfig: PetLive2denvConfig | null;
   globalModelConfig: PetGlobalModelConfig | null;
   modelConfig: PetModelConfig | null;
+  modelInteraction: PetModelInteractionView | null;
   activeModelPath: string | null;
   modelKey: string | null;
   activeModelFileUrl: string | null;
@@ -35,6 +37,7 @@ export class ConfigService {
     this.live2denvConfig = bootstrap.configSnapshot?.live2denvConfig ?? null;
     this.globalModelConfig = bootstrap.configSnapshot?.globalModelConfig ?? null;
     this.modelConfig = bootstrap.configSnapshot?.modelConfig ?? null;
+    this.modelInteraction = bootstrap.configSnapshot?.modelInteraction ?? null;
     this.activeModelPath = bootstrap.configSnapshot?.activeModelPath ?? null;
     this.modelKey = bootstrap.configSnapshot?.modelKey ?? null;
     this.activeModelFileUrl = bootstrap.configSnapshot?.activeModelFileUrl ?? null;
@@ -45,6 +48,7 @@ export class ConfigService {
       live2denvConfig: observableRef,
       globalModelConfig: observableRef,
       modelConfig: observableRef,
+      modelInteraction: observableRef,
       activeModelPath: observable,
       modelKey: observable,
       activeModelFileUrl: observable,
@@ -82,6 +86,7 @@ export class ConfigService {
     const detachModel = modelApi?.onConfigUpdated?.((payload) => {
       runInAction(() => {
         this.modelConfig = payload.config ?? this.modelConfig;
+        this.modelInteraction = payload.modelInteraction ?? payload.snapshot?.modelInteraction ?? this.modelInteraction;
         this.configOverrides = payload.configOverrides ?? this.configOverrides;
         this.activeModelPath = payload.modelPath ?? this.activeModelPath;
         this.modelKey = payload.modelKey ?? this.modelKey;
@@ -112,6 +117,7 @@ export class ConfigService {
       modelKey: this.modelKey,
       activeModelFileUrl: this.activeModelFileUrl,
       modelConfig: this.modelConfig,
+      modelInteraction: this.modelInteraction,
       configOverrides: this.configOverrides,
     };
   }
@@ -142,6 +148,7 @@ export class ConfigService {
         this.live2denvConfig = live2denvConfig ?? this.initialSnapshot?.live2denvConfig ?? this.live2denvConfig;
         this.globalModelConfig = globalModelConfig ?? this.initialSnapshot?.globalModelConfig ?? this.globalModelConfig;
         this.modelConfig = modelBundle?.config ?? this.initialSnapshot?.modelConfig ?? this.modelConfig;
+        this.modelInteraction = modelBundle?.modelInteraction ?? this.initialSnapshot?.modelInteraction ?? this.modelInteraction;
         this.activeModelPath = modelBundle?.modelPath
           ?? live2denvConfig?.currentModelPath
           ?? this.initialSnapshot?.activeModelPath
@@ -225,6 +232,7 @@ export class ConfigService {
       if (!result) return null;
       runInAction(() => {
         this.modelConfig = result.config ?? this.modelConfig;
+        this.modelInteraction = result.modelInteraction ?? this.modelInteraction;
         this.activeModelPath = result.modelPath ?? this.activeModelPath;
         this.modelKey = result.modelKey ?? this.modelKey;
         this.activeModelFileUrl = result.activeModelFileUrl ?? this.activeModelFileUrl;
@@ -240,6 +248,10 @@ export class ConfigService {
       this.captureError('model.update.failed', error);
       throw error;
     }
+  }
+
+  previewMotion(group: string, index: number): void {
+    this.bridge.modelApi?.previewMotion?.({ group, index });
   }
 
   async updateTtsConfig(options: { modelPath?: string; patch: Partial<PetTtsConfig> }): Promise<boolean> {

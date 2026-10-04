@@ -33,7 +33,7 @@ Live2dLayout 创建 revision 快照
         ↓
 按 scale + 模型基准尺寸 + 两侧区域计算三矩形
         ↓
-ElectronService / BridgeService 发送同一 revision 的 setContentBounds
+ElectronService / BridgeService 发送同一 revision 的 setContentSize
         ↓
 Electron 应用窗口几何并返回 appliedGeometry
         ↓
@@ -72,5 +72,5 @@ Electron 返回的 `appliedGeometry` 是窗口尺寸的权威来源。Chromium �
 
 ## 日志与验证
 
-统一使用 `ns: live2d.layout`，重点事件包括：`version.waiting`、`version.superseded`、`pixi.resize.before`、`pixi.resize.after`、`version.committed`、`version.rendered` 和 `version.failed`。连续 scale 测试应按 revision 对齐 Electron 的 `setContentBounds`、`appliedGeometry`、Pixi 尺寸、模型中心和红线中心，确认不存在旧 revision 回写。
+统一使用 `ns: live2d.layout`，重点事件包括：`version.waiting`、`version.superseded`、`pixi.resize.before`、`pixi.resize.after`、`version.committed`、`version.rendered` 和 `version.failed`。连续 scale 测试应按 revision 对齐 Electron 的 `setContentSize`、`appliedGeometry`、Pixi 尺寸、模型中心和红线中心，确认不存在旧 revision 回写。
 

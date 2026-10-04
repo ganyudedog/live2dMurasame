@@ -68,7 +68,6 @@ export type VisualFrameConfig = {
   ratio: number;
   minPx: number;
   paddingPx: number;
-  center: string;
   offsetPx: number;
   offsetRatio: number;
 };
@@ -83,7 +82,7 @@ export type BubbleConfig = {
 export type ModelConfig = {
   visualFrame: VisualFrameConfig;
   bubble: BubbleConfig;
-  interactionZones: { actions: string[]; zones: { heightRange: [number, number]; motions: string[] }[] };
+  interaction?: PetInteractionBindings;
   rag: {
     profile: {
       personal: string;

@@ -1,8 +1,11 @@
+import { parseModelInteractionCatalog } from '../infrastructure/ModelConfigParser.js';
+
 export class ModelEnvironmentService {
-  constructor({ repository, memoryRepository, log }) {
+  constructor({ repository, memoryRepository, log, interactionCatalogReader = parseModelInteractionCatalog }) {
     this.repository = repository;
     this.memoryRepository = memoryRepository;
     this.log = log;
+    this.interactionCatalogReader = interactionCatalogReader;
     this.cache = new Map();
   }
 
@@ -28,13 +31,29 @@ export class ModelEnvironmentService {
       ...patch,
       visualFrame: merge('visualFrame'),
       bubble: merge('bubble'),
-      interactionZones: merge('interactionZones'),
+      interaction: Object.prototype.hasOwnProperty.call(patch, 'interaction') ? patch.interaction : base.interaction,
       rag: merge('rag'),
       tts: merge('tts'),
     };
     const saved = this.repository.save(environment.updateConfiguration(configuration));
     this.cache.set(modelPath, saved);
     return saved;
+  }
+
+  getInteractionView(modelPath) {
+    if (!modelPath) return null;
+    const catalog = this.interactionCatalogReader(modelPath);
+    const saved = this.getConfiguration(modelPath)?.interaction;
+    const hasSavedBindings = saved && typeof saved === 'object' && !Array.isArray(saved);
+    return {
+      motions: catalog.motions,
+      hitAreas: catalog.hitAreas.map((area) => ({
+        name: area.name,
+        motions: hasSavedBindings && Array.isArray(saved[area.name])
+          ? saved[area.name].map((item) => ({ ...item }))
+          : area.motions.map((item) => ({ ...item })),
+      })),
+    };
   }
 
   getMemory(modelPath) {

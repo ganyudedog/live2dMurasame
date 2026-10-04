@@ -81,7 +81,7 @@ const ControlPanel: React.FC = observer(() => {
       {activeTab === 'model-motions' && <MotionSettingsPage />}
 
       {activeTab === 'model-interaction' && (
-        <InteractionPage manager={service.interactionZones} />
+        <InteractionPage manager={service.interaction} />
       )}
 
       {activeTab === 'ai-settings' && (

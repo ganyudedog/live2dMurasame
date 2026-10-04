@@ -11,6 +11,7 @@ export const serviceModule: ServiceModule = {
       scope.resolve(TOKENS.stateBus),
       scope.resolve(TOKENS.log),
       scope.resolve(TOKENS.electron).bridge.windowApi,
+      scope.resolve(TOKENS.electron).bridge.modelApi,
     ));
   },
 };

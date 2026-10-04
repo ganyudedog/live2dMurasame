@@ -1,116 +1,140 @@
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 
 type ChatBubbleProps = {
-    text: string;
-    side: 'start' | 'end';
-    tail: { y: number; size?: number };
-    maxWidth?: number | string; // 若未提供，将使用 CSS 变量 --bubble-max-width
-    className?: string;
-    style?: React.CSSProperties;
+  text: string;
+  side: 'start' | 'end';
+  tail: { y: number; size?: number };
+  maxWidth?: number | string;
+  className?: string;
+  style?: React.CSSProperties;
 };
 
-const DEFAULT_TAIL_SIZE = 10;
+const FONT_SIZE = 16;
+const LINE_HEIGHT = 24;
+const HORIZONTAL_INSET = 18;
+const VERTICAL_INSET = 16;
+const MIN_BODY_WIDTH = 128;
+const TAIL_LENGTH = 16;
+const TAIL_HALF_HEIGHT = 10;
+const FONT = '600 16px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
-/**
- * 对称的聊天气泡组件（不依赖 DaisyUI），支持：
- * - 左右侧（start/end）一致的布局
- * - 尾巴在左右边，纵向自由定位（tail.y）
- * - 可选缩放与最大宽度
- * - 文本传入
- *
- * 定位说明：
- * - 组件内部不负责根据“模型嘴巴坐标”定位，仅提供尾巴在气泡盒子内的 y 位置。
- * - 在 PetCanvas 中，计算并设置气泡的 top/left，使尾巴尖与模型嘴巴 y 共线即可。
- */
-export const ChatBubble: React.FC<ChatBubbleProps> = ({
-    text,
-    side,
-    tail,
-    maxWidth,
-    className,
-    style,
-}) => {
-    const tailSize = tail.size ?? DEFAULT_TAIL_SIZE;
-    const isLeft = side === 'start';
+const measureText = (text: string): number => {
+  if (typeof document === 'undefined') return Array.from(text).length * FONT_SIZE;
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) return Array.from(text).length * FONT_SIZE;
+  context.font = FONT;
+  return context.measureText(text).width;
+};
 
-    // 外层容器负责 scale，避免内部尺寸与定位偏差
-    const containerStyle: React.CSSProperties = {
-        // 不在组件内部做绝对定位或缩放，由父容器控制
-        ...style,
-    };
+const resolveMaxWidth = (value: number | string | undefined): number => {
+  const parsed = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 240;
+};
 
-    // 气泡主体盒子：使用对称的 padding 与圆角
-    const resolvedMaxWidth: number | string = maxWidth ?? 'var(--bubble-max-width, 260px)';
-    const sidePadding = tailSize + 1; // 包含轻微高光的占位，确保尾巴不越界
-    // 避免同时混用 padding 与 paddingLeft/Right 导致 React 警告：使用完全展开的 padding 属性
-    const baseHorizPadding = 3;
-    const bubbleStyle: React.CSSProperties = {
-        maxWidth: resolvedMaxWidth,
-        paddingTop: 10,
-        paddingBottom: 10,
-        paddingLeft: isLeft ? baseHorizPadding : baseHorizPadding + sidePadding,
-        paddingRight: isLeft ? baseHorizPadding + sidePadding : baseHorizPadding,
-        // 为避免左右内部留白不一致，不做额外对齐，只由外层决定 side
-    };
+const wrapText = (text: string, maxContentWidth: number): string[] => {
+  const lines: string[] = [];
+  for (const paragraph of text.split(/\r?\n/)) {
+    if (!paragraph) {
+      lines.push('');
+      continue;
+    }
+    let current = '';
+    for (const character of Array.from(paragraph)) {
+      const candidate = current + character;
+      if (current && measureText(candidate) > maxContentWidth) {
+        lines.push(current);
+        current = character;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) lines.push(current);
+  }
+  return lines.length > 0 ? lines : [''];
+};
 
-    // 尾巴（箭头）样式：对称的三角形，尖端沿 y 定位
-    // 使用两个层叠元素以获得描边/阴影效果，保持左右一致
-    const tailCommon: React.CSSProperties = {
-        position: 'absolute',
-        width: 0,
-        height: 0,
-        top: tail.y - tailSize, // 以尖端共线，向上回退 size 长度
-        // 约束尾巴 Y 在盒子内，溢出由外层定位避免
-    };
+const speechPath = (
+  bodyX: number,
+  bodyWidth: number,
+  height: number,
+  tailY: number,
+  tailSize: number,
+): string => {
+  const radius = Math.min(22, bodyWidth / 2, height / 2);
+  const right = bodyX + bodyWidth;
+  const topTail = Math.max(radius + 2, tailY - tailSize);
+  const bottomTail = Math.min(height - radius - 2, tailY + tailSize);
+  const tailOnLeft = bodyX > 0;
+  const tailPoint = tailOnLeft ? bodyX - TAIL_LENGTH : right + TAIL_LENGTH;
 
-    // 主三角形
-    const tailPrimary: React.CSSProperties = {
-        ...tailCommon,
-        width: tailSize,
-        height: tailSize * 2,
-        background: '#0f172a',
-        ...(isLeft
-            ? {
-                right: 0,
-                clipPath: 'polygon(100% 50%, 0 0, 0 100%)',
-            }
-            : {
-                left: 0,
-                clipPath: 'polygon(0 50%, 100% 0, 100% 100%)',
-            }),
-        filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.25))',
-    };
+  if (tailOnLeft) {
+    return [
+      `M ${bodyX + radius} 0 H ${right - radius} Q ${right} 0 ${right} ${radius}`,
+      `V ${height - radius} Q ${right} ${height} ${right - radius} ${height}`,
+      `H ${bodyX + radius} Q ${bodyX} ${height} ${bodyX} ${height - radius}`,
+      `V ${bottomTail} Q ${bodyX} ${tailY} ${tailPoint} ${tailY}`,
+      `Q ${bodyX} ${tailY} ${bodyX} ${topTail} V ${radius}`,
+      `Q ${bodyX} 0 ${bodyX + radius} 0 Z`,
+    ].join(' ');
+  }
 
-    // 轻微的描边/高光，保证左右一致（可选）
-    const tailHighlight: React.CSSProperties = {
-        ...tailCommon,
-        width: Math.max(1, Math.floor(tailSize * 0.5)),
-        height: tailSize * 2 - 2,
-        background: 'rgba(255,255,255,0.06)',
-        ...(isLeft
-            ? {
-                right: 1,
-                clipPath: 'polygon(100% 50%, 0 0, 0 100%)',
-            }
-            : {
-                left: 1,
-                clipPath: 'polygon(0 50%, 100% 0, 100% 100%)',
-            }),
-    };
+  return [
+    `M ${bodyX + radius} 0 H ${right - radius} Q ${right} 0 ${right} ${radius}`,
+    `V ${topTail} Q ${right} ${tailY} ${tailPoint} ${tailY}`,
+    `Q ${right} ${tailY} ${right} ${bottomTail} V ${height - radius}`,
+    `Q ${right} ${height} ${right - radius} ${height} H ${bodyX + radius}`,
+    `Q ${bodyX} ${height} ${bodyX} ${height - radius} V ${radius}`,
+    `Q ${bodyX} 0 ${bodyX + radius} 0 Z`,
+  ].join(' ');
+};
 
-    return (
-        <div className={className} style={containerStyle} data-side={side}>
-            <div className="relative inline-block rounded-[10px] bg-slate-900 text-white shadow-[0_2px_8px_rgba(0,0,0,0.25)]" style={bubbleStyle}>
-                {/* 尾巴层：先高光后主体，保持与盒子完全对称 */}
-                <div style={tailHighlight} />
-                <div style={tailPrimary} />
-                {/* 文本内容 */}
-                <div className="whitespace-pre-wrap wrap-break-word leading-[1.4] text-sm">
-                    {text}
-                </div>
-            </div>
-        </div>
-    );
+export const ChatBubble: React.FC<ChatBubbleProps> = ({ text, side, tail, maxWidth, className, style }) => {
+  const layout = useMemo(() => {
+    const maxContentWidth = Math.max(64, resolveMaxWidth(maxWidth) - HORIZONTAL_INSET * 2);
+    const lines = wrapText(text, maxContentWidth);
+    const lineWidth = Math.max(...lines.map(measureText), MIN_BODY_WIDTH - HORIZONTAL_INSET * 2);
+    const bodyWidth = Math.max(MIN_BODY_WIDTH, Math.min(maxContentWidth + HORIZONTAL_INSET * 2, lineWidth + HORIZONTAL_INSET * 2));
+    const bodyHeight = lines.length * LINE_HEIGHT + VERTICAL_INSET * 2;
+    const bodyX = side === 'end' ? TAIL_LENGTH : 0;
+    const tailY = Math.max(TAIL_HALF_HEIGHT + 4, Math.min(bodyHeight - TAIL_HALF_HEIGHT - 4, tail.y || bodyHeight / 2));
+    return { lines, bodyWidth, bodyHeight, bodyX, width: bodyWidth + TAIL_LENGTH, tailY };
+  }, [maxWidth, side, tail.y, text]);
+
+  return (
+    <svg
+      className={className}
+      style={{ display: 'block', overflow: 'visible', ...style }}
+      width={layout.width}
+      height={layout.bodyHeight}
+      viewBox={`0 0 ${layout.width} ${layout.bodyHeight}`}
+      role="status"
+      aria-label={text}
+    >
+      <path
+        d={speechPath(layout.bodyX, layout.bodyWidth, layout.bodyHeight, layout.tailY, tail.size ?? TAIL_HALF_HEIGHT)}
+        fill="#ffffff"
+        stroke="rgba(15, 23, 42, 0.34)"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        filter="drop-shadow(0 3px 8px rgba(15, 23, 42, 0.22))"
+      />
+      <text
+        x={layout.bodyX + HORIZONTAL_INSET}
+        y={VERTICAL_INSET + FONT_SIZE}
+        fill="#0f172a"
+        fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+        fontSize={FONT_SIZE}
+        fontWeight="600"
+      >
+        {layout.lines.map((line, index) => (
+          <tspan key={`${index}-${line}`} x={layout.bodyX + HORIZONTAL_INSET} dy={index === 0 ? 0 : LINE_HEIGHT}>
+            {line || ' '}
+          </tspan>
+        ))}
+      </text>
+    </svg>
+  );
 };
 
 export default memo(ChatBubble);

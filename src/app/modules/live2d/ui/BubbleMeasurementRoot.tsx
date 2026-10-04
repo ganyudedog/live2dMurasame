@@ -9,7 +9,7 @@ import { ChatBubble } from './components/ChatBubble';
  * A separate UI root used only for browser text layout. It reports plain numbers to the
  * service; no HTMLElement or observer crosses the UI/service boundary.
  */
-export const BubbleMeasurementRoot = observer(() => {
+export const BubbleMeasurementRoot = observer(({ onMeasured }: { onMeasured?: () => void }) => {
   const live2d = useService(TOKENS.live2d);
   const config = useService(TOKENS.config);
   const measureRef = useRef<HTMLDivElement | null>(null);
@@ -53,6 +53,7 @@ export const BubbleMeasurementRoot = observer(() => {
         if (changed) {
           submitted = current;
           live2d.submitBubbleMeasurement({ requestId, text, ...current, maxWidth });
+          onMeasured?.();
         }
         return;
       }
@@ -80,7 +81,7 @@ export const BubbleMeasurementRoot = observer(() => {
       resizeObserver?.disconnect();
       if (frameId !== null) window.cancelAnimationFrame(frameId);
     };
-  }, [live2d, maxWidth, requestId, text]);
+  }, [live2d, maxWidth, onMeasured, requestId, text]);
 
   if (!text) return null;
   return (

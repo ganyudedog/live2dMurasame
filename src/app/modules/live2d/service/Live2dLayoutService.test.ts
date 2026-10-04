@@ -3,7 +3,7 @@ import type { Application } from 'pixi.js';
 import type { Live2DModel } from '../runtime/live2d/runtime';
 import type { LogService } from '@app/shared/logging/LogService';
 import { calculateLive2dLayout, type Live2dLayoutInput } from '../../../../../shared/live2dLayout.js';
-import { Live2dLayout } from './Live2dLayout';
+import { Live2dLayoutService } from './Live2dLayoutService';
 
 vi.mock('pixi.js', () => ({
   UPDATE_PRIORITY: { HIGH: 25 },
@@ -45,7 +45,7 @@ function harness() {
   };
   const send = vi.fn(() => new Promise<PetWindowIntentAck>(() => {}));
   const log = { debug: vi.fn(), warn: vi.fn(), info: vi.fn() };
-  const layout = new Live2dLayout({
+  const layout = new Live2dLayoutService({
     geometry: () => native, send,
     log: log as unknown as LogService,
   });
@@ -159,6 +159,22 @@ describe('versioned layout', () => {
     resolve({ ...ack, revision: 999 }); await drain(); h.paint();
     expect(h.layout.snapshot).toBeNull();
     expect(h.log.warn).toHaveBeenCalled();
+    h.detach();
+  });
+  it('resolves the visual center from the runtime face hit area and records the source', async () => {
+    const h = harness();
+    h.detach();
+    (h.model as typeof h.model & { internalModel: unknown }).internalModel = {
+      hitAreas: { face: { name: 'face', id: 'HitArea', index: 7 } },
+      getDrawableBounds: () => ({ x: 260, y: 500, width: 100, height: 120 }),
+    };
+    h.attach();
+    h.paint(); await drain();
+    const request = (h.send.mock.calls as unknown as [PetWindowIntentPayload][])[0][0];
+    expect(request.payload!.layout!.visualCenterRatio).toBeCloseTo((310 - 20) / 1500);
+    expect(h.log.info).toHaveBeenCalledWith('live2d.layout', 'visual-center.resolved', expect.objectContaining({
+      source: 'hit-area', visualCenterLocalX: 310,
+    }));
     h.detach();
   });
   it('ignores a detached model reply after reattachment', async () => {

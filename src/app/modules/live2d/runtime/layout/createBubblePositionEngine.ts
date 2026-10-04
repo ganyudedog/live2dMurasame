@@ -85,13 +85,14 @@ export const createBubblePositionEngine = ({
 
     const scale = scaleRef.current;
     const visualScale = clamp(Number.isFinite(scale) ? scale : 1, 0.3, 2);
-    const sideWidth = layout.left.width;
     const configuredSide = bubbleSettingsRef.current?.side ?? 'auto';
     const side = chooseBubbleSide(configuredSide, bounds, windowGeometry);
+    const sideWidth = side === 'left' ? layout.left.width : layout.right.width;
     bubbleLayoutCommitter.commitBubbleZoneMetrics({
-      left: { left: layout.left.x, width: sideWidth, targetWidth: sideWidth },
-      right: { left: layout.right.x, width: sideWidth, targetWidth: sideWidth },
-      active: side, symmetricWidth: sideWidth, symmetricCapacity: sideWidth,
+      left: { left: layout.left.x, width: layout.left.width, targetWidth: layout.left.width },
+      right: { left: layout.right.x, width: layout.right.width, targetWidth: layout.right.width },
+      active: side, symmetricWidth: Math.max(layout.left.width, layout.right.width),
+      symmetricCapacity: Math.max(layout.left.width, layout.right.width),
       widthShortfall: false,
     });
 

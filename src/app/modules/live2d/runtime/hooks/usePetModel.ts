@@ -25,7 +25,6 @@ export interface UsePetModelParams {
   isWindowDragActiveRef: RefObject<boolean>;
   setModel: (model: Live2DModelType | null) => void;
   setModelLoadStatus: (status: 'idle' | 'loading' | 'loaded' | 'error', error?: string) => void;
-  updateHitAreas: (model: Live2DModelType) => void;
   updateBubblePosition: (force?: boolean) => void;
   updateDragHandlePosition: (force?: boolean) => void;
   scheduleApplyLayout: () => void;
@@ -55,7 +54,6 @@ export const usePetModel = ({
   isWindowDragActiveRef,
   setModel,
   setModelLoadStatus,
-  updateHitAreas,
   updateBubblePosition,
   updateDragHandlePosition,
   scheduleApplyLayout,
@@ -472,13 +470,12 @@ export const usePetModel = ({
         modelRef.current = model;
         (model as any).eventMode = 'none';
         // The auto-start ticker must not expose the loader's default transform.
-        // Live2dLayout makes the model visible after viewport and transform agree.
+        // Live2dLayoutService makes the model visible after viewport and transform agree.
         model.visible = false;
         app.stage.addChild(model as any);
         applyLayoutRef.current?.();
         setModel(model);
         setModelLoadStatus('loaded');
-        updateHitAreas(model);
 
         const actionController = createLive2DActionController({ log: logService });
         actionControllerRef.current = actionController;

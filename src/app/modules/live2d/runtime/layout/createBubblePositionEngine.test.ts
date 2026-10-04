@@ -39,4 +39,11 @@ describe('bubble consumes the shared rectangles', () => {
       expect(sink.commitVisibleFrameMetrics).toHaveBeenCalledWith({ left: layout.model.x, width: layout.model.width });
     }
   });
+
+  it('keeps the bubble outside the model edge instead of centering it on the face', () => {
+    const { layout, sink } = harness(1, 0, 'left');
+    expect(sink.commitBubblePlacement).toHaveBeenCalledWith(expect.objectContaining({
+      position: { left: layout.model.x - 12 - 40, top: expect.any(Number) },
+    }));
+  });
 });

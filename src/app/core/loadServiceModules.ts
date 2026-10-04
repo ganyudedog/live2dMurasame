@@ -7,6 +7,7 @@ const discoveredModules = import.meta.glob(['../modules/**/module.ts', '../share
   import: 'serviceModule',
 }) as Record<string, ServiceModule>;
 
+// 注册所有模块
 export const registerServiceModules = (
   container: ServiceContainer,
   windowKind: WindowKind,

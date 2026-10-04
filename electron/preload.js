@@ -59,6 +59,13 @@ const ModelAPI = {
   onConfigUpdated: snapshotStore.onModelConfigUpdated,
   listModelPaths: () => ipcRenderer.invoke('ddd:live2denv:list-models'),
   pickModelFile: () => ipcRenderer.invoke('ddd:live2denv:pick-model'),
+  previewMotion: (payload) => ipcRenderer.send('ddd:modelenv:motion:preview', payload),
+  onPreviewMotion: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ddd:modelenv:motion:preview', listener);
+    return () => ipcRenderer.removeListener('ddd:modelenv:motion:preview', listener);
+  },
 };
 
 const MemoryAPI = {

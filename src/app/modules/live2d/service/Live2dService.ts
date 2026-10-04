@@ -3,9 +3,15 @@ import type { Live2DModel } from '../runtime/live2d/runtime';
 import { MotionManager } from '../runtime/live2d/motionManager';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
-import { Live2dLayout, type LayoutSnapshot } from './Live2dLayout';
+import { Live2dLayoutService, type LayoutSnapshot } from './Live2dLayoutService';
 import { BubblePresentation } from './BubblePresentation';
 import { createBubblePositionEngine } from '../runtime/layout/createBubblePositionEngine';
+import { InteractionService } from './InteractionService';
+import {
+  BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH,
+  BUBBLE_LAYOUT_SIDE_MIN_WIDTH,
+  BUBBLE_SIDE_MAX_WIDTH,
+} from '../domain/constants';
 
 export type ModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 export type BubbleMeasurement = {
@@ -17,9 +23,11 @@ export type BubbleMeasurement = {
 };
 
 export class Live2dService {
-  readonly layout: Live2dLayout;
+  readonly layoutService: Live2dLayoutService;
   readonly bubble = new BubblePresentation();
+  readonly interaction: InteractionService;
   private bubbleSettings: { side?: 'auto' | 'left' | 'right'; sideWidth?: number; headRatio?: number | null } = {};
+  private configuredBubbleSideWidth = BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH;
   private readonly bubbleEngine: ReturnType<typeof createBubblePositionEngine>;
   model: Live2DModel | null = null;
   modelLoadStatus: ModelLoadStatus = 'idle';
@@ -43,16 +51,22 @@ export class Live2dService {
   private readonly stateBus: StateBusService;
   private readonly log: LogService;
   private readonly windowApi: PetWindowAPI | undefined;
+  private readonly modelApi: PetModelAPI | undefined;
   private scaleReaction: IReactionDisposer | null = null;
   private removeWindowFactListener: (() => void) | null = null;
+  private removePreviewListener: (() => void) | null = null;
   private disposed = false;
   private nativeSourceTs = -Infinity;
 
-  constructor(stateBus: StateBusService, log: LogService, windowApi?: PetWindowAPI) {
+  constructor(stateBus: StateBusService, log: LogService, windowApi?: PetWindowAPI, modelApi?: PetModelAPI) {
     this.stateBus = stateBus;
     this.log = log;
     this.windowApi = windowApi;
-    this.layout = new Live2dLayout({
+    this.modelApi = modelApi;
+    this.interaction = new InteractionService({
+      play: (group, index) => this.applyMotion(group, true, index),
+    });
+    this.layoutService = new Live2dLayoutService({
       geometry: () => this.nativeGeometry,
       send: (intent) => {
         if (!this.windowApi?.sendWindowIntent) return Promise.reject(new Error('Window IPC unavailable'));
@@ -71,7 +85,7 @@ export class Live2dService {
       bubbleSettingsRef: { get current() { return service.bubbleSettings; } },
       // Native position selects a bubble side; rectangles come from the layout.
       windowGeometryRef: { get current() { return service.nativeGeometry; } },
-      layoutRef: { get current() { return service.layout.snapshot?.presentation ?? null; } },
+      layoutRef: { get current() { return service.layoutService.snapshot?.presentation ?? null; } },
       lastBubbleUpdateRef: { current: 0 },
       bubbleLayoutCommitter: this.bubble,
     });
@@ -101,18 +115,21 @@ export class Live2dService {
           this.scale = Math.min(2, Math.max(0.3, scale));
         });
         this.log.debug('live2d.service', 'scale.applied', { scale: this.scale });
-        this.layout.setScale(this.scale);
+        this.layoutService.setScale(this.scale);
       },
       { fireImmediately: true },
     );
     this.startWindowGeometrySync();
+    const removePreview = this.modelApi?.onPreviewMotion?.(({ group, index }) => this.interaction.preview(group, index));
+    this.removePreviewListener = typeof removePreview === 'function' ? removePreview : null;
     this.log.info('live2d.service', 'started');
   }
 
   setModel(model: Live2DModel | null): void {
-    if (!model) this.layout.detach();
+    if (!model) this.layoutService.detach();
     this.motionManager.dispose();
     if (model) this.motionManager.attach(model);
+    this.interaction.setModel(model);
     runInAction(() => {
       this.model = model;
       this.availableMotions = this.motionManager.getGroups();
@@ -137,17 +154,25 @@ export class Live2dService {
 
   configureBubble(settings: typeof this.bubbleSettings): void {
     this.bubbleSettings = settings;
-    this.layout.setSideWidth(settings.sideWidth ?? 100);
+    const requestedWidth = Number(settings.sideWidth);
+    this.configuredBubbleSideWidth = Number.isFinite(requestedWidth)
+      ? Math.min(BUBBLE_SIDE_MAX_WIDTH, Math.max(BUBBLE_LAYOUT_SIDE_MIN_WIDTH, requestedWidth))
+      : BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH;
+    this.layoutService.setSideWidth(this.configuredBubbleSideWidth);
     this.updateBubblePosition(true);
   }
 
+  configureInteraction(view: PetModelInteractionView | null): void {
+    this.interaction.configure(view);
+  }
+
   updateBubblePosition = (force = false): void => {
-    if (!force && this.layout.framePending) return;
+    if (!force && this.layoutService.framePending) return;
     runInAction(() => this.bubbleEngine.updateBubblePosition(force));
   };
 
   setWindowDragging(active: boolean): void {
-    this.layout.setDragging(active);
+    this.layoutService.setDragging(active);
     // Drag changes only Electron's desktop anchor; local layout stays unchanged.
     this.log.debug('live2d.service', 'drag.state', { active });
   }
@@ -186,6 +211,7 @@ export class Live2dService {
       this.bubbleMeasurement = null;
       if (text === null) this.playingMotionSound = null;
     });
+    if (text === null) this.layoutService.setSideWidth(this.configuredBubbleSideWidth);
   }
 
   setWindowGeometry(geometry: PetWindowGeometry): void {
@@ -223,11 +249,14 @@ export class Live2dService {
 
   dispose(): void {
     this.disposed = true;
-    this.layout.detach();
+    this.layoutService.detach();
     this.scaleReaction?.();
     this.scaleReaction = null;
     this.removeWindowFactListener?.();
     this.removeWindowFactListener = null;
+    this.removePreviewListener?.();
+    this.removePreviewListener = null;
+    this.interaction.setModel(null);
     this.motionManager.dispose();
     this.log.info('live2d.service', 'disposed');
   }
@@ -266,11 +295,11 @@ export class Live2dService {
     };
   }
 
-  private applyMotion(group: string, interrupt: boolean): void {
+  private applyMotion(group: string, interrupt: boolean, index?: number): void {
     if (!group) return;
     const meta = interrupt
-      ? this.motionManager.interruptAndPlay(group)
-      : this.motionManager.play(group);
+      ? this.motionManager.interruptAndPlay(group, index)
+      : this.motionManager.play(group, index);
     runInAction(() => {
       this.playingMotion = group;
       this.playingMotionText = meta?.text ?? null;
@@ -280,6 +309,7 @@ export class Live2dService {
     });
     this.log.info('live2d.service', interrupt ? 'motion.interrupt' : 'motion.play', {
       group,
+      index,
       hasText: Boolean(meta?.text),
       hasSound: Boolean(meta?.sound),
     });

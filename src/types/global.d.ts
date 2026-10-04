@@ -97,7 +97,6 @@ declare global {
     ratio?: number;
     minPx?: number;
     paddingPx?: number;
-    center?: string;
     offsetPx?: number;
     offsetRatio?: number;
     [key: string]: unknown;
@@ -112,17 +111,31 @@ declare global {
     [key: string]: unknown;
   }
 
-  // 交互区配置
-  interface PetInteractionZonesConfig {
-    actions?: string[];
-    zones?: { heightRange: [number, number]; motions: string[] }[];
-    [key: string]: unknown;
+  interface PetInteractionMotionAssignment {
+    group: string;
+    index: number;
+    weight: number;
+  }
+
+  type PetInteractionBindings = Record<string, PetInteractionMotionAssignment[]>;
+
+  interface PetMotionDescriptor {
+    group: string;
+    index: number;
+    file: string;
+    text?: string;
+    sound?: string;
+  }
+
+  interface PetModelInteractionView {
+    hitAreas: Array<{ name: string; motions: PetInteractionMotionAssignment[] }>;
+    motions: PetMotionDescriptor[];
   }
 
   interface PetModelConfig {
     visualFrame?: PetVisualFrameConfig;
     bubble?: PetBubbleConfig;
-    interactionZones?: PetInteractionZonesConfig;
+    interaction?: PetInteractionBindings;
     rag?: PetRagConfig;
     tts?: PetTtsConfig;
     [key: string]: unknown;
@@ -136,6 +149,7 @@ declare global {
     modelKey: string | null;
     activeModelFileUrl: string | null;
     modelConfig: PetModelConfig | null;
+    modelInteraction: PetModelInteractionView | null;
     configOverrides: Record<string, string>;
   }
 
@@ -209,6 +223,10 @@ declare global {
   interface PetWindowGeometry {
     bounds: { x: number; y: number; width: number; height: number };
     contentBounds: { x: number; y: number; width: number; height: number };
+    /** Exact native content pixel size reported by Electron. */
+    contentSize?: { width: number; height: number } | null;
+    /** Unnormalized getContentBounds result, retained for resize diagnostics. */
+    rawContentBounds?: { x: number; y: number; width: number; height: number };
     workArea: { x: number; y: number; width: number; height: number };
     displayId: number;
     scaleFactor: number;
@@ -388,12 +406,14 @@ declare global {
   }
 
   interface PetModelAPI {
-    getConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
-    updateConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; configOverrides: Record<string, string> } | undefined>;
+    getConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; modelInteraction: PetModelInteractionView | null; configOverrides: Record<string, string> } | undefined>;
+    updateConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; modelInteraction: PetModelInteractionView | null; configOverrides: Record<string, string> } | undefined>;
     removeConfig?: (modelPath: string) => Promise<boolean | undefined>;
-    onConfigUpdated?: (callback: (payload: { modelPath?: string | null; modelFileUrl?: string | null; modelKey?: string | null; config?: PetModelConfig | null; configOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
+    onConfigUpdated?: (callback: (payload: { modelPath?: string | null; modelFileUrl?: string | null; modelKey?: string | null; config?: PetModelConfig | null; modelInteraction?: PetModelInteractionView | null; configOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;
     listModelPaths?: () => Promise<string[] | undefined>;
     pickModelFile?: () => Promise<string | null | undefined>;
+    previewMotion?: (payload: { group: string; index: number }) => void;
+    onPreviewMotion?: (callback: (payload: { group: string; index: number }) => void) => (() => void) | void;
   }
 
   interface PetMemoryAPI {

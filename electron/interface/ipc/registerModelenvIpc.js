@@ -12,11 +12,11 @@ const safeFileUrl = (modelPath) => {
   try { return pathToFileURL(hit).toString(); } catch { return null; }
 };
 
-const registerModelenvIpcImpl = ({ live2dEnvironmentService, modelEnvironmentService, pickTtsPath, sendAll, publishSnapshot }) => {
+const registerModelenvIpcImpl = ({ live2dEnvironmentService, modelEnvironmentService, pickTtsPath, sendAll, publishSnapshot, getMainWindow }) => {
   const currentPath = (candidate) => candidate || live2dEnvironmentService.root.currentModelPath;
   const modelResult = (modelPath, config) => {
     const snapshot = live2dEnvironmentService.snapshot();
-    return { modelPath: modelPath ?? null, modelKey: modelPath ? getModelKeyFromPath(modelPath) : null, activeModelFileUrl: modelPath === snapshot.activeModelPath ? snapshot.activeModelFileUrl : safeFileUrl(modelPath), config: config ?? null, configOverrides: modelPath === snapshot.activeModelPath ? snapshot.configOverrides : buildConfigOverrides(snapshot.live2denvConfig, modelPath, config) };
+    return { modelPath: modelPath ?? null, modelKey: modelPath ? getModelKeyFromPath(modelPath) : null, activeModelFileUrl: modelPath === snapshot.activeModelPath ? snapshot.activeModelFileUrl : safeFileUrl(modelPath), config: config ?? null, modelInteraction: modelPath ? modelEnvironmentService.getInteractionView(modelPath) : null, configOverrides: modelPath === snapshot.activeModelPath ? snapshot.configOverrides : buildConfigOverrides(snapshot.live2denvConfig, modelPath, config) };
   };
   ipcMain.handle('ddd:modelenv:get', (_event, modelPath) => { const target = currentPath(modelPath); return modelResult(target, target ? modelEnvironmentService.getConfiguration(target) : null); });
   ipcMain.handle('ddd:modelenv:update', (_event, payload = {}) => {
@@ -26,6 +26,13 @@ const registerModelenvIpcImpl = ({ live2dEnvironmentService, modelEnvironmentSer
     sendAll('ddd:modelenv:changed', { ...result, snapshot }); if (target === snapshot.activeModelPath) publishSnapshot(snapshot); return result;
   });
   ipcMain.handle('ddd:modelenv:remove', (_event, modelPath) => { if (typeof modelPath !== 'string' || !modelPath.trim()) return false; removeModelConfig(modelPath); modelEnvironmentService.clear(modelPath); return true; });
+  ipcMain.on('ddd:modelenv:motion:preview', (_event, payload = {}) => {
+    const group = typeof payload?.group === 'string' ? payload.group.trim() : '';
+    const index = payload?.index;
+    if (!group || !Number.isInteger(index) || index < 0) return;
+    const target = getMainWindow();
+    if (target && !target.isDestroyed()) target.webContents.send('ddd:modelenv:motion:preview', { group, index });
+  });
   ipcMain.handle('ddd:modelenv:tts:get', (_event, payload = {}) => { const target = currentPath(payload?.modelPath); return target ? modelEnvironmentService.getConfiguration(target)?.tts ?? null : null; });
   ipcMain.handle('ddd:modelenv:tts:update', (_event, payload = {}) => { const target = currentPath(payload?.modelPath); if (!target) return { modelPath: null, tts: null, snapshot: null }; const environment = modelEnvironmentService.updateConfiguration(target, { tts: payload?.patch ?? {} }); const snapshot = live2dEnvironmentService.snapshot(); const result = { modelPath: target, tts: environment.configuration?.tts ?? null, snapshot }; sendAll('ddd:modelenv:tts:changed', result); if (target === snapshot.activeModelPath) publishSnapshot(snapshot); return result; });
   ipcMain.handle('ddd:modelenv:tts:pick-gpt', () => pickTtsPath('gpt'));
@@ -39,4 +46,5 @@ export const registerModelenvIpc = createDependencyAwareRegistrar([
   'pickTtsPath',
   'sendAll',
   'publishSnapshot',
+  'getMainWindow',
 ], registerModelenvIpcImpl);

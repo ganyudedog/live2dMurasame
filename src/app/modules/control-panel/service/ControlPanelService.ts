@@ -1,7 +1,7 @@
 import { actionBound, computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import { DEFAULT_GLOBAL_UI_SETTINGS, DEFAULT_MODEL_CONFIG } from '../domain/defaults';
 import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '../infrastructure/chatSessionCache';
-import { InteractionZoneManager, type InteractionZonesCommit } from './InteractionZoneManager';
+import { InteractionManager, type InteractionCommit } from './InteractionManager';
 import type {
   ChatMessage,
   ControlPanelTabKey,
@@ -37,7 +37,7 @@ export class ControlPanelService {
 
   readonly config: ConfigService;
   readonly stateBus: StateBusService;
-  readonly interactionZones: InteractionZoneManager;
+  readonly interaction: InteractionManager;
   private readonly log: LogService;
   private readonly liveKit: LiveKitService;
   private reactions: IReactionDisposer[] = [];
@@ -49,8 +49,9 @@ export class ControlPanelService {
     this.log = log;
     this.liveKit = liveKit;
     this.aiSettings = toChatConfig(config.globalModelConfig);
-    this.interactionZones = new InteractionZoneManager({
-      persist: (commit) => this.persistInteractionZones(commit),
+    this.interaction = new InteractionManager({
+      persist: (commit) => this.persistInteraction(commit),
+      preview: (motion) => this.config.previewMotion(motion.group, motion.index),
       log,
     });
     makeObservable(this, {
@@ -110,9 +111,9 @@ export class ControlPanelService {
         },
       ),
       reaction(
-        () => [this.currentModelPath, this.modelConfig.interactionZones] as const,
-        ([modelPath, interactionZones]) => {
-          this.interactionZones.syncFromConfig(modelPath, interactionZones);
+        () => [this.currentModelPath, this.config.modelInteraction] as const,
+        ([modelPath, modelInteraction]) => {
+          this.interaction.syncFromView(modelPath, modelInteraction);
         },
         { fireImmediately: true },
       ),
@@ -146,7 +147,7 @@ export class ControlPanelService {
         ...DEFAULT_MODEL_CONFIG.bubble,
         ...(persisted.bubble as Partial<ModelConfig['bubble']>),
       },
-      interactionZones: persisted.interactionZones ?? DEFAULT_MODEL_CONFIG.interactionZones,
+      interaction: persisted.interaction,
       rag: buildRagConfig(persisted.rag, DEFAULT_MODEL_CONFIG.rag),
       tts: {
         ...DEFAULT_MODEL_CONFIG.tts,
@@ -264,7 +265,7 @@ export class ControlPanelService {
   }
 
   async selectModelPath(path: string): Promise<void> {
-    await this.interactionZones.flush();
+    await this.interaction.flush();
     await this.config.updateLive2denvConfig({ currentModelPath: path });
     this.logTrace('model', 'select', { path }).end({ selectedPath: path });
   }
@@ -272,7 +273,7 @@ export class ControlPanelService {
   async addModel(): Promise<void> {
     const modelDir = await this.config.pickModelFile();
     if (!modelDir) return;
-    await this.interactionZones.flush();
+    await this.interaction.flush();
     const nextPaths = Array.from(new Set([...this.modelPaths, modelDir]));
     await this.config.updateLive2denvConfig({
       modelPaths: nextPaths,
@@ -284,7 +285,7 @@ export class ControlPanelService {
 
   async removeModel(path: string): Promise<void> {
     if (this.modelPaths.length <= 1) return;
-    if (path === this.currentModelPath) await this.interactionZones.flush();
+    if (path === this.currentModelPath) await this.interaction.flush();
     const nextPaths = this.modelPaths.filter((entry) => entry !== path);
     await this.config.updateLive2denvConfig({
       modelPaths: nextPaths,
@@ -339,7 +340,7 @@ export class ControlPanelService {
 
   async dispose(): Promise<void> {
     this.reactions.splice(0).forEach((dispose) => dispose());
-    await this.interactionZones.dispose();
+    await this.interaction.dispose();
     if (this.aiPersistTimer !== null) {
       window.clearTimeout(this.aiPersistTimer);
       this.aiPersistTimer = null;
@@ -348,14 +349,14 @@ export class ControlPanelService {
     this.logTrace('lifecycle', 'dispose').end({ disposed: true });
   }
 
-  private async persistInteractionZones(commit: InteractionZonesCommit): Promise<void> {
+  private async persistInteraction(commit: InteractionCommit): Promise<void> {
     await this.config.updateModelConfig({
       modelPath: commit.modelPath ?? undefined,
-      patch: { interactionZones: commit.interactionZones },
+      patch: { interaction: commit.interaction },
     });
-    this.logTrace('interactionZones', 'persist', {
+    this.logTrace('interaction', 'persist', {
       modelPath: commit.modelPath,
-      zoneCount: commit.interactionZones.zones.length,
+      areaCount: Object.keys(commit.interaction).length,
     }).end({ persisted: true });
   }
 

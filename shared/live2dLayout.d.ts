@@ -6,6 +6,7 @@ export interface Live2dLayoutInput {
   baseHeight: number;
   scale: number;
   sideWidth?: number;
+  visualCenterRatio?: number;
 }
 export interface LayoutRect { x: number; y: number; width: number; height: number }
 export interface ThreeRectLayout {

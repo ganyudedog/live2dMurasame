@@ -20,7 +20,8 @@ export class Live2dEnvironmentService {
   snapshot() {
     const modelPath = this.root.currentModelPath;
     const modelConfig = modelPath ? this.modelEnvironmentService.getConfiguration(modelPath) : null;
-    return createConfigSnapshot(this.root.toPersistence(), this.root.settings, modelPath, modelConfig);
+    const modelInteraction = modelPath ? this.modelEnvironmentService.getInteractionView(modelPath) : null;
+    return createConfigSnapshot(this.root.toPersistence(), this.root.settings, modelPath, modelConfig, modelInteraction);
   }
 
   update(patch = {}) {

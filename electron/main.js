@@ -229,7 +229,7 @@ const { scheduleApplyAutoLaunchSetting, flushPendingAutoLaunchSetting } = create
 });
 const modelEnvironmentService = new ModelEnvironmentService({
     repository: new JsonModelEnvironmentRepository({
-        fields: ['visualFrame', 'bubble', 'interactionZones', 'rag', 'tts'],
+        fields: ['visualFrame', 'bubble', 'interaction', 'rag', 'tts'],
     }),
     memoryRepository: new JsonModelMemoryRepository(),
     log: backendLog,

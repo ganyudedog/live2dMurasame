@@ -19,6 +19,7 @@ export const createConfigSnapshot = (
   globalModelConfig,
   activeModelPath,
   modelConfig,
+  modelInteraction,
 ) => {
   const configOverrides = buildConfigOverrides(live2denvConfig, activeModelPath, modelConfig);
   return {
@@ -30,6 +31,7 @@ export const createConfigSnapshot = (
     // activeModelPath 作为“身份真值”仍保持目录路径；该字段仅为派生/兼容 fetch & Live2DModel.from。
     activeModelFileUrl: resolveActiveModelFileUrl(activeModelPath),
     modelConfig: clone(modelConfig),
+    modelInteraction: clone(modelInteraction),
     configOverrides: { ...configOverrides },
   };
 };

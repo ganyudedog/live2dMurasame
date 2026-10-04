@@ -20,7 +20,7 @@ describe('native observations', () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as LogService;
     const service = new Live2dService({ scale: 1 } as StateBusService, log, api);
     service.setWindowGeometry(geometry()); service.start();
-    const schedule = vi.spyOn(service.layout, 'schedule');
+    const schedule = vi.spyOn(service.layoutService, 'schedule');
     const actual = geometry(); actual.contentBounds.x = 900; actual.contentBounds.width = 99;
     listener({ epoch: 0, source: 'system', kind: 'size', geometry: actual, bounds: actual.bounds, ts: 100 });
     expect(service.nativeGeometry).toEqual(actual);

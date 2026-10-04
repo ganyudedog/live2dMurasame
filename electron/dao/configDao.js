@@ -8,7 +8,6 @@ import {
   normalizeLive2denvConfig,
   normalizeModelConfig,
 } from './globalConfig.js';
-import { parseModelInteractionZones } from '../modules/modelenv/infrastructure/ModelConfigParser.js';
 
 let logService = null;
 
@@ -267,9 +266,7 @@ export const loadModelConfig = (modelDir) => {
     return normalizeModelConfig(readJsonFile(configPath, DEFAULT_MODEL_CONFIG));
   }
 
-  // 无持久化配置 → 从模型 JSON 自动生成 interactionZones 默认值
-  const zones = parseModelInteractionZones(modelDir);
-  const config = normalizeModelConfig({ interactionZones: zones });
+  const config = normalizeModelConfig(DEFAULT_MODEL_CONFIG);
   writeJsonFile(configPath, config);
   return config;
 };

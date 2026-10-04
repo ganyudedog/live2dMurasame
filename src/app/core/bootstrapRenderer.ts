@@ -37,6 +37,9 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
       reaction(() => config.modelConfig?.bubble,
         (settings) => live2d.configureBubble(settings ?? {}),
         { fireImmediately: true }),
+      reaction(() => config.modelInteraction,
+        (view) => live2d.configureInteraction(view),
+        { fireImmediately: true }),
     );
   }
 

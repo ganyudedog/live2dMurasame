@@ -1,16 +1,14 @@
 import { screen } from 'electron';
 import { calculateLive2dLayout, PET_WINDOW_BASE_CONTENT_WIDTH, PET_WINDOW_BASE_CONTENT_HEIGHT } from '../../../shared/live2dLayout.js';
-import { resizeWindowAroundCenter } from './WindowsCenterResize.js';
+import { readContentBounds, readContentSize, resizeWindowContent } from './WindowsCenterResize.js';
 
 /** Main owns the desktop anchor. Renderer supplies only a versioned numeric layout. */
 export const createWindowIntentController = ({ getMainWindow, channels = {}, traceEnabled = true, log = null }) => {
   const factChannel = channels.fact ?? 'ddd:window:fact';
   const boundsChangedChannel = channels.boundsChanged ?? 'ddd:window:bounds-changed';
-  let anchor = null;
   let dragging = false;
   let pending = null;
   let applyChain = Promise.resolve();
-  let dragOrigin = null;
   const revisions = new Map();
   let traceUntil = 0;
   let traceContext = null;
@@ -27,7 +25,7 @@ export const createWindowIntentController = ({ getMainWindow, channels = {}, tra
     const win = getMainWindow();
     if (!traceEnabled || Date.now() > traceUntil || !win || win.isDestroyed()) return;
     traceRows.push(JSON.stringify({ phase, epochMs: Date.now(), ...traceContext,
-      content: win.getContentBounds(), ...extra }));
+      content: readContentBounds(win), ...extra }));
     if (traceRows.length >= 18) flushTrace();
     else if (!traceTimer) {
       traceTimer = setTimeout(flushTrace, 250);
@@ -37,18 +35,15 @@ export const createWindowIntentController = ({ getMainWindow, channels = {}, tra
 
   const readGeometry = (win) => {
     const bounds = win.getBounds();
-    const contentBounds = win.getContentBounds();
+    const contentBounds = readContentBounds(win);
+    const contentSize = readContentSize(win);
+    const rawContentBounds = win.getContentBounds?.();
     const display = screen.getDisplayMatching(bounds);
     return {
-      bounds, contentBounds, workArea: display.workArea,
+      bounds, contentBounds, contentSize, rawContentBounds, workArea: display.workArea,
       displayId: display.id, scaleFactor: display.scaleFactor,
       baseContentSize: { width: PET_WINDOW_BASE_CONTENT_WIDTH, height: PET_WINDOW_BASE_CONTENT_HEIGHT },
     };
-  };
-
-  const captureAnchor = (win) => {
-    const rect = win.getContentBounds();
-    anchor = { center: Math.round(rect.x + rect.width / 2), bottom: rect.y + rect.height };
   };
 
   const publish = (source = 'system', kind = 'size') => {
@@ -65,7 +60,6 @@ export const createWindowIntentController = ({ getMainWindow, channels = {}, tra
   const apply = async ({ target, revision, source, preserveHeight }) => {
     const win = getMainWindow();
     if (!win || win.isDestroyed()) return;
-    if (!anchor) captureAnchor(win);
     const currentGeometry = readGeometry(win);
     const current = currentGeometry.contentBounds;
     const rect = {
@@ -77,8 +71,8 @@ export const createWindowIntentController = ({ getMainWindow, channels = {}, tra
     trace('beforeSetContentSize', { applySource: source, applyRevision: revision, target: rect });
     if (rect.width !== current.width || rect.height !== current.height) {
       trace('setContentSize.begin', { target: rect });
-      await resizeWindowAroundCenter(win, rect.width, rect.height, anchor);
-      trace('setContentSize.return', { predicted: rect, originDeltaX: 0, originDeltaY: 0 });
+      await resizeWindowContent(win, rect.width, rect.height);
+      trace('setContentSize.return', { predicted: rect, positionChanged: false });
     }
     // API return is only a native observation, never a presented-frame ACK.
     trace('afterSetContentSize', { applySource: source, applyRevision: revision });
@@ -107,8 +101,7 @@ export const createWindowIntentController = ({ getMainWindow, channels = {}, tra
       const target = calculateLive2dLayout(intent.payload.layout);
       revisions.set(intent.source, revision);
       const update = { target, revision, source: intent.source, preserveHeight: intent.payload.preserveHeight === true };
-      // Resize also moves the native window around its anchor. During a gesture
-      // retain only the latest scale, then apply it at the final native anchor.
+      // Defer resizing during a gesture and apply only the latest scale after it ends.
       let appliedGeometry;
       if (dragging) pending = update;
       else {
@@ -126,20 +119,7 @@ export const createWindowIntentController = ({ getMainWindow, channels = {}, tra
   const setNativeDragSession = ({ active } = {}) => {
     if (dragging === Boolean(active)) return;
     dragging = Boolean(active);
-    const win = getMainWindow();
-    if (!win || win.isDestroyed()) return;
-    if (dragging) {
-      if (!anchor) captureAnchor(win);
-      dragOrigin = win.getContentBounds();
-    } else {
-      const current = win.getContentBounds();
-      // Translate the existing anchor by the user's movement. Reconstructing
-      // it from rounded native width/height would introduce a new scale center.
-      if (anchor && dragOrigin) {
-        anchor.center += current.x - dragOrigin.x;
-        anchor.bottom += current.y - dragOrigin.y;
-      } else captureAnchor(win);
-      dragOrigin = null;
+    if (!dragging) {
       const update = pending;
       pending = null;
       if (update) {

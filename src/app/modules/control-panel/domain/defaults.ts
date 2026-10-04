@@ -14,7 +14,6 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     ratio: 0.7,
     minPx: 100,
     paddingPx: 0,
-    center: 'face',
     offsetPx: 0,
     offsetRatio: -0.16,
   },
@@ -22,9 +21,8 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     symmetric: true,
     headRatio: null,
     side: 'auto',
-    sideWidth: 100,
+    sideWidth: 260,
   },
-  interactionZones: { actions: [], zones: [] },
   rag: {
     profile: {
       personal: '',

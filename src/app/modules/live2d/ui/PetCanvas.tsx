@@ -74,7 +74,6 @@ const PetCanvas: React.FC = observer(() => {
   const live2denvConfig = configService.live2denvConfig;
   const globalModelConfig = configService.globalModelConfig;
   const activeModelFileUrl = configService.activeModelFileUrl;
-  const persistedModelConfig = configService.modelConfig;
   const hydrated = configService.hydrated;
   const refreshConfigSnapshot = useCallback(() => configService.refresh(), [configService]);
   
@@ -111,22 +110,12 @@ const PetCanvas: React.FC = observer(() => {
     });
   }, [hydrated, activeModelFileUrl, live2denvConfig?.currentModelPath, modelPath]);
   const modelPathRef = useRef(modelPath);
-
-
-  const interactionZonesRef = useRef<{
-    actions: string[];
-    zones: { heightRange: [number, number]; motions: string[] }[];
-  } | null>(null);
-
   usePetCanvasConfigRefs({
     modelPath,
     modelPathRef,
-    persistedModelConfig,
-    interactionZonesRef,
   });
 
   // 辅助引用
-  const hitAreasRef = useRef<Array<{ id: string; motion: string; name: string }>>([]); // 点击区域
   const modelBaseUrlRef = useRef<string | null>(null); // 模型基础 URL
   const surrogateAudioRef = useRef<HTMLAudioElement | null>(null); // 替代音频元素
   const updateBubblePositionRef = useRef<(force?: boolean) => void>(() => { }); // 更新气泡位置函数引用
@@ -149,10 +138,10 @@ const PetCanvas: React.FC = observer(() => {
     [live2dService],
   );
   // UI consumes the scale that belongs to renderGeometry. The requested bus
-  // value is allowed to wait until Live2dLayout commits its next atomic frame.
+  // value is allowed to wait until Live2dLayoutService commits its next atomic frame.
   const scale = live2dService.renderScale;
   const getModelMiddleRect = useCallback(
-    () => live2dService.layout.middleRect,
+    () => live2dService.layoutService.middleRect,
     [live2dService],
   );
 
@@ -160,14 +149,11 @@ const PetCanvas: React.FC = observer(() => {
   const motionText = live2dService.playingMotionText;
   const motionSound = live2dService.playingMotionSound;
   const setMotionText = useCallback((text: string | null) => live2dService.setMotionText(text), [live2dService]);
-  // 强行打断动作
-  const interruptMotion = useCallback((group: string) => live2dService.interruptMotion(group), [live2dService]);
-
   // 鼠标相关
   const ignoreMouse = Boolean(globalModelConfig?.ignoreMouse);
   const debugModeEnabled = Boolean(globalModelConfig?.debugModeEnabled);
   useLayoutEffect(() => {
-    live2dService.layout.setDebug(debugModeEnabled);
+    live2dService.layoutService.setDebug(debugModeEnabled);
   }, [live2dService, debugModeEnabled]);
 
   const pointerX = useRef(0); // 鼠标 X 坐标
@@ -481,19 +467,6 @@ const PetCanvas: React.FC = observer(() => {
     updateDragHandlePosition(true);
   }, [live2dService.bubbleMeasurement, updateBubblePosition, updateDragHandlePosition]);
 
-  const updateHitAreas = useCallback((modelInstance: Live2DModelType) => {
-    const settings = (modelInstance as any).internalModel?.settings;
-    const raw: Array<{ Name?: string; Id?: string; Motion?: string }> = settings?.hitAreas ?? [];
-    const mapped = raw
-      .map(entry => ({
-        id: entry.Id ?? '',
-        motion: entry.Motion ?? '',
-        name: (entry.Name ?? '').toLowerCase(),
-      }))
-      .filter(area => area.id && area.motion);
-    hitAreasRef.current = mapped;
-  }, []);
-
   // 检测是否为idle状态
   const isIdleState = useCallback((motionManager: any): boolean => {
     if (!motionManager) return true;
@@ -519,7 +492,7 @@ const PetCanvas: React.FC = observer(() => {
     const app = appRef.current;
     const model = live2dService.model;
     if (!app || !model) return;
-    return live2dService.layout.attach(app, model, (snapshot) => {
+    return live2dService.layoutService.attach(app, model, (snapshot) => {
       live2dService.setRenderSnapshot(snapshot);
       updateBubblePositionFromRef(true);
       updateDragHandlePositionFromRef(true);
@@ -530,7 +503,7 @@ const PetCanvas: React.FC = observer(() => {
     }));
   }, [live2dService, live2dService.model, updateBubblePositionFromRef, updateDragHandlePositionFromRef]);
 
-  const scheduleApplyLayout = live2dService.layout.schedule;
+  const scheduleApplyLayout = live2dService.layoutService.schedule;
 
   // Live2D 模型生命周期（封装于自定义 Hook）
   usePetModel({
@@ -550,7 +523,6 @@ const PetCanvas: React.FC = observer(() => {
     isWindowDragActiveRef,
     setModel,
     setModelLoadStatus,
-    updateHitAreas,
     updateBubblePosition,
     updateDragHandlePosition,
     scheduleApplyLayout,
@@ -593,41 +565,11 @@ const PetCanvas: React.FC = observer(() => {
     const ny = (clientY - bounds.y) / (bounds.height || 1);
     if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
 
-    let group: string | null = null;
-
-    // 使用 interactionZones.zones 匹配点击区域（自上而下堆叠的矩形）
-    const cfg = interactionZonesRef.current;
-    if (cfg?.zones?.length) {
-      const matches: { motions: string[]; index: number }[] = [];
-      cfg.zones.forEach((zone, i) => {
-        const lo = Math.max(0, Math.min(1, zone.heightRange[0] ?? 0));
-        const hi = Math.max(0, Math.min(1, zone.heightRange[1] ?? 1));
-        if (ny >= lo && ny <= hi && zone.motions.length) {
-          matches.push({ motions: zone.motions, index: i });
-        }
-      });
-      if (matches.length) {
-        // 取最上层命中的区域（zones 数组顺序即堆叠顺序）
-        const picked = matches[0];
-        group = picked.motions[Math.floor(Math.random() * picked.motions.length)] ?? null;
-      }
-    }
-
-    if (!group) return;
-
-    const areaObj = hitAreasRef.current.find(a => a.motion.toLowerCase() === group.toLowerCase());
-    let dispatched = false;
-    if (areaObj) {
-      try {
-        const precise = (model as any).hitTest?.(areaObj.id, clientX, clientY);
-        if (precise) { interruptMotion(group); dispatched = true; }
-      } catch { /* swallow */ }
-    }
-    if (!dispatched) { interruptMotion(group); dispatched = true; }
+    const dispatched = live2dService.interaction.handleTap(clientX, clientY);
     if ((window as any).LIVE2D_MOTION_DEBUG === true) {
-      debug('pet.interaction', 'tap.dispatch', { nx: Number(nx.toFixed(3)), ny: Number(ny.toFixed(3)), group, preciseTried: !!areaObj });
+      debug('pet.interaction', 'tap.dispatch', { nx: Number(nx.toFixed(3)), ny: Number(ny.toFixed(3)), dispatched });
     }
-  }, [getModelMiddleRect, interruptMotion]);
+  }, [getModelMiddleRect, live2dService]);
 
   useEffect(() => bindPointerGestures({
     handlePointerTap,

@@ -37,7 +37,6 @@ export const DEFAULT_MODEL_CONFIG = {
     ratio: 0.7,
     minPx: 100,
     paddingPx: 0,
-    center: 'face',
     offsetPx: 0,
     offsetRatio: -0.16,
   },
@@ -46,10 +45,6 @@ export const DEFAULT_MODEL_CONFIG = {
     headRatio: null,
     side: 'auto',
     sideWidth: 100,
-  },
-  interactionZones: {
-    actions: [],
-    zones: [],
   },
   rag: {
     profile: {
@@ -190,17 +185,22 @@ const normalizeTtsConfig = (input = {}) => {
   return next;
 };
 
-const normalizeInteractionZones = (input) => {
-  const def = { actions: [], zones: [] };
-  if (!input || typeof input !== 'object') return def;
-  return {
-    actions: Array.isArray(input.actions)
-      ? input.actions.filter((v) => typeof v === 'string')
-      : [],
-    zones: Array.isArray(input.zones)
-      ? input.zones.filter((z) => z && Array.isArray(z.heightRange) && Array.isArray(z.motions))
-      : [],
-  };
+const normalizeInteraction = (input) => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const normalized = {};
+  Object.entries(input).forEach(([areaName, assignments]) => {
+    const name = typeof areaName === 'string' ? areaName.trim() : '';
+    if (!name || !Array.isArray(assignments)) return;
+    normalized[name] = assignments
+      .filter((item) => item && typeof item.group === 'string' && item.group.trim()
+        && Number.isInteger(item.index) && item.index >= 0)
+      .map((item) => ({
+        group: item.group.trim(),
+        index: item.index,
+        weight: Number.isFinite(item.weight) ? Math.max(0, item.weight) : 100,
+      }));
+  });
+  return normalized;
 };
 
 export const normalizeModelConfig = (input = {}) => {
@@ -213,6 +213,7 @@ export const normalizeModelConfig = (input = {}) => {
     ...DEFAULT_MODEL_CONFIG.visualFrame,
     ...((input && input.visualFrame) || {}),
   };
+  delete next.visualFrame.center;
 
   next.bubble = {
     ...DEFAULT_MODEL_CONFIG.bubble,
@@ -221,7 +222,10 @@ export const normalizeModelConfig = (input = {}) => {
   next.bubble.side = ['auto', 'left', 'right'].includes(next.bubble.side) ? next.bubble.side : 'auto';
   next.bubble.sideWidth = clampNumber(next.bubble.sideWidth, 100, 50, 150);
 
-  next.interactionZones = normalizeInteractionZones(input && input.interactionZones);
+  delete next.interactionZones;
+  const interaction = normalizeInteraction(input && input.interaction);
+  if (interaction) next.interaction = interaction;
+  else delete next.interaction;
 
   next.rag = normalizeRagConfig(input && input.rag);
   next.tts = normalizeTtsConfig(input && input.tts);

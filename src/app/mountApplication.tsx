@@ -9,6 +9,7 @@ import { ServiceProvider } from './core/ServiceProvider';
 import type { LogService } from './shared/logging/LogService';
 import { TOKENS } from './core/serviceTokens';
 import { BubbleMeasurementRoot } from './modules/live2d/ui/BubbleMeasurementRoot';
+import { reaction } from 'mobx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -74,22 +75,46 @@ export const mountApplication = async (): Promise<void> => {
   // stays in UI infrastructure while Live2dService receives only stable numeric dimensions.
   let measurementHost: HTMLDivElement | null = null;
   let measurementRoot: ReturnType<typeof createRoot> | null = null;
-  if (windowKind === 'pet') {
+  let stopMeasurementReaction: (() => void) | null = null;
+  const live2d = windowKind === 'pet' ? application.container.resolve(TOKENS.live2d) : null;
+  const disposeMeasurement = (expectedRequestId?: number) => {
+    if (expectedRequestId !== undefined && live2d && live2d.bubbleMeasurementRequestId !== expectedRequestId) return;
+    measurementRoot?.unmount();
+    measurementRoot = null;
+    measurementHost?.remove();
+    measurementHost = null;
+  };
+  const mountMeasurement = () => {
+    if (!live2d?.playingMotionText || measurementRoot) return;
     measurementHost = document.createElement('div');
     measurementHost.dataset.role = 'bubble-measurement-root';
     document.body.appendChild(measurementHost);
     measurementRoot = createRoot(measurementHost);
+    const requestId = live2d.bubbleMeasurementRequestId;
+    const handleMeasured = () => {
+      // The root exists only for the current text's layout sample.
+      queueMicrotask(() => disposeMeasurement(requestId));
+    };
     measurementRoot.render(
       <StrictMode>
         <ServiceProvider container={application.container}>
-          <BubbleMeasurementRoot />
+          <BubbleMeasurementRoot onMeasured={handleMeasured} />
         </ServiceProvider>
       </StrictMode>,
+    );
+  };
+  if (live2d) {
+    stopMeasurementReaction = reaction(
+      () => `${live2d.bubbleMeasurementRequestId}:${live2d.playingMotionText ?? ''}`,
+      mountMeasurement,
+      { fireImmediately: true },
     );
   }
 
   window.addEventListener('pagehide', () => {
     measurementRoot?.unmount();
+    stopMeasurementReaction?.();
+    stopMeasurementReaction = null;
     measurementHost?.remove();
     mainRoot.unmount();
     void application.dispose();

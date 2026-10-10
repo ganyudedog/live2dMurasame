@@ -1,0 +1,168 @@
+import type { LogService } from '@app/shared/logging/LogService';
+import { nowPerf } from '../infrastructure/actionClock';
+import { detectActionCapability } from '../domain/capability';
+import { ActionExecutor } from '../infrastructure/ActionExecutor';
+import { normalizeActionIntent } from '../domain/normalize';
+import { actionIntentInputSchema } from '../domain/schema';
+import type { ActionDispatchResult, ActionIntentInput, ActionIntentNormalized, ActionCapability } from '../domain/types';
+
+interface Live2DCoreModelLike {
+  getParameterCount?: () => number;
+  getParameterId?: (index: number) => string;
+  getParameterValueById?: (id: string) => number;
+  setParameterValueById?: (id: string, value: number) => void;
+}
+
+interface Live2dActionServiceOptions {
+  log: LogService;
+  dedupeWindowMs?: number;
+  maxQueueSize?: number;
+}
+
+const DEFAULT_DEDUPE_WINDOW_MS = 220;
+const DEFAULT_MAX_QUEUE_SIZE = 4;
+
+export class Live2dActionService {
+  private readonly dedupeWindowMs: number;
+  private readonly maxQueueSize: number;
+  private readonly executor = new ActionExecutor();
+  private readonly log: LogService;
+
+  private capability: ActionCapability = {
+    canShakeHead: false,
+    canBlink: false,
+    canMouth: false,
+  };
+
+  private queue: ActionIntentNormalized[] = [];
+  private lastAcceptedAtByKind = new Map<string, number>();
+  private lastSignature = new Map<string, number>();
+  private capabilityReady = false;
+
+  constructor(options: Live2dActionServiceOptions) {
+    this.log = options.log;
+    this.dedupeWindowMs = options.dedupeWindowMs ?? DEFAULT_DEDUPE_WINDOW_MS;
+    this.maxQueueSize = options.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
+  }
+
+  dispatch(input: ActionIntentInput, source = 'unknown'): ActionDispatchResult {
+    const parsed = actionIntentInputSchema.safeParse(input);
+    if (!parsed.success) {
+      const context = this.log.contextRegistry.register('Live2dActionService', {
+        relation: 'action',
+        params: { source },
+        behavior: '校验、去重并执行模型动作意图',
+      });
+      context.beginTrace('dispatch.invalid').fail('动作意图校验失败', {
+        source,
+        issues: parsed.error.issues.map((issue) => issue.message),
+      });
+      context.dispose();
+      return { ok: false, state: 'dropped', reason: 'invalid' };
+    }
+
+    const now = Date.now();
+    const action = normalizeActionIntent(parsed.data, now);
+
+    if (!this.supportsAction(action.kind)) {
+      return { ok: false, state: 'dropped', reason: 'no-capability' };
+    }
+
+    if (this.isInCooldown(action, now)) {
+      return { ok: false, state: 'dropped', reason: 'cooldown' };
+    }
+
+    if (this.isDuplicate(action, now)) {
+      return { ok: false, state: 'dropped', reason: 'duplicate' };
+    }
+
+    this.lastAcceptedAtByKind.set(action.kind, now);
+
+    const active = this.executor.getActiveAction();
+    if (!active) {
+      this.executor.start(action, nowPerf());
+      return { ok: true, state: 'started' };
+    }
+
+    if (action.priority >= active.priority) {
+      this.executor.start(action, nowPerf());
+      return { ok: true, state: 'started' };
+    }
+
+    this.enqueue(action);
+    return { ok: true, state: 'queued' };
+  }
+
+  tick(core: Live2DCoreModelLike, nowMs = performance.now()): void {
+    if (!this.capabilityReady) {
+      this.capability = detectActionCapability(core);
+      this.capabilityReady = true;
+      this.executor.setCapability(this.capability);
+    }
+
+    if (!this.executor.getActiveAction()) {
+      const next = this.dequeueNext();
+      if (next) {
+        this.executor.start(next, nowPerf());
+      }
+    }
+
+    const result = this.executor.tick(core, nowMs);
+    if (result.finished && result.action) {
+      const context = this.log.contextRegistry.register('Live2dActionService', {
+        relation: 'action',
+        params: { kind: result.action.kind },
+        behavior: '完成一次 Live2D 动作执行',
+      });
+      context.beginTrace('finished').end({
+        kind: result.action.kind,
+        intensity: result.action.intensity,
+        durationMs: result.action.durationMs,
+      });
+      context.dispose();
+    }
+  }
+
+  dispose(): void {
+    this.queue = [];
+    this.executor.stop();
+    this.lastAcceptedAtByKind.clear();
+    this.lastSignature.clear();
+    this.capabilityReady = false;
+  }
+
+  getCapability(): ActionCapability {
+    return this.capability;
+  }
+
+  private supportsAction(kind: ActionIntentNormalized['kind']): boolean {
+    if (!this.capabilityReady) return true;
+    if (kind === 'shake_head') return this.capability.canShakeHead;
+    if (kind === 'blink') return this.capability.canBlink;
+    return this.capability.canMouth;
+  }
+
+  private isInCooldown(action: ActionIntentNormalized, now: number): boolean {
+    const lastAt = this.lastAcceptedAtByKind.get(action.kind) ?? 0;
+    return action.cooldownMs > 0 && now - lastAt < action.cooldownMs;
+  }
+
+  private isDuplicate(action: ActionIntentNormalized, now: number): boolean {
+    const signature = `${action.kind}|${Math.round(action.intensity * 100)}|${Math.round(action.durationMs / 20)}`;
+    const lastAt = this.lastSignature.get(signature) ?? 0;
+    this.lastSignature.set(signature, now);
+    return now - lastAt < this.dedupeWindowMs;
+  }
+
+  private enqueue(action: ActionIntentNormalized): void {
+    this.queue.push(action);
+    this.queue.sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
+    if (this.queue.length > this.maxQueueSize) {
+      this.queue.length = this.maxQueueSize;
+    }
+  }
+
+  private dequeueNext(): ActionIntentNormalized | undefined {
+    return this.queue.shift();
+  }
+}

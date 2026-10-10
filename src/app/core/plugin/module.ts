@@ -9,7 +9,7 @@ export const serviceModule: ServiceModule = {
   register(container) {
     container.registerSingleton(TOKENS.pluginRuntime, (scope) => new PluginRuntime(
       scope.resolve(TOKENS.log),
-      scope.resolve(TOKENS.bootstrapContext).windowKind === 'test' ? 'cli' : 'desktop',
+      'desktop',
     ));
   },
 };

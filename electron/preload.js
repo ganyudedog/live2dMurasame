@@ -152,6 +152,10 @@ const SystemAPI = {
   debugTrace: (payload) => ipcRenderer.send('ddd:system:renderer-trace', payload),
 };
 
+const TtsDiagnosticsAPI = {
+  saveArtifacts: (artifacts) => ipcRenderer.invoke('ddd:tts:save-artifacts', { artifacts }),
+};
+
 ipcRenderer.on('ddd:live2denv:snapshot:changed', (_event, payload) => {
   snapshotStore.dispatchSnapshotUpdate(payload);
 });
@@ -174,3 +178,4 @@ contextBridge.exposeInMainWorld('MemoryAPI', MemoryAPI);
 contextBridge.exposeInMainWorld('AIAPI', AIAPI);
 contextBridge.exposeInMainWorld('AsrAPI', AsrAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);
+contextBridge.exposeInMainWorld('TtsDiagnosticsAPI', TtsDiagnosticsAPI);

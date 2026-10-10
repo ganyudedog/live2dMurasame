@@ -1,11 +1,10 @@
 import type { ServiceContainer } from './di/container';
-import type { ServiceModule, WindowKind } from './di/module';
+import { getServiceModuleDefinitions, type ServiceModuleExports, type WindowKind } from './di/module';
 import type { ServiceToken } from './di/token';
 
-const discoveredModules = import.meta.glob(['./plugin/module.ts','../modules/**/module.ts', '../shared/**/module.ts'], {
+const discoveredModules = import.meta.glob(['./plugin/module.ts','../modules/*/module.ts', '../shared/**/module.ts'], {
   eager: true,
-  import: 'serviceModule',
-}) as Record<string, ServiceModule>;
+}) as Record<string, ServiceModuleExports>;
 
 // 注册所有模块
 export const registerServiceModules = (
@@ -13,6 +12,7 @@ export const registerServiceModules = (
   windowKind: WindowKind,
 ): readonly ServiceToken<unknown>[] => {
   const modules = Object.values(discoveredModules)
+    .flatMap(getServiceModuleDefinitions)
     .filter((module) => module.windows.includes('all') || module.windows.includes(windowKind))
     .sort((left, right) => left.id.localeCompare(right.id));
 

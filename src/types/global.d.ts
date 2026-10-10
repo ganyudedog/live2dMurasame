@@ -434,6 +434,14 @@ declare global {
     debugTrace?: (payload: PetDebugTracePayload) => void;
   }
 
+  interface PetTtsDiagnosticsAPI {
+    saveArtifacts?: (artifacts: Array<{ filename: string; base64: string; mimeType?: string }>) => Promise<{
+      ok: boolean;
+      directory: string;
+      files: string[];
+    }>;
+  }
+
   type PetMicState = 'off' | 'requesting' | 'active' | 'denied' | 'error';
 
   interface PetAsrStatus {
@@ -500,6 +508,7 @@ declare global {
     AIAPI?: PetAIAPI;
     AsrAPI?: PetAsrAPI;
     SystemAPI?: PetSystemAPI;
+    TtsDiagnosticsAPI?: PetTtsDiagnosticsAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
   }
 }

@@ -1,17 +1,17 @@
 import { makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
-import type { Live2DModel } from '../runtime/live2d/runtime';
-import { MotionManager } from '../runtime/live2d/motionManager';
+import type { Live2DModel } from '../modules/model/runtime/live2d/runtime';
+import { MotionService } from '../modules/motion/service/MotionService';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
-import { Live2dLayoutService, type LayoutSnapshot } from './Live2dLayoutService';
-import { BubblePresentation } from './BubblePresentation';
-import { createBubblePositionEngine } from '../runtime/layout/createBubblePositionEngine';
-import { InteractionService } from './InteractionService';
+import { Live2dLayoutService, type LayoutSnapshot } from '../modules/layout/service/Live2dLayoutService';
+import { BubblePresentation } from '../modules/bubble/domain/BubblePresentation';
+import { createBubblePositionEngine } from '../modules/bubble/runtime/createBubblePositionEngine';
+import { InteractionService } from '../modules/interaction/service/InteractionService';
 import {
   BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH,
   BUBBLE_LAYOUT_SIDE_MIN_WIDTH,
   BUBBLE_SIDE_MAX_WIDTH,
-} from '../domain/constants';
+} from '../modules/bubble/domain/constants';
 import type { Live2dRegister } from '@app/core/plugin/registers';
 
 export type ModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
@@ -47,7 +47,7 @@ export class Live2dService {
   bubbleMeasurementRequestId = 0;
   bubbleMeasurement: BubbleMeasurement | null = null;
 
-  readonly motionManager = new MotionManager({ idleMinMs: 20000, idleMaxMs: 40000 });
+  readonly motionManager = new MotionService({ idleMinMs: 20000, idleMaxMs: 40000 });
 
   private readonly stateBus: StateBusService;
   private readonly log: LogService;

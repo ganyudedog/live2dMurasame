@@ -8,7 +8,7 @@ import { bootstrapRenderer } from './core/bootstrapRenderer';
 import { ServiceProvider } from './core/ServiceProvider';
 import type { LogService } from './shared/logging/LogService';
 import { TOKENS } from './core/serviceTokens';
-import { BubbleMeasurementRoot } from './modules/live2d/ui/BubbleMeasurementRoot';
+import { BubbleMeasurementRoot } from './modules/live2d/modules/bubble/ui/BubbleMeasurementRoot';
 import { reaction } from 'mobx';
 
 const queryClient = new QueryClient({

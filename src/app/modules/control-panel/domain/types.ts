@@ -8,20 +8,8 @@ export type ControlPanelTabKey =
   | 'ai-rag'
   | 'ai-rag-params';
 
-export type AsrConfig = {
-  mode: 'local' | 'remote';
-  engine: 'sherpa-onnx' | string;
-  modelDir: string;
-  endpoint: string;
-  sampleRate: number;
-  featureDim: number;
-  numThreads: number;
-  provider: string;
-  debug: number;
-  rule1MinTrailingSilence: number;
-  rule2MinTrailingSilence: number;
-  rule3MinUtteranceLength: number;
-};
+import type { AsrConfig } from '@app/modules/ai/modules/asr/domain/config';
+export type { AsrConfig } from '@app/modules/ai/modules/asr/domain/config';
 
 export type ThemeMode = 'light' | 'dark';
 

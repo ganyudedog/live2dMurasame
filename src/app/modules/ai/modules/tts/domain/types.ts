@@ -1,0 +1,74 @@
+export interface TtsRuntimeConfig {
+  enabled: boolean;
+  baseUrl: string;
+  gptWeightsPath: string;
+  sovitsWeightsPath: string;
+  textLang: string;
+  promptLang: string;
+  refAudioPath: string;
+  refAudioText: string;
+  textSplitMode: string;
+  speedFactor: number;
+  fragmentInterval: number;
+  useLastGeneratedAsRef: boolean;
+  topK: number;
+  topP: number;
+  temperature: number;
+}
+
+export interface QwenTtsTriggerInput {
+  requestId: string;
+  queueGroupId?: string;
+  sentenceIndex?: number;
+  speakText: string;
+  displayText?: string;
+}
+
+export interface TtsSynthesisRequest {
+  requestId: string;
+  queueGroupId?: string;
+  sentenceIndex?: number;
+  onSubmitted?: () => void;
+  /** Stable renderer-side id propagated through the LiveKit TTS event payload. */
+  traceId?: string;
+  speakText: string;
+  displayText?: string;
+  config: TtsRuntimeConfig;
+  signal?: AbortSignal;
+  // 是否优先使用 LiveKit 实时主链路；测试页可设为 false 强制走 HTTP OGG 流式。
+  preferRealtime?: boolean;
+}
+
+export interface TtsCancelRequest {
+  requestId: string;
+  reason?: string;
+  config: TtsRuntimeConfig;
+  signal?: AbortSignal;
+}
+
+export interface TtsPlaybackOptions {
+  requestId: string;
+  signal?: AbortSignal;
+  onChunk?: (receivedBytes: number) => void;
+}
+
+export interface TtsPlaybackResult {
+  streamed: boolean;
+  bytesReceived: number;
+  mimeType: string | null;
+}
+
+export interface TtsRunResult {
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
+  streamed?: boolean;
+  bytesReceived?: number;
+  mimeType?: string | null;
+}
+
+export interface TtsWarmupResult {
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
+}

@@ -8,12 +8,15 @@ Live2D 模块采用 DI 容器管理 service，UI 只负责输入、挂载 Pixi �
 
 ## Service 边界
 
+目录采用业务能力优先：`modules/` 下的 `model/`、`motion/`、`layout/`、`bubble/`、`interaction/`、`actions/` 内部各自分层。模块根部 `module.ts` 保留唯一注册入口，`service/Live2dService.ts` 负责统一编排。
+
 ```text
 DI Container
 ├─ Live2dService
-│  ├─ Live2dLayout       数值布局、版本和 Pixi 提交
-│  ├─ ModelService        模型生命周期与参数
-│  └─ 子模块              眼球、动作、气泡等纯逻辑
+│  ├─ layout/Live2dLayoutService     数值布局、版本和 Pixi 提交
+│  ├─ motion/MotionService          动画播放与空闲调度
+│  ├─ interaction/InteractionService  命中区域与动作绑定
+│  └─ model、bubble、actions        模型运行时、气泡及参数动作
 ├─ ElectronService
 │  ├─ BridgeService       IPC 桥接
 │  └─ DragService         窗口拖动开始/结束

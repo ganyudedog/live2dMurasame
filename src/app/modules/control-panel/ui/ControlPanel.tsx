@@ -6,7 +6,7 @@ import { TOKENS } from '@app/core/serviceTokens';
 import ControlPanelLayout from './ControlPanelLayout';
 import { useThemeMode } from './theme';
 import HomePage from './pages/HomePage';
-import InteractionPage from './pages/InteractionPage';
+import InteractionPage from '../modules/interaction/ui/InteractionPage';
 import AiSettingsPage from './pages/AiSettingsPage';
 import ModelSelectPage from './pages/ModelSelectPage';
 import ModelParamsPage from './pages/ModelParamsPage';

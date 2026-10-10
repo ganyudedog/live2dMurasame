@@ -1,7 +1,9 @@
+import { toChatConfig, buildRagConfig, trimText, shouldPreheatTts, createId, createMessage } from '../domain/configuration';
 import { actionBound, computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import { DEFAULT_GLOBAL_UI_SETTINGS, DEFAULT_MODEL_CONFIG } from '../domain/defaults';
-import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '../infrastructure/chatSessionCache';
-import { InteractionManager, type InteractionCommit } from './InteractionManager';
+import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '../modules/chat/infrastructure/chatSessionCache';
+import { InteractionSettingsService } from '../modules/interaction/service/InteractionSettingsService';
+import type { InteractionCommit } from '../modules/interaction/domain/interaction';
 import type {
   ChatMessage,
   ControlPanelTabKey,
@@ -11,14 +13,8 @@ import type {
   ModelEntry,
 } from '../domain/types';
 import type { ChatConfig, ChatRequest, ChatResponse } from '@app/shared/state-bus/sharedStateTypes';
-import type { LiveKitTtsPreheatRequest, LiveKitTtsPreheatResponseServer } from '@app/modules/ai/infrastructure/livekit/model/liveKitModel';
-import type { LiveKitService } from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
-import {
-  fromTtsPreheatServer,
-  normalizeBaseUrl,
-  postRequest,
-  toTtsPreheatServer,
-} from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
+import type { TtsService } from '@app/modules/ai/modules/tts/service/TtsService';
+import { normalizeAsrConfig } from '@app/modules/ai/modules/asr/domain/config';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
@@ -39,20 +35,20 @@ export class ControlPanelService {
 
   readonly config: ConfigService;
   readonly stateBus: StateBusService;
-  readonly interaction: InteractionManager;
+  readonly interaction: InteractionSettingsService;
   private readonly log: LogService;
-  private readonly liveKit: LiveKitService;
+  private readonly tts: TtsService;
   private reactions: IReactionDisposer[] = [];
   private aiPersistTimer: number | null = null;
   private extensionRegister: ControlPanelRegister | null = null;
 
-  constructor(config: ConfigService, stateBus: StateBusService, log: LogService, liveKit: LiveKitService) {
+  constructor(config: ConfigService, stateBus: StateBusService, log: LogService, tts: TtsService) {
     this.config = config;
     this.stateBus = stateBus;
     this.log = log;
-    this.liveKit = liveKit;
+    this.tts = tts;
     this.aiSettings = toChatConfig(config.globalModelConfig);
-    this.interaction = new InteractionManager({
+    this.interaction = new InteractionSettingsService({
       persist: (commit) => this.persistInteraction(commit),
       preview: (motion) => this.config.previewMotion(motion.group, motion.index),
       log,
@@ -168,22 +164,7 @@ export class ControlPanelService {
   }
 
   get asrConfig(): AsrConfig {
-    const raw = this.config.globalModelConfig?.asr ?? {};
-    const numberOr = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-    return {
-      mode: raw.mode === 'remote' ? 'remote' : 'local',
-      engine: typeof raw.engine === 'string' && raw.engine.trim() ? raw.engine : 'sherpa-onnx',
-      modelDir: typeof raw.modelDir === 'string' ? raw.modelDir : '',
-      endpoint: typeof raw.endpoint === 'string' ? raw.endpoint : '',
-      sampleRate: numberOr(raw.sampleRate, 16000),
-      featureDim: numberOr(raw.featureDim, 80),
-      numThreads: numberOr(raw.numThreads, 2),
-      provider: typeof raw.provider === 'string' ? raw.provider : 'cpu',
-      debug: numberOr(raw.debug, 0),
-      rule1MinTrailingSilence: numberOr(raw.rule1MinTrailingSilence, 2.4),
-      rule2MinTrailingSilence: numberOr(raw.rule2MinTrailingSilence, 1.2),
-      rule3MinUtteranceLength: numberOr(raw.rule3MinUtteranceLength, 20),
-    };
+    return normalizeAsrConfig(this.config.globalModelConfig?.asr);
   }
 
   async persistAsrConfig(next: AsrConfig): Promise<void> {
@@ -453,29 +434,7 @@ export class ControlPanelService {
     });
 
     try {
-      const baseUrl = normalizeBaseUrl(config.baseUrl);
-      await this.liveKit.ensureRoomConnected(baseUrl, {
-        eventTopic: 'v3.event',
-        reason: 'tts-config-preheat',
-      });
-      const session = await this.liveKit.ensureSession(baseUrl, {
-        client: 'desktop',
-        version: '0.1.0',
-        capabilities: { livekit: true, audioDownlink: true },
-      });
-      const body = toTtsPreheatServer({
-        sessionId: session.sessionId,
-        requestId,
-        ts: Date.now(),
-        payload: {
-          textLang: trimText(config.textLang) || 'all_ja',
-          promptLang: trimText(config.promptLang) || 'ja',
-          refAudioPath: trimText(config.refAudioPath),
-          promptText: trimText(config.refAudioText),
-        },
-      } satisfies LiveKitTtsPreheatRequest);
-      const raw = await postRequest<LiveKitTtsPreheatResponseServer>(baseUrl, '/v3/tts/preheat', body);
-      const result = fromTtsPreheatServer(raw);
+      const result = await this.tts.preheat(config, requestId);
       runInAction(() => {
         this.ttsPreheatState = 'ok';
         this.ttsPreheatMessage = `预热完成：${result.state}`;
@@ -527,46 +486,3 @@ export class ControlPanelService {
     };
   }
 }
-
-const toChatConfig = (config: PetGlobalModelConfig | null | undefined): ChatConfig => ({
-  model: typeof config?.model === 'string' ? config.model : '',
-  apiKey: typeof config?.apiKey === 'string' ? config.apiKey : '',
-  baseURL: typeof config?.baseURL === 'string' ? config.baseURL : '',
-  displayLang: config?.displayLang === 'en' || config?.displayLang === 'ja' || config?.displayLang === 'ko'
-    ? config.displayLang
-    : 'zh',
-});
-
-const buildRagConfig = (persisted: unknown, defaults: ModelConfig['rag']): ModelConfig['rag'] => {
-  const source = isRecord(persisted) ? persisted : {};
-  const profile = isRecord(source.profile) ? source.profile : source;
-  const retrieval = isRecord(source.retrieval) ? source.retrieval : source;
-  return {
-    profile: {
-      ...defaults.profile,
-      ...profile,
-      banned: typeof profile.banned === 'string'
-        ? profile.banned
-        : typeof profile.mustFollow === 'string' ? profile.mustFollow : defaults.profile.banned,
-    },
-    retrieval: { ...defaults.retrieval, ...retrieval },
-  } as ModelConfig['rag'];
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
-const trimText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
-const shouldPreheatTts = (prev: ModelConfig['tts'], next: ModelConfig['tts']): boolean => (
-  prev.textLang !== next.textLang
-  || trimText(prev.refAudioPath) !== trimText(next.refAudioPath)
-  || trimText(prev.refAudioText) !== trimText(next.refAudioText)
-);
-const createId = (): string => `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-const createMessage = (
-  role: ChatMessage['role'],
-  text: string,
-  requestId: string,
-  createdAt: number,
-  source: ChatMessage['source'],
-  status: ChatMessage['status'],
-  error?: string,
-): ChatMessage => ({ id: createId(), role, text, requestId, createdAt, source, status, error });

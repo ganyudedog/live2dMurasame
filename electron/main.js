@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, protocol } from 'electron';
+import { app, BrowserWindow, Menu, dialog, protocol, ipcMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,7 @@ import {
 } from '../shared/live2dLayout.js';
 import { detectModelFilePath } from './utils/path.js';
 import { configureConfigDao } from './dao/configDao.js';
+import { registerTtsDiagnosticsIpc } from './utils/ttsDiagnostics.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +29,7 @@ let controlPanelWindow = null;
 let isQuitting = false;
 const backendLog = createBackendLogService();
 configureConfigDao(backendLog);
+registerTtsDiagnosticsIpc({ ipcMain });
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const appBaseDir = (() => {

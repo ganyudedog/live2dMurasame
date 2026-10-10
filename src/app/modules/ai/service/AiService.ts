@@ -1,14 +1,11 @@
-import { makeObservable, observable, reaction, runInAction, type IReactionDisposer } from 'mobx';
-import { createStage2Runtime, type Stage2Runtime } from '@app/modules/ai/core/stage2Runtime';
-import { createFrontendTtsRuntime, type FrontendTtsRuntime } from '@app/modules/ai/tts/runtime';
-import { createAsrAudioCaptureController } from '../runtime/audio/asrAudioCapture';
+import { computed, makeObservable, observable, reaction, runInAction, type IReactionDisposer } from 'mobx';
+import type { LlmService } from '../modules/llm/service/LlmService';
+import type { TtsService } from '../modules/tts/service/TtsService';
+import type { AsrService } from '../modules/asr/service/AsrService';
+import { toErrorMessage } from '@app/shared/utils/errors';
 import type { ChatRequest } from '@app/shared/state-bus/sharedStateTypes';
-import type { ConfigService } from '@app/shared/config/ConfigService';
-import type { ElectronService } from '@app/shared/electron/ElectronService';
 import type { LogService } from '@app/shared/logging/LogService';
-import { LiveKitService } from '@app/modules/ai/infrastructure/livekit/service/liveKitService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
-import { TtsSentenceQueue } from './TtsSentenceQueue';
 import type { AiRegister } from '@app/core/plugin/registers';
 import type { Disposable, TextAiInput, TextAiResponse, TextAiResult } from '@app/core/plugin/types';
 
@@ -16,51 +13,41 @@ export class AiService {
   processing = false;
   activeRequestId: string | null = null;
   lastError: string | null = null;
-  asrRunning = false;
-  ttsWarmed = false;
-
-  private readonly config: ConfigService;
-  private readonly bridge: ElectronService['bridge'];
   private readonly stateBus: StateBusService;
   private readonly log: LogService;
-  private readonly stage2: Stage2Runtime;
-  private readonly tts: FrontendTtsRuntime;
-  private readonly asrCapture;
+  private readonly llm: LlmService;
+  private readonly tts: TtsService;
+  private readonly asr: AsrService;
   private reactions: IReactionDisposer[] = [];
-  private unsubscribeAsr: (() => void) | null = null;
-  private warmupTimer: number | null = null;
   private disposed = false;
   private extensionRegister: AiRegister | null = null;
   private responseListeners = new Set<(response: TextAiResponse) => void>();
+  private stopChatSpeech: (() => void) | null = null;
 
   constructor(
-    config: ConfigService,
-    electron: ElectronService,
     stateBus: StateBusService,
     log: LogService,
-    liveKit: LiveKitService,
+    llm: LlmService,
+    tts: TtsService,
+    asr: AsrService,
   ) {
-    this.config = config;
-    this.bridge = electron.bridge;
     this.stateBus = stateBus;
     this.log = log;
-    this.asrCapture = createAsrAudioCaptureController({ log });
-    const getConfigSnapshot = () => this.config.getSnapshot();
-    this.stage2 = createStage2Runtime({
-      dispatchAction: () => ({ ok: false, state: 'dropped', reason: 'no-capability' }),
-      getActionCapability: () => ({ canShakeHead: false, canBlink: false, canMouth: false }),
-      getConfigSnapshot,
-    });
-    this.tts = createFrontendTtsRuntime({ log, liveKit, getConfigSnapshot });
+    this.llm = llm;
+    this.tts = tts;
+    this.asr = asr;
 
     makeObservable(this, {
       processing: observable,
       activeRequestId: observable,
       lastError: observable,
-      asrRunning: observable,
-      ttsWarmed: observable,
+      asrRunning: computed,
+      ttsWarmed: computed,
     });
   }
+
+  get asrRunning(): boolean { return this.asr.running; }
+  get ttsWarmed(): boolean { return this.tts.warmed; }
 
   start(): void {
     this.reactions.push(
@@ -71,38 +58,7 @@ export class AiService {
           void this.processChatRequest(request);
         },
       ),
-      reaction(
-        () => this.stateBus.asr.enabled,
-        (enabled) => void this.syncAsrRuntime(enabled),
-        { fireImmediately: true },
-      ),
-      reaction(
-        () => createWarmupFingerprint(this.config),
-        () => this.scheduleWarmup(),
-        { fireImmediately: true },
-      ),
     );
-    this.unsubscribeAsr = this.bridge.asrApi?.onEvent?.((event) => {
-      if (event.type !== 'asr.final' || !event.text.trim()) return;
-      const request: ChatRequest = {
-        id: `asr_${event.utteranceId || Date.now().toString(36)}`,
-        text: event.text.trim(),
-        source: 'asr',
-        status: 'pending',
-        createdAt: Date.now(),
-      };
-      const asrContext = this.log.contextRegistry.register('AiService', {
-        relation: 'asr.final',
-        params: { requestId: request.id, textLength: request.text.length },
-        behavior: '接收 ASR 最终文本并提交聊天请求',
-      });
-      asrContext.beginTrace('asr.final.received').end({
-        requestId: request.id,
-        textLength: request.text.length,
-      });
-      asrContext.dispose();
-      this.stateBus.publishChatRequest(request);
-    }) ?? null;
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'lifecycle',
       params: {},
@@ -170,13 +126,13 @@ export class AiService {
       textLength: request.text.trim().length,
     });
 
-    const queue = new TtsSentenceQueue();
     let accumulatedDisplay = '';
-    const consumer = this.consumeTtsQueue(request.id, queue);
+    const consumer = this.tts.createDispatcher(request.id);
+    this.stopChatSpeech = consumer.stop;
 
     try {
       const aiConfig = this.stateBus.chatConfig;
-      const result = await this.stage2.ask(request.text.trim(), {
+      const result = await this.llm.ask(request.text.trim(), {
         trace,
         apiKey: aiConfig.apiKey,
         baseURL: aiConfig.baseURL,
@@ -192,7 +148,7 @@ export class AiService {
             updatedAt: Date.now(),
           });
           this.emitTextResponse({ requestId: request.id, text: accumulatedDisplay, status: 'streaming' });
-          queue.push(sentence.speakText, sentence.displayText);
+          consumer.submit(sentence.speakText, sentence.displayText);
           trace.record('sentence.received', {
             requestId: request.id,
             sentenceIndex: accumulatedDisplay.split('\n').length - 1,
@@ -200,7 +156,6 @@ export class AiService {
           });
         },
       });
-      queue.finish();
 
       if (!result.ok) {
         throw new Error(result.error ?? '对话请求失败');
@@ -216,14 +171,15 @@ export class AiService {
         updatedAt: Date.now(),
       });
       this.emitTextResponse({ requestId: request.id, text: finalDisplay, status: 'done' });
-      await consumer.done;
+      await consumer.wait();
       trace.end({
         requestId: request.id,
         responseLength: finalDisplay.length,
+        tts: consumer.summary(),
       });
     } catch (error) {
-      queue.finish();
       consumer.stop();
+      this.tts.cancelActive('chat-failed');
       const message = toErrorMessage(error);
       runInAction(() => {
         this.lastError = message;
@@ -240,6 +196,7 @@ export class AiService {
       trace.fail('AI 对话请求失败', { requestId: request.id, err: message }, error);
     } finally {
       consumer.stop();
+      this.stopChatSpeech = null;
       runInAction(() => {
         this.processing = false;
         this.activeRequestId = null;
@@ -249,6 +206,7 @@ export class AiService {
   }
 
   cancel(reason = 'user-cancelled'): void {
+    this.stopChatSpeech?.();
     this.tts.cancelActive(reason);
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'chat.request',
@@ -265,17 +223,8 @@ export class AiService {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.reactions.splice(0).forEach((dispose) => dispose());
-    this.unsubscribeAsr?.();
-    this.unsubscribeAsr = null;
-    if (this.warmupTimer !== null) window.clearTimeout(this.warmupTimer);
-    this.warmupTimer = null;
-    try {
-      await this.syncAsrRuntime(false);
-    } finally {
-      this.stage2.dispose();
-      this.tts.dispose();
-      await this.asrCapture.stop();
-    }
+    this.cancel('dispose');
+    this.responseListeners.clear();
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'lifecycle',
       params: {},
@@ -285,182 +234,7 @@ export class AiService {
     context.dispose();
   }
 
-  private consumeTtsQueue(requestId: string, queue: TtsSentenceQueue) {
-    let timer: number | null = null;
-    let stopped = false;
-    let resolveDone: () => void = () => undefined;
-    const done = new Promise<void>((resolve) => {
-      resolveDone = resolve;
-    });
-    const pump = async (): Promise<void> => {
-      if (stopped || this.disposed) {
-        resolveDone();
-        return;
-      }
-      const next = queue.next();
-      if (next) {
-        try {
-          const result = await this.tts.speakFromQwenReply({
-            requestId: `${requestId}_s${next.index}`,
-            speakText: next.speakText,
-            displayText: next.displayText,
-          });
-          const context = this.log.contextRegistry.register('AiService', {
-            relation: 'tts.sentence',
-            params: { requestId, sentenceIndex: next.index },
-            behavior: '播放聊天回复中的一个 TTS 句子',
-          });
-          context.beginTrace('tts.sentence.done').end({
-            requestId,
-            sentenceIndex: next.index,
-            ok: result.ok,
-            skipped: Boolean(result.skipped),
-            bytesReceived: result.bytesReceived,
-          });
-          context.dispose();
-        } catch (error) {
-          const context = this.log.contextRegistry.register('AiService', {
-            relation: 'tts.sentence',
-            params: { requestId, sentenceIndex: next.index },
-            behavior: '播放聊天回复中的一个 TTS 句子',
-          });
-          context.beginTrace('tts.sentence.failed').fail('TTS 句子播放失败', {
-            requestId,
-            sentenceIndex: next.index,
-            err: toErrorMessage(error),
-          }, error);
-          context.dispose();
-        } finally {
-          queue.advance();
-        }
-        void pump();
-        return;
-      }
-      if (!queue.isDrained) timer = window.setTimeout(() => void pump(), 50);
-      else resolveDone();
-    };
-    void pump();
-    return {
-      done,
-      stop: () => {
-        if (stopped) return;
-        stopped = true;
-        if (timer !== null) window.clearTimeout(timer);
-        resolveDone();
-      },
-    };
-  }
-
-  private async syncAsrRuntime(enabled: boolean): Promise<void> {
-    const api = this.bridge.asrApi;
-    if (!api) {
-      const context = this.log.contextRegistry.register('AiService', {
-        relation: 'asr.runtime',
-        params: { enabled },
-        behavior: '启动或停止 ASR 麦克风和后端音频链路',
-      });
-      context.beginTrace('asr.missingApi').fail('ASR API 不存在', { enabled });
-      context.dispose();
-      return;
-    }
-    if (!enabled) {
-      if (this.asrRunning) await api.stop?.();
-      await this.asrCapture.stop();
-      runInAction(() => {
-        this.asrRunning = false;
-      });
-      const context = this.log.contextRegistry.register('AiService', {
-        relation: 'asr.runtime',
-        params: { enabled: false },
-        behavior: '停止 ASR 麦克风和后端音频链路',
-      });
-      context.beginTrace('asr.stopped').end({ enabled: false });
-      context.dispose();
-      return;
-    }
-    if (this.asrRunning || this.disposed) return;
-    try {
-      await api.start?.();
-      await this.asrCapture.start({
-        targetSampleRate: 16000,
-        onFallbackChunk: async ({ samples }) => {
-          await api.pushAudioChunk?.({ samples });
-        },
-      });
-      runInAction(() => {
-        this.asrRunning = true;
-      });
-      const context = this.log.contextRegistry.register('AiService', {
-        relation: 'asr.runtime',
-        params: { enabled: true },
-        behavior: '启动 ASR 麦克风和后端音频链路',
-      });
-      context.beginTrace('asr.started').end({ enabled: true });
-      context.dispose();
-    } catch (error) {
-      runInAction(() => {
-        this.asrRunning = false;
-        this.lastError = toErrorMessage(error);
-      });
-      const context = this.log.contextRegistry.register('AiService', {
-        relation: 'asr.runtime',
-        params: { enabled: true },
-        behavior: '启动 ASR 麦克风和后端音频链路',
-      });
-      context.beginTrace('asr.start.failed').fail('ASR 启动失败', { err: toErrorMessage(error) }, error);
-      context.dispose();
-    }
-  }
-
   private emitTextResponse(response: TextAiResponse): void {
     this.responseListeners.forEach((listener) => listener(response));
   }
-
-  private scheduleWarmup(): void {
-    if (this.warmupTimer !== null) window.clearTimeout(this.warmupTimer);
-    const tts = this.config.modelConfig?.tts;
-    if (!tts?.enabled || !tts.baseUrl || !tts.gptWeightsPath || !tts.sovitsWeightsPath) return;
-    this.warmupTimer = window.setTimeout(() => {
-      this.warmupTimer = null;
-      void this.tts.warmupFromCurrentConfig('ai-service-config-change').then((result) => {
-        runInAction(() => {
-          this.ttsWarmed = result.ok;
-        });
-        if (!result.ok && !result.skipped) {
-          const context = this.log.contextRegistry.register('AiService', {
-            relation: 'tts.warmup',
-            params: { reason: result.reason },
-            behavior: '在配置变化后预热 TTS 模型',
-          });
-          context.beginTrace('tts.warmup.failed').fail('TTS 预热失败', { reason: result.reason });
-          context.dispose();
-        } else {
-          const context = this.log.contextRegistry.register('AiService', {
-            relation: 'tts.warmup',
-            params: { reason: result.reason },
-            behavior: '在配置变化后预热 TTS 模型',
-          });
-          context.beginTrace('tts.warmup.completed').end({
-            ok: result.ok,
-            skipped: Boolean(result.skipped),
-            reason: result.reason,
-          });
-          context.dispose();
-        }
-      });
-    }, 260);
-  }
 }
-
-const createWarmupFingerprint = (config: ConfigService): string => {
-  const tts = config.modelConfig?.tts;
-  return JSON.stringify([
-    config.activeModelPath,
-    tts?.enabled,
-    tts?.baseUrl,
-    tts?.gptWeightsPath,
-    tts?.sovitsWeightsPath,
-  ]);
-};
-
-const toErrorMessage = (error: unknown): string => String(error instanceof Error ? error.message : error);

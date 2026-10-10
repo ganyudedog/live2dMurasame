@@ -1,30 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useRef, useCallback, useState, useLayoutEffect, useMemo, useEffect } from 'react';
 import { observer } from 'mobx-react-lite';
-import { ChatBubble } from './components/ChatBubble';
-import DebugSymmetricMasks from './components/DebugSymmetricMasks';
-import DebugVisualMasks from './components/DebugVisualMasks';
-import OpenTheMenu from './components/OpenTheMenu';
+import { ChatBubble } from '../modules/bubble/ui/components/ChatBubble';
+import DebugSymmetricMasks from '../modules/layout/ui/components/DebugSymmetricMasks';
+import DebugVisualMasks from '../modules/layout/ui/components/DebugVisualMasks';
+import OpenTheMenu from '../modules/interaction/ui/components/OpenTheMenu';
 import { Application } from 'pixi.js';
-import type { Live2DModel as Live2DModelType } from '../runtime/live2d/runtime';
-import { usePetModel } from '../runtime/hooks/usePetModel';
-import { useEyeReset } from './hooks/useEyeReset';
-import { useMousePassthrough } from '../runtime/hooks/useMousePassthrough';
-import { useBubbleLifecycle } from './hooks/useBubbleLifecycle';
+import type { Live2DModel as Live2DModelType } from '../modules/model/runtime/live2d/runtime';
+import { usePetModel } from '../modules/model/runtime/hooks/usePetModel';
+import { useEyeReset } from '../modules/model/ui/hooks/useEyeReset';
+import { useMousePassthrough } from '../modules/interaction/runtime/hooks/useMousePassthrough';
+import { useBubbleLifecycle } from '../modules/bubble/ui/hooks/useBubbleLifecycle';
 import { usePetCanvasConfigRefs } from './hooks/usePetCanvasConfigRefs';
-import { bindPointerGestures } from './imperative/bindPointerGestures';
-import { usePetCanvasBootstrap } from '../runtime/hooks/usePetCanvasBootstrap';
-import { useWindowDragGesture } from './hooks/useWindowDragGesture';
-import { useLayoutCommitter } from '../runtime/geometry/commit/LayoutCommitter';
-import { solveContextZoneLayout } from '../runtime/geometry/solvers/ContextZoneLayoutSolver';
-import { solveInteractivity } from '../runtime/geometry/solvers/InteractivitySolver';
-import { solveContextZoneActivity } from '../runtime/geometry/solvers/ContextZoneActivitySolver';
+import { bindPointerGestures } from '../modules/interaction/ui/imperative/bindPointerGestures';
+import { usePetCanvasBootstrap } from './hooks/usePetCanvasBootstrap';
+import { useWindowDragGesture } from '../modules/interaction/ui/hooks/useWindowDragGesture';
+import { useLayoutCommitter } from '../modules/interaction/runtime/geometry/commit/LayoutCommitter';
+import { solveContextZoneLayout } from '../modules/interaction/runtime/geometry/solvers/ContextZoneLayoutSolver';
+import { solveInteractivity } from '../modules/interaction/runtime/geometry/solvers/InteractivitySolver';
+import { solveContextZoneActivity } from '../modules/interaction/runtime/geometry/solvers/ContextZoneActivitySolver';
 import { debug, info } from '@app/shared/logging/compat';
 import { useService } from '@app/core/useService';
 import { TOKENS } from '@app/core/serviceTokens';
 import {
   CONTEXT_ZONE_LATCH_MS,
-} from '../domain/constants';
+} from '../modules/interaction/domain/constants';
 
 import { clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '@app/shared/utils/math';
 

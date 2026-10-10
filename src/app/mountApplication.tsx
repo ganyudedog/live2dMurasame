@@ -85,7 +85,9 @@ export const mountApplication = async (): Promise<void> => {
     measurementHost = null;
   };
   const mountMeasurement = () => {
-    if (!live2d?.playingMotionText || measurementRoot) return;
+    // A newer text or scale must replace any in-flight measurement tree.
+    disposeMeasurement();
+    if (!live2d?.playingMotionText) return;
     measurementHost = document.createElement('div');
     measurementHost.dataset.role = 'bubble-measurement-root';
     document.body.appendChild(measurementHost);

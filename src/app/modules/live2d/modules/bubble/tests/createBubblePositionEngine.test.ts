@@ -12,7 +12,7 @@ function harness(scale: number, x: number, side: 'left' | 'right' | 'auto' = 'au
   const engine = createBubblePositionEngine({
     scaleRef: { current: scale }, motionTextRef: { current: 'hello' },
     layoutRef: { current: layout },
-    bubbleMeasurementRef: { current: { requestId: 1, text: 'hello', width: 40, height: 30, maxWidth: 68 } },
+    bubbleMeasurementRef: { current: { requestId: 1, text: 'hello', width: 40, height: 30, maxWidth: 68, scale } },
     bubbleSettingsRef: { current: { side } },
     windowGeometryRef: { current: {
       bounds: rect, contentBounds: rect,
@@ -45,5 +45,16 @@ describe('bubble consumes the shared rectangles', () => {
     expect(sink.commitBubblePlacement).toHaveBeenCalledWith(expect.objectContaining({
       position: { left: layout.model.x - 12 - 40, top: expect.any(Number) },
     }));
+  });
+
+  it('positions measured final dimensions without scaling them a second time', () => {
+    for (const scale of [0.3, 0.5, 1, 2]) {
+      const { layout, sink } = harness(scale, 0, 'left');
+      const placement = sink.commitBubblePlacement.mock.calls[0][0];
+      expect(placement.position.left).toBeCloseTo(layout.model.x - 12 * scale - 40);
+      const headY = layout.model.y + layout.model.height * 0.085;
+      expect(placement.position.top).toBeCloseTo(Math.max(0, headY - 30 / 2));
+      expect(placement.tailY).toBeGreaterThanOrEqual(9);
+    }
   });
 });

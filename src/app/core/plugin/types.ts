@@ -45,7 +45,7 @@ export interface TextAiResult {
 export interface TextAiResponse {
   readonly requestId: string;
   readonly text: string;
-  readonly status: 'streaming' | 'done' | 'error';
+  readonly status: 'streaming' | 'done' | 'error' | 'cancelled';
   readonly error?: string | null;
 }
 

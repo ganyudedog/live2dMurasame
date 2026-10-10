@@ -8,6 +8,7 @@ import type { ActionCapability, ActionDispatchResult, ActionIntentInput } from '
 import type { Stage2AskResult, Stage2LLMConfig } from '../domain/types';
 
 interface Stage2AskOptions {
+  signal?: AbortSignal;
   trace: TraceScope;
   model?: string;
   temperature?: number;
@@ -83,8 +84,11 @@ export class LlmService {
     }
 
     try {
+      options.signal?.throwIfAborted();
       const resolved = await this.resolveConfig(options);
+      options.signal?.throwIfAborted();
       const ragRuntime = await this.rag.resolve(cleanText, options.trace);
+      options.signal?.throwIfAborted();
       const languageProfile = this.resolveLanguageProfile();
       const start = performance.now();
       let firstDeltaLatencyMs = -1;
@@ -107,7 +111,9 @@ export class LlmService {
           displayLang: languageProfile.displayLang,
           speakLang: languageProfile.speakLang,
           stream: true,
+          signal: options.signal,
           onStreamDelta: ({ deltaText, aggregateText }) => {
+            if (options.signal?.aborted) return;
             if (firstDeltaLatencyMs < 0 && String(deltaText).trim()) {
               firstDeltaLatencyMs = Math.round(performance.now() - start);
               options.trace.record('ask.stream.firstDelta', {
@@ -133,6 +139,8 @@ export class LlmService {
           },
         },
       );
+
+      options.signal?.throwIfAborted();
 
       // 解析回复
       const reply = parseStage2Reply(llmResult.rawText);

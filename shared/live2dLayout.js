@@ -1,13 +1,17 @@
 export const PET_WINDOW_BASE_CONTENT_WIDTH = 500;
 export const PET_WINDOW_BASE_CONTENT_HEIGHT = 900;
+export const BUBBLE_SIDE_MIN_WIDTH = 220;
+export const BUBBLE_SIDE_MAX_WIDTH = 320;
+export const BUBBLE_SIDE_DEFAULT_WIDTH = 260;
 
 export function calculateSideWidth(configuredWidth, scale) {
-  const base = Math.min(320, Math.max(50, Number.isFinite(configuredWidth) ? configuredWidth : 100));
-  return Math.min(320, Math.max(50, base * scale));
+  const base = Math.min(BUBBLE_SIDE_MAX_WIDTH, Math.max(BUBBLE_SIDE_MIN_WIDTH,
+    Number.isFinite(configuredWidth) ? configuredWidth : BUBBLE_SIDE_DEFAULT_WIDTH));
+  return Math.min(BUBBLE_SIDE_MAX_WIDTH, Math.max(BUBBLE_SIDE_MIN_WIDTH, base * scale));
 }
 
 /** Pure DIP layout shared by Pixi and Electron. */
-export function calculateLive2dLayout({ baseWidth, baseHeight, scale, sideWidth = 100, visualCenterRatio = 0.5 }) {
+export function calculateLive2dLayout({ baseWidth, baseHeight, scale, sideWidth = BUBBLE_SIDE_DEFAULT_WIDTH, visualCenterRatio = 0.5 }) {
   if (![baseWidth, baseHeight, scale, sideWidth].every(Number.isFinite)
     || baseWidth <= 0 || baseHeight <= 0 || scale <= 0) throw new Error('Invalid Live2D layout input');
   const centerRatio = Number.isFinite(visualCenterRatio) ? Math.min(1, Math.max(0, visualCenterRatio)) : 0.5;

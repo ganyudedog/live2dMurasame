@@ -10,6 +10,11 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   baseURL: '',
   displayLang: 'zh',
   asr: {
+    endpointPresetVersion: 1,
+    profile: 'conversation',
+    vadModelPath: '',
+    vadThreshold: 0.5,
+    vadMinSpeechDuration: 0.2,
     mode: 'local',
     engine: 'sherpa-onnx',
     modelDir: '',
@@ -19,8 +24,8 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
     numThreads: 2,
     provider: 'cpu',
     debug: 0,
-    rule1MinTrailingSilence: 2.4,
-    rule2MinTrailingSilence: 1.2,
+    rule1MinTrailingSilence: 1.2,
+    rule2MinTrailingSilence: 0.7,
     rule3MinUtteranceLength: 20,
   },
 };
@@ -254,8 +259,15 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
     next.displayLang = settings.displayLang;
   }
   const asr = settings.asr && typeof settings.asr === 'object' ? settings.asr : {};
+  const legacyEndpoints = asr.endpointPresetVersion !== 1
+    && asr.rule1MinTrailingSilence === 2.4 && asr.rule2MinTrailingSilence === 1.2;
   next.asr = {
     ...DEFAULT_GLOBAL_MODEL_CONFIG.asr,
+    endpointPresetVersion: 1,
+    profile: asr.profile === 'agent' ? 'agent' : 'conversation',
+    vadModelPath: typeof asr.vadModelPath === 'string' ? asr.vadModelPath.trim() : '',
+    vadThreshold: Number.isFinite(asr.vadThreshold) ? Math.min(0.95, Math.max(0.05, asr.vadThreshold)) : 0.5,
+    vadMinSpeechDuration: Number.isFinite(asr.vadMinSpeechDuration) ? Math.min(0.3, Math.max(0.15, asr.vadMinSpeechDuration)) : 0.2,
     mode: asr.mode === 'remote' ? 'remote' : 'local',
     engine: typeof asr.engine === 'string' && asr.engine.trim() ? asr.engine.trim() : DEFAULT_GLOBAL_MODEL_CONFIG.asr.engine,
     modelDir: typeof asr.modelDir === 'string' ? asr.modelDir.trim() : '',
@@ -265,8 +277,8 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
     numThreads: Number.isFinite(asr.numThreads) && asr.numThreads > 0 ? Math.floor(asr.numThreads) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.numThreads,
     provider: typeof asr.provider === 'string' && asr.provider.trim() ? asr.provider.trim() : DEFAULT_GLOBAL_MODEL_CONFIG.asr.provider,
     debug: Number.isFinite(asr.debug) ? Math.max(0, Math.floor(asr.debug)) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.debug,
-    rule1MinTrailingSilence: Number.isFinite(asr.rule1MinTrailingSilence) ? Math.max(0, asr.rule1MinTrailingSilence) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.rule1MinTrailingSilence,
-    rule2MinTrailingSilence: Number.isFinite(asr.rule2MinTrailingSilence) ? Math.max(0, asr.rule2MinTrailingSilence) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.rule2MinTrailingSilence,
+    rule1MinTrailingSilence: legacyEndpoints ? 1.2 : Number.isFinite(asr.rule1MinTrailingSilence) ? Math.max(0.5, asr.rule1MinTrailingSilence) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.rule1MinTrailingSilence,
+    rule2MinTrailingSilence: legacyEndpoints ? 0.7 : Number.isFinite(asr.rule2MinTrailingSilence) ? Math.max(0.2, asr.rule2MinTrailingSilence) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.rule2MinTrailingSilence,
     rule3MinUtteranceLength: Number.isFinite(asr.rule3MinUtteranceLength) ? Math.max(0, Math.floor(asr.rule3MinUtteranceLength)) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.rule3MinUtteranceLength,
   };
   return next;

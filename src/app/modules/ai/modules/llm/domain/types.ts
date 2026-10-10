@@ -10,6 +10,7 @@ export interface Stage2LLMConfig {
 }
 
 export interface Stage2LLMRequest {
+  signal?: AbortSignal;
   userText: string;
   model?: string;
   temperature?: number;

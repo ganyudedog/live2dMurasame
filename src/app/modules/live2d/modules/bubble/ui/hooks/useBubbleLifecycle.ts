@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useLayoutEffect, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, type RefObject } from 'react';
 import type { Live2DModel as Live2DModelType } from '../../../model/runtime/live2d/runtime';
 
 export interface UseBubbleLifecycleParams {
   motionText: string | null;
   motionSound: string | null;
+  readingDurationMs?: number;
   motionTextRef: RefObject<string | null>;
   modelRef: RefObject<Live2DModelType | null>;
   surrogateAudioRef: RefObject<HTMLAudioElement | null>;
@@ -24,6 +25,7 @@ export interface UseBubbleLifecycleParams {
 export const useBubbleLifecycle = ({
   motionText,
   motionSound,
+  readingDurationMs,
   motionTextRef,
   modelRef,
   surrogateAudioRef,
@@ -35,6 +37,14 @@ export const useBubbleLifecycle = ({
   resolveSoundUrl,
   commitBubbleReady,
 }: UseBubbleLifecycleParams): void => {
+  useEffect(() => {
+    if (!motionText || motionSound || !readingDurationMs) return;
+    const internal = (modelRef.current as any)?.internalModel;
+    const motionManager = internal?.motionManager || internal?._motionManager || internal?.animator || internal?._animator;
+    if (motionManager?._currentAudio) return;
+    scheduleBubbleDismiss(null, Math.max(7000, readingDurationMs + 400));
+  }, [modelRef, motionSound, motionText, readingDurationMs, scheduleBubbleDismiss]);
+
   useLayoutEffect(() => {
     motionTextRef.current = motionText;
 

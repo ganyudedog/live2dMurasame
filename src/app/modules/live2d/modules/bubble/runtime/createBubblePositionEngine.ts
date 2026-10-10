@@ -6,6 +6,7 @@ import type { BubblePresentationSink } from '../domain/BubblePresentation';
 import {
   BUBBLE_GAP,
   BUBBLE_PADDING,
+  resolveBubbleTypography,
 } from '../domain/constants';
 
 type ValueRef<T> = { current: T };
@@ -98,16 +99,16 @@ export const createBubblePositionEngine = ({
 
     if (!text || !bubbleMeasurement
       || bubbleMeasurement.text !== text
+      || bubbleMeasurement.scale !== scale
       || bubbleMeasurement.width <= 0
       || bubbleMeasurement.height <= 0) {
       bubbleLayoutCommitter.clearBubblePresentation();
       return;
     }
 
-    // The measurement root reports the unscaled React box. Scale is applied exactly once
-    // here and once by CSS, so the positioning math and the rendered bubble stay aligned.
-    const bubbleWidth = bubbleMeasurement.width * visualScale;
-    const bubbleHeight = bubbleMeasurement.height * visualScale;
+    // The isolated root measures final DIP dimensions, with no subsequent CSS scale.
+    const bubbleWidth = bubbleMeasurement.width;
+    const bubbleHeight = bubbleMeasurement.height;
     const gap = BUBBLE_GAP * visualScale;
     const maxLeft = Math.max(BUBBLE_PADDING, screen.width - bubbleWidth - BUBBLE_PADDING);
     const targetX = side === 'left'
@@ -121,8 +122,8 @@ export const createBubblePositionEngine = ({
     const headY = bounds.y + bounds.height * headRatio;
     const maxTop = Math.max(BUBBLE_PADDING, screen.height - bubbleHeight - BUBBLE_PADDING);
     const targetY = clamp(headY - bubbleHeight / 2, BUBBLE_PADDING, maxTop);
-    const unscaledTailY = (headY - targetY) / visualScale;
-    const tailY = clamp(unscaledTailY, 10, Math.max(10, bubbleMeasurement.height - 10));
+    const tailHalfHeight = resolveBubbleTypography(scale).tailHalfHeight;
+    const tailY = clamp(headY - targetY, tailHalfHeight, Math.max(tailHalfHeight, bubbleHeight - tailHalfHeight));
 
     bubbleLayoutCommitter.commitBubblePlacement({
       side,

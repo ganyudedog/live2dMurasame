@@ -24,6 +24,7 @@ const setup = () => {
   const log = { debugModeEnabled: false, contextRegistry: { register: vi.fn(() => context) } } as unknown as LogService;
   const unsubscribe = vi.fn();
   const liveKit = {
+    setPlaybackMuted: vi.fn(),
     ensureSession: vi.fn().mockResolvedValue({ sessionId: 'session' }),
     subscribeEvents: vi.fn((_url: string, callback: LiveKitV3EventHandler) => { handler = callback; return unsubscribe; }),
     subscribeShadowPcm: vi.fn((_url: string, callback: (frame: LiveKitShadowPcmFrame) => void) => { shadowHandler = callback; return vi.fn(); }),
@@ -50,6 +51,23 @@ describe('TTS lifecycle and offline recording', () => {
       setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout });
   });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it('mutes playback on interruption and ignores a cancelled request starting late', async () => {
+    const { runtime, emit, liveKit } = setup();
+    let release;
+    vi.mocked(requestTtsSynthesis).mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    const speaking = runtime.speakFromQwenReply({ requestId: 'request', queueGroupId: 'turn', speakText: 'hello' });
+    await vi.waitFor(() => expect(requestTtsSynthesis).toHaveBeenCalledOnce());
+    emit('tts.started', {});
+    expect(liveKit.setPlaybackMuted).toHaveBeenLastCalledWith('http://127.0.0.1:9881', false);
+    runtime.cancelActive('barge-in');
+    expect(liveKit.setPlaybackMuted).toHaveBeenLastCalledWith('http://127.0.0.1:9881', true);
+    emit('tts.started', {});
+    expect(liveKit.setPlaybackMuted).toHaveBeenLastCalledWith('http://127.0.0.1:9881', true);
+    release!(realtimeResponse());
+    await speaking;
+    runtime.dispose();
+  });
 
   it('provides warmup and preheat through the TTS service boundary', async () => {
     const { runtime, log, liveKit } = setup();

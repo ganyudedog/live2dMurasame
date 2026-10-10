@@ -1,268 +1,122 @@
-# ASR 完整链路架构文档
+# 实时语音输入链路
 
-> 最后更新：2026-05-19
-> 目标架构：onnx-web 前端推理，无 SAB，无跨进程音频传输
+更新日期：2026-10-11。本文描述当前实现。
 
----
+## 执行链路
 
-## 一、架构总览
+```text
+Pet 窗口麦克风
+  -> AudioWorklet：单声道、连续重采样、16 kHz / 512 样本（32 ms）
+  -> Electron IPC
+  -> ASR Worker：Silero VAD + sherpa-onnx OnlineRecognizer
+       -> asr.speech-start：已确认人声，立即打断 LLM / TTS
+       -> asr.partial：展示识别中的文本
+       -> asr.speech-end：已确认语音结束，刷新识别器尾部
+       -> asr.final：提交该句最终文本
+  -> AsrService 本地通知 AiService
+  -> LLM 流式句子 -> TTS
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  PetCanvas（主窗口，始终在线）                                        │
-│                                                                      │
-│  ┌──────────────────────────┐    ┌──────────────────────────────┐   │
-│  │ onnx-web ASR 引擎        │    │ Chat 管道                    │   │
-│  │                          │    │                              │   │
-│  │ getUserMedia(mono)       │    │ Stage2Runtime.ask()          │   │
-│  │   → AudioContext         │    │   LLM 流式请求               │   │
-│  │   → AudioWorkletNode     │    │ TtsRuntime.speakFromQwenReply│   │
-│  │   → PCM 帧 → onnx-web    │    │   LiveKit 房间音频播放       │   │
-│  │   → 识别结果             │    │                              │   │
-│  └──────────┬───────────────┘    └──────────────┬───────────────┘   │
-│             │                                    │                   │
-│             │ dispatchPatch(chat.request)         │ dispatchPatch     │
-│             │ source='asr'                       │ (chat.response)   │
-│             └────────────┬───────────────────────┘                   │
-└──────────────────────────┼──────────────────────────────────────────┘
-                           │
-                  ┌────────┴────────┐
-                  │  SharedWorker   │
-                  │                 │
-                  │  SharedState    │
-                  │   asr.enabled   │
-                  │   chat.request  │
-                  │   chat.response │
-                  │   config.*      │
-                  └────────┬────────┘
-                           │
-┌──────────────────────────┼──────────────────────────────────────────┐
-│  ControlPanel（控制面板，可选开关）                                    │
-│                                                                      │
-│  文字输入 → dispatchPatch(chat.request)                               │
-│  subscribe chat.request (source='asr') → 创建用户消息 UI               │
-│  subscribe chat.response → 流式更新 assistant 消息 UI                  │
-│  配置修改 → dispatchPatch(config.*)                                    │
-│  ASR toggle → dispatchPatch(asr.enabled)                              │
-└─────────────────────────────────────────────────────────────────────┘
+SharedWorker：同步 ASR 状态、用户文本、助手文本到控制面板
 ```
 
-### 核心原则
+Silero 的 `minSpeechDuration` 默认 0.2 秒，限制在 0.15 到 0.3 秒之间。
+确认人声后先发出打断事件，再做 ASR 解码。实际打断还包含音频帧量化、
+推理、IPC 和系统调度时间，不能将配置的 200 ms 等同于实测延迟。
+VAD 默认在 0.7 秒静音后结束当前语音轮次。
+ASR 自身端点可以拆分较长的识别片段，但不会在用户仍讲话时提交对话。
+最终识别不需要在 VAD 结束后再等待另一轮 ASR 端点静音。
 
-| 职责 | 执行端 | 说明 |
-|------|--------|------|
-| ASR 识别 | **PetCanvas** | onnx-web 全在渲染进程内完成 |
-| LLM 请求 | **PetCanvas** | Stage2Runtime.ask() |
-| TTS 合成 | **PetCanvas** | TtsRuntime.speakFromQwenReply() |
-| 音频播放 | **PetCanvas** | LiveKit 房间下行 |
-| 聊天 UI | **ControlPanel** | 纯界面，不执行 LLM/TTS |
-| 配置管理 | **ControlPanel** | 通过 SharedWorker 同步到 PetCanvas |
+识别线程避免阻塞 Electron 主线程。音频待处理积压超过 1 秒时会停止识别并
+明确报错，避免丢掉中间语音后提交错误转写。需要降低模型负载后重新开启。
 
----
+## 打断与请求接替
 
-## 二、数据流
+`AsrService.onSpeechStart` 通知 `AiService.cancel('barge-in')`：
 
-### 2.1 音频采集 → ASR 识别（全在 PetCanvas 进程内）
+- 中止当前 LLM 请求，取消信号同时覆盖模型流式请求与超时。
+- 停止当前句子分发器，取消 TTS 请求，并立即静音本地 LiveKit 播放。
+- 下一次有效 TTS 开始时恢复播放；已取消请求的晚到事件不会恢复声音。
+- 当前对话标记为 `cancelled`，保留已经显示的文本。
+- 新语音最终结果可立即接替；旧请求的回调、失败和清理不会覆盖新请求。
 
-```
-麦克风 → getUserMedia({ channelCount: 1, echoCancellation: true, noiseSuppression: true })
-  → AudioContext({ latencyHint: 'interactive' })
-  → AudioWorkletNode (PCM 帧采集)
-  → onnx-web (前端 WASM 推理)
-  → 识别文本
-```
+`asr.final` 通过本地订阅送入 AI，SharedWorker 只承担跨窗口同步，避免合帧
+覆盖最终结果导致漏提交。重复或晚到的语音结果会被忽略。
+每次识别会话使用唯一 ID，重新开关麦克风不会复用历史请求 ID。
 
-**无需** SharedArrayBuffer、跨进程通信或主进程参与。onnx-web 的 WebAssembly 运行时直接消费 AudioWorklet 产出的 PCM 帧。
+## 两档语音输入
 
-### 2.2 ASR 文本 → LLM → TTS
+| 档次 | 处理方式 | 当前可用性 |
+| --- | --- | --- |
+| `conversation` | VAD 结束后提交流式 ASR 最终文本 | 已实现 |
+| `agent` | 保留整句音频，经过第二次高精度转写才允许提交 | 已预留接口，待接复核模型 |
 
-```
-PetCanvas onnx-web 识别完成
-  │ 创建 ChatRequest { id, text, source:'asr', status:'pending' }
-  │
-  ├── dispatchPatch({ path:'chat.request', value: request })
-  │     → SharedWorker 广播 → ControlPanel 创建用户消息 UI
-  │
-  └── 本地直调 processChatRequest(request, config)
-        └── Stage2Runtime.ask(text, { onDisplayTextStreaming })
-              │ 流式 → dispatchPatch({ path:'chat.response', value: { displayText, status:'streaming' } })
-              │ LLM 完成 → speakText
-              └── TtsRuntime.speakFromQwenReply({ requestId, speakText, displayText })
-                    └── LiveKit 房间 → 音频播放
-```
+高精度档复用同一套 VAD 打断逻辑，区别在最终文本的准入条件。
+未来 ASR 适配器提供以下接口：
 
-### 2.3 文字输入 → LLM → TTS
-
-```
-ControlPanel handleChatSubmit
-  → 本地创建 userMessage + pendingMessage
-  → dispatchPatch({ path:'chat.request', value: { id, text, source:'text', status:'pending' } })
-           ↓ SharedWorker 广播
-PetCanvas subscribe chat.request (source='text', pending)
-  → processChatRequest → Stage2Runtime.ask()
-  → 流式 dispatchPatch chat.response → TtsRuntime.speakFromQwenReply()
-           ↓ SharedWorker 广播
-ControlPanel subscribe chat.response → 流式更新 assistant 消息 UI
-```
-
----
-
-## 三、SharedWorker Chat 管道
-
-Chat 管道是 PetCanvas 和 ControlPanel 之间唯一的通信桥梁。`speakText` 不在 SharedWorker 中共享，仅在 PetCanvas 本地流转。
-
-### 3.1 SharedState 类型
-
-```ts
-interface ChatRequest {
-  id: string;
-  text: string;                                    // 用户输入文本
-  source: 'text' | 'asr';                          // 来源
-  status: 'pending' | 'processing' | 'done' | 'error';
-  createdAt: number;
+```js
+async refineFinal({ samples, sampleRate, draftText, utteranceId, signal }) {
+  // samples: 完整语句的 Float32 PCM，包含 VAD 保留的句首。
+  // sampleRate: 16000；draftText 仅是初稿，不能直接驱动 agent。
+  // 返回离线大模型或远程服务的复核结果。
+  return { text: verifiedText };
 }
-
-interface ChatResponse {
-  id: string;                                      // 对应 ChatRequest.id
-  displayText: string;                             // 展示文本（流式更新）
-  status: 'streaming' | 'done' | 'error';          // speakText 不跨窗口
-  error: string | null;
-  updatedAt: number;
-}
-
-interface ChatConfig {
-  apiKey: string;
-  baseURL: string;
-  displayLang: 'zh' | 'en' | 'ja' | 'ko';
-}
-
-type SharedState = {
-  rev: number;
-  global: { scale: number };
-  asr: {
-    enabled: boolean;
-    state: 'off' | 'active' | 'error';
-    lastUpdatedAt: number;
-  };
-  config: ChatConfig;
-  chat: {
-    request: ChatRequest | null;
-    response: ChatResponse | null;
-  };
-};
 ```
 
-### 3.2 PatchOp 路径
+入口在 `AsrSession.js`，由 `asrWorker.js` 从适配器注入 `refineFinal`。
+新的语音开始会取消前一轮复核；即使复核服务忽略取消信号，晚到结果也不会提交。
+复核失败、结果为空或未配置复核适配器时，不会降级使用初稿驱动 agent。
+最终事件与 `ChatRequest.voice` 包含 `profile`、`refined`，供后续 agent 路由使用。
+当前设置界面禁用高精度档选项，接入具体模型后再开放。
+高精度档目前仅预留转写接口，不包含 agent 执行逻辑或说话人识别。
 
+## 配置模型
+
+复用项目已有的 `sherpa-onnx-node`，无需新增 npm 依赖。
+除了原有 `encoder.onnx`、`decoder.onnx`、`joiner.onnx`、`tokens.txt`，还需要：
+
+- sherpa-onnx 兼容的 `silero_vad.onnx`。
+- [官方模型下载](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx)。
+- [官方 Silero VAD 说明](https://k2-fsa.github.io/sherpa/onnx/vad/silero-vad.html)。
+
+将其放入 ASR 模型目录，或在控制面板 ASR 设置的“Silero VAD 模型路径”中填写完整路径。
+此链路要求 16 kHz；已有其他采样率配置需改为 16000。
+设置在下次开启麦克风时生效，修改参数后关闭再开启 ASR。
+
+| 配置字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `profile` | `conversation` | 语音输入档次 |
+| `vadModelPath` | 空 | 空时查找 ASR 目录中的 `silero_vad.onnx` |
+| `vadThreshold` | 0.5 | 人声概率阈值 |
+| `vadMinSpeechDuration` | 0.2 | 连续人声确认时长，秒 |
+| `rule1MinTrailingSilence` | 1.2 | ASR 无文本端点静音，秒 |
+| `rule2MinTrailingSilence` | 0.7 | ASR 有文本端点 / VAD 句尾静音，秒 |
+| `rule3MinUtteranceLength` | 20 | ASR 长片段端点，秒 |
+
+旧配置中未标记版本的默认组合 `2.4 / 1.2` 会迁移成 `1.2 / 0.7`，
+自定义组合会保留。迁移结果标记 `endpointPresetVersion: 1`，避免反复修改。
+VAD 的长语音保护为 60 秒；长于此值的连续讲话可能按 VAD 的保护策略分句。
+
+## 验证与调参
+
+自动测试覆盖状态机、端点迁移、旧结果修订、请求取消、重复事件、加载失败、
+音频积压和高精度复核失败。它们不能替代真实语音和扬声器环境测试。
+
+可使用录音回放脚本比较 `0.6 / 0.7 / 0.8 / 1.2` 秒的句尾设置，脚本直接调用
+生产识别 Worker，输出音频时间轴上的开始、结束、最终文本及离线处理实时率：
+
+```powershell
+pnpm exec node scripts/checkAsrRecording.mjs "D:/models/asr" "D:/recordings/test.wav"
 ```
-global.scale                          // 标量，滑块实时同步
-asr.enabled / asr.state              // 标量，开关与状态
-config.apiKey / config.baseURL / ... // 标量，配置字段
-chat.request                         // 完整 ChatRequest 对象
-chat.response                        // 完整 ChatResponse 对象
-```
 
-### 3.3 粒度策略
+已回放本地 Zipformer 模型附带的 `0.wav`、`1.wav`、`8k.wav`（8 kHz 样本先重采样）。
+这三个样本在四组参数下均输出一条最终结果，文本一致。
+`0.7` 秒相对 `1.2` 秒均提前约 512 ms 提交，未出现额外分句。
+这只验证所测样本的相对变化，不能据此推断真实插话和扬声器环境的总体误切率。
 
-- 标量 / 独立字段（`config.*`、`asr.*`）→ 细粒度路径，避免全量覆盖
-- 复合对象（`chat.request`、`chat.response`）→ 粗粒度路径，一次传完整对象，减少 op 数量
+建议录音覆盖：短句、句中 300/500/800 ms 停顿、连续插话、轻声、背景噪声、
+TTS 扬声器回声以及长指令。分别记录句中误切、漏打断、错误打断、句首漏字
+和语音结束到请求提交的时间。
 
-### 3.4 调用示例
-
-```ts
-// ControlPanel 文字输入 → 委托给 PetCanvas
-sharedStoreClient.dispatchPatch([{
-  path: 'chat.request',
-  value: { id: 'req_1', text: 'こんにちは', source: 'text', status: 'pending', createdAt: Date.now() }
-}]);
-
-// PetCanvas LLM 流式响应 → 回写 displayText
-sharedStoreClient.dispatchPatch([{
-  path: 'chat.response',
-  value: { id: 'req_1', displayText: '你好，今天过得如', status: 'streaming', error: null, updatedAt: Date.now() }
-}]);
-
-// ControlPanel 配置修改 → 同步到 PetCanvas
-sharedStoreClient.dispatchPatch([
-  { path: 'config.apiKey', value: 'sk-xxx' },
-  { path: 'config.baseURL', value: 'https://api.example.com' },
-  { path: 'config.displayLang', value: 'ja' },
-]);
-```
-
----
-
-## 四、文件清单
-
-| 文件 | 职责 |
-|------|------|
-| `src/renderer/components/pet/audio/asrCapture.worklet.ts` | AudioWorklet 处理器（PCM 采集 → onnx-web 输入） |
-| `src/renderer/components/pet/audio/asrAudioCapture.ts` | 音频采集控制器（getUserMedia + AudioContext + AudioWorkletNode） |
-| `src/renderer/components/pet/PetCanvas.tsx` | ASR 运行时 + Chat 管道 + LLM + TTS |
-| `src/renderer/components/pet/hooks/useChatBridge.ts` | Chat 管道封装（配置同步 + chat.request 订阅 + ASR → chat.request） |
-| `src/renderer/components/pet/hooks/useChatRuntime.ts` | LLM + TTS 运行时（Stage2Runtime + TtsRuntime） |
-| `src/renderer/shared/sharedStateTypes.ts` | SharedState 类型定义 + PatchOp 路径 |
-| `src/renderer/shared/sharedStore.worker.ts` | SharedWorker 状态管理（applyOp + 合帧广播） |
-| `src/renderer/shared/sharedStoreClient.ts` | SharedWorker 客户端（dispatchPatch + subscribe） |
-| `src/renderer/shared/sharedWorkerAsrStore.ts` | ASR 状态订阅（useSyncExternalStore） |
-| `src/renderer/components/controlPanel/ControlPanel.tsx` | 控制面板（chat 委托 SharedWorker，无 LLM/TTS 运行时） |
-| `src/renderer/components/controlPanel/pages/HomePage.tsx` | 首页 UI（对话区 + 麦克风开关） |
-| `src/AI/core/stage2Runtime.ts` | LLM 运行时（流式请求 + 双文本输出） |
-| `src/AI/tts/runtime.ts` | TTS 运行时（LiveKit 房间合成 + 播放） |
-
-### 删除/不再需要的文件
-
-| 文件 | 原因 |
-|------|------|
-| `electron/main/asrIpc.js` | ASR 引擎移至前端 onnx-web，主进程不再运行 sherpa-onnx |
-| `electron/preload.js` (AsrAPI 部分) | ASR 不再需要 preload IPC 桥接 |
-| `electron/main.js` (SAB 相关) | 不再需要 SAB 及对应的 COOP/COEP header 注入 |
-| `vite.config.ts` (COOP/COEP) | onnx-web WASM 不需要 crossOriginIsolated |
-
----
-
-## 五、关键设计决策
-
-### 5.1 onnx-web 前端推理
-
-ASR 识别从主进程 sherpa-onnx 迁移到前端 onnx-web WebAssembly 运行时：
-
-- **优势**：消除跨进程 SAB 传输问题，降低架构复杂度
-- **性能**：WASM 推理在渲染进程的 AudioWorklet 线程中执行，不阻塞 UI
-- **模型加载**：首次启用 ASR 时异步加载 onnx 模型文件到 WASM 运行时
-
-### 5.2 Chat 管道通过 SharedWorker
-
-- `speakText` 不跨窗口同步（仅在 PetCanvas 本地流转 LLM → TTS）
-- `displayText` 通过 SharedWorker 广播到 ControlPanel 展示
-- PetCanvas 是唯一 LLM/TTS 执行端，ControlPanel 纯 UI
-
-### 5.3 ASR final 本地直调
-
-PetCanvas 收到 onnx-web 识别结果后：
-- `dispatchPatch({ path:'chat.request', ... })` → SharedWorker → ControlPanel 展示用户消息
-- 本地直调 `processChatRequest()` → 不经 Worker 绕路，避免自循环
-
-### 5.4 ASR 状态管理
-
-- `asr.enabled` 通过 SharedWorker 跨窗口同步
-- PetCanvas 监听 `asr.enabled` 变化 → 启动/停止 onnx-web 引擎 + 音频采集
-- ControlPanel toggle 仅 dispatch `asr.enabled` patch
-
-### 5.5 配置同步
-
-- ControlPanel 修改 AI 配置 → 同步 dispatch `config.*` patches 到 SharedWorker
-- PetCanvas 首次挂载从 `ConfigAPI` 拉取，后续通过 SharedWorker patched 事件增量更新
-- `globalAiDraft.onCommit` 中同时调用 `updateGlobalModelConfig`（持久化）+ `sharedStoreClient.dispatchPatch`（实时同步）
-
----
-
-## 六、后续待实施
-
-| 任务 | 说明 |
-|------|------|
-| onnx-web 模型加载 | 集成 sherpa-onnx WASM 到渲染进程 |
-| AudioWorklet → onnx-web 数据管道 | PCM 帧直接送入 WASM 推理引擎 |
-| 移除 AsrAPI | 清理 preload.js 中 ASR 相关 IPC handler |
-| 移除 asrIpc.js | 主进程不再运行 sherpa-onnx |
-| ControlPanel LiveKit 房间 | 加入 LiveKit 但不播放音频（订阅丢弃） |
+先对比句尾静音 `0.6 / 0.7 / 0.8` 秒；误切较多时增加句尾静音，
+错误打断较多时提高人声阈值或确认时长。浏览器回声消除已开启，但 Silero
+只区分语音与非语音，不能保证过滤扬声器回声或只识别指定用户。

@@ -23,6 +23,11 @@ declare global {
   }
 
   interface PetAsrConfig {
+    endpointPresetVersion?: 1;
+    profile?: 'conversation' | 'agent';
+    vadModelPath?: string;
+    vadThreshold?: number;
+    vadMinSpeechDuration?: number;
     mode?: 'local' | 'remote';
     engine?: string;
     modelDir?: string;
@@ -463,6 +468,14 @@ declare global {
     utteranceId: string;
     text: string;
     ts: number;
+    profile?: 'conversation' | 'agent';
+    refined?: boolean;
+  }
+
+  interface PetAsrSpeechEvent {
+    type: 'asr.speech-start' | 'asr.speech-end';
+    utteranceId: string;
+    ts: number;
   }
 
   interface PetAsrErrorEvent {
@@ -488,7 +501,7 @@ declare global {
     ts: number;
   }
 
-  type PetAsrEvent = PetAsrPartialEvent | PetAsrFinalEvent | PetAsrErrorEvent | PetAsrThrottleEvent | PetMicStateEvent;
+  type PetAsrEvent = PetAsrPartialEvent | PetAsrFinalEvent | PetAsrSpeechEvent | PetAsrErrorEvent | PetAsrThrottleEvent | PetMicStateEvent;
 
   interface PetAsrAPI {
     pushAudioChunk?: (payload: { samples: Float32Array | number[] }) => Promise<boolean | undefined>;

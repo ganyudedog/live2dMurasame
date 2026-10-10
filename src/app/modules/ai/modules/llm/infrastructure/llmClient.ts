@@ -59,6 +59,12 @@ export const requestStage2LLM = async (
     }
   };
 
+  const timeoutSignal = withTimeoutSignal(timeoutMs);
+  const signal = req.signal && timeoutSignal
+    ? AbortSignal.any([req.signal, timeoutSignal])
+    : req.signal ?? timeoutSignal;
+  signal?.throwIfAborted();
+
   if (req.stream) {
     // 流式模式：增量拼接 JSON 文本，尽早把可见文本回推给 UI。
     const stream = await client.chat.completions.create(
@@ -67,12 +73,13 @@ export const requestStage2LLM = async (
         stream: true,
       },
       {
-        signal: withTimeoutSignal(timeoutMs),
+        signal,
       },
     );
 
     let rawText = '';
     for await (const chunk of stream) {
+      signal?.throwIfAborted();
       const delta = chunk.choices?.[0]?.delta?.content ?? '';
       if (!delta) continue;
       rawText += delta;
@@ -96,7 +103,7 @@ export const requestStage2LLM = async (
   const response = await client.chat.completions.create(
     requestBody,
     {
-      signal: withTimeoutSignal(timeoutMs),
+      signal,
     },
   );
 

@@ -392,7 +392,7 @@ export class ControlPanelService {
             : message
         ));
       }
-      if (response.status === 'done' || response.status === 'error') this.chatSending = false;
+      if (response.status === 'done' || response.status === 'error' || response.status === 'cancelled') this.chatSending = false;
       if (response.status === 'error') this.chatError = response.error;
     });
   }

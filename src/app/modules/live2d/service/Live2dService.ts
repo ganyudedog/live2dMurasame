@@ -11,6 +11,7 @@ import {
   BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH,
   BUBBLE_LAYOUT_SIDE_MIN_WIDTH,
   BUBBLE_SIDE_MAX_WIDTH,
+  resolveBubbleContentMaxWidth,
 } from '../modules/bubble/domain/constants';
 import type { Live2dRegister } from '@app/core/plugin/registers';
 
@@ -21,6 +22,8 @@ export type BubbleMeasurement = {
   width: number;
   height: number;
   maxWidth: number;
+  scale: number;
+  readingDurationMs?: number;
 };
 
 export class Live2dService {
@@ -157,11 +160,22 @@ export class Live2dService {
   configureBubble(settings: typeof this.bubbleSettings): void {
     this.bubbleSettings = settings;
     const requestedWidth = Number(settings.sideWidth);
-    this.configuredBubbleSideWidth = Number.isFinite(requestedWidth)
+    const sideWidth = Number.isFinite(requestedWidth)
       ? Math.min(BUBBLE_SIDE_MAX_WIDTH, Math.max(BUBBLE_LAYOUT_SIDE_MIN_WIDTH, requestedWidth))
       : BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH;
+    if (sideWidth !== this.configuredBubbleSideWidth) {
+      runInAction(() => {
+        this.configuredBubbleSideWidth = sideWidth;
+        this.bubbleMeasurementRequestId += 1;
+        this.bubbleMeasurement = null;
+      });
+    }
     this.layoutService.setSideWidth(this.configuredBubbleSideWidth);
     this.updateBubblePosition(true);
+  }
+
+  get bubbleContentMaxWidth(): number {
+    return resolveBubbleContentMaxWidth(this.configuredBubbleSideWidth, this.renderScale);
   }
 
   registerExtensions(register: Live2dRegister): void {
@@ -225,7 +239,6 @@ export class Live2dService {
       this.bubbleMeasurement = null;
       if (text === null) this.playingMotionSound = null;
     });
-    if (text === null) this.layoutService.setSideWidth(this.configuredBubbleSideWidth);
   }
 
   setWindowGeometry(geometry: PetWindowGeometry): void {
@@ -235,6 +248,11 @@ export class Live2dService {
   /** Called by the layout transaction during the Pixi layout commit. */
   setRenderSnapshot(snapshot: LayoutSnapshot): void {
     runInAction(() => {
+      if (this.renderScale !== snapshot.scale) {
+        this.bubbleMeasurementRequestId += 1;
+        this.bubbleMeasurement = null;
+        this.bubble.clearBubblePresentation();
+      }
       this.renderGeometry = snapshot.geometry;
       this.renderScale = snapshot.scale;
     });
@@ -249,7 +267,8 @@ export class Live2dService {
   submitBubbleMeasurement(measurement: BubbleMeasurement): void {
     if (measurement.requestId !== this.bubbleMeasurementRequestId) return;
     if (measurement.text !== this.playingMotionText) return;
-    if (measurement.width <= 0 || measurement.height <= 0) return;
+    if (measurement.scale !== this.renderScale || measurement.maxWidth !== this.bubbleContentMaxWidth) return;
+    if (![measurement.width, measurement.height].every((value) => Number.isFinite(value) && value > 0)) return;
     runInAction(() => {
       this.bubbleMeasurement = measurement;
     });

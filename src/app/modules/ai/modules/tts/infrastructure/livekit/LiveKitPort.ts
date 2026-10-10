@@ -3,6 +3,7 @@ import type {
   disconnectLiveKitRoom, getLiveKitPlaybackSnapshot, publishLiveKitPlaybackFeedback,
   subscribeLiveKitV3Events, subscribeLiveKitShadowPcm, subscribeLiveKitDecodedAudio,
   publishLiveKitV3Event,
+  setLiveKitPlaybackMuted,
 } from './LiveKitGateway';
 
 export interface LiveKitPort {
@@ -16,4 +17,5 @@ export interface LiveKitPort {
   subscribeShadowPcm: typeof subscribeLiveKitShadowPcm;
   subscribeDecodedAudio: typeof subscribeLiveKitDecodedAudio;
   publishEvent: typeof publishLiveKitV3Event;
+  setPlaybackMuted?: typeof setLiveKitPlaybackMuted;
 }

@@ -52,4 +52,22 @@ describe('LLM and RAG orchestration', () => {
     expect(trace.record).toHaveBeenCalledWith('memory.persist.failed', expect.objectContaining({ modelPath: 'pet' }));
     service.dispose();
   });
+
+  it('passes cancellation to the network and prevents cancelled output from dispatching actions or memory', async () => {
+    const { service, trace, memory, dispatchAction } = setup();
+    const controller = new AbortController();
+    const onSentenceStreaming = vi.fn();
+    const rawText = '{"display_text":"late","speak_text":"late","action_intent":{"kind":"blink"}}\n';
+    vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
+      expect(request.signal).toBe(controller.signal);
+      controller.abort();
+      request.onStreamDelta?.({ deltaText: rawText, aggregateText: rawText });
+      return { rawText, usedModel: 'model' };
+    });
+    expect(await service.ask('question', { trace: trace as unknown as TraceScope, signal: controller.signal, onSentenceStreaming })).toMatchObject({ ok: false });
+    expect(onSentenceStreaming).not.toHaveBeenCalled();
+    expect(dispatchAction).not.toHaveBeenCalled();
+    expect(memory.update).not.toHaveBeenCalled();
+    service.dispose();
+  });
 });

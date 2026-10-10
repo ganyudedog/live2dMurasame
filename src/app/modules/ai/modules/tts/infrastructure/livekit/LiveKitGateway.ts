@@ -111,6 +111,11 @@ const isAudioControlEvent = (type: unknown): boolean => typeof type === 'string'
 const SHADOW_PCM_MAGIC = new TextEncoder().encode('TTSSHADOW1\0');
 const sessionByBaseUrl = new Map<string, SessionCache>();
 const roomByBaseUrl = new Map<string, RoomCache>();
+
+export const setLiveKitPlaybackMuted = (baseUrl: string, muted: boolean): void => {
+  const cache = roomByBaseUrl.get(normalizeBaseUrl(baseUrl));
+  if (cache) cache.audioEl.muted = muted;
+};
 const connectPromiseByBaseUrl = new Map<string, Promise<RoomCache>>();
 
 const now = () => Date.now();

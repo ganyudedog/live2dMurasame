@@ -13,8 +13,9 @@ export interface ChatRequest {
   /** 来源：'text' = 手动输入, 'asr' = 语音识别 */
   source: 'text' | 'asr';
   /** 处理状态 */
-  status: 'pending' | 'processing' | 'done' | 'error';
+  status: 'pending' | 'processing' | 'done' | 'error' | 'cancelled';
   createdAt: number;
+  voice?: { profile: 'conversation' | 'agent'; refined: boolean };
 }
 
 /**
@@ -26,7 +27,7 @@ export interface ChatResponse {
   /** 展示文本（流式更新） */
   displayText: string;
   /** 响应状态：streaming = 流式中, done = 完成, error = 出错 */
-  status: 'streaming' | 'done' | 'error';
+  status: 'streaming' | 'done' | 'error' | 'cancelled';
   error: string | null;
   updatedAt: number;
 }

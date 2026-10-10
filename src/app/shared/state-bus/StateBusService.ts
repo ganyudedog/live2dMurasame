@@ -189,6 +189,13 @@ export class StateBusService {
         { path: 'asr.state', value: event.state },
         { path: 'asr.lastUpdatedAt', value: event.ts },
       );
+      if (event.state === 'active') ops.push(
+        { path: 'asr.error', value: null },
+        { path: 'asr.throttled', value: false },
+      );
+      if (event.state === 'off' || event.state === 'error') ops.push({ path: 'asr.partialText', value: '' });
+    } else if (event.type === 'asr.speech-start') {
+      ops.push({ path: 'asr.partialText', value: '' }, { path: 'asr.lastUpdatedAt', value: event.ts });
     } else if (event.type === 'asr.partial') {
       ops.push(
         { path: 'asr.state', value: 'active' },

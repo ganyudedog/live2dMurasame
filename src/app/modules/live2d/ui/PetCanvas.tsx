@@ -183,6 +183,8 @@ const PetCanvas: React.FC = observer(() => {
   const baseFrameMetrics = live2dService.bubble.baseFrame;
   const bubbleZoneMetrics = live2dService.bubble.zones;
   const [bubbleReady, setBubbleReady] = useState(false);
+  const bubbleVisible = bubbleReady && bubblePosition !== null
+    && live2dService.bubbleMeasurement?.requestId === live2dService.bubbleMeasurementRequestId;
   const bubbleReadyRef = useRef(false);
 
   // pixi相关
@@ -402,14 +404,13 @@ const PetCanvas: React.FC = observer(() => {
 
     const measurement = live2dService.bubbleMeasurement;
     const measuredPosition = bubblePosition;
-    const visualScale = Math.max(0.3, Math.min(2, scale || 1));
     // Bubble hit testing reuses the numeric measurement sent by the isolated UI root.
     const bubbleRect = motionText && measurement?.text === motionText && measuredPosition
       ? {
         left: measuredPosition.left,
         top: measuredPosition.top,
-        right: measuredPosition.left + measurement.width * visualScale,
-        bottom: measuredPosition.top + measurement.height * visualScale,
+        right: measuredPosition.left + measurement.width,
+        bottom: measuredPosition.top + measurement.height,
       }
       : null;
     const interactivity = solveInteractivity({
@@ -452,7 +453,6 @@ const PetCanvas: React.FC = observer(() => {
     getModelMiddleRect,
     live2dService.bubbleMeasurement,
     motionText,
-    scale,
     updateInteractiveZones,
     windowGeometry?.workArea,
   ]);
@@ -588,6 +588,7 @@ const PetCanvas: React.FC = observer(() => {
   useBubbleLifecycle({
     motionText,
     motionSound,
+    readingDurationMs: live2dService.bubbleMeasurement?.readingDurationMs,
     motionTextRef,
     modelRef,
     surrogateAudioRef,
@@ -647,19 +648,18 @@ const PetCanvas: React.FC = observer(() => {
               left: bubblePosition ? bubblePosition.left : 24,
               top: bubblePosition ? bubblePosition.top : 24,
               position: 'absolute',
-              visibility: bubbleReady ? 'visible' : 'hidden',
-              opacity: bubbleReady ? 1 : 0,
+              visibility: bubbleVisible ? 'visible' : 'hidden',
+              opacity: bubbleVisible ? 1 : 0,
               transition: 'opacity 120ms ease',
-              // Measurement stays unscaled in the other UI root; visual scale is applied here once.
-              transformOrigin: 'left top',
-              transform: `scale(${Math.max(0.3, Math.min(2, (scale || 1)))})`
             }}
           >
             <ChatBubble
+              key={live2dService.bubbleMeasurementRequestId}
               text={motionText}
               side={bubbleAlignment === 'left' ? 'start' : 'end'}
               tail={{ y: bubbleTailY ?? 14 }}
               maxWidth={live2dService.bubbleMeasurement?.maxWidth}
+              scale={scale}
             />
           </div>
         )}

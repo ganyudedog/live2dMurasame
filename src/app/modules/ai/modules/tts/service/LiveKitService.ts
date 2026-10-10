@@ -5,6 +5,7 @@ import {
   ensureLiveKitSession, ensureLiveKitRoomConnected, disconnectLiveKitRoom,
   getLiveKitPlaybackSnapshot, publishLiveKitPlaybackFeedback, subscribeLiveKitV3Events,
   subscribeLiveKitShadowPcm, subscribeLiveKitDecodedAudio, publishLiveKitV3Event,
+  setLiveKitPlaybackMuted,
 } from '../infrastructure/livekit/LiveKitGateway';
 import type {
   LiveKitPlaybackFeedbackSnapshot, LiveKitV3EventHandler, LiveKitShadowPcmHandler,
@@ -36,6 +37,10 @@ export class LiveKitService implements LiveKitPort {
 
   disconnectRoom(baseUrl: string): void {
     disconnectLiveKitRoom(baseUrl);
+  }
+
+  setPlaybackMuted(baseUrl: string, muted: boolean): void {
+    setLiveKitPlaybackMuted(baseUrl, muted);
   }
 
   getPlaybackSnapshot(baseUrl: string): Promise<LiveKitPlaybackFeedbackSnapshot | null> {

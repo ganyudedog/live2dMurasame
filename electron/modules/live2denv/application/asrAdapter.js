@@ -49,10 +49,29 @@ export const createAsrAdapter = (options = {}) => {
         decodingMethod: 'greedy_search',
         maxActivePaths: 4,
         enableEndpoint: true,
-        rule1MinTrailingSilence: Number.isFinite(options.rule1MinTrailingSilence) ? options.rule1MinTrailingSilence : 2.4,
-        rule2MinTrailingSilence: Number.isFinite(options.rule2MinTrailingSilence) ? options.rule2MinTrailingSilence : 1.2,
+        rule1MinTrailingSilence: Number.isFinite(options.rule1MinTrailingSilence) ? options.rule1MinTrailingSilence : 1.2,
+        rule2MinTrailingSilence: Number.isFinite(options.rule2MinTrailingSilence) ? options.rule2MinTrailingSilence : 0.7,
         rule3MinUtteranceLength: Number.isFinite(options.rule3MinUtteranceLength) ? options.rule3MinUtteranceLength : 20,
       });
+    },
+    createVad() {
+      const model = options.vadModelPath?.trim() || path.join(modelDir, 'silero_vad.onnx');
+      if (!fs.existsSync(model)) throw new Error(`Silero VAD 模型文件缺失，请配置 vadModelPath: ${model}`);
+      if ((options.sampleRate ?? 16000) !== 16000) throw new Error('Silero VAD 音频采样率必须为 16000 Hz');
+      return new sherpa.Vad({
+        sileroVad: {
+          model,
+          threshold: options.vadThreshold ?? 0.5,
+          minSpeechDuration: Math.min(0.3, Math.max(0.15, options.vadMinSpeechDuration ?? 0.2)),
+          minSilenceDuration: options.rule2MinTrailingSilence ?? 0.7,
+          windowSize: 512,
+          maxSpeechDuration: 60,
+        },
+        sampleRate: 16000,
+        numThreads: 1,
+        provider: 'cpu',
+        debug: 0,
+      }, 90);
     },
   };
 };

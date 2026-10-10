@@ -57,8 +57,9 @@ describe('ASR service lifecycle', () => {
   });
 
   it('publishes only final text and releases the configuration reaction', async () => {
-    const { service, api, stateBus, emit } = setup();
+    const { service, api, stateBus, emit } = setup(true);
     service.start();
+    await vi.waitFor(() => expect(service.running).toBe(true));
     emit({ type: 'asr.final', text: ' hello ', utteranceId: 'utterance', ts: Date.now() } as PetAsrFinalEvent);
     expect(stateBus.publishChatRequest).toHaveBeenCalledWith(expect.objectContaining({
       id: 'asr_utterance', text: 'hello', source: 'asr', status: 'pending',
@@ -66,7 +67,43 @@ describe('ASR service lifecycle', () => {
     await service.dispose();
     runInAction(() => { stateBus.asr.enabled = true; });
     emit({ type: 'asr.final', text: 'late', ts: Date.now() } as PetAsrFinalEvent);
-    expect(api.start).not.toHaveBeenCalled();
+    expect(api.start).toHaveBeenCalledOnce();
     expect(stateBus.publishChatRequest).toHaveBeenCalledOnce();
+  });
+
+  it('interrupts on speech start, submits finals once and rejects stale or unrefined input', async () => {
+    const { service, stateBus, emit } = setup(true);
+    const interrupt = vi.fn();
+    const final = vi.fn();
+    service.onSpeechStart(interrupt);
+    service.onFinal(final);
+    service.start();
+    await vi.waitFor(() => expect(service.running).toBe(true));
+    emit({ type: 'asr.speech-start', utteranceId: 'new', ts: 1 });
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(stateBus.publishChatRequest).not.toHaveBeenCalled();
+    emit({ type: 'asr.final', utteranceId: 'old', text: 'late', ts: 2 });
+    emit({ type: 'asr.final', utteranceId: 'new', text: 'draft', profile: 'agent', refined: false, ts: 3 });
+    expect(final).not.toHaveBeenCalled();
+    const event: PetAsrFinalEvent = { type: 'asr.final', utteranceId: 'new', text: 'verified', profile: 'agent', refined: true, ts: 4 };
+    emit(event);
+    emit(event);
+    expect(final).toHaveBeenCalledOnce();
+    expect(stateBus.publishChatRequest).toHaveBeenCalledWith(expect.objectContaining({ voice: { profile: 'agent', refined: true } }));
+    runInAction(() => { stateBus.asr.enabled = false; });
+    emit({ type: 'asr.speech-start', utteranceId: 'disabled', ts: 5 });
+    emit({ type: 'asr.final', utteranceId: 'disabled', text: 'disabled', ts: 6 });
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(final).toHaveBeenCalledOnce();
+    await service.dispose();
+  });
+
+  it('does not acquire the microphone after a backend start failure', async () => {
+    const { service, api } = setup(true);
+    api.start.mockResolvedValue({ running: false, lastError: 'missing vad' } as never);
+    service.start();
+    await vi.waitFor(() => expect(service.lastError).toBe('missing vad'));
+    expect(capture.start).not.toHaveBeenCalled();
+    await service.dispose();
   });
 });

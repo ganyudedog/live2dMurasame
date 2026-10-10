@@ -23,6 +23,10 @@ export class AiService {
   private extensionRegister: AiRegister | null = null;
   private responseListeners = new Set<(response: TextAiResponse) => void>();
   private stopChatSpeech: (() => void) | null = null;
+  private activeController: AbortController | null = null;
+  private activeRequest: ChatRequest | null = null;
+  private activeDisplayText = '';
+  private readonly asrSubscriptions: Array<() => void> = [];
 
   constructor(
     stateBus: StateBusService,
@@ -54,10 +58,14 @@ export class AiService {
       reaction(
         () => this.stateBus.chatRequest,
         (request) => {
-          if (!request || request.status !== 'pending' || !request.text.trim()) return;
+          if (!request || request.source !== 'text' || request.status !== 'pending' || !request.text.trim()) return;
           void this.processChatRequest(request);
         },
       ),
+    );
+    this.asrSubscriptions.push(
+      this.asr.onSpeechStart(() => this.cancel('barge-in')),
+      this.asr.onFinal((request) => { void this.processChatRequest(request); }),
     );
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'lifecycle',
@@ -96,18 +104,13 @@ export class AiService {
   async processChatRequest(request: ChatRequest): Promise<void> {
     if (this.disposed) return;
     if (this.processing) {
-      const busyContext = this.log.contextRegistry.register('AiService', {
-        relation: 'chat.request',
-        params: { requestId: request.id, activeRequestId: this.activeRequestId },
-        behavior: '拒绝并发聊天请求',
-      });
-      busyContext.beginTrace('request.dropped.busy').end({
-        requestId: request.id,
-        activeRequestId: this.activeRequestId,
-      });
-      busyContext.dispose();
-      return;
+      this.cancel('superseded-by-new-request');
     }
+    const controller = new AbortController();
+    this.activeController = controller;
+    this.activeRequest = request;
+    this.activeDisplayText = '';
+    const isCurrent = () => !controller.signal.aborted && this.activeController === controller && !this.disposed;
 
     runInAction(() => {
       this.processing = true;
@@ -134,12 +137,15 @@ export class AiService {
       const aiConfig = this.stateBus.chatConfig;
       const result = await this.llm.ask(request.text.trim(), {
         trace,
+        signal: controller.signal,
         apiKey: aiConfig.apiKey,
         baseURL: aiConfig.baseURL,
         onSentenceStreaming: (sentence) => {
+          if (!isCurrent()) return;
           accumulatedDisplay = accumulatedDisplay
             ? `${accumulatedDisplay}\n${sentence.displayText}`
             : sentence.displayText;
+          this.activeDisplayText = accumulatedDisplay;
           this.stateBus.publishChatResponse({
             id: request.id,
             displayText: accumulatedDisplay,
@@ -157,11 +163,17 @@ export class AiService {
         },
       });
 
+      if (!isCurrent()) {
+        trace.end({ requestId: request.id, status: 'cancelled' });
+        return;
+      }
+
       if (!result.ok) {
         throw new Error(result.error ?? '对话请求失败');
       }
 
       const finalDisplay = accumulatedDisplay || result.reply?.display_text?.trim() || '';
+      this.activeDisplayText = finalDisplay;
       this.stateBus.publishChatRequest({ ...request, status: 'done' });
       this.stateBus.publishChatResponse({
         id: request.id,
@@ -178,6 +190,10 @@ export class AiService {
         tts: consumer.summary(),
       });
     } catch (error) {
+      if (!isCurrent()) {
+        trace.end({ requestId: request.id, status: 'cancelled' });
+        return;
+      }
       consumer.stop();
       this.tts.cancelActive('chat-failed');
       const message = toErrorMessage(error);
@@ -196,25 +212,45 @@ export class AiService {
       trace.fail('AI 对话请求失败', { requestId: request.id, err: message }, error);
     } finally {
       consumer.stop();
-      this.stopChatSpeech = null;
-      runInAction(() => {
-        this.processing = false;
-        this.activeRequestId = null;
-      });
+      if (this.activeController === controller) {
+        this.stopChatSpeech = null;
+        this.activeController = null;
+        this.activeRequest = null;
+        runInAction(() => {
+          this.processing = false;
+          this.activeRequestId = null;
+        });
+      }
       context.dispose();
     }
   }
 
   cancel(reason = 'user-cancelled'): void {
+    const request = this.activeRequest;
+    this.activeController?.abort();
+    this.activeController = null;
+    this.activeRequest = null;
     this.stopChatSpeech?.();
+    this.stopChatSpeech = null;
     this.tts.cancelActive(reason);
+    if (request) {
+      this.stateBus.publishChatRequest({ ...request, status: 'cancelled' });
+      this.stateBus.publishChatResponse({
+        id: request.id, displayText: this.activeDisplayText, status: 'cancelled', error: null, updatedAt: Date.now(),
+      });
+      this.emitTextResponse({ requestId: request.id, text: this.activeDisplayText, status: 'cancelled' });
+    }
+    runInAction(() => {
+      this.processing = false;
+      this.activeRequestId = null;
+    });
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'chat.request',
-      params: { requestId: this.activeRequestId, reason },
+      params: { requestId: request?.id, reason },
       behavior: '取消当前 TTS 和聊天请求',
     });
     context.beginTrace('request.cancelled').end({
-      requestId: this.activeRequestId,
+      requestId: request?.id,
       reason,
     });
     context.dispose();
@@ -223,6 +259,7 @@ export class AiService {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.reactions.splice(0).forEach((dispose) => dispose());
+    this.asrSubscriptions.splice(0).forEach((dispose) => dispose());
     this.cancel('dispose');
     this.responseListeners.clear();
     const context = this.log.contextRegistry.register('AiService', {

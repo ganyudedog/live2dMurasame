@@ -1,5 +1,8 @@
 export const PET_WINDOW_BASE_CONTENT_WIDTH: number;
 export const PET_WINDOW_BASE_CONTENT_HEIGHT: number;
+export const BUBBLE_SIDE_MIN_WIDTH: number;
+export const BUBBLE_SIDE_MAX_WIDTH: number;
+export const BUBBLE_SIDE_DEFAULT_WIDTH: number;
 
 export interface Live2dLayoutInput {
   baseWidth: number;

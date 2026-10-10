@@ -2,7 +2,6 @@ import { useLayoutEffect, useRef } from 'react';
 import { observer } from 'mobx-react-lite';
 import { TOKENS } from '@app/core/serviceTokens';
 import { useService } from '@app/core/useService';
-import { BUBBLE_SIDE_WIDTH, resolveBubbleContentMaxWidth } from '../domain/constants';
 import { ChatBubble } from './components/ChatBubble';
 
 /**
@@ -11,16 +10,11 @@ import { ChatBubble } from './components/ChatBubble';
  */
 export const BubbleMeasurementRoot = observer(({ onMeasured }: { onMeasured?: () => void }) => {
   const live2d = useService(TOKENS.live2d);
-  const config = useService(TOKENS.config);
   const measureRef = useRef<HTMLDivElement | null>(null);
   const text = live2d.playingMotionText;
   const requestId = live2d.bubbleMeasurementRequestId;
   const scale = live2d.renderScale;
-  const configuredSideWidth = Number(config.modelConfig?.bubble?.sideWidth);
-  const maxWidth = resolveBubbleContentMaxWidth(
-    Number.isFinite(configuredSideWidth) ? configuredSideWidth : BUBBLE_SIDE_WIDTH,
-    scale,
-  );
+  const maxWidth = live2d.bubbleContentMaxWidth;
 
   useLayoutEffect(() => {
     const element = measureRef.current;
@@ -52,7 +46,8 @@ export const BubbleMeasurementRoot = observer(({ onMeasured }: { onMeasured?: ()
           || Math.abs(submitted.height - current.height) >= 0.25;
         if (changed) {
           submitted = current;
-          live2d.submitBubbleMeasurement({ requestId, text, ...current, maxWidth });
+          const readingDurationMs = Number(element.querySelector('svg')?.dataset.readingDurationMs) || 0;
+          live2d.submitBubbleMeasurement({ requestId, text, ...current, maxWidth, scale, readingDurationMs });
           onMeasured?.();
         }
         return;
@@ -81,7 +76,7 @@ export const BubbleMeasurementRoot = observer(({ onMeasured }: { onMeasured?: ()
       resizeObserver?.disconnect();
       if (frameId !== null) window.cancelAnimationFrame(frameId);
     };
-  }, [live2d, maxWidth, onMeasured, requestId, text]);
+  }, [live2d, maxWidth, onMeasured, requestId, scale, text]);
 
   if (!text) return null;
   return (
@@ -98,7 +93,7 @@ export const BubbleMeasurementRoot = observer(({ onMeasured }: { onMeasured?: ()
       }}
     >
       <div ref={measureRef} style={{ display: 'inline-block' }}>
-        <ChatBubble text={text} side="start" tail={{ y: 14 }} maxWidth={maxWidth} />
+        <ChatBubble text={text} side="start" tail={{ y: 14 }} maxWidth={maxWidth} scale={scale} autoAdvance={false} />
       </div>
     </div>
   );

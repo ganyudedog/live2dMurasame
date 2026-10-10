@@ -167,8 +167,11 @@ export class TtsService {
 
   cancelActive(reason: string): void {
     const requestId = this.activeRequestId;
+    const config = normalizeTtsConfig(readTtsSnapshot(this.getConfigSnapshot)?.modelConfig?.tts);
+    if (config.baseUrl) this.liveKit.setPlaybackMuted?.(config.baseUrl, true);
     for (const [id, request] of this.requests) {
       if (request.config.baseUrl) {
+        this.liveKit.setPlaybackMuted?.(request.config.baseUrl, true);
         void cancelTtsSynthesis({ log: this.log, liveKit: this.liveKit }, {
           requestId: id,
           reason,
@@ -284,6 +287,8 @@ export class TtsService {
       ...(feedbackFailures ? { feedback: { failures: feedbackFailures, reason: feedbackReason } } : {}),
     });
     const beginPlaybackObservation = () => {
+      if (controller.signal.aborted) return;
+      this.liveKit.setPlaybackMuted?.(ttsConfig.baseUrl, false);
       this.feedback.stop();
       this.activeAbortController = controller;
       this.activeRequestId = requestId;
@@ -323,6 +328,7 @@ export class TtsService {
       }
 
       offEvents = this.liveKit.subscribeEvents(ttsConfig.baseUrl, (event) => {
+        if (controller.signal.aborted) return;
         if (event.request_id !== requestId || event.session_id !== session.sessionId) return;
         if (event.type !== 'tts.started' && event.type !== 'tts.queued' && event.type !== 'tts.finished'
           && event.type !== 'tts.canceled' && event.type !== 'tts.error' && event.type !== 'tts.chunk_meta') return;

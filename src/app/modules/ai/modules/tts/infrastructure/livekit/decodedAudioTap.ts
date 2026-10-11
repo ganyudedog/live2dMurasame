@@ -1,4 +1,4 @@
-import workletUrl from './decodedAudioTap.worklet.js?url';
+import workletUrl from './decodedAudioTap.worklet.js?worker&url';
 
 export type DecodedAudioFrame = {
   samples: Float32Array;

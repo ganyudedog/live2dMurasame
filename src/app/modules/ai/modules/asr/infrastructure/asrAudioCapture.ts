@@ -1,4 +1,4 @@
-import workletUrl from './asrCapture.worklet.js?url';
+import workletUrl from './asrCapture.worklet.js?worker&url';
 import type { LogService } from '@app/shared/logging/LogService';
 
 export type AsrAudioCaptureStartOptions = {

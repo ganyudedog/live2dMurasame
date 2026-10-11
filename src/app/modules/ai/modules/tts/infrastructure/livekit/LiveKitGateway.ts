@@ -1092,7 +1092,7 @@ const ensureDecodedAudioTap = (cache: RoomCache): void => {
   if (!AudioContextCtor) return;
 
   try {
-    cache.decodedAudioTap = createDecodedAudioTap(cache.attachedAudioTrack.mediaStreamTrack, AudioContextCtor, (frame) => {
+    const tap = createDecodedAudioTap(cache.attachedAudioTrack.mediaStreamTrack, AudioContextCtor, (frame) => {
       cache.decodedAudioHandlers.forEach((handler) => {
         try {
           handler(frame);
@@ -1100,6 +1100,12 @@ const ensureDecodedAudioTap = (cache: RoomCache): void => {
           // Recording must never interrupt audio playback.
         }
       });
+    });
+    cache.decodedAudioTap = tap;
+    void tap.ready.catch((error) => {
+      if (cache.decodedAudioTap !== tap) return;
+      disposeDecodedAudioTap(cache);
+      warn('livekit.service', 'audio.observation.unavailable', { reason: String(error) });
     });
   } catch (error) {
     warn('livekit.service', 'audio.observation.unavailable', { reason: String(error) });

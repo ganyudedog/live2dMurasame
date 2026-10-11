@@ -1,9 +1,11 @@
+import workletUrl from './decodedAudioTap.worklet.js?url';
+
 export type DecodedAudioFrame = {
   samples: Float32Array;
   sampleRate: number;
 };
 
-export type DecodedAudioTap = { dispose: () => void };
+export type DecodedAudioTap = { ready: Promise<void>; dispose: () => void };
 
 export const createDecodedAudioTap = (
   track: MediaStreamTrack,
@@ -12,44 +14,51 @@ export const createDecodedAudioTap = (
 ): DecodedAudioTap => {
   const context = new AudioContextCtor({ sampleRate: 32000 });
   const nodes: AudioNode[] = [];
-  let processor: ScriptProcessorNode | undefined;
+  let processor: AudioWorkletNode | undefined;
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    if (processor) processor.onaudioprocess = null;
+    if (processor) {
+      processor.port.onmessage = null;
+      processor.port.close();
+    }
     nodes.forEach((node) => {
       try { node.disconnect(); } catch { /* Already disconnected. */ }
     });
     void context.close().catch(() => undefined);
   };
 
-  try {
-    // Observe the remote track on a silent branch, independent of audible HTML playback.
-    const source = context.createMediaStreamSource(new MediaStream([track]));
-    nodes.push(source);
-    processor = context.createScriptProcessor(1024, 1, 1);
-    nodes.push(processor);
-    const mute = context.createGain();
-    nodes.push(mute);
-    mute.gain.value = 0;
-    source.connect(processor);
-    processor.connect(mute);
-    mute.connect(context.destination);
-    processor.onaudioprocess = (event) => {
-      try {
-        observe({
-          samples: new Float32Array(event.inputBuffer.getChannelData(0)),
-          sampleRate: event.inputBuffer.sampleRate,
-        });
-      } catch {
-        // Observer failures cannot affect the track or its playback element.
-      }
-    };
-    void context.resume().catch(() => undefined);
-    return { dispose };
-  } catch (error) {
-    dispose();
-    throw error;
-  }
+  const ready = (async () => {
+    try {
+      await context.audioWorklet.addModule(workletUrl);
+      if (disposed) return;
+      // Observe the remote track on a silent branch, independent of audible HTML playback.
+      const source = context.createMediaStreamSource(new MediaStream([track]));
+      nodes.push(source);
+      processor = new AudioWorkletNode(context, 'tts-decoded-audio-tap', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 1,
+        channelCountMode: 'explicit',
+      });
+      nodes.push(processor);
+      processor.port.onmessage = (event: MessageEvent<Float32Array>) => {
+        if (disposed) return;
+        try {
+          observe({ samples: event.data, sampleRate: context.sampleRate });
+        } catch {
+          // Observer failures cannot affect the track or its playback element.
+        }
+      };
+      source.connect(processor);
+      processor.connect(context.destination);
+      await context.resume();
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  })();
+  return { ready, dispose };
 };

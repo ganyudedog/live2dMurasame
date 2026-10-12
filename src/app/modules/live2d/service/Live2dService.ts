@@ -1,10 +1,11 @@
-import { makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
+import { computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import type { Live2DModel } from '../modules/model/runtime/live2d/runtime';
 import { MotionService } from '../modules/motion/service/MotionService';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import { Live2dLayoutService, type LayoutSnapshot } from '../modules/layout/service/Live2dLayoutService';
 import { BubblePresentation } from '../modules/bubble/domain/BubblePresentation';
+import { BubbleDialogueService } from '../modules/bubble/service/BubbleDialogueService';
 import { createBubblePositionEngine } from '../modules/bubble/runtime/createBubblePositionEngine';
 import { InteractionService } from '../modules/interaction/service/InteractionService';
 import {
@@ -29,6 +30,7 @@ export type BubbleMeasurement = {
 export class Live2dService {
   readonly layoutService: Live2dLayoutService;
   readonly bubble = new BubblePresentation();
+  readonly dialogue = new BubbleDialogueService();
   readonly interaction: InteractionService;
   private bubbleSettings: { side?: 'auto' | 'left' | 'right'; sideWidth?: number; headRatio?: number | null } = {};
   private configuredBubbleSideWidth = BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH;
@@ -85,8 +87,8 @@ export class Live2dService {
     const service = this;
     this.bubbleEngine = createBubblePositionEngine({
       scaleRef: { get current() { return service.renderScale; } },
-      motionTextRef: { get current() { return service.playingMotionText; } },
-      bubbleMeasurementRef: { get current() { return service.bubbleMeasurement; } },
+      motionTextRef: { get current() { return service.bubbleText; } },
+      bubbleMeasurementRef: { get current() { return service.activeBubbleMeasurement; } },
       bubbleSettingsRef: { get current() { return service.bubbleSettings; } },
       // Native position selects a bubble side; rectangles come from the layout.
       windowGeometryRef: { get current() { return service.nativeGeometry; } },
@@ -108,7 +110,10 @@ export class Live2dService {
       renderGeometry: observableRef,
       bubbleMeasurementRequestId: observable,
       bubbleMeasurement: observableRef,
+      bubbleText: computed,
+      activeBubbleMeasurement: computed,
     });
+    this.dialogue.configure(this.bubbleContentMaxWidth, this.renderScale);
   }
 
   start(): void {
@@ -171,11 +176,25 @@ export class Live2dService {
       });
     }
     this.layoutService.setSideWidth(this.configuredBubbleSideWidth);
+    this.dialogue.configure(this.bubbleContentMaxWidth, this.renderScale);
     this.updateBubblePosition(true);
   }
 
   get bubbleContentMaxWidth(): number {
     return resolveBubbleContentMaxWidth(this.configuredBubbleSideWidth, this.renderScale);
+  }
+
+  get bubbleText(): string | null {
+    return this.dialogue.conversationId ? this.dialogue.text : this.playingMotionText;
+  }
+
+  get activeBubbleMeasurement(): BubbleMeasurement | null {
+    const dialogue = this.dialogue.measurement;
+    if (this.dialogue.conversationId) {
+      return dialogue ? { requestId: dialogue.id, text: dialogue.text, width: dialogue.width, height: dialogue.height,
+        maxWidth: dialogue.maxWidth, scale: dialogue.scale } : null;
+    }
+    return this.bubbleMeasurement?.requestId === this.bubbleMeasurementRequestId ? this.bubbleMeasurement : null;
   }
 
   registerExtensions(register: Live2dRegister): void {
@@ -256,6 +275,7 @@ export class Live2dService {
       this.renderGeometry = snapshot.geometry;
       this.renderScale = snapshot.scale;
     });
+    this.dialogue.configure(this.bubbleContentMaxWidth, this.renderScale);
     this.log.debug('live2d.geometry', 'render.snapshot', {
       revision: snapshot.revision,
       width: snapshot.target.width,
@@ -282,6 +302,7 @@ export class Live2dService {
 
   dispose(): void {
     this.disposed = true;
+    this.dialogue.dispose();
     this.layoutService.detach();
     this.scaleReaction?.();
     this.scaleReaction = null;

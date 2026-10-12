@@ -1,100 +1,70 @@
 import { useLayoutEffect, useRef } from 'react';
-import { observer } from 'mobx-react-lite';
-import { TOKENS } from '@app/core/serviceTokens';
-import { useService } from '@app/core/useService';
 import { ChatBubble } from './components/ChatBubble';
 
-/**
- * A separate UI root used only for browser text layout. It reports plain numbers to the
- * service; no HTMLElement or observer crosses the UI/service boundary.
- */
-export const BubbleMeasurementRoot = observer(({ onMeasured }: { onMeasured?: () => void }) => {
-  const live2d = useService(TOKENS.live2d);
-  const measureRef = useRef<HTMLDivElement | null>(null);
-  const text = live2d.playingMotionText;
-  const requestId = live2d.bubbleMeasurementRequestId;
-  const scale = live2d.renderScale;
-  const maxWidth = live2d.bubbleContentMaxWidth;
+export interface BubbleLayoutRequest {
+  text: string;
+  maxWidth: number;
+  scale: number;
+  scrollable?: boolean;
+}
 
+export interface BubbleLayoutMeasurement {
+  width: number;
+  height: number;
+  lineCount: number;
+  readingDurationMs: number;
+}
+
+/** 动作与对话共享的临时测量组件，只接收展示参数并返回数字。 */
+export const BubbleMeasurementRoot = ({ request, onMeasured }: {
+  request: BubbleLayoutRequest;
+  onMeasured: (measurement: BubbleLayoutMeasurement) => void;
+}) => {
+  const hostRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
-    const element = measureRef.current;
-    if (!element || !text) return;
-
+    const svg = hostRef.current?.querySelector('svg');
+    if (!svg) return;
     let disposed = false;
-    let frameId: number | null = null;
+    let submitted = false;
+    let frame: number | null = null;
     let previous: { width: number; height: number } | null = null;
-    let submitted: { width: number; height: number } | null = null;
     let resizeObserver: ResizeObserver | null = null;
-
-    const scheduleSample = () => {
-      if (disposed || frameId !== null) return;
-      frameId = window.requestAnimationFrame(sample);
+    const schedule = () => {
+      if (!disposed && !submitted && frame === null) frame = requestAnimationFrame(sample);
     };
-
     const sample = () => {
-      frameId = null;
-      if (disposed) return;
-      const rect = element.getBoundingClientRect();
-      const current = { width: rect.width, height: rect.height };
-      const stable = previous
-        && Math.abs(previous.width - current.width) < 0.25
-        && Math.abs(previous.height - current.height) < 0.25;
-
-      if (stable && current.width > 0 && current.height > 0) {
-        const changed = !submitted
-          || Math.abs(submitted.width - current.width) >= 0.25
-          || Math.abs(submitted.height - current.height) >= 0.25;
-        if (changed) {
-          submitted = current;
-          const readingDurationMs = Number(element.querySelector('svg')?.dataset.readingDurationMs) || 0;
-          live2d.submitBubbleMeasurement({ requestId, text, ...current, maxWidth, scale, readingDurationMs });
-          onMeasured?.();
-        }
+      frame = null;
+      if (disposed || submitted) return;
+      const { width, height } = svg.getBoundingClientRect();
+      if (previous && width > 0 && height > 0
+        && Math.abs(previous.width - width) < 0.25 && Math.abs(previous.height - height) < 0.25) {
+        submitted = true;
+        onMeasured({ width, height, lineCount: Number(svg.dataset.lineCount),
+          readingDurationMs: Number(svg.dataset.readingDurationMs) || 0 });
         return;
       }
-      previous = current;
-      scheduleSample();
+      previous = { width, height };
+      schedule();
     };
-
-    const startMeasurement = () => {
+    const start = () => {
       if (disposed) return;
-      resizeObserver = new ResizeObserver(() => {
-        previous = null;
-        scheduleSample();
-      });
-      resizeObserver.observe(element);
-      // Requiring two equal animation frames avoids publishing an intermediate React layout.
-      scheduleSample();
+      resizeObserver = new ResizeObserver(() => { previous = null; schedule(); });
+      resizeObserver.observe(svg);
+      schedule();
     };
-
-    const fontsReady = document.fonts?.ready;
-    if (fontsReady) void fontsReady.then(startMeasurement, startMeasurement);
-    else startMeasurement();
-
+    if (document.fonts?.ready) void document.fonts.ready.then(start, start);
+    else start();
     return () => {
       disposed = true;
       resizeObserver?.disconnect();
-      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [live2d, maxWidth, onMeasured, requestId, scale, text]);
+  }, [onMeasured, request]);
 
-  if (!text) return null;
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: 'fixed',
-        left: 0,
-        top: 0,
-        visibility: 'hidden',
-        pointerEvents: 'none',
-        contain: 'layout style paint',
-        display: 'inline-block',
-      }}
-    >
-      <div ref={measureRef} style={{ display: 'inline-block' }}>
-        <ChatBubble text={text} side="start" tail={{ y: 14 }} maxWidth={maxWidth} scale={scale} autoAdvance={false} />
-      </div>
-    </div>
-  );
-});
+  return <div ref={hostRef} aria-hidden="true" style={{ position: 'fixed', left: 0, top: 0,
+    visibility: 'hidden', pointerEvents: 'none', contain: 'layout style paint' }}>
+    <ChatBubble text={request.text} maxWidth={request.maxWidth} scale={request.scale}
+      side="start" tail={{ y: 14 }} autoAdvance={false}
+      scrollable={request.scrollable} />
+  </div>;
+};

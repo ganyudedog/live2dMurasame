@@ -3,7 +3,7 @@ import { readLlmSnapshot, readRemoteLlmConfig, readGlobalConfigFallback } from '
 import { isString, normalizeReplyText, normalizeDisplayLang, normalizeSpeakLang } from '../domain/config';
 import type { TraceScope } from '@app/shared/logging/LogService';
 import { requestStage2LLM } from '../infrastructure/llmClient';
-import { parseStage2Reply, parseStage2StreamPreview, parseSentenceStreamPreview, type ParsedSentence } from '../domain/replyParser';
+import { parseStage2Reply, SentenceStreamParser, type ParsedSentence } from '../domain/replyParser';
 import type { ActionCapability, ActionDispatchResult, ActionIntentInput } from '../../../../live2d/modules/actions/domain/types';
 import type { Stage2AskResult, Stage2LLMConfig } from '../domain/types';
 
@@ -14,10 +14,10 @@ interface Stage2AskOptions {
   temperature?: number;
   apiKey?: string;
   baseURL?: string;
-  // 流式显示回调：仅用于 UI 文本实时更新，不触发语音。
-  onDisplayTextStreaming?: (displayText: string) => void;
-  // 流式句子回调：JSON Lines 中每行 JSON 解析完成后立即触发
+  // 同一解析器分别报告字段就绪和整句完成，共享连续的业务句子编号。
   onSentenceStreaming?: (sentence: ParsedSentence) => void;
+  onSentenceSpeechReady?: (sentence: { sentenceIndex: number; speakText: string }) => void;
+  onSentenceDisplayReady?: (sentence: { sentenceIndex: number; displayText: string }) => void;
 }
 
 interface LlmServiceOptions {
@@ -92,8 +92,26 @@ export class LlmService {
       const languageProfile = this.resolveLanguageProfile();
       const start = performance.now();
       let firstDeltaLatencyMs = -1;
-      let streamedDisplayText = '';
-      let processedSentenceCount = 0;
+      let streamedRawText = '';
+      const parser = new SentenceStreamParser();
+      const publishSentences = (rawText: string) => {
+        if (options.signal?.aborted) return;
+        // 网络返回的最终文本会 trim；与已消费流相同则不重复提交。
+        if (rawText.trim() === streamedRawText.trim()) return;
+        if (!rawText.startsWith(streamedRawText)) throw new Error('LLM 流式输出不是追加文本');
+        const events = parser.push(rawText.slice(streamedRawText.length));
+        streamedRawText = rawText;
+        for (const event of events) {
+          if (options.signal?.aborted) return;
+          if (event.type === 'speech-ready') {
+            options.onSentenceSpeechReady?.({ sentenceIndex: event.sentenceIndex, speakText: event.speakText });
+          } else if (event.type === 'display-ready') {
+            options.onSentenceDisplayReady?.({ sentenceIndex: event.sentenceIndex, displayText: event.displayText });
+          } else {
+            options.onSentenceStreaming?.(event.sentence);
+          }
+        }
+      };
 
       // 发起对话
       const llmResult = await requestStage2LLM(
@@ -121,26 +139,14 @@ export class LlmService {
               });
             }
 
-            // JSON Lines 句子解析：每行 JSON 完整后立即回调
-            const sentences = parseSentenceStreamPreview(aggregateText, processedSentenceCount);
-            if (sentences.length > 0) {
-              processedSentenceCount += sentences.length;
-              for (const s of sentences) {
-                options.onSentenceStreaming?.(s);
-              }
-            }
-
-            // 兼容旧路径：单对象 JSON 的 display_text 预览
-            const preview = parseStage2StreamPreview(aggregateText);
-            const nextDisplay = normalizeReplyText(preview.display_text);
-            if (!nextDisplay || nextDisplay === streamedDisplayText) return;
-            streamedDisplayText = nextDisplay;
-            options.onDisplayTextStreaming?.(nextDisplay);
+            publishSentences(aggregateText);
           },
         },
       );
 
       options.signal?.throwIfAborted();
+
+      publishSentences(llmResult.rawText);
 
       // 解析回复
       const reply = parseStage2Reply(llmResult.rawText);

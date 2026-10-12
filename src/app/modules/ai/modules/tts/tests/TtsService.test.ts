@@ -81,6 +81,28 @@ describe('TTS lifecycle and offline recording', () => {
     await expect(runtime.preheat(config, 'late')).rejects.toThrow('disposed');
   });
 
+  it('publishes request-scoped playback events once and supports unbinding', async () => {
+    const { runtime, emit } = setup();
+    const listener = vi.fn();
+    const off = runtime.onPlayback(listener);
+    vi.mocked(requestTtsSynthesis).mockImplementation(async () => {
+      emit('tts.started', {});
+      emit('tts.started', {});
+      emit('tts.finished', {});
+      emit('tts.finished', {});
+      return realtimeResponse();
+    });
+    await runtime.speakFromQwenReply({ requestId: 'request', queueGroupId: 'chat', sentenceIndex: 3, speakText: 'speech' });
+    expect(listener.mock.calls.map(([event]) => event)).toEqual([
+      { requestId: 'request', queueGroupId: 'chat', sentenceIndex: 3, state: 'started', transport: 'livekit' },
+      { requestId: 'request', queueGroupId: 'chat', sentenceIndex: 3, state: 'finished', transport: 'livekit' },
+    ]);
+    off();
+    await runtime.speakFromQwenReply({ requestId: 'request', queueGroupId: 'chat', speakText: 'again' });
+    expect(listener).toHaveBeenCalledTimes(2);
+    runtime.dispose();
+  });
+
   it('owns HTTP synthesis and playback used by the test page', async () => {
     const { runtime } = setup();
     const response = new Response('audio');

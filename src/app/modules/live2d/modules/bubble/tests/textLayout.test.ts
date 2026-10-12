@@ -22,11 +22,10 @@ describe('final-size bubble text layout', () => {
     expect(layout(text, 0.3).pages.flat().join('')).toBe(text);
   });
 
-  it('keeps short messages compact and preserves explicit line breaks', () => {
+  it('uses the full width for short messages and preserves explicit line breaks', () => {
     const short = layout('\u4f60\u597d\n\u4e3b\u4eba', 0.3);
     expect(short.pages).toEqual([['\u4f60\u597d', '\u4e3b\u4eba']]);
-    expect(short.bodyWidth).toBe(short.typography.minBodyWidth);
-    expect(short.bodyWidth).toBeLessThan(resolveBubbleContentMaxWidth(260, 0.3));
+    expect(short.bodyWidth).toBe(resolveBubbleContentMaxWidth(260, 0.3));
     expect(short.bodyHeight).toBe(2 * short.typography.lineHeight + 2 * short.typography.verticalInset);
   });
 

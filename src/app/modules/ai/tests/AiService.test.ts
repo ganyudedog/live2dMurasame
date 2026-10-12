@@ -41,7 +41,7 @@ describe('voice interruption orchestration', () => {
     llm.ask.mockImplementationOnce(() => new Promise(() => {}));
     const old = service.processChatRequest(request('old'));
     const oldOptions = llm.ask.mock.calls[0][1];
-    oldOptions.onSentenceStreaming?.({ displayText: 'old speech', speakText: 'old speech', lineIndex: 0 });
+    oldOptions.onSentenceStreaming?.({ displayText: 'old speech', speakText: 'old speech', sentenceIndex: 0 });
     speechStart();
     expect(oldOptions.signal?.aborted).toBe(true);
     expect(tts.cancelActive).toHaveBeenCalledWith('barge-in');
@@ -50,7 +50,7 @@ describe('voice interruption orchestration', () => {
     final(request('new'));
     expect(service.activeRequestId).toBe('new');
     const callsBeforeLateOutput = stateBus.publishChatResponse.mock.calls.length;
-    oldOptions.onSentenceStreaming?.({ displayText: 'late speech', speakText: 'late speech', lineIndex: 1 });
+    oldOptions.onSentenceStreaming?.({ displayText: 'late speech', speakText: 'late speech', sentenceIndex: 1 });
     resolveOld({ ok: true });
     await old;
     expect(consumers.get('old')?.submit).toHaveBeenCalledOnce();
@@ -81,5 +81,33 @@ describe('voice interruption orchestration', () => {
     await service.dispose();
     expect(offStart).toHaveBeenCalledOnce();
     expect(offFinal).toHaveBeenCalledOnce();
+  });
+
+  it('pairs early speech and translation using the same TTS request id without duplicate submission', async () => {
+    const { service, llm, consumers } = setup();
+    const events = vi.fn();
+    service.onDialogue(events);
+    let finish!: () => void;
+    llm.ask.mockImplementation(() => new Promise((resolve) => { finish = () => resolve({ ok: true }); }));
+    const task = service.processChatRequest(request('chat'));
+    const options = llm.ask.mock.calls[0][1];
+    options.onSentenceSpeechReady?.({ sentenceIndex: 0, speakText: 'Japanese' });
+    expect(consumers.get('chat')?.submit).toHaveBeenCalledWith('Japanese', '', 0);
+    expect(events).toHaveBeenCalledWith({ type: 'started', conversationId: 'chat' });
+    options.onSentenceDisplayReady?.({ sentenceIndex: 0, displayText: 'Chinese' });
+    expect(events).toHaveBeenCalledWith({ type: 'sentence', conversationId: 'chat', requestId: 'chat_s0', text: 'Chinese' });
+    options.onSentenceStreaming?.({ sentenceIndex: 0, displayText: 'Chinese', speakText: 'Japanese' });
+    expect(consumers.get('chat')?.submit).toHaveBeenCalledOnce();
+    expect(events.mock.calls.filter(([event]) => event.type === 'sentence')).toHaveLength(1);
+    options.onSentenceSpeechReady?.({ sentenceIndex: 1, speakText: 'more Japanese' });
+    options.onSentenceDisplayReady?.({ sentenceIndex: 1, displayText: 'more Chinese' });
+    options.onSentenceStreaming?.({ sentenceIndex: 1, displayText: 'more Chinese', speakText: 'more Japanese' });
+    expect(consumers.get('chat')?.submit).toHaveBeenLastCalledWith('more Japanese', '', 1);
+    expect(events).toHaveBeenCalledWith({ type: 'sentence', conversationId: 'chat', requestId: 'chat_s1', text: 'more Chinese' });
+    expect(consumers.get('chat')?.submit).toHaveBeenCalledTimes(2);
+    finish();
+    await task;
+    expect(events).toHaveBeenLastCalledWith({ type: 'completed', conversationId: 'chat' });
+    await service.dispose();
   });
 });

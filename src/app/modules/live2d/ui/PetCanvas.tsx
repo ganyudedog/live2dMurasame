@@ -147,6 +147,9 @@ const PetCanvas: React.FC = observer(() => {
 
   // 动作相关
   const motionText = live2dService.playingMotionText;
+  const bubbleText = live2dService.bubbleText;
+  const activeBubbleMeasurement = live2dService.activeBubbleMeasurement;
+  const dialogueActive = Boolean(live2dService.dialogue.conversationId);
   const motionSound = live2dService.playingMotionSound;
   const setMotionText = useCallback((text: string | null) => live2dService.setMotionText(text), [live2dService]);
   // 鼠标相关
@@ -183,8 +186,8 @@ const PetCanvas: React.FC = observer(() => {
   const baseFrameMetrics = live2dService.bubble.baseFrame;
   const bubbleZoneMetrics = live2dService.bubble.zones;
   const [bubbleReady, setBubbleReady] = useState(false);
-  const bubbleVisible = bubbleReady && bubblePosition !== null
-    && live2dService.bubbleMeasurement?.requestId === live2dService.bubbleMeasurementRequestId;
+  const bubbleVisible = (dialogueActive || bubbleReady) && bubblePosition !== null
+    && activeBubbleMeasurement?.text === bubbleText && Boolean(bubbleText);
   const bubbleReadyRef = useRef(false);
 
   // pixi相关
@@ -402,10 +405,10 @@ const PetCanvas: React.FC = observer(() => {
       shouldClearLatch: contextZoneActivity.shouldClearLatch,
     });
 
-    const measurement = live2dService.bubbleMeasurement;
+    const measurement = activeBubbleMeasurement;
     const measuredPosition = bubblePosition;
     // Bubble hit testing reuses the numeric measurement sent by the isolated UI root.
-    const bubbleRect = motionText && measurement?.text === motionText && measuredPosition
+    const bubbleRect = bubbleText && measurement?.text === bubbleText && measuredPosition
       ? {
         left: measuredPosition.left,
         top: measuredPosition.top,
@@ -451,8 +454,8 @@ const PetCanvas: React.FC = observer(() => {
     contentBounds.x,
     bubblePosition,
     getModelMiddleRect,
-    live2dService.bubbleMeasurement,
-    motionText,
+    activeBubbleMeasurement,
+    bubbleText,
     updateInteractiveZones,
     windowGeometry?.workArea,
   ]);
@@ -462,10 +465,10 @@ const PetCanvas: React.FC = observer(() => {
   }, [updateDragHandlePosition]);
 
   useLayoutEffect(() => {
-    if (!live2dService.bubbleMeasurement) return;
+    if (!activeBubbleMeasurement) return;
     updateBubblePosition(true);
     updateDragHandlePosition(true);
-  }, [live2dService.bubbleMeasurement, updateBubblePosition, updateDragHandlePosition]);
+  }, [activeBubbleMeasurement, updateBubblePosition, updateDragHandlePosition]);
 
   // 检测是否为idle状态
   const isIdleState = useCallback((motionManager: any): boolean => {
@@ -641,7 +644,7 @@ const PetCanvas: React.FC = observer(() => {
         )}
         {/* 视觉中心红线：位于最上层、无事件、始终显示 */}
 
-        {motionText && (
+        {bubbleText && (
           <div
             className="absolute pointer-events-none select-none z-20"
             style={{
@@ -654,11 +657,13 @@ const PetCanvas: React.FC = observer(() => {
             }}
           >
             <ChatBubble
-              key={live2dService.bubbleMeasurementRequestId}
-              text={motionText}
+              text={bubbleText}
+              displayText={dialogueActive ? live2dService.dialogue.displayedText : undefined}
+              autoAdvance={!dialogueActive}
+              scrollable={dialogueActive && (live2dService.dialogue.measurement?.lineCount ?? 0) > 4}
               side={bubbleAlignment === 'left' ? 'start' : 'end'}
               tail={{ y: bubbleTailY ?? 14 }}
-              maxWidth={live2dService.bubbleMeasurement?.maxWidth}
+              maxWidth={activeBubbleMeasurement?.maxWidth}
               scale={scale}
             />
           </div>

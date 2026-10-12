@@ -32,7 +32,6 @@ export const resolveBubbleTypography = (scale: number) => {
     lineHeight: Math.round(fontSize * 1.45),
     horizontalInset: Math.round(18 * ratio),
     verticalInset: Math.round(16 * ratio),
-    minBodyWidth: Math.round(128 * ratio),
     tailLength: Math.round(16 * ratio),
     tailHalfHeight: Math.round(10 * ratio),
     radius: Math.round(22 * ratio),

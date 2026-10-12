@@ -53,6 +53,57 @@ describe('LLM and RAG orchestration', () => {
     service.dispose();
   });
 
+  it('submits speech before translation and commits each sentence once with continuous ids', async () => {
+    const { service, trace } = setup();
+    const speech = vi.fn();
+    const display = vi.fn();
+    const sentence = vi.fn();
+    const first = '{"speak_text":"Japanese","display_text":"Chinese"}';
+    const second = '{"speak_text":"more Japanese","display_text":"more Chinese"}';
+    const prefix = '```json\n\n';
+    const rawText = `${prefix}${first}\n\n${second}\n` + '```';
+    vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
+      request.onStreamDelta?.({ deltaText: '', aggregateText: `${prefix}{"speak_text":"Japanese",` });
+      expect(speech).toHaveBeenCalledWith({ sentenceIndex: 0, speakText: 'Japanese' });
+      expect(display).not.toHaveBeenCalled();
+      expect(sentence).not.toHaveBeenCalled();
+      request.onStreamDelta?.({ deltaText: '', aggregateText: `${prefix}{"speak_text":"Japanese","display_text":"Chinese"` });
+      expect(display).toHaveBeenCalledWith({ sentenceIndex: 0, displayText: 'Chinese' });
+      expect(sentence).not.toHaveBeenCalled();
+      request.onStreamDelta?.({ deltaText: '', aggregateText: rawText });
+      request.onStreamDelta?.({ deltaText: '', aggregateText: rawText });
+      return { rawText, usedModel: 'model' };
+    });
+    expect(await service.ask('question', { trace: trace as unknown as TraceScope,
+      onSentenceSpeechReady: speech, onSentenceDisplayReady: display, onSentenceStreaming: sentence })).toMatchObject({ ok: true });
+    expect(speech).toHaveBeenCalledTimes(2);
+    expect(display).toHaveBeenCalledTimes(2);
+    expect(sentence.mock.calls.map(([value]) => value.sentenceIndex)).toEqual([0, 1]);
+    service.dispose();
+  });
+
+  it('does not replay fields when the final response trims stream whitespace', async () => {
+    const { service, trace } = setup();
+    const speech = vi.fn();
+    const display = vi.fn();
+    const sentence = vi.fn();
+    const rawText = ' \n{"speak_text":"speech","display_text":"display"}\n ';
+    vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
+      let aggregateText = '';
+      for (const deltaText of rawText) {
+        aggregateText += deltaText;
+        request.onStreamDelta?.({ deltaText, aggregateText });
+      }
+      return { rawText: rawText.trim(), usedModel: 'model' };
+    });
+    expect(await service.ask('question', { trace: trace as unknown as TraceScope,
+      onSentenceSpeechReady: speech, onSentenceDisplayReady: display, onSentenceStreaming: sentence })).toMatchObject({ ok: true });
+    expect(speech).toHaveBeenCalledOnce();
+    expect(display).toHaveBeenCalledOnce();
+    expect(sentence).toHaveBeenCalledOnce();
+    service.dispose();
+  });
+
   it('passes cancellation to the network and prevents cancelled output from dispatching actions or memory', async () => {
     const { service, trace, memory, dispatchAction } = setup();
     const controller = new AbortController();

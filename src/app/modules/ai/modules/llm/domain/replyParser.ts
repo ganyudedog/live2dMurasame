@@ -2,15 +2,120 @@ import { stage2LlmReplySchema } from './schema';
 import type { ActionIntentInput } from '../../../../live2d/modules/actions/domain/types';
 import type { Stage2LLMReply } from './types';
 
-/** 流式解析出的单句（JSON Lines 中的一行） */
+/** 流式解析出的业务句子，与输出文本的物理行号无关。 */
 export interface ParsedSentence {
   speakText: string;
   displayText: string;
   actionIntent?: ActionIntentInput;
-  /** 该句在流式输出中的行索引（0-based） */
-  lineIndex: number;
+  /** 该句在当前回复中的连续编号（0-based）。 */
+  sentenceIndex: number;
 }
 
+export type SentenceStreamEvent =
+  | { type: 'speech-ready'; sentenceIndex: number; speakText: string }
+  | { type: 'display-ready'; sentenceIndex: number; displayText: string }
+  | { type: 'sentence-complete'; sentence: ParsedSentence };
+
+/** 每次请求独立使用：只扫描新增字符，完整字符串就绪后立即产出，整句完成后再提交句子。 */
+export class SentenceStreamParser {
+  private nextSentenceIndex = 0;
+  private sentenceIndex: number | null = null;
+  private record = '';
+  private depth = 0;
+  private inString = false;
+  private escaped = false;
+  private stringStart = 0;
+  private fieldName = '';
+  private fieldState: 'key' | 'value' | 'other' = 'key';
+  private lineStart = true;
+  private speechReady = false;
+  private displayReady = false;
+
+  push(deltaText: string): SentenceStreamEvent[] {
+    const events: SentenceStreamEvent[] = [];
+    for (const char of deltaText) {
+      if (!this.depth) {
+        if (char === '{' && this.lineStart) {
+          this.record = '{';
+          this.depth = 1;
+          this.fieldState = 'key';
+          this.fieldName = '';
+        }
+        if (char === '\n') this.lineStart = true;
+        else if (!/\s/.test(char)) this.lineStart = false;
+        continue;
+      }
+
+      this.record += char;
+      if (this.inString) {
+        if (this.escaped) this.escaped = false;
+        else if (char === '\\') this.escaped = true;
+        else if (char === '"') {
+          this.inString = false;
+          if (this.depth === 1) this.closeString(events);
+        }
+        continue;
+      }
+      if (char === '"') {
+        this.inString = true;
+        this.stringStart = this.record.length - 1;
+      } else if (char === '{' || char === '[') {
+        this.depth++;
+      } else if (char === '}' || char === ']') {
+        this.depth--;
+        if (this.depth === 0) this.completeSentence(events);
+      } else if (this.depth === 1 && char === ':') {
+        this.fieldState = 'value';
+      } else if (this.depth === 1 && char === ',') {
+        this.fieldState = 'key';
+        this.fieldName = '';
+      }
+    }
+    return events;
+  }
+
+  private getSentenceIndex(): number {
+    return this.sentenceIndex ??= this.nextSentenceIndex++;
+  }
+
+  private closeString(events: SentenceStreamEvent[]): void {
+    let value: string;
+    try { value = JSON.parse(this.record.slice(this.stringStart)); }
+    catch { this.fieldState = 'other'; return; }
+    if (this.fieldState === 'key') {
+      this.fieldName = value;
+    } else if (this.fieldState === 'value' && value.trim()) {
+      if ((this.fieldName === 'speak_text' || this.fieldName === 'speakText') && !this.speechReady) {
+        this.speechReady = true;
+        events.push({ type: 'speech-ready', sentenceIndex: this.getSentenceIndex(), speakText: value.trim() });
+      } else if ((this.fieldName === 'display_text' || this.fieldName === 'displayText') && !this.displayReady) {
+        this.displayReady = true;
+        events.push({ type: 'display-ready', sentenceIndex: this.getSentenceIndex(), displayText: value.trim() });
+      }
+    }
+    this.fieldState = 'other';
+  }
+
+  private completeSentence(events: SentenceStreamEvent[]): void {
+    try {
+      const parsed = JSON.parse(this.record);
+      const speakText = typeof (parsed.speak_text ?? parsed.speakText) === 'string'
+        ? (parsed.speak_text ?? parsed.speakText).trim() : '';
+      const displayText = typeof (parsed.display_text ?? parsed.displayText) === 'string'
+        ? (parsed.display_text ?? parsed.displayText).trim() : '';
+      if (speakText || displayText) {
+        events.push({ type: 'sentence-complete', sentence: {
+          sentenceIndex: this.getSentenceIndex(), speakText, displayText: displayText || speakText,
+          actionIntent: parsed.action_intent ? { ...parsed.action_intent, kind: parsed.action_intent.kind ?? 'blink' } : undefined,
+        } });
+      }
+    } catch { /* 不完整或无效的记录不提交为完整句子。 */ }
+    this.record = '';
+    this.sentenceIndex = null;
+    this.speechReady = false;
+    this.displayReady = false;
+  }
+}
 
 const extractJsonCandidate = (raw: string): string => {
   const trimmed = raw.trim();
@@ -26,49 +131,6 @@ const extractJsonCandidate = (raw: string): string => {
   const last = trimmed.lastIndexOf('}');
   if (first >= 0 && last > first) return trimmed.slice(first, last + 1);
   return trimmed;
-};
-
-const safeDecodePartialJsonString = (value: string): string => {
-  const raw = String(value ?? '');
-  if (!raw) return '';
-
-  try {
-    return JSON.parse(`"${raw}"`);
-  } catch {
-    // 兼容流式中间态：处理不完整的转义片段，避免解析失败。
-    let normalized = raw;
-    normalized = normalized.replace(/\\u[0-9a-fA-F]{0,3}$/g, '');
-    normalized = normalized.replace(/\\$/g, '');
-    normalized = normalized.replace(/\\n/g, '\n');
-    normalized = normalized.replace(/\\r/g, '\r');
-    normalized = normalized.replace(/\\t/g, '\t');
-    normalized = normalized.replace(/\\"/g, '"');
-    normalized = normalized.replace(/\\\\/g, '\\');
-    return normalized;
-  }
-};
-
-const extractPartialStringField = (rawText: string, key: string): string => {
-  const source = String(rawText ?? '');
-  if (!source) return '';
-  const pattern = new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)`, 'i');
-  const matched = source.match(pattern);
-  if (!matched?.[1]) return '';
-  return safeDecodePartialJsonString(matched[1]).trim();
-};
-
-// 从流式增量文本中提取可预览字段（允许 JSON 尚未闭合）。
-export const parseStage2StreamPreview = (
-  rawText: string,
-): Partial<Pick<Stage2LLMReply, 'display_text' | 'speak_text'>> => {
-  const candidate = extractJsonCandidate(rawText);
-  const displayText = extractPartialStringField(candidate, 'display_text');
-  const speakText = extractPartialStringField(candidate, 'speak_text');
-
-  return {
-    display_text: displayText || undefined,
-    speak_text: speakText || undefined,
-  };
 };
 
 // 解析 LLM 完整回复（兼容单对象 JSON 与 JSON Lines 两种格式）
@@ -120,56 +182,4 @@ export const parseStage2Reply = (rawText: string): Stage2LLMReply => {
     speak_text: allSpeak.join('') || '',
     action_intent: lastActionIntent ?? { kind: 'blink' },
   };
-};
-
-/**
- * 从流式 JSON Lines 输出中提取已完成的行。
- *
- * 策略：按 \n 分割，对每行尝试 JSON.parse。
- * 解析失败的行视为不完整（流式中间态），不产出。
- * 通过 processedCount 跳已处理行避免重复解析。
- */
-export const parseSentenceStreamPreview = (
-  aggregateText: string,
-  processedCount: number,
-): ParsedSentence[] => {
-  const raw = String(aggregateText ?? '');
-  const lines = raw.split('\n');
-  const sentences: ParsedSentence[] = [];
-
-  for (let i = processedCount; i < lines.length; i += 1) {
-    const line = (lines[i] ?? '').trim();
-    if (!line || !line.startsWith('{')) continue;
-
-    try {
-      const parsed = JSON.parse(line);
-      const speakText = String(parsed.speak_text ?? parsed.speakText ?? '').trim();
-      const displayText = String(parsed.display_text ?? parsed.displayText ?? '').trim();
-      if (!speakText && !displayText) continue;
-
-      const sentence: ParsedSentence = {
-        speakText,
-        displayText: displayText || speakText,
-        lineIndex: i,
-      };
-
-      // action_intent 可选
-      if (parsed.action_intent && typeof parsed.action_intent === 'object') {
-        sentence.actionIntent = {
-          kind: parsed.action_intent.kind ?? 'blink',
-          intensity: parsed.action_intent.intensity,
-          durationMs: parsed.action_intent.durationMs,
-          priority: parsed.action_intent.priority,
-          cooldownMs: parsed.action_intent.cooldownMs,
-          reason: parsed.action_intent.reason,
-        };
-      }
-
-      sentences.push(sentence);
-    } catch {
-      // 不完整 JSON → 跳过，等待下一个 delta 补全
-    }
-  }
-
-  return sentences;
 };

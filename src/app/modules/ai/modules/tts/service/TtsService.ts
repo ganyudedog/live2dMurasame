@@ -11,7 +11,7 @@ import { shouldExportTtsAudioArtifacts } from '@app/shared/utils/ttsAudioArtifac
 import type { LiveKitPlaybackFeedbackPayload } from '@app/modules/ai/modules/tts/infrastructure/livekit/protocol';
 import type { LiveKitPort } from '../infrastructure/livekit/LiveKitPort';
 import type { LogService, TraceScope } from '@app/shared/logging/LogService';
-import type { QwenTtsTriggerInput, TtsRunResult, TtsRuntimeConfig, TtsWarmupResult, TtsSynthesisRequest, TtsPlaybackOptions } from '../domain/types';
+import type { QwenTtsTriggerInput, TtsRunResult, TtsRuntimeConfig, TtsWarmupResult, TtsSynthesisRequest, TtsPlaybackOptions, TtsPlaybackEvent } from '../domain/types';
 
 import { normalizeTtsConfig } from '../domain/config';
 import { trimText as normalizeText } from '../domain/requestPolicy';
@@ -51,6 +51,7 @@ export class TtsService {
   private readonly requests = new Map<string, { controller: AbortController; groupId?: string; config: TtsRuntimeConfig }>();
   private submissionTail: Promise<void> = Promise.resolve();
   private httpPlaybackTail: Promise<void> = Promise.resolve();
+  private readonly playbackListeners = new Set<(event: TtsPlaybackEvent) => void>();
 
   // 当前是否已调用 dispose，dispose 后实例不应再接受新的 speak 请求，且会中止所有未完成的请求。 
   private disposed = false;
@@ -80,6 +81,11 @@ export class TtsService {
 
   createDispatcher(requestId: string) {
     return createSentenceDispatcher(this, requestId, () => this.disposed);
+  }
+
+  onPlayback(listener: (event: TtsPlaybackEvent) => void): () => void {
+    this.playbackListeners.add(listener);
+    return () => this.playbackListeners.delete(listener);
   }
 
   async warmup(config: TtsRuntimeConfig, reason = 'manual'): Promise<void> {
@@ -113,6 +119,7 @@ export class TtsService {
     this.feedback.stop();
     this.feedback.dispose();
     this.player.dispose();
+    this.playbackListeners.clear();
   }
 
   // 根据当前配置进行预热，预热过程会检查必要的配置项并调用后端接口，记录日志以供分析预热失败的原因和时长。
@@ -170,6 +177,7 @@ export class TtsService {
     const config = normalizeTtsConfig(readTtsSnapshot(this.getConfigSnapshot)?.modelConfig?.tts);
     if (config.baseUrl) this.liveKit.setPlaybackMuted?.(config.baseUrl, true);
     for (const [id, request] of this.requests) {
+      this.emitPlayback({ requestId: id, queueGroupId: request.groupId, state: 'cancelled', transport: 'none' });
       if (request.config.baseUrl) {
         this.liveKit.setPlaybackMuted?.(request.config.baseUrl, true);
         void cancelTtsSynthesis({ log: this.log, liveKit: this.liveKit }, {
@@ -201,7 +209,11 @@ export class TtsService {
     const requestId = normalizeText(input.requestId) || `tts_${Date.now().toString(36)}`;
     const speakText = normalizeText(input.speakText);
     const displayText = normalizeText(input.displayText) || speakText;
+    const notify = (state: TtsPlaybackEvent['state'], transport: TtsPlaybackEvent['transport']) => {
+      this.emitPlayback({ requestId, queueGroupId: input.queueGroupId, sentenceIndex: input.sentenceIndex, state, transport });
+    };
     if (!speakText) {
+      notify('skipped', 'none');
       return {
         ok: false,
         skipped: true,
@@ -221,6 +233,7 @@ export class TtsService {
     const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
 
     if (!ttsConfig.enabled) {
+      notify('skipped', 'none');
       return {
         ok: false,
         skipped: true,
@@ -229,6 +242,7 @@ export class TtsService {
     }
 
     if (!ttsConfig.baseUrl) {
+      notify('error', 'none');
       this.notifyError?.('TTS 已启用但服务地址为空，请在 TTS 设置中填写 baseUrl');
       throw new Error('TTS 已启用但服务地址为空，请在 TTS 设置中填写 baseUrl');
     }
@@ -266,6 +280,16 @@ export class TtsService {
     let firstChunkLogged = false;
     const startedAt = performance.now();
     let sessionId: string | undefined;
+    let playbackStarted = false;
+    let playbackEnded = false;
+    const notifyPlayback = (state: TtsPlaybackEvent['state'], transport: TtsPlaybackEvent['transport']) => {
+      if (controller.signal.aborted || playbackEnded) return;
+      if (state === 'started') {
+        if (playbackStarted) return;
+        playbackStarted = true;
+      } else playbackEnded = true;
+      notify(state, transport);
+    };
     let submittedMs: number | undefined;
     let firstPcmMs: number | undefined;
     let queueDepth: number | undefined;
@@ -336,12 +360,15 @@ export class TtsService {
           ? event.payload as Record<string, unknown>
           : {};
         if (event.type === 'tts.started') {
+          notifyPlayback('started', 'livekit');
           beginPlaybackObservation();
           this.feedback.start(ttsConfig.baseUrl, session.sessionId, requestId, onFeedbackFailure, onFeedbackSnapshot, controller.signal);
         }
         if (event.type === 'tts.queued' && typeof payload.queue_depth === 'number') queueDepth = payload.queue_depth;
         if (event.type === 'tts.chunk_meta') firstPcmMs ??= Math.round(performance.now() - startedAt);
         if (event.type === 'tts.finished' || event.type === 'tts.canceled' || event.type === 'tts.error') {
+          if (event.type === 'tts.finished') notifyPlayback('finished', 'livekit');
+          else notifyPlayback(event.type === 'tts.canceled' ? 'cancelled' : 'error', 'livekit');
           if (capture) terminalPayload = payload;
           if (typeof payload.trace_id === 'string') backendTraceId = payload.trace_id;
           if (typeof payload.first_frame_ms === 'number') backendFirstFrameMs = payload.first_frame_ms;
@@ -376,6 +403,8 @@ export class TtsService {
 
       if (isRealtimeResponse) {
         releaseHttpPlayback();
+        notifyPlayback(realtimeState === 'tts.finished' ? 'finished'
+          : realtimeState === 'tts.canceled' ? 'cancelled' : 'error', 'livekit');
         // Source drain precedes tts.finished, but the receiver jitter buffer
         // can still hold the tail. This observation grace never delays submits.
         if (capture?.hasAudio && realtimeState === 'tts.finished') {
@@ -401,7 +430,7 @@ export class TtsService {
           transport: 'livekit',
         });
         return {
-          ok: realtimeState !== 'tts.canceled',
+          ok: realtimeState === 'tts.finished',
           skipped: realtimeState === 'tts.canceled',
           reason: realtimeState === 'tts.canceled' ? 'aborted' : undefined,
           streamed: true,
@@ -412,6 +441,7 @@ export class TtsService {
 
       await previousHttpPlayback;
       if (controller.signal.aborted) throw new DOMException('The operation was aborted', 'AbortError');
+      notifyPlayback('started', 'http');
       const playbackResult = await this.player.playResponse(response, {
         requestId,
         signal: controller.signal,
@@ -432,6 +462,7 @@ export class TtsService {
         bytesReceived: playbackResult.bytesReceived,
         mimeType: playbackResult.mimeType,
       });
+      notifyPlayback('finished', 'http');
 
       return {
         ok: true,
@@ -454,6 +485,7 @@ export class TtsService {
       }
 
       const message = String(rawError instanceof Error ? rawError.message : rawError);
+      notifyPlayback('error', 'none');
       trace.fail('TTS 请求执行失败', {
         ...resultSummary(),
         err: message,
@@ -513,5 +545,9 @@ export class TtsService {
         }
       });
     }, 260);
+  }
+
+  private emitPlayback(event: TtsPlaybackEvent): void {
+    this.playbackListeners.forEach((listener) => listener(event));
   }
 }

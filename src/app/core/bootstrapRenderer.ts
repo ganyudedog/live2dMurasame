@@ -5,6 +5,7 @@ import { registerServiceModules } from './loadServiceModules';
 import { TOKENS } from './serviceTokens';
 import { reaction } from 'mobx';
 import type { AiHostApi, ControlPanelHostApi, DesktopHostApi, Live2dHostApi } from './plugin/types';
+import { bindAiBubble } from './bindings/bindAiBubble';
 
 export interface RendererApplication {
   readonly container: ServiceContainer;
@@ -78,6 +79,7 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
     const electron = container.resolve(TOKENS.electron);
     const config = container.resolve(TOKENS.config);
     bindings.push(
+      bindAiBubble(container.resolve(TOKENS.ai), container.resolve(TOKENS.tts), live2d),
       reaction(() => electron.drag.active, (active) => live2d.setWindowDragging(active), { fireImmediately: true }),
       reaction(() => config.modelConfig?.bubble,
         (settings) => live2d.configureBubble(settings ?? {}),

@@ -8,8 +8,7 @@ import { bootstrapRenderer } from './core/bootstrapRenderer';
 import { ServiceProvider } from './core/ServiceProvider';
 import type { LogService } from './shared/logging/LogService';
 import { TOKENS } from './core/serviceTokens';
-import { BubbleMeasurementRoot } from './modules/live2d/modules/bubble/ui/BubbleMeasurementRoot';
-import { reaction } from 'mobx';
+import { bindBubbleMeasurementRoot } from './modules/live2d/modules/bubble/ui/imperative/bindBubbleMeasurementRoot';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -71,53 +70,11 @@ export const mountApplication = async (): Promise<void> => {
     </StrictMode>,
   );
 
-  // The measurement tree is deliberately isolated from the visible tree. Browser layout
-  // stays in UI infrastructure while Live2dService receives only stable numeric dimensions.
-  let measurementHost: HTMLDivElement | null = null;
-  let measurementRoot: ReturnType<typeof createRoot> | null = null;
-  let stopMeasurementReaction: (() => void) | null = null;
   const live2d = windowKind === 'pet' ? application.container.resolve(TOKENS.live2d) : null;
-  const disposeMeasurement = (expectedRequestId?: number) => {
-    if (expectedRequestId !== undefined && live2d && live2d.bubbleMeasurementRequestId !== expectedRequestId) return;
-    measurementRoot?.unmount();
-    measurementRoot = null;
-    measurementHost?.remove();
-    measurementHost = null;
-  };
-  const mountMeasurement = () => {
-    // A newer text or scale must replace any in-flight measurement tree.
-    disposeMeasurement();
-    if (!live2d?.playingMotionText) return;
-    measurementHost = document.createElement('div');
-    measurementHost.dataset.role = 'bubble-measurement-root';
-    document.body.appendChild(measurementHost);
-    measurementRoot = createRoot(measurementHost);
-    const requestId = live2d.bubbleMeasurementRequestId;
-    const handleMeasured = () => {
-      // The root exists only for the current text's layout sample.
-      queueMicrotask(() => disposeMeasurement(requestId));
-    };
-    measurementRoot.render(
-      <StrictMode>
-        <ServiceProvider container={application.container}>
-          <BubbleMeasurementRoot onMeasured={handleMeasured} />
-        </ServiceProvider>
-      </StrictMode>,
-    );
-  };
-  if (live2d) {
-    stopMeasurementReaction = reaction(
-      () => `${live2d.bubbleMeasurementRequestId}:${live2d.playingMotionText ?? ''}`,
-      mountMeasurement,
-      { fireImmediately: true },
-    );
-  }
+  const stopMeasurement = live2d ? bindBubbleMeasurementRoot(live2d) : null;
 
   window.addEventListener('pagehide', () => {
-    measurementRoot?.unmount();
-    stopMeasurementReaction?.();
-    stopMeasurementReaction = null;
-    measurementHost?.remove();
+    stopMeasurement?.();
     mainRoot.unmount();
     void application.dispose();
   }, { once: true });

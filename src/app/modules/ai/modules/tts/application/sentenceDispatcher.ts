@@ -9,9 +9,13 @@ export const createSentenceDispatcher = (speaker: SentenceSpeechPort, requestId:
   let sentenceIndex = 0;
   const results = { completed: 0, skipped: 0, failed: 0 };
   const pending = new Set<Promise<void>>();
-  const submit = (speakText: string, displayText: string): void => {
+  const submitted = new Set<number>();
+  const submit = (speakText: string, displayText: string, explicitIndex?: number): void => {
     if (stopped || isDisposed()) return;
-    const index = sentenceIndex++;
+    const index = explicitIndex ?? sentenceIndex;
+    if (submitted.has(index)) return;
+    submitted.add(index);
+    sentenceIndex = Math.max(sentenceIndex, index + 1);
     const task = (async () => {
       try {
         const result = await speaker.speakFromQwenReply({
@@ -28,7 +32,7 @@ export const createSentenceDispatcher = (speaker: SentenceSpeechPort, requestId:
     void task.finally(() => pending.delete(task));
   };
   return {
-    submit, wait: () => Promise.all([...pending]), summary: () => ({ submitted: sentenceIndex, ...results }),
+    submit, wait: () => Promise.all([...pending]), summary: () => ({ submitted: submitted.size, ...results }),
     stop: () => { stopped = true; },
   };
 };

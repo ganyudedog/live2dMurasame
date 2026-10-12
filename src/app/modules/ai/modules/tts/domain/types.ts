@@ -67,6 +67,14 @@ export interface TtsRunResult {
   mimeType?: string | null;
 }
 
+export interface TtsPlaybackEvent {
+  requestId: string;
+  queueGroupId?: string;
+  sentenceIndex?: number;
+  state: 'started' | 'finished' | 'cancelled' | 'error' | 'skipped';
+  transport: 'livekit' | 'http' | 'none';
+}
+
 export interface TtsWarmupResult {
   ok: boolean;
   skipped?: boolean;

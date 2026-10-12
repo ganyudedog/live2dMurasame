@@ -8,6 +8,7 @@ import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import type { AiRegister } from '@app/core/plugin/registers';
 import type { Disposable, TextAiInput, TextAiResponse, TextAiResult } from '@app/core/plugin/types';
+import type { AiDialogueEvent } from '../types';
 
 export class AiService {
   processing = false;
@@ -22,6 +23,7 @@ export class AiService {
   private disposed = false;
   private extensionRegister: AiRegister | null = null;
   private responseListeners = new Set<(response: TextAiResponse) => void>();
+  private dialogueListeners = new Set<(event: AiDialogueEvent) => void>();
   private stopChatSpeech: (() => void) | null = null;
   private activeController: AbortController | null = null;
   private activeRequest: ChatRequest | null = null;
@@ -101,6 +103,11 @@ export class AiService {
     return () => this.responseListeners.delete(listener);
   }
 
+  onDialogue(listener: (event: AiDialogueEvent) => void): Disposable {
+    this.dialogueListeners.add(listener);
+    return () => this.dialogueListeners.delete(listener);
+  }
+
   async processChatRequest(request: ChatRequest): Promise<void> {
     if (this.disposed) return;
     if (this.processing) {
@@ -132,6 +139,19 @@ export class AiService {
     let accumulatedDisplay = '';
     const consumer = this.tts.createDispatcher(request.id);
     this.stopChatSpeech = consumer.stop;
+    this.emitDialogue({ type: 'started', conversationId: request.id });
+    const submittedSpeech = new Set<number>();
+    const displayedSentences = new Set<number>();
+    const submitSpeech = (sentenceIndex: number, speakText: string, displayText = '') => {
+      if (!isCurrent() || !speakText || submittedSpeech.has(sentenceIndex)) return;
+      submittedSpeech.add(sentenceIndex);
+      consumer.submit(speakText, displayText, sentenceIndex);
+    };
+    const prepareDisplay = (sentenceIndex: number, text: string) => {
+      if (!isCurrent() || !text || displayedSentences.has(sentenceIndex)) return;
+      displayedSentences.add(sentenceIndex);
+      this.emitDialogue({ type: 'sentence', conversationId: request.id, requestId: `${request.id}_s${sentenceIndex}`, text });
+    };
 
     try {
       const aiConfig = this.stateBus.chatConfig;
@@ -140,6 +160,8 @@ export class AiService {
         signal: controller.signal,
         apiKey: aiConfig.apiKey,
         baseURL: aiConfig.baseURL,
+        onSentenceSpeechReady: ({ sentenceIndex, speakText }) => submitSpeech(sentenceIndex, speakText),
+        onSentenceDisplayReady: ({ sentenceIndex, displayText }) => prepareDisplay(sentenceIndex, displayText),
         onSentenceStreaming: (sentence) => {
           if (!isCurrent()) return;
           accumulatedDisplay = accumulatedDisplay
@@ -154,10 +176,11 @@ export class AiService {
             updatedAt: Date.now(),
           });
           this.emitTextResponse({ requestId: request.id, text: accumulatedDisplay, status: 'streaming' });
-          consumer.submit(sentence.speakText, sentence.displayText);
+          prepareDisplay(sentence.sentenceIndex, sentence.displayText);
+          submitSpeech(sentence.sentenceIndex, sentence.speakText, sentence.displayText);
           trace.record('sentence.received', {
             requestId: request.id,
-            sentenceIndex: accumulatedDisplay.split('\n').length - 1,
+            sentenceIndex: sentence.sentenceIndex,
             speakLength: sentence.speakText.length,
           });
         },
@@ -173,6 +196,8 @@ export class AiService {
       }
 
       const finalDisplay = accumulatedDisplay || result.reply?.display_text?.trim() || '';
+      if (!displayedSentences.size) prepareDisplay(0, finalDisplay);
+      if (!submittedSpeech.size && result.reply?.speak_text) submitSpeech(0, result.reply.speak_text, finalDisplay);
       this.activeDisplayText = finalDisplay;
       this.stateBus.publishChatRequest({ ...request, status: 'done' });
       this.stateBus.publishChatResponse({
@@ -184,6 +209,7 @@ export class AiService {
       });
       this.emitTextResponse({ requestId: request.id, text: finalDisplay, status: 'done' });
       await consumer.wait();
+      if (isCurrent()) this.emitDialogue({ type: 'completed', conversationId: request.id });
       trace.end({
         requestId: request.id,
         responseLength: finalDisplay.length,
@@ -209,6 +235,7 @@ export class AiService {
         updatedAt: Date.now(),
       });
       this.emitTextResponse({ requestId: request.id, text: message, status: 'error', error: message });
+      this.emitDialogue({ type: 'cancelled', conversationId: request.id });
       trace.fail('AI 对话请求失败', { requestId: request.id, err: message }, error);
     } finally {
       consumer.stop();
@@ -239,6 +266,7 @@ export class AiService {
         id: request.id, displayText: this.activeDisplayText, status: 'cancelled', error: null, updatedAt: Date.now(),
       });
       this.emitTextResponse({ requestId: request.id, text: this.activeDisplayText, status: 'cancelled' });
+      this.emitDialogue({ type: 'cancelled', conversationId: request.id });
     }
     runInAction(() => {
       this.processing = false;
@@ -262,6 +290,7 @@ export class AiService {
     this.asrSubscriptions.splice(0).forEach((dispose) => dispose());
     this.cancel('dispose');
     this.responseListeners.clear();
+    this.dialogueListeners.clear();
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'lifecycle',
       params: {},
@@ -273,5 +302,9 @@ export class AiService {
 
   private emitTextResponse(response: TextAiResponse): void {
     this.responseListeners.forEach((listener) => listener(response));
+  }
+
+  private emitDialogue(event: AiDialogueEvent): void {
+    this.dialogueListeners.forEach((listener) => listener(event));
   }
 }

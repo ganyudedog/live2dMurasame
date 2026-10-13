@@ -1,8 +1,10 @@
 import type { WindowKind } from './core/di/module';
 import ControlPanel from './modules/control-panel/ui/ControlPanel';
 import PetCanvas from './modules/live2d/ui/PetCanvas';
+import { SubtitleWindow } from './modules/subtitle/ui/SubtitleWindow';
 
 export const AppRoot = ({ windowKind }: { windowKind: WindowKind }) => {
+  if (windowKind === 'subtitle') return <SubtitleWindow />;
   if (windowKind === 'control-panel') {
     return (
       <div className="w-screen h-screen overflow-hidden relative pointer-events-auto">

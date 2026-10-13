@@ -7,6 +7,7 @@ const ports = new Set<MessagePort>();
 let state: SharedState = {
   rev: 0,
   global: { scale: 1 },
+  composer: { draft: '' },
   asr: {
     enabled: false,
     state: 'off',
@@ -23,6 +24,9 @@ let flushTimer: number | null = null;
 let pendingOps: PatchOp[] = [];
 
 const applyOp = (op: PatchOp) => {
+  if (op.path === 'composer.draft' && typeof op.value === 'string') {
+    state = { ...state, composer: { draft: op.value } }; return;
+  }
   if (op.path === 'global.scale') {
     const next = Number.isFinite(op.value) ? op.value : state.global.scale;
     state = {

@@ -1,5 +1,5 @@
 export interface MousePassthroughPolicyInput {
-  contextZoneActive: boolean;
+  inputActive: boolean;
   ignoreMouse: boolean;
   pointerInsideModel: boolean;
   pointerInsideBubble: boolean;
@@ -17,7 +17,7 @@ export interface MousePassthroughPolicyResult {
  * 纯计算：根据交互快照决定窗口是否应进入鼠标穿透。
  */
 export const resolveMousePassthroughPolicy = ({
-  contextZoneActive,
+  inputActive,
   ignoreMouse,
   pointerInsideModel,
   pointerInsideBubble,
@@ -25,7 +25,7 @@ export const resolveMousePassthroughPolicy = ({
   dragHandleHover,
   dragHandleActive,
 }: MousePassthroughPolicyInput): MousePassthroughPolicyResult => {
-  const shouldCapture = contextZoneActive || (!ignoreMouse && (
+  const shouldCapture = inputActive || (!ignoreMouse && (
     pointerInsideModel
     || pointerInsideBubble
     || pointerInsideHandle

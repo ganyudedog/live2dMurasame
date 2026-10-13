@@ -12,6 +12,7 @@ const setup = (enabled = false) => {
   let listener: ((event: PetAsrEvent) => void) | undefined;
   const unsubscribe = vi.fn();
   const api = {
+    finish: vi.fn().mockResolvedValue(true),
     start: vi.fn().mockResolvedValue(undefined), stop: vi.fn().mockResolvedValue(undefined), pushAudioChunk: vi.fn(),
     onEvent: vi.fn((callback: (event: PetAsrEvent) => void) => { listener = callback; return unsubscribe; }),
   };
@@ -24,6 +25,43 @@ const setup = (enabled = false) => {
 };
 
 describe('ASR service lifecycle', () => {
+  it('temporarily enables the microphone, submits the release final and restores disabled state', async () => {
+    const { service, api, stateBus, emit } = setup(false);
+    service.start();
+    emit({ type: 'asr.hold', held: true, key: 'Backquote', ts: 1 });
+    await vi.waitFor(() => expect(service.running).toBe(true));
+    emit({ type: 'asr.speech-start', utteranceId: 'held-turn', ts: 2 });
+    api.finish.mockImplementation(async () => {
+      emit({ type: 'asr.final', utteranceId: 'held-turn', text: '完整尾句', ts: 3 }); return true;
+    });
+    emit({ type: 'asr.hold', held: false, key: 'Backquote', ts: 4 });
+    await vi.waitFor(() => expect(service.running).toBe(false));
+    expect(api.finish).toHaveBeenCalledOnce();
+    expect(stateBus.asr.enabled).toBe(false);
+    expect(stateBus.publishChatRequest).toHaveBeenCalledWith(expect.objectContaining({ text: '完整尾句' }));
+    expect(api.stop).toHaveBeenCalledOnce(); await service.dispose();
+  });
+
+  it('preserves a continuously enabled microphone when the shortcut is released', async () => {
+    const { service, api, emit } = setup(true);
+    service.start(); await vi.waitFor(() => expect(service.running).toBe(true));
+    emit({ type: 'asr.hold', held: true, key: 'F8', ts: 1 });
+    emit({ type: 'asr.hold', held: false, key: 'F8', ts: 2 });
+    await Promise.resolve();
+    expect(api.stop).not.toHaveBeenCalled(); expect(api.finish).not.toHaveBeenCalled();
+    await service.dispose();
+  });
+
+  it('does not open the microphone if a quick hold ends before model readiness', async () => {
+    const { service, api, emit } = setup(false);
+    let ready!: () => void;
+    api.start.mockImplementation(() => new Promise<void>((resolve) => { ready = resolve; }));
+    service.start(); emit({ type: 'asr.hold', held: true, key: 'F8', ts: 1 });
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledOnce());
+    emit({ type: 'asr.hold', held: false, key: 'F8', ts: 2 }); ready();
+    await vi.waitFor(() => expect(api.stop).toHaveBeenCalledOnce());
+    expect(capture.start).not.toHaveBeenCalled(); await service.dispose();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     capture.start.mockResolvedValue(undefined);

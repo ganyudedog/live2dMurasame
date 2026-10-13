@@ -14,6 +14,7 @@ import MotionSettingsPage from './pages/MotionSettingsPage';
 import RagSettingsPage from './pages/RagSettingsPage';
 import RagParamsPage from './pages/RagParamsPage';
 import { PluginPanelHost } from '@app/core/plugin/PluginPanelHost';
+import { SubtitleSettings } from '../modules/subtitle/ui/SubtitleSettings';
 
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);
@@ -86,7 +87,7 @@ const ControlPanel: React.FC = observer(() => {
       )}
 
       {activeTab === 'ai-settings' && (
-        <AiSettingsPage
+        <div className="space-y-4"><AiSettingsPage
           model={service.aiSettings.model}
           apiBaseUrl={service.aiSettings.baseURL}
           apiKey={service.aiSettings.apiKey}
@@ -107,7 +108,7 @@ const ControlPanel: React.FC = observer(() => {
             return null;
           })}
           onAsrConfigChange={(next) => service.persistAsrConfig(next).catch(reportError)}
-        />
+        /><div className="px-4 pb-4"><SubtitleSettings config={service.config.globalModelConfig ?? {}} onChange={(patch) => service.config.updateGlobalConfig(patch)} /></div></div>
       )}
 
       {activeTab === 'ai-rag' && (

@@ -1,7 +1,7 @@
 import type { ServiceContainer } from './container';
 import type { ServiceToken } from './token';
 
-export type WindowKind = 'pet' | 'control-panel';
+export type WindowKind = 'pet' | 'control-panel' | 'subtitle';
 
 export interface ServiceModule {
   readonly id: string;

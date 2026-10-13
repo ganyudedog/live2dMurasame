@@ -12,8 +12,12 @@ import type { LlmService } from '../modules/ai/modules/llm/service/LlmService';
 import type { TtsService } from '../modules/ai/modules/tts/service/TtsService';
 import type { AsrService } from '../modules/ai/modules/asr/service/AsrService';
 import type { PluginRuntime } from './plugin/PluginRuntime';
+import type { SubtitleService } from '../modules/subtitle/service/SubtitleService';
+import type { FloatingComposerService } from '../modules/live2d/modules/interaction/service/FloatingComposerService';
 
 export const TOKENS = {
+  subtitle: createServiceToken<SubtitleService>('SubtitleService'),
+  floatingComposer: createServiceToken<FloatingComposerService>('FloatingComposerService'),
   bootstrapContext: createServiceToken<BootstrapContext>('BootstrapContext'),
   electron: createServiceToken<ElectronService>('ElectronService'),
   log: createServiceToken<LogService>('LogService'),

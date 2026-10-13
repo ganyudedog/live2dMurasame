@@ -129,11 +129,12 @@ const AIAPI = {
 // electron侧接入asr功能，给渲染进程请求
 
 const AsrAPI = {
-  getSharedBufferInfo: (options) => createAsrSharedBufferInfo(options),
   pushAudioChunk: (payload) => ipcRenderer.invoke('ddd:live2denv:asr:push-audio', payload),
   getStatus: () => ipcRenderer.invoke('ddd:live2denv:asr:status'),
   start: () => ipcRenderer.invoke('ddd:live2denv:asr:start'),
   stop: () => ipcRenderer.invoke('ddd:live2denv:asr:stop'),
+  finish: () => ipcRenderer.invoke('ddd:live2denv:asr:finish'),
+  pause: () => ipcRenderer.invoke('ddd:live2denv:asr:pause'),
   onEvent: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, payload) => {
@@ -150,6 +151,21 @@ const AsrAPI = {
 
 const SystemAPI = {
   debugTrace: (payload) => ipcRenderer.send('ddd:system:renderer-trace', payload),
+};
+
+const SubtitleAPI = {
+  getState: () => ipcRenderer.invoke('ddd:subtitle:state'),
+  updateSettings: (patch) => ipcRenderer.invoke('ddd:subtitle:settings', patch),
+  preview: (enabled) => ipcRenderer.invoke('ddd:subtitle:preview', enabled),
+  resetPosition: () => ipcRenderer.invoke('ddd:subtitle:reset-position'),
+  resetAppearance: () => ipcRenderer.invoke('ddd:subtitle:reset-appearance'),
+  gesture: (payload) => ipcRenderer.send('ddd:subtitle:gesture', payload),
+  replyStarted: (id) => ipcRenderer.send('ddd:subtitle:reply-started', id),
+  onState: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ddd:subtitle:state', listener);
+    return () => ipcRenderer.removeListener('ddd:subtitle:state', listener);
+  },
 };
 
 const TtsDiagnosticsAPI = {
@@ -177,5 +193,6 @@ contextBridge.exposeInMainWorld('ModelAPI', ModelAPI);
 contextBridge.exposeInMainWorld('MemoryAPI', MemoryAPI);
 contextBridge.exposeInMainWorld('AIAPI', AIAPI);
 contextBridge.exposeInMainWorld('AsrAPI', AsrAPI);
+contextBridge.exposeInMainWorld('SubtitleAPI', SubtitleAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);
 contextBridge.exposeInMainWorld('TtsDiagnosticsAPI', TtsDiagnosticsAPI);

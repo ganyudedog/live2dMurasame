@@ -45,6 +45,7 @@ export type SharedState = {
   global: {
     scale: number;
   };
+  composer?: { draft: string };
   asr: {
     enabled: boolean;
     state: 'off' | 'requesting' | 'active' | 'denied' | 'error';
@@ -66,7 +67,7 @@ export type SharedState = {
 export type PatchOp = {
   path:
     // global
-    | 'global.scale'
+    | 'global.scale' | 'composer.draft'
     // asr
     | 'asr.enabled' | 'asr.state' | 'asr.partialText'
     | 'asr.error' | 'asr.throttled' | 'asr.lastUpdatedAt'

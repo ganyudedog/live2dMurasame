@@ -33,6 +33,7 @@ export class StateBusService {
   connected = false;
   revision = 0;
   scale = 1;
+  composerDraft = '';
   asr: SharedState['asr'] = { ...DEFAULT_ASR_STATE };
   chatConfig: ChatConfig = { ...DEFAULT_CHAT_CONFIG };
   chatRequest: ChatRequest | null = null;
@@ -45,6 +46,7 @@ export class StateBusService {
   private readonly windowKind: BootstrapContext['windowKind'];
   private unsubscribeWorker: (() => void) | null = null;
   private unsubscribeAsr: (() => void) | null = null;
+  private pendingComposerDraft: string | null = null;
 
   constructor(
     config: ConfigService,
@@ -60,6 +62,7 @@ export class StateBusService {
       connected: observable,
       revision: observable,
       scale: observable,
+      composerDraft: observable,
       asr: observableRef,
       chatConfig: observableRef,
       chatRequest: observableRef,
@@ -103,6 +106,12 @@ export class StateBusService {
 
   publishChatRequest(request: ChatRequest): void {
     this.dispatch([{ path: 'chat.request', value: request }], 'chat.request');
+  }
+
+  publishComposerDraft(text: string): void {
+    this.pendingComposerDraft = text;
+    runInAction(() => { this.composerDraft = text; });
+    this.dispatch([{ path: 'composer.draft', value: text }], 'composer.draft');
   }
 
   publishChatResponse(response: ChatResponse): void {
@@ -152,6 +161,7 @@ export class StateBusService {
     runInAction(() => {
       this.revision = state.rev;
       this.scale = state.global.scale;
+      this.composerDraft = state.composer?.draft ?? '';
       this.asr = { ...state.asr };
       this.chatConfig = { ...state.config };
       this.chatRequest = state.chat.request;
@@ -164,6 +174,11 @@ export class StateBusService {
     let nextConfig = this.chatConfig;
     for (const op of ops) {
       if (op.path === 'global.scale' && typeof op.value === 'number') this.scale = op.value;
+      else if (op.path === 'composer.draft' && typeof op.value === 'string') {
+        if (this.pendingComposerDraft === null || this.pendingComposerDraft === op.value) {
+          this.composerDraft = op.value; this.pendingComposerDraft = null;
+        }
+      }
       else if (op.path === 'asr.enabled') nextAsr = { ...nextAsr, enabled: Boolean(op.value) };
       else if (op.path === 'asr.state' && typeof op.value === 'string') nextAsr = { ...nextAsr, state: op.value as SharedState['asr']['state'] };
       else if (op.path === 'asr.partialText' && typeof op.value === 'string') nextAsr = { ...nextAsr, partialText: op.value };
@@ -185,7 +200,7 @@ export class StateBusService {
     const ops: PatchOp[] = [];
     if (event.type === 'mic.state') {
       ops.push(
-        { path: 'asr.enabled', value: event.enabled },
+        // enabled is the user's persistent choice; temporary hold-to-talk must not overwrite it.
         { path: 'asr.state', value: event.state },
         { path: 'asr.lastUpdatedAt', value: event.ts },
       );
@@ -194,6 +209,7 @@ export class StateBusService {
         { path: 'asr.throttled', value: false },
       );
       if (event.state === 'off' || event.state === 'error') ops.push({ path: 'asr.partialText', value: '' });
+      if (event.state === 'error') ops.push({ path: 'asr.enabled', value: false });
     } else if (event.type === 'asr.speech-start') {
       ops.push({ path: 'asr.partialText', value: '' }, { path: 'asr.lastUpdatedAt', value: event.ts });
     } else if (event.type === 'asr.partial') {

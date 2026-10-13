@@ -17,17 +17,17 @@ const registerLive2dEnvIpcImpl = ({ live2dEnvironmentService, pickModelFile, log
 
   ipcMain.handle('ddd:live2denv:get', () => live2dEnvironmentService.root.toPersistence());
   ipcMain.handle('ddd:live2denv:update', (_event, patch = {}) => {
-    const snapshot = live2dEnvironmentService.update(isObject(patch) ? patch : {});
-    publish(snapshot);
+    const changes = isObject(patch) ? patch : {};
+    const snapshot = live2dEnvironmentService.update(changes);
+    // Settings changes have already published through the service subscription.
+    if (!isObject(changes.settings)) publish(snapshot);
     return snapshot.live2denvConfig;
   });
   ipcMain.handle('ddd:live2denv:list-models', () => live2dEnvironmentService.listModelPaths());
   ipcMain.handle('ddd:live2denv:pick-model', () => pickModelFile());
 
   const readSettings = () => live2dEnvironmentService.root.settings;
-  const updateSettings = (patch) => {
-    const snapshot = live2dEnvironmentService.updateSettings(isObject(patch) ? patch : {});
-    const settings = snapshot.globalModelConfig;
+  live2dEnvironmentService.onSettingsChanged(({ snapshot, settings, patch }) => {
     if (Object.prototype.hasOwnProperty.call(patch ?? {}, 'debugModeEnabled')) {
       logService?.setDebugPolicy?.(settings.debugModeEnabled);
     }
@@ -36,10 +36,9 @@ const registerLive2dEnvIpcImpl = ({ live2dEnvironmentService, pickModelFile, log
     }
     publish(snapshot);
     sendAll('ddd:live2denv:global:changed', settings);
-    return settings;
-  };
+  });
   ipcMain.handle('ddd:live2denv:global:get', readSettings);
-  ipcMain.handle('ddd:live2denv:global:update', (_event, patch = {}) => updateSettings(patch));
+  ipcMain.handle('ddd:live2denv:global:update', (_event, patch = {}) => live2dEnvironmentService.updateSettings(patch).globalModelConfig);
   ipcMain.handle('ddd:live2denv:ai:get', () => {
     const settings = readSettings();
     return { model: settings.model ?? '', apiKey: settings.apiKey ?? '', baseURL: settings.baseURL ?? '', displayLang: settings.displayLang ?? 'zh' };
@@ -50,7 +49,7 @@ const registerLive2dEnvIpcImpl = ({ live2dEnvironmentService, pickModelFile, log
     if (typeof patch?.apiKey === 'string') allowed.apiKey = patch.apiKey;
     if (typeof patch?.baseURL === 'string') allowed.baseURL = patch.baseURL;
     if (['zh', 'en', 'ja', 'ko'].includes(patch?.displayLang)) allowed.displayLang = patch.displayLang;
-    const settings = updateSettings(allowed);
+    const settings = live2dEnvironmentService.updateSettings(allowed).globalModelConfig;
     const ai = { model: settings.model ?? '', apiKey: settings.apiKey ?? '', baseURL: settings.baseURL ?? '', displayLang: settings.displayLang ?? 'zh' };
     sendAll('ddd:live2denv:ai:changed', ai);
     return ai;

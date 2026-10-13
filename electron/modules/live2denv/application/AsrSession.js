@@ -95,6 +95,14 @@ export const createAsrSession = ({ recognizer, vad, profile = 'conversation', re
   };
 
   return {
+    finish() {
+      if (disposed) return;
+      if (speaking && remainder.length) decode(remainder);
+      remainder = new Float32Array(0);
+      if (speaking) finishSpeech();
+      preRoll = [];
+      vad.reset();
+    },
     accept(samples) {
       if (disposed) return;
       const merged = new Float32Array(remainder.length + samples.length);

@@ -10,8 +10,13 @@ try {
     refineFinal: adapter.refineFinal,
     emit: (event) => parentPort.postMessage({ type: 'event', event }),
   });
-  parentPort.on('message', ({ samples }) => {
+  parentPort.on('message', ({ samples, type, id }) => {
     try {
+      if (type === 'finish') {
+        session.finish();
+        parentPort.postMessage({ type: 'finished', id });
+        return;
+      }
       session.accept(samples);
       parentPort.postMessage({ type: 'consumed', samples: samples.length });
     } catch (error) {

@@ -12,16 +12,15 @@ export interface UseMousePassthroughParams {
   pointerInsideModelRef: RefObject<boolean>;
   pointerInsideBubbleRef: RefObject<boolean>;
   pointerInsideHandleRef: RefObject<boolean>;
-  pointerInsideContextZoneRef: RefObject<boolean>;
+  pointerInsideInputRef: RefObject<boolean>;
+  inputFocusedRef: RefObject<boolean>;
   dragHandleHoverRef: RefObject<boolean>;
   dragHandleActiveRef: RefObject<boolean>;
-  contextZoneActiveUntilRef: RefObject<number>;
   cursorPollRafRef: RefObject<number | null>;
   pointerX: RefObject<number>;
   pointerY: RefObject<number>;
   updateDragHandlePositionRef: RefObject<((force?: boolean) => void) | null>;
   recomputeWindowPassthroughRef: RefObject<() => void>;
-  clearContextZoneLatchTimer: () => void;
 }
 
 export interface UseMousePassthroughResult {
@@ -43,16 +42,15 @@ export const useMousePassthrough = ({
   pointerInsideModelRef,
   pointerInsideBubbleRef,
   pointerInsideHandleRef,
-  pointerInsideContextZoneRef,
+  pointerInsideInputRef,
+  inputFocusedRef,
   dragHandleHoverRef,
   dragHandleActiveRef,
-  contextZoneActiveUntilRef,
   cursorPollRafRef,
   pointerX,
   pointerY,
   updateDragHandlePositionRef,
   recomputeWindowPassthroughRef,
-  clearContextZoneLatchTimer,
 }: UseMousePassthroughParams): UseMousePassthroughResult => {
   const { startCursorPoll, stopCursorPoll } = useCursorTracking({
     getWindowSnapshot,
@@ -86,16 +84,8 @@ export const useMousePassthrough = ({
   }, [mousePassthroughRef, startCursorPoll, stopCursorPoll, windowApi]);
 
   const recomputeWindowPassthrough = useCallback(() => {
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    const contextZoneActive = pointerInsideContextZoneRef.current || contextZoneActiveUntilRef.current > now;
-    if (!contextZoneActive && contextZoneActiveUntilRef.current !== 0) {
-      contextZoneActiveUntilRef.current = 0;
-      clearContextZoneLatchTimer();
-    }
     const policy = resolveMousePassthroughPolicy({
-      contextZoneActive,
+      inputActive: pointerInsideInputRef.current || inputFocusedRef.current,
       ignoreMouse: ignoreMouseRef.current,
       pointerInsideModel: pointerInsideModelRef.current,
       pointerInsideBubble: pointerInsideBubbleRef.current,
@@ -105,15 +95,14 @@ export const useMousePassthrough = ({
     });
     setWindowMousePassthrough(policy.shouldPassthrough);
   }, [
-    clearContextZoneLatchTimer,
     dragHandleActiveRef,
     dragHandleHoverRef,
     ignoreMouseRef,
     pointerInsideBubbleRef,
-    pointerInsideContextZoneRef,
+    pointerInsideInputRef,
+    inputFocusedRef,
     pointerInsideHandleRef,
     pointerInsideModelRef,
-    contextZoneActiveUntilRef,
     setWindowMousePassthrough,
   ]);
 
@@ -133,8 +122,7 @@ export const useMousePassthrough = ({
   useEffect(() => () => {
     stopCursorPoll();
     setWindowMousePassthrough(false);
-    clearContextZoneLatchTimer();
-  }, [stopCursorPoll, setWindowMousePassthrough, clearContextZoneLatchTimer]);
+  }, [stopCursorPoll, setWindowMousePassthrough]);
 
   return {
     setWindowMousePassthrough,

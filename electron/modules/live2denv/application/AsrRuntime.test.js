@@ -16,6 +16,30 @@ const setup = () => {
 };
 
 describe('ASR worker lifecycle', () => {
+  it('preloads without enabling input and reuses the model after a hold release', async () => {
+    const { runtime, worker, createWorker } = setup();
+    const prepared = runtime.prepare(); worker.emit('message', { type: 'ready' }); await prepared;
+    expect(runtime.getStatus()).toMatchObject({ enabled: false, running: true, state: 'off' });
+    expect(runtime.pushAudioChunk({ samples: new Float32Array(512) })).toBe(false);
+    await runtime.start();
+    expect(runtime.getStatus().enabled).toBe(true);
+    await runtime.pause(); await runtime.start();
+    expect(createWorker).toHaveBeenCalledOnce(); expect(worker.terminate).not.toHaveBeenCalled();
+    await runtime.stop(); expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+  it('waits for final events before acknowledging hold release', async () => {
+    const { runtime, worker } = setup();
+    const events = [];
+    const off = runtime.subscribe((event) => events.push(event));
+    const starting = runtime.start(); worker.emit('message', { type: 'ready' }); await starting;
+    const finish = runtime.finish();
+    const { id } = worker.postMessage.mock.calls.at(-1)[0];
+    worker.emit('message', { type: 'event', event: { type: 'asr.final', text: 'tail' } });
+    worker.emit('message', { type: 'finished', id });
+    expect(await finish).toBe(true);
+    expect(events.at(-1)).toEqual({ type: 'asr.final', text: 'tail' });
+    off(); await runtime.stop();
+  });
   it('migrates persisted legacy endpoint defaults exactly once', () => {
     const legacy = { rule1MinTrailingSilence: 2.4, rule2MinTrailingSilence: 1.2 };
     expect(normalizeLive2denvConfig({ settings: { asr: legacy } }).settings.asr).toMatchObject({ endpointPresetVersion: 1, rule1MinTrailingSilence: 1.2, rule2MinTrailingSilence: 0.7 });

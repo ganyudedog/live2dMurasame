@@ -354,7 +354,7 @@ export const warmupTtsModel = async (
   try {
     await ensureRealtimeConnected(dependencies, baseUrl, `warmup:${options?.reason || 'auto'}`, options?.signal, trace);
     const sessionId = await ensureSession(dependencies, baseUrl, options?.signal, trace);
-  const requestId = `warmup_${(options?.reason || 'auto').replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now().toString(36)}`;
+    const requestId = `warmup_${(options?.reason || 'auto').replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now().toString(36)}`;
     await ensureModelReady(dependencies, baseUrl, sessionId, requestId, config, options?.signal, trace);
     trace.end({ baseUrl, sessionId, requestId });
   } catch (error) {

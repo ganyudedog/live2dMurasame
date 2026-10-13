@@ -20,6 +20,8 @@ declare global {
     baseURL?: string;
     displayLang?: 'zh' | 'en' | 'ja' | 'ko';
     asr?: PetAsrConfig;
+    subtitle?: Partial<import('../../shared/subtitleSettings.js').SubtitleSettings>;
+    pushToTalk?: Partial<import('../../shared/subtitleSettings.js').PushToTalkSettings>;
   }
 
   interface PetAsrConfig {
@@ -501,14 +503,34 @@ declare global {
     ts: number;
   }
 
-  type PetAsrEvent = PetAsrPartialEvent | PetAsrFinalEvent | PetAsrSpeechEvent | PetAsrErrorEvent | PetAsrThrottleEvent | PetMicStateEvent;
+  interface PetAsrHoldEvent { type: 'asr.hold'; held: boolean; key: string; ts: number }
+  type PetAsrEvent = PetAsrPartialEvent | PetAsrFinalEvent | PetAsrSpeechEvent | PetAsrErrorEvent | PetAsrThrottleEvent | PetMicStateEvent | PetAsrHoldEvent;
 
   interface PetAsrAPI {
     pushAudioChunk?: (payload: { samples: Float32Array | number[] }) => Promise<boolean | undefined>;
     getStatus?: () => Promise<PetAsrStatus | undefined>;
     start?: () => Promise<PetAsrStatus | undefined>;
     stop?: () => Promise<PetAsrStatus | undefined>;
+    finish?: () => Promise<boolean>;
+    pause?: () => Promise<PetAsrStatus | undefined>;
     onEvent?: (callback: (event: PetAsrEvent) => void) => (() => void) | void;
+  }
+
+  interface PetSubtitleState {
+    version: number; text: string; phase: 'idle' | 'listening' | 'submitted' | 'preview';
+    settings: import('../../shared/subtitleSettings.js').SubtitleSettings;
+    bounds: import('../../shared/subtitleSettings.js').SubtitleBounds;
+    fading: boolean; adjusting: boolean;
+  }
+  interface PetSubtitleAPI {
+    getState: () => Promise<PetSubtitleState>;
+    updateSettings: (patch: Partial<import('../../shared/subtitleSettings.js').SubtitleSettings>) => Promise<void>;
+    preview: (enabled: boolean) => Promise<void>;
+    resetPosition: () => Promise<void>;
+    resetAppearance: () => Promise<void>;
+    gesture: (payload: { action: 'start' | 'end'; edge?: string }) => void;
+    replyStarted: (conversationId: string) => void;
+    onState: (callback: (state: PetSubtitleState) => void) => () => void;
   }
 
   interface Window {
@@ -520,6 +542,7 @@ declare global {
     MemoryAPI?: PetMemoryAPI;
     AIAPI?: PetAIAPI;
     AsrAPI?: PetAsrAPI;
+    SubtitleAPI?: PetSubtitleAPI;
     SystemAPI?: PetSystemAPI;
     TtsDiagnosticsAPI?: PetTtsDiagnosticsAPI;
     __PET_CONFIG__?: PetConfigSnapshot;

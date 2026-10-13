@@ -32,6 +32,15 @@ const setup = (options = {}) => {
 };
 
 describe('VAD-driven ASR turn state', () => {
+  it('finishes a held turn exactly once without waiting for trailing silence', () => {
+    const { session, feed, emit, vad } = setup();
+    feed(true, '松开前最后一句');
+    session.finish(); session.finish();
+    expect(emit.mock.calls.filter(([event]) => event.type === 'asr.final')).toEqual([
+      [expect.objectContaining({ text: '松开前最后一句' })],
+    ]);
+    expect(vad.reset).toHaveBeenCalledTimes(2);
+  });
   it('interrupts immediately on confirmed speech and waits for VAD end to publish final', () => {
     const { feed, emit, recognizer, stream } = setup();
     feed(false);

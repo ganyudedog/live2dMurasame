@@ -1,15 +1,24 @@
 import { createConfigSnapshot } from './ConfigSnapshotAssembler.js';
 
+const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
+
 export class Live2dEnvironmentService {
-  constructor({ repository, modelEnvironmentService }) {
+  constructor({ repository, modelEnvironmentService, log }) {
     this.repository = repository;
     this.modelEnvironmentService = modelEnvironmentService;
     this.environment = null;
+    this.log = log;
+    this.settingsChangedListeners = new Set();
   }
 
   initialize() {
-    this.environment = this.repository.load();
-    return this.snapshot();
+    try {
+      this.environment = this.repository.load();
+      return this.snapshot();
+    } catch (error) {
+      this.log?.error?.('live2denv', 'environment.initialize.failed', { message: String(error?.message ?? error) });
+      throw error;
+    }
   }
 
   get root() {
@@ -32,15 +41,41 @@ export class Live2dEnvironmentService {
     } else if (Object.prototype.hasOwnProperty.call(patch, 'currentModelPath')) {
       next = current.selectModel(patch.currentModelPath);
     }
-    if (patch.settings && typeof patch.settings === 'object') {
+    if (isObject(patch.settings)) {
       next = next.withSettings(patch.settings);
     }
-    this.environment = this.repository.save(next);
-    return this.snapshot();
+    try {
+      this.environment = this.repository.save(next);
+    } catch (error) {
+      this.log?.error?.('live2denv', 'environment.persist.failed', {
+        message: String(error?.message ?? error), hasSettings: isObject(patch.settings),
+      });
+      throw error;
+    }
+    const snapshot = this.snapshot();
+    if (isObject(patch.settings)) this.notifySettingsChanged(snapshot, patch.settings);
+    return snapshot;
   }
 
   updateSettings(patch = {}) {
-    return this.update({ settings: patch });
+    return this.update({ settings: isObject(patch) ? patch : {} });
+  }
+
+  notifySettingsChanged(snapshot, patch) {
+    const event = { snapshot, settings: snapshot.globalModelConfig, patch };
+    // Persistence must succeed before adapters or other services observe the change.
+    for (const listener of this.settingsChangedListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        this.log?.error?.('live2denv', 'settings.listener.failed', { message: String(error?.message ?? error) });
+      }
+    }
+  }
+
+  onSettingsChanged(listener) {
+    this.settingsChangedListeners.add(listener);
+    return () => this.settingsChangedListeners.delete(listener);
   }
 
   recordWindowBounds(bounds) {

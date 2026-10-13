@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { resolveWindowKind } from './resolveWindowKind';
 
 describe('renderer window selection', () => {
+  it('selects the independent subtitle renderer', () => {
+    expect(resolveWindowKind('?window=subtitle')).toBe('subtitle');
+  });
   it('selects the control panel', () => {
     expect(resolveWindowKind('?window=control-panel')).toBe('control-panel');
   });

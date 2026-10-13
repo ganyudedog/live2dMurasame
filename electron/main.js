@@ -20,6 +20,8 @@ import {
 import { detectModelFilePath } from './utils/path.js';
 import { configureConfigDao } from './dao/configDao.js';
 import { registerTtsDiagnosticsIpc } from './utils/ttsDiagnostics.js';
+import { createSubtitleModule } from './modules/subtitle/module.js';
+import { HoldToTalkService } from './modules/asr/service/HoldToTalkService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -239,9 +241,12 @@ const modelEnvironmentService = new ModelEnvironmentService({
 const live2dEnvironmentService = new Live2dEnvironmentService({
     repository: new JsonLive2dEnvironmentRepository(),
     modelEnvironmentService,
+    log: backendLog,
 });
 let applicationIpc;
 let windowApplicationService;
+let subtitleService;
+let holdToTalkService;
 
 windowApplicationService = new WindowApplicationService({
     getMainWindow: () => mainWindow,
@@ -267,6 +272,11 @@ applicationIpc = registerDomainIpc({
     logService: backendLog,
 });
 const asrRuntime = applicationIpc.asrRuntime;
+const unsubscribeSettings = live2dEnvironmentService.onSettingsChanged(({ settings, patch }) => {
+    subtitleService?.configure(settings.subtitle);
+    holdToTalkService?.configure(settings.pushToTalk);
+    if (settings.pushToTalk?.enabled && settings.asr?.modelDir && !asrRuntime.getStatus().lastError) void asrRuntime.prepare();
+});
 
 const hideControlPanel = () => {
     if (controlPanelWindow && !controlPanelWindow.isDestroyed()) {
@@ -371,8 +381,11 @@ const createMainWindow = () => {
 
 app.on('before-quit', () => {
     isQuitting = true;
+    unsubscribeSettings();
     windowApplicationService?.dispose();
     asrRuntime?.dispose?.();
+    subtitleService?.dispose();
+    holdToTalkService?.dispose();
     flushPendingAutoLaunchSetting();
 });
 
@@ -429,6 +442,21 @@ app.whenReady().then(async () => {
     backendLog.setDebugPolicy?.(loadedConfig?.debugModeEnabled);
     applyAutoLaunchSetting(loadedConfig.autoLaunch, backendLog);
     createMainWindow();
+    subtitleService = createSubtitleModule({
+        preload: path.join(__dirname, 'preload.js'),
+        loadWindow: (target) => target.loadURL(devServerUrl ? `${devServerUrl}?window=subtitle` : 'app://./index.html?window=subtitle'),
+        getPetWindow: () => mainWindow,
+        saveSettings: (patch) => live2dEnvironmentService.updateSettings({ subtitle: patch }),
+        log: backendLog,
+    });
+    subtitleService.start(loadedConfig.subtitle);
+    asrRuntime.subscribe((event) => subtitleService.onAsr(event));
+    holdToTalkService = new HoldToTalkService({
+        emit: (event) => applicationIpc.sendAll('ddd:live2denv:asr:event', event), log: backendLog,
+    });
+    holdToTalkService.start(loadedConfig.pushToTalk);
+    if (loadedConfig.pushToTalk?.enabled && loadedConfig.asr?.modelDir) void asrRuntime.prepare();
+    mainWindow.on('closed', () => { subtitleService?.window?.close(); });
     await ensureModelSelectedOnStartup();
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {

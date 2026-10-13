@@ -53,7 +53,7 @@ export default function ModelParamsPage({
           </label>
 
           <label className="label cursor-pointer justify-between border border-base-300 rounded-box px-3 py-2">
-            <span className="label-text text-sm">悬浮显示拖动</span>
+            <span className="label-text text-sm">悬浮显示输入框</span>
             <input
               type="checkbox"
               className="toggle toggle-sm"

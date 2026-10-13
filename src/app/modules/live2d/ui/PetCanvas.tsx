@@ -4,7 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { ChatBubble } from '../modules/bubble/ui/components/ChatBubble';
 import DebugSymmetricMasks from '../modules/layout/ui/components/DebugSymmetricMasks';
 import DebugVisualMasks from '../modules/layout/ui/components/DebugVisualMasks';
-import OpenTheMenu from '../modules/interaction/ui/components/OpenTheMenu';
+import { FloatingComposer } from '../modules/interaction/ui/components/FloatingComposer';
 import { Application } from 'pixi.js';
 import type { Live2DModel as Live2DModelType } from '../modules/model/runtime/live2d/runtime';
 import { usePetModel } from '../modules/model/runtime/hooks/usePetModel';
@@ -16,15 +16,10 @@ import { bindPointerGestures } from '../modules/interaction/ui/imperative/bindPo
 import { usePetCanvasBootstrap } from './hooks/usePetCanvasBootstrap';
 import { useWindowDragGesture } from '../modules/interaction/ui/hooks/useWindowDragGesture';
 import { useLayoutCommitter } from '../modules/interaction/runtime/geometry/commit/LayoutCommitter';
-import { solveContextZoneLayout } from '../modules/interaction/runtime/geometry/solvers/ContextZoneLayoutSolver';
 import { solveInteractivity } from '../modules/interaction/runtime/geometry/solvers/InteractivitySolver';
-import { solveContextZoneActivity } from '../modules/interaction/runtime/geometry/solvers/ContextZoneActivitySolver';
 import { debug, info } from '@app/shared/logging/compat';
 import { useService } from '@app/core/useService';
 import { TOKENS } from '@app/core/serviceTokens';
-import {
-  CONTEXT_ZONE_LATCH_MS,
-} from '../modules/interaction/domain/constants';
 
 import { clampAngleY as clampAngleYBase, clampEyeBallY as clampEyeBallYBase } from '@app/shared/utils/math';
 
@@ -38,11 +33,13 @@ const toFiniteNumber = (raw: unknown, fallback: number): number => {
 };
 
 const PetCanvas: React.FC = observer(() => {
-  // 来自主进程的配置快照（offset.md 数据流真值）
+  // 来自主进程的配置快照
   const configService = useService(TOKENS.config);
   const live2dService = useService(TOKENS.live2d);
   const electronService = useService(TOKENS.electron);
   useService(TOKENS.ai);
+  const composer = useService(TOKENS.floatingComposer);
+  const composerVisible = composer.visible;
   const windowApi = electronService.bridge.windowApi;
   // Local sizes come from the shared numeric layout; desktop position is native metadata.
   const windowGeometry = live2dService.renderGeometry ?? live2dService.nativeGeometry;
@@ -165,7 +162,8 @@ const PetCanvas: React.FC = observer(() => {
   const pointerInsideModelRef = useRef(false); // 指针是否在模型内
   const pointerInsideHandleRef = useRef(false); // 指针是否在拖拽手柄内
   const pointerInsideBubbleRef = useRef(false); // 指针是否在气泡内
-  const pointerInsideContextZoneRef = useRef(false); // 指针是否在上下文区域
+  const pointerInsideInputRef = useRef(false);
+  const inputFocusedRef = useRef(false);
   const dragHandleHoverRef = useRef(false); // 拖拽手柄是否处于悬停状态
   const dragHandleActiveRef = useRef(false); // 拖拽手柄是否处于激活状态
 
@@ -205,42 +203,18 @@ const PetCanvas: React.FC = observer(() => {
     refreshConfigSnapshot,
   });
 
-  // 上下文区域
-  const contextZoneStyleRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null); // 上下文区域样式
-  const [contextZoneStyle, setContextZoneStyle] = useState<{ left: number; top: number; width: number; height: number } | null>(null); // 上下文区域样式状态
-  const [contextZoneAlignment, setContextZoneAlignment] = useState<'left' | 'right'>('right'); // 上下文区域对齐方式
-  const contextZoneAlignmentRef = useRef<'left' | 'right'>('right'); // 上下文区域对齐方式引用
-  const contextZoneActiveUntilRef = useRef(0); // 上下文区域活动截止时间
-  const contextZoneReleaseTimerRef = useRef<number | null>(null); // 上下文区域释放定时器
+  const [composerStyle, setComposerStyle] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    inputFocusedRef.current = composer.focused && composerVisible;
+    if (!composerVisible) pointerInsideInputRef.current = false;
+    recomputeWindowPassthroughRef.current();
+  }, [composer.focused, composerVisible]);
 
   const commitBubbleReady = useCallback((next: boolean) => {
     if (bubbleReadyRef.current === next) return;
     bubbleReadyRef.current = next;
     setBubbleReady(next);
   }, [setBubbleReady]);
-
-  const clearContextZoneLatchTimer = useCallback(() => {
-    if (contextZoneReleaseTimerRef.current !== null) {
-      if (typeof window !== 'undefined') {
-        window.clearTimeout(contextZoneReleaseTimerRef.current);
-      }
-      contextZoneReleaseTimerRef.current = null;
-    }
-  }, []);
-
-  const scheduleContextZoneLatchCheck = useCallback((targetTimestamp: number) => {
-    if (typeof window === 'undefined') return;
-    const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-      ? performance.now()
-      : Date.now();
-    const delay = Math.max(24, targetTimestamp - now);
-    clearContextZoneLatchTimer();
-    contextZoneReleaseTimerRef.current = window.setTimeout(() => {
-      contextZoneReleaseTimerRef.current = null;
-      recomputeWindowPassthroughRef.current();
-    }, delay);
-  }, [clearContextZoneLatchTimer]);
-
 
   const clearBubbleTimer = useCallback(() => {
     if (!bubbleTimerRef.current) return;
@@ -307,35 +281,19 @@ const PetCanvas: React.FC = observer(() => {
     pointerInsideModelRef,
     pointerInsideBubbleRef,
     pointerInsideHandleRef,
-    pointerInsideContextZoneRef,
+    pointerInsideInputRef,
+    inputFocusedRef,
     dragHandleHoverRef,
     dragHandleActiveRef,
-    contextZoneActiveUntilRef,
     cursorPollRafRef,
     pointerX,
     pointerY,
     updateDragHandlePositionRef,
     recomputeWindowPassthroughRef,
-    clearContextZoneLatchTimer,
   });
 
-  const {
-    applyContextZoneDecision,
-    updateInteractiveZones,
-  } = useLayoutCommitter({
-    contextZoneStyleRef,
-    contextZoneAlignmentRef,
-    contextZoneActiveUntilRef,
-    contextZoneReleaseTimerRef,
-    pointerInsideContextZoneRef,
-    pointerInsideBubbleRef,
-    pointerInsideHandleRef,
-    pointerInsideModelRef,
-    setContextZoneStyle,
-    setContextZoneAlignment,
-    recomputeWindowPassthroughRef,
-    scheduleContextZoneLatchCheck,
-    clearContextZoneLatchTimer,
+  const { updateInteractiveZones } = useLayoutCommitter({
+    pointerInsideInputRef, pointerInsideBubbleRef, pointerInsideHandleRef, pointerInsideModelRef, recomputeWindowPassthroughRef,
   });
 
   const updateDragHandlePosition = useCallback((force = false) => {
@@ -355,55 +313,15 @@ const PetCanvas: React.FC = observer(() => {
     const screen = app.renderer.screen;
     if (!screen.width || !screen.height) return;
     const canvasRect = { left: 0, top: 0, right: screen.width, bottom: screen.height };
-    const workArea = windowGeometry?.workArea ?? {
-      x: 0,
-      y: 0,
-      width: screen.width,
-      height: screen.height,
+    const width = Math.min(280, Math.max(1, screen.width - 32));
+    const height = 64;
+    const style = {
+      left: Math.max(0, Math.min(screen.width - width, bounds.x + (bounds.width - width) / 2)),
+      top: Math.max(0, Math.min(screen.height - height, bounds.y + (bounds.height - height) / 2)),
+      width, height,
     };
-
-    // 使用 geometry solver 计算上下文区布局（纯函数）
-    const cz = solveContextZoneLayout({
-      containerWidth: screen.width,
-      containerHeight: screen.height,
-      containerLeft: 0,
-      containerTop: 0,
-      modelTopDom: Math.max(0, Math.min(screen.height, bounds.y)),
-      modelHeightDom: Math.max(48, Math.min(screen.height, bounds.height)),
-      screenAvailLeft: workArea.x,
-      screenAvailWidth: workArea.width,
-      windowGlobalLeft: contentBounds.x,
-      windowGlobalWidth: contentBounds.width,
-      leftMargin: 14,
-      rightMargin: 14,
-      constants: {
-        EDGE_THRESHOLD: 48,
-        MIN_WIDTH: 56,
-        MAX_WIDTH: 104,
-        MIN_HEIGHT: 48,
-        MAX_HEIGHT: 120,
-      },
-    });
-
-    const contextZoneActivity = solveContextZoneActivity({
-      pointerX: pointerX.current,
-      pointerY: pointerY.current,
-      rectAbs: cz.rectAbs,
-      now,
-      latchDurationMs: CONTEXT_ZONE_LATCH_MS,
-      activeUntil: contextZoneActiveUntilRef.current,
-      hasReleaseTimer: contextZoneReleaseTimerRef.current !== null,
-    });
-
-    applyContextZoneDecision({
-      alignment: cz.alignment,
-      style: cz.style,
-      rectAbs: cz.rectAbs,
-      pointerInsideContextZone: contextZoneActivity.pointerInsideContextZone,
-      nextActiveUntil: contextZoneActivity.nextActiveUntil,
-      shouldScheduleLatchCheck: contextZoneActivity.shouldScheduleLatchCheck,
-      shouldClearLatch: contextZoneActivity.shouldClearLatch,
-    });
+    setComposerStyle((previous) => previous && Object.keys(style).every((key) => previous[key as keyof typeof style] === style[key as keyof typeof style]) ? previous : style);
+    const inputRect = composerVisible ? { left: style.left, top: style.top, right: style.left + width, bottom: style.top + height } : null;
 
     const measurement = activeBubbleMeasurement;
     const measuredPosition = bubblePosition;
@@ -434,31 +352,19 @@ const PetCanvas: React.FC = observer(() => {
         height: bounds.height,
       },
       bubbleRect,
-      contextZoneRect: cz.rectAbs,
+      inputRect,
       pointerInsideHandle: false,
       dragHandleHover: dragHandleHoverRef.current,
       dragHandleActive: dragHandleActiveRef.current,
       ignoreMouse: ignoreMouseRef.current,
     });
-    updateInteractiveZones({
-      pointerInsideBubble: interactivity.pointerInsideBubble,
-      pointerInsideContextZone: interactivity.pointerInsideContextZone,
-      pointerInsideHandle: interactivity.pointerInsideHandle,
-      pointerInsideModel: interactivity.pointerInsideModel,
-      shouldCapture: interactivity.shouldCapture,
-      shouldPassthrough: interactivity.shouldPassthrough,
-    });
+    composer.setHovered(interactivity.pointerInsideModel || interactivity.pointerInsideInput);
+    updateInteractiveZones(interactivity);
   }, [
-    applyContextZoneDecision,
-    contentBounds.width,
-    contentBounds.x,
-    bubblePosition,
-    getModelMiddleRect,
-    activeBubbleMeasurement,
-    bubbleText,
-    updateInteractiveZones,
-    windowGeometry?.workArea,
+    composer, composerVisible, bubblePosition, getModelMiddleRect, activeBubbleMeasurement, bubbleText, updateInteractiveZones,
   ]);
+
+  useLayoutEffect(() => { updateDragHandlePosition(true); }, [updateDragHandlePosition]);
 
   useLayoutEffect(() => {
     updateDragHandlePositionRef.current = updateDragHandlePosition;
@@ -669,12 +575,11 @@ const PetCanvas: React.FC = observer(() => {
           </div>
         )}
 
-        {debugModeEnabled && ignoreMouse && contextZoneStyle && (
-          <OpenTheMenu
-            contextZoneStyle={contextZoneStyle}
-            contextZoneAlignment={contextZoneAlignment}
-          />
-        )}
+        {composerStyle && <FloatingComposer service={composer} style={composerStyle} onInteractivityChange={() => {
+          inputFocusedRef.current = composer.focused && composer.visible;
+          if (!composer.visible) pointerInsideInputRef.current = false;
+          recomputeWindowPassthroughRef.current();
+        }} />}
       </div>
     </>
   );

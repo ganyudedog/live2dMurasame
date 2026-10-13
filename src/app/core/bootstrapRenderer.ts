@@ -87,6 +87,8 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
       reaction(() => config.modelInteraction,
         (view) => live2d.configureInteraction(view),
         { fireImmediately: true }),
+      reaction(() => config.globalModelConfig?.showDragHandleOnHover !== false,
+        (enabled) => container.resolve(TOKENS.floatingComposer).configure(enabled), { fireImmediately: true }),
     );
   }
 

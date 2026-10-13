@@ -26,6 +26,9 @@ export class Live2dEnvironment {
     if (settings?.asr && typeof settings.asr === 'object') {
       nextSettings.asr = { ...(this.settings.asr ?? {}), ...settings.asr };
     }
+    for (const key of ['subtitle', 'pushToTalk']) {
+      if (settings?.[key] && typeof settings[key] === 'object') nextSettings[key] = { ...(this.settings[key] ?? {}), ...settings[key] };
+    }
     return new Live2dEnvironment({ modelPaths: this.modelPaths, currentModelPath: this.currentModelPath, windowState: this.windowState, settings: nextSettings });
   }
 

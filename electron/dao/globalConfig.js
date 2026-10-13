@@ -1,8 +1,12 @@
+import { DEFAULT_SUBTITLE_SETTINGS, DEFAULT_PUSH_TO_TALK, normalizeSubtitleSettings, normalizePushToTalk } from '../../shared/subtitleSettings.js';
+
 export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   scale: 1.0,
   ignoreMouse: false,
   autoLaunch: false,
   showDragHandleOnHover: true,
+  subtitle: DEFAULT_SUBTITLE_SETTINGS,
+  pushToTalk: DEFAULT_PUSH_TO_TALK,
   forcedFollow: false,
   debugModeEnabled: false,
   model: 'deepseek-v4-flash',
@@ -228,6 +232,8 @@ export const normalizeModelConfig = (input = {}) => {
 
 export const normalizeGlobalModelConfig = (settings = {}) => {
   const next = { ...DEFAULT_GLOBAL_MODEL_CONFIG };
+  next.subtitle = normalizeSubtitleSettings(settings.subtitle);
+  next.pushToTalk = normalizePushToTalk(settings.pushToTalk);
   if (Number.isFinite(settings.scale)) {
     next.scale = settings.scale;
   }

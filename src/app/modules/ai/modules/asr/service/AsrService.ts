@@ -21,6 +21,10 @@ export class AsrService {
   private readonly finalListeners = new Set<(request: ChatRequest) => void>();
   private latestUtteranceId: string | null = null;
   private submittedUtteranceId: string | null = null;
+  private held = false;
+  private finishing = false;
+  private capturing = false;
+  private backendOwned = false;
 
   constructor(electron: ElectronService, stateBus: StateBusService, log: LogService) {
     this.api = electron.bridge.asrApi;
@@ -33,8 +37,24 @@ export class AsrService {
   start(): void {
     this.unsubscribeEvents = this.api?.onEvent?.((event) => {
       if (this.disposed) return;
+      if (event.type === 'asr.hold') {
+        if (event.held === this.held) return;
+        this.held = event.held;
+        if (!event.held && !this.stateBus.asr.enabled) {
+          this.finishing = true;
+          this.transition = this.transition.then(async () => {
+            try {
+              if (this.running) { await this.capture.stop(); this.capturing = false; await this.api?.finish?.(); }
+            } finally {
+              this.finishing = false;
+              await this.syncRuntime(!this.disposed && (this.stateBus.asr.enabled || this.held), true);
+            }
+          });
+        } else this.scheduleTransition(this.stateBus.asr.enabled || this.held);
+        return;
+      }
       if (event.type === 'asr.speech-start') {
-        if (!this.running || !this.stateBus.asr.enabled) return;
+        if (!this.running || !(this.stateBus.asr.enabled || this.held || this.finishing)) return;
         this.latestUtteranceId = event.utteranceId;
         this.speechStartListeners.forEach((listener) => listener(event));
         return;
@@ -44,7 +64,7 @@ export class AsrService {
         this.scheduleTransition(false);
         return;
       }
-      if (event.type !== 'asr.final' || !this.running || !this.stateBus.asr.enabled || !event.text.trim()
+      if (event.type !== 'asr.final' || !this.running || !(this.stateBus.asr.enabled || this.held || this.finishing) || !event.text.trim()
         || (this.latestUtteranceId !== null && event.utteranceId !== this.latestUtteranceId)
         || event.utteranceId === this.submittedUtteranceId
         || (event.profile === 'agent' && !event.refined)) return;
@@ -59,7 +79,7 @@ export class AsrService {
     }) ?? null;
     this.stopEnabledReaction = reaction(
       () => this.stateBus.asr.enabled,
-      (enabled) => this.scheduleTransition(enabled),
+      (enabled) => this.scheduleTransition(enabled || this.held),
       { fireImmediately: true },
     );
   }
@@ -79,7 +99,7 @@ export class AsrService {
     this.transition = this.transition.then(() => this.syncRuntime(enabled && !this.disposed));
   }
 
-  private async syncRuntime(enabled: boolean): Promise<void> {
+  private async syncRuntime(enabled: boolean, keepWarm = false): Promise<void> {
     const context = this.log.contextRegistry.register('AsrService', {
       relation: 'asr.runtime', params: { enabled }, behavior: '管理麦克风和后端识别链路',
     });
@@ -87,17 +107,23 @@ export class AsrService {
     try {
       if (!enabled) {
         try {
-          if (this.running) await this.api?.stop?.();
+          if (this.running || this.backendOwned) {
+            if (keepWarm && !this.disposed && this.api?.pause) await this.api.pause();
+            else { await this.api?.stop?.(); this.backendOwned = false; }
+          }
         } finally {
           await this.capture.stop();
+          this.capturing = false;
           runInAction(() => { this.running = false; });
         }
-      } else if (!this.running) {
+      } else if (!this.running || !this.capturing) {
         if (!this.api) throw new Error('ASR API 不存在');
         const status = await this.api.start?.();
         if (status && !status.running) throw new Error(status.lastError ?? 'ASR 后端启动失败');
-        this.latestUtteranceId = null;
-        this.submittedUtteranceId = null;
+        this.backendOwned = true;
+        // A released key must not acquire a microphone after a slow model load.
+        if (this.disposed || !(this.stateBus.asr.enabled || this.held)) { await this.api.stop?.(); this.backendOwned = false; return; }
+        if (!this.running) { this.latestUtteranceId = null; this.submittedUtteranceId = null; }
         try {
           await this.capture.start({
             targetSampleRate: 16000,
@@ -108,8 +134,10 @@ export class AsrService {
               });
             },
           });
+          this.capturing = true;
         } catch (error) {
           await this.api.stop?.();
+          this.backendOwned = false;
           throw error;
         }
         runInAction(() => { this.running = true; this.lastError = null; });

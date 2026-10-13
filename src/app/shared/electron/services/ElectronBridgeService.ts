@@ -27,6 +27,8 @@ export class ElectronBridgeService {
     return window.AsrAPI;
   }
 
+  get subtitleApi(): PetSubtitleAPI | undefined { return window.SubtitleAPI; }
+
   get aiApi(): PetAIAPI | undefined {
     return window.AIAPI;
   }

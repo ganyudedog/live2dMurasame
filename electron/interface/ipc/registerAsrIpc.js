@@ -12,6 +12,8 @@ const registerAsrIpcImpl = ({ live2dEnvironmentService, channelPrefix = 'ddd:liv
   ipcMain.handle(`${channelPrefix}:push-audio`, (_event, payload) => runtime.pushAudioChunk(payload));
   ipcMain.handle(`${channelPrefix}:start`, () => runtime.start());
   ipcMain.handle(`${channelPrefix}:stop`, () => runtime.stop());
+  ipcMain.handle(`${channelPrefix}:finish`, () => runtime.finish());
+  ipcMain.handle(`${channelPrefix}:pause`, () => runtime.pause());
   return runtime;
 };
 

@@ -20,7 +20,7 @@ export interface InteractivitySolverInput {
   rendererHeight: number;
   modelBounds: InteractivityCanvasModelBounds;
   bubbleRect: InteractivityRect | null;
-  contextZoneRect: InteractivityRect | null;
+  inputRect: InteractivityRect | null;
   pointerInsideHandle: boolean;
   dragHandleHover: boolean;
   dragHandleActive: boolean;
@@ -31,7 +31,7 @@ export interface InteractivitySolverResult {
   pointerWithinCanvas: boolean;
   pointerInsideModel: boolean;
   pointerInsideBubble: boolean;
-  pointerInsideContextZone: boolean;
+  pointerInsideInput: boolean;
   pointerInsideHandle: boolean;
   shouldCapture: boolean;
   shouldPassthrough: boolean;
@@ -53,7 +53,7 @@ export const solveInteractivity = ({
   rendererHeight,
   modelBounds,
   bubbleRect,
-  contextZoneRect,
+  inputRect,
   pointerInsideHandle,
   dragHandleHover,
   dragHandleActive,
@@ -72,9 +72,9 @@ export const solveInteractivity = ({
   }
 
   const pointerInsideBubble = isPointInsideRect(pointerX, pointerY, bubbleRect);
-  const pointerInsideContextZone = isPointInsideRect(pointerX, pointerY, contextZoneRect);
+  const pointerInsideInput = isPointInsideRect(pointerX, pointerY, inputRect);
 
-  const shouldCapture = pointerInsideContextZone || (!ignoreMouse && (
+  const shouldCapture = pointerInsideInput || (!ignoreMouse && (
     pointerInsideModel
     || pointerInsideBubble
     || pointerInsideHandle
@@ -86,7 +86,7 @@ export const solveInteractivity = ({
     pointerWithinCanvas,
     pointerInsideModel,
     pointerInsideBubble,
-    pointerInsideContextZone,
+    pointerInsideInput,
     pointerInsideHandle,
     shouldCapture,
     shouldPassthrough: !shouldCapture,

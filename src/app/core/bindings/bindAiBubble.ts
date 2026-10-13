@@ -9,7 +9,10 @@ export const bindAiBubble = (ai: AiService, tts: TtsService, live2d: Live2dServi
       live2d.setMotionText(null);
       dialogue.begin(event.conversationId);
     } else if (event.conversationId === dialogue.conversationId) {
-      if (event.type === 'sentence') dialogue.prepare({ requestId: event.requestId, text: event.text });
+      if (event.type === 'sentence') {
+        dialogue.prepare({ requestId: event.requestId, text: event.text });
+        if (typeof window !== 'undefined') window.SubtitleAPI?.replyStarted(event.conversationId);
+      }
       else if (event.type === 'completed') dialogue.complete();
       else dialogue.clear();
     }

@@ -50,11 +50,9 @@ if (!isDevServerMode) {
 // 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
 const enableGpu = process.env.VITE_ENABLE_GPU === '1';
 if (!enableGpu) {
-    try {
-        app.disableHardwareAcceleration();
-        app.commandLine.appendSwitch('disable-gpu');
-        app.commandLine.appendSwitch('disable-gpu-compositing');
-    } catch { }
+    app.disableHardwareAcceleration();
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-gpu-compositing');
 }
 
 const loadMainWindow = (target) => {
@@ -95,17 +93,15 @@ const pickModelDirViaDialog = async (parentWindow) => {
 
         const hit = detectModelFilePath(picked);
         if (!hit) {
-            try {
-                const messageBoxOptions = {
-                    type: 'warning',
-                    message: '请选择以 .model3.json 结尾的 Live2D 模型文件。',
-                };
-                if (parentWindow) {
-                    await dialog.showMessageBox(parentWindow, messageBoxOptions);
-                } else {
-                    await dialog.showMessageBox(messageBoxOptions);
-                }
-            } catch { }
+            const messageBoxOptions = {
+                type: 'warning',
+                 message: '请选择以 .model3.json 结尾的 Live2D 模型文件。',
+            };
+            if (parentWindow) {
+                await dialog.showMessageBox(parentWindow, messageBoxOptions);
+            } else {
+                await dialog.showMessageBox(messageBoxOptions);
+            }
             return null;
         }
         return path.dirname(hit);
@@ -138,10 +134,8 @@ const getBestDialogParentWindow = () => {
 
 const pickTtsFileWithFilters = async ({ title, filters }) => {
     const parentWindow = getBestDialogParentWindow();
-    try {
-        parentWindow?.show();
-        parentWindow?.focus();
-    } catch { }
+    parentWindow?.show();
+    parentWindow?.focus();
     return pickFilePathViaDialog(parentWindow, {
         title,
         properties: ['openFile'],
@@ -157,10 +151,8 @@ const ensureModelSelectedOnStartup = async () => {
         if (hasCurrent || list.length) return;
 
         const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-        try {
-            parentWindow?.show();
-            parentWindow?.focus();
-        } catch { }
+        parentWindow?.show();
+        parentWindow?.focus();
 
         const dir = await pickModelDirViaDialog(parentWindow);
         if (!dir) return;
@@ -232,9 +224,7 @@ const { scheduleApplyAutoLaunchSetting, flushPendingAutoLaunchSetting } = create
     apply: (enabled) => applyAutoLaunchSetting(enabled, backendLog),
 });
 const modelEnvironmentService = new ModelEnvironmentService({
-    repository: new JsonModelEnvironmentRepository({
-        fields: ['bubble', 'interaction', 'rag', 'tts'],
-    }),
+    repository: new JsonModelEnvironmentRepository(),
     memoryRepository: new JsonModelMemoryRepository(),
     log: backendLog,
 });

@@ -5,7 +5,7 @@ import {
   ensureLiveKitSession, ensureLiveKitRoomConnected, disconnectLiveKitRoom,
   getLiveKitPlaybackSnapshot, publishLiveKitPlaybackFeedback, subscribeLiveKitV3Events,
   subscribeLiveKitShadowPcm, subscribeLiveKitDecodedAudio, publishLiveKitV3Event,
-  setLiveKitPlaybackMuted,
+  setLiveKitPlaybackMuted, subscribeLiveKitAudioLevel,
 } from '../infrastructure/livekit/LiveKitGateway';
 import type {
   LiveKitPlaybackFeedbackSnapshot, LiveKitV3EventHandler, LiveKitShadowPcmHandler,
@@ -61,6 +61,10 @@ export class LiveKitService implements LiveKitPort {
 
   subscribeShadowPcm(baseUrl: string, handler: LiveKitShadowPcmHandler): () => void {
     return subscribeLiveKitShadowPcm(baseUrl, handler);
+  }
+
+  subscribeAudioLevel(baseUrl: string, handler: (level: number | null) => void): () => void {
+    return subscribeLiveKitAudioLevel(baseUrl, handler);
   }
 
   subscribeDecodedAudio(baseUrl: string, handler: LiveKitDecodedAudioHandler): () => void {

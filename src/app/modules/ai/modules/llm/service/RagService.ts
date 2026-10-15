@@ -1,4 +1,3 @@
-import type { ActionCapability } from '../../../../live2d/modules/actions/domain/types';
 import { buildRollingSummary } from '../domain/memory/rollingSummary';
 import { createMemoryMessageId, buildRecentMemoryPatch, buildMetaMemoryPatch } from '../domain/memory/conversationMemory';
 import { buildRagContext, normalizeRuntimeRagConfig, type RuntimeRagConfig } from '../domain/rag/contextBuilder';
@@ -10,10 +9,8 @@ export class RagService {
   private readonly knowledgeCache = new Map<string, string>();
   private readonly repository = new LlmMemoryRepository();
   private readonly getConfigSnapshot: () => PetConfigSnapshot | null | undefined;
-  private readonly getActionCapability?: () => ActionCapability;
-  constructor(getConfigSnapshot: () => PetConfigSnapshot | null | undefined, getActionCapability?: () => ActionCapability) {
+  constructor(getConfigSnapshot: () => PetConfigSnapshot | null | undefined) {
     this.getConfigSnapshot = getConfigSnapshot;
-    this.getActionCapability = getActionCapability;
   }
 
   dispose(): void {
@@ -23,7 +20,7 @@ export class RagService {
   async resolve(userText: string, trace?: TraceScope): Promise<ResolvedRagRuntime> {
     try {
       // 记忆和知识库属于同一套前端 RAG 编排，Electron 只提供持久化和文件读取。
-      const snapshot = this.getConfigSnapshot?.();
+      const snapshot = this.getConfigSnapshot();
       const modelPath = snapshot?.activeModelPath ?? null;
       const rawRag = snapshot?.modelConfig?.rag;
       const ragConfig = normalizeRuntimeRagConfig(rawRag);
@@ -37,7 +34,6 @@ export class RagService {
         userText,
         ragConfig,
         knowledgeText,
-        capability: this.getActionCapability?.(),
         memory: memoryState,
       });
       return {

@@ -1,4 +1,4 @@
-import type { ActionIntentInput } from '../../../../live2d/modules/actions/domain/types';
+import type { ActionIntentInput, ActionCapability } from '../../../../live2d/modules/actions/domain/types';
 
 export interface Stage2LLMConfig {
   apiKey?: string;
@@ -15,6 +15,7 @@ export interface Stage2LLMRequest {
   model?: string;
   temperature?: number;
   ragContext?: string;
+  actionCapability?: ActionCapability;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
   // 是否启用流式输出（降低首字等待时间）
@@ -32,7 +33,7 @@ export interface Stage2LLMReply {
   display_text?: string;
   // 面向 TTS 的发音文本（例如日文）
   speak_text?: string;
-  action_intent: ActionIntentInput;
+  action_intent?: ActionIntentInput;
   meta?: {
     latency_ms?: number;
     model?: string;
@@ -48,11 +49,7 @@ export interface Stage2AskResult {
     contextText: string;
     chunkCount: number;
   };
-  actionResult?: {
-    ok: boolean;
-    state: 'started' | 'queued' | 'dropped';
-    reason?: string;
-  };
+  modelVersion?: number;
   error?: string;
   rawText?: string;
 }

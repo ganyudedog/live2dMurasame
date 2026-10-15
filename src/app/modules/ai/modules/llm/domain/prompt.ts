@@ -1,3 +1,5 @@
+import type { ActionCapability } from '../../../../live2d/modules/actions/domain/types';
+
 export interface BuildPromptInput {
   userText: string;
   ragContext?: string;
@@ -8,7 +10,7 @@ export interface BuildPromptInput {
 /**
  * JSON Lines 输出契约：每行一个独立 JSON 对象，行间用 \n 分隔。
  * speak_text 必须排在 display_text 前面，便于流式场景下优先发送 TTS。
- * action_intent 可选，仅在需要动作的句子附带（通常放在最后一句）。
+ * action_intent 可选，附在语义对应的句子内，不单独输出动作行。
  * 最终行后面不能有逗号或数组包裹。
  */
 const OUTPUT_CONTRACT = [
@@ -32,7 +34,7 @@ const OUTPUT_CONTRACT = [
   '{"speak_text":"これでひと息つけそう？","display_text":"这下能松口气了吧？"}',
   '',
   '每行对象之间不要添加逗号，不要输出代码围栏、场景标题或解释。',
-  'action_intent 可选，仅在语义需要动作时附带，通常放在最后一行，不必每次添加。',
+  'action_intent 可选，需要时放在语义对应的同一行 JSON 内，顺序为 speak_text、display_text、action_intent。不要另起一行只输出动作，不必每次添加。',
 ].join('\n');
 
 const CONVERSATION_STYLE = [
@@ -62,20 +64,26 @@ const mapSpeakLangName = (lang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'al
   return lang && lang.trim() ? lang : '日语';
 };
 
-export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'ja' | 'ko'; speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto' }): string => {
+export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'ja' | 'ko'; speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto'; actionCapability?: ActionCapability }): string => {
   const displayLangName = mapDisplayLangName(input?.displayLang);
   const speakLangName = mapSpeakLangName(input?.speakLang);
   return [
     '你是 Live2D 桌宠的角色对话助手。',
     '你的输出必须是严格的 JSON Lines，不要包裹在 markdown 代码块（```）中，不要添加额外的注释或说明文字。',
     CONVERSATION_STYLE,
-    `display_text 必须使用${displayLangName}。`,
-    `speak_text 是给 TTS 语音合成用的，**必须**使用${speakLangName}（即使用户输入是其他语言）。如果 speak_text 用了错误的语言，TTS 合成会失败。`,
-    '动作只允许三种 kind: shake_head, blink, mouth。',
-    '如果不需要动作或语义不确定，省略 action_intent。',
     '如果提供了 RAG 上下文，你必须优先遵守其中的人设、关系、禁忌、世界观、最近对话记忆与知识片段。',
     '输出格式（JSON Lines）：',
     OUTPUT_CONTRACT,
+    // 固定规则完整放在前部；语言及动作目录在后部，减少编辑动作时失效的缓存前缀。
+    `display_text 必须使用${displayLangName}。`,
+    `speak_text 是给 TTS 语音合成用的，**必须**使用${speakLangName}（即使用户输入是其他语言）。如果 speak_text 用了错误的语言，TTS 合成会失败。`,
+    '可选 action_intent 格式为 {"action_id":[["a","b"],"c"]}：外层依次执行，内层同时执行，先同时播放 a、b，等两者都回退结束后再播放 c。示例 ID 仅说明格式，实际 ID 必须来自当前动作表。',
+    '单个动作使用 {"action_id":["动作ID"]}；最多 8 个顺序阶段，每个并行组最多 4 个不同动作，不允许更深嵌套。不要输出参数、数值、时长、优先级或动画文件名。',
+    '优先选择少量自然动作，例如转头和脸红可以同时发生。同组尽量避免控制相同部位，参数冲突时后列动作优先。语音结束会取消剩余动作，不要为了演完动作延长回复。',
+    ...([...(input?.actionCapability?.actions ?? [])].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      .map((action) => `动作标签 @action:${action.id}：${action.label}（${action.category}）${action.description ? `，${action.description}` : ''}`)),
+    !input?.actionCapability?.actions.length ? '当前没有可用动作表，省略 action_intent。' : '',
+    '如果不需要动作或语义不确定，省略 action_intent。',
   ].join('\n');
 };
 

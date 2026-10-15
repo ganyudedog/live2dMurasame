@@ -6,6 +6,7 @@ import { normalizeTtsConfig } from '../domain/config';
 import type { LiveKitDecodedAudioFrame, LiveKitShadowPcmFrame, LiveKitV3EventHandler } from '../infrastructure/livekit/LiveKitGateway';
 import type { LiveKitService } from '../service/LiveKitService';
 import type { LogService } from '@app/shared/logging/LogService';
+import type { ConfigService } from '@app/shared/config/ConfigService';
 
 vi.mock('../infrastructure/ttsClient', () => ({
   requestTtsSynthesis: vi.fn(), cancelTtsSynthesis: vi.fn().mockResolvedValue(undefined), warmupTtsModel: vi.fn(), preheatTtsConfig: vi.fn(),
@@ -34,7 +35,7 @@ const setup = () => {
     publishPlaybackFeedback: vi.fn().mockResolvedValue(undefined),
   };
   const runtime = new TtsService({ log, liveKit: liveKit as unknown as LiveKitService,
-    getConfigSnapshot: () => ({ modelConfig: { tts: { enabled: true, baseUrl: 'http://127.0.0.1:9881' } } }) as PetConfigSnapshot });
+    config: { modelConfig: { tts: { enabled: true, baseUrl: 'http://127.0.0.1:9881' } } } as ConfigService });
   const emit = (type: string, payload: Record<string, unknown>) => handler?.({
     type, request_id: 'request', session_id: 'session', payload,
   }, {});

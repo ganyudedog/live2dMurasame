@@ -19,16 +19,37 @@ const registerModelenvIpcImpl = ({ live2dEnvironmentService, modelEnvironmentSer
     return { modelPath: modelPath ?? null, modelKey: modelPath ? getModelKeyFromPath(modelPath) : null, activeModelFileUrl: modelPath === snapshot.activeModelPath ? snapshot.activeModelFileUrl : safeFileUrl(modelPath), config: config ?? null, modelInteraction: modelPath ? modelEnvironmentService.getInteractionView(modelPath) : null, configOverrides: modelPath === snapshot.activeModelPath ? snapshot.configOverrides : buildConfigOverrides(snapshot.live2denvConfig, modelPath, config) };
   };
   ipcMain.handle('ddd:modelenv:get', (_event, modelPath) => { const target = currentPath(modelPath); return modelResult(target, target ? modelEnvironmentService.getConfiguration(target) : null); });
+  ipcMain.handle('ddd:modelenv:actions:sources', (_event, modelPath) =>
+    modelEnvironmentService.getActionSources(currentPath(modelPath)));
+  ipcMain.handle('ddd:modelenv:actions:save', (_event, payload = {}) => {
+    if (typeof payload.modelPath !== 'string' || !payload.modelPath.trim()) throw new Error('动作表保存必须指定模型');
+    const environment = modelEnvironmentService.saveActionCatalog(payload.modelPath, payload.actions);
+    const result = modelResult(payload.modelPath, environment.configuration);
+    const snapshot = live2dEnvironmentService.snapshot();
+    sendAll('ddd:modelenv:changed', { ...result, snapshot });
+    if (payload.modelPath === snapshot.activeModelPath) publishSnapshot(snapshot);
+    return result;
+  });
+  ipcMain.handle('ddd:modelenv:actions:preview', (_event, payload = {}) => {
+    if (payload.modelPath !== live2dEnvironmentService.root.currentModelPath) throw new Error('只能预览当前加载模型的动作');
+    const actions = modelEnvironmentService.getConfiguration(payload.modelPath)?.actions ?? [];
+    if (!actions.some(({ id }) => id === payload.actionId)) throw new Error('动作未保存或不存在');
+    const target = getMainWindow();
+    if (!target || target.isDestroyed()) throw new Error('模型窗口不可用');
+    target.webContents.send('ddd:modelenv:actions:preview', { modelPath: payload.modelPath, actionId: payload.actionId });
+    return { accepted: true };
+  });
   ipcMain.handle('ddd:modelenv:update', (_event, payload = {}) => {
     const target = currentPath(payload?.modelPath); if (!target) return modelResult(null, null);
-    const environment = modelEnvironmentService.updateConfiguration(target, payload?.patch ?? {});
+    const patch = payload?.patch && typeof payload.patch === 'object' ? { ...payload.patch } : {};
+    const environment = modelEnvironmentService.updateConfiguration(target, patch);
     const result = modelResult(target, environment.configuration); const snapshot = live2dEnvironmentService.snapshot();
     sendAll('ddd:modelenv:changed', { ...result, snapshot }); if (target === snapshot.activeModelPath) publishSnapshot(snapshot); return result;
   });
   ipcMain.handle('ddd:modelenv:remove', (_event, modelPath) => { if (typeof modelPath !== 'string' || !modelPath.trim()) return false; removeModelConfig(modelPath); modelEnvironmentService.clear(modelPath); return true; });
   ipcMain.on('ddd:modelenv:motion:preview', (_event, payload = {}) => {
     const group = typeof payload?.group === 'string' ? payload.group.trim() : '';
-    const index = payload?.index;
+    const index = Number(payload?.index);
     if (!group || !Number.isInteger(index) || index < 0) return;
     const target = getMainWindow();
     if (target && !target.isDestroyed()) target.webContents.send('ddd:modelenv:motion:preview', { group, index });

@@ -1,11 +1,14 @@
 import { parseModelInteractionCatalog } from '../infrastructure/ModelConfigParser.js';
+import { parseActionCatalog } from '../../../../shared/actionCatalog.js';
+import { readActionSources } from '../infrastructure/ActionSourceReader.js';
 
 export class ModelEnvironmentService {
-  constructor({ repository, memoryRepository, log, interactionCatalogReader = parseModelInteractionCatalog }) {
+  constructor({ repository, memoryRepository, log, interactionCatalogReader = parseModelInteractionCatalog, actionSourceReader = readActionSources }) {
     this.repository = repository;
     this.memoryRepository = memoryRepository;
     this.log = log;
     this.interactionCatalogReader = interactionCatalogReader;
+    this.actionSourceReader = actionSourceReader;
     this.cache = new Map();
   }
 
@@ -34,6 +37,15 @@ export class ModelEnvironmentService {
       rag: merge('rag'),
       tts: merge('tts'),
     };
+    if (Object.prototype.hasOwnProperty.call(patch, 'actions')) {
+      configuration.actions = parseActionCatalog(patch.actions);
+      if (configuration.actions.length) {
+        const parameters = new Set(this.getActionSources(modelPath).parameters.map(({ id }) => id));
+        for (const action of configuration.actions) for (const track of action.tracks) {
+          if (!parameters.has(track.parameterId)) throw new Error(`模型没有可用的动作参数：${track.parameterId}`);
+        }
+      }
+    }
     // visualFrame was a legacy, renderer-only tuning block. Do not carry it
     // forward when an old model environment is updated.
     delete configuration.visualFrame;
@@ -56,6 +68,18 @@ export class ModelEnvironmentService {
           : area.motions.map((item) => ({ ...item })),
       })),
     };
+  }
+
+  getActionSources(modelPath) {
+    if (!modelPath) throw new Error('请先选择模型');
+    return this.actionSourceReader(modelPath);
+  }
+
+  saveActionCatalog(modelPath, actions) {
+    this.updateConfiguration(modelPath, { actions });
+    // 重新通过 repository/DAO 读取实际落盘结果，返回值不能只回显生成请求。
+    this.clear(modelPath);
+    return this.getEnvironment(modelPath);
   }
 
   getMemory(modelPath) {

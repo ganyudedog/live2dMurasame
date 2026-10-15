@@ -1,3 +1,4 @@
+import { parseActionCatalog, type ActionDefinition, type ActionSourceData } from '../../../../shared/actionCatalog.js';
 import { makeObservable, observable, observableRef, runInAction } from 'mobx';
 import type { BootstrapContext } from '@app/core/bootstrapContext';
 import type { ElectronService } from '../electron/ElectronService';
@@ -65,6 +66,14 @@ export class ConfigService {
     const modelApi = this.bridge.modelApi;
     const detachLive2denv = snapshotApi?.onLive2denvConfigUpdated?.((payload) => {
       runInAction(() => {
+        if (payload.snapshot) {
+          this.activeModelPath = payload.snapshot.activeModelPath;
+          this.modelKey = payload.snapshot.modelKey;
+          this.activeModelFileUrl = payload.snapshot.activeModelFileUrl;
+          this.modelConfig = payload.snapshot.modelConfig;
+          this.modelInteraction = payload.snapshot.modelInteraction;
+          this.configOverrides = payload.snapshot.configOverrides;
+        }
         this.live2denvConfig = payload.live2denvConfig ?? this.live2denvConfig;
         this.globalModelConfig = payload.globalModelConfig ?? this.globalModelConfig;
         this.activeModelPath = payload.activeModelPath ?? this.activeModelPath;
@@ -84,6 +93,8 @@ export class ConfigService {
       this.syncLoggerMode();
     });
     const detachModel = modelApi?.onConfigUpdated?.((payload) => {
+      // 编辑另一个模型的完成通知不能切换当前工作区。
+      if (payload.modelPath && this.activeModelPath && payload.modelPath !== this.activeModelPath) return;
       runInAction(() => {
         this.modelConfig = payload.config ?? this.modelConfig;
         this.modelInteraction = payload.modelInteraction ?? payload.snapshot?.modelInteraction ?? this.modelInteraction;
@@ -222,14 +233,20 @@ export class ConfigService {
   }
 
   async updateModelConfig(options: { modelPath?: string; patch?: Partial<PetModelConfig> }): Promise<ModelConfigUpdateResult | null> {
+    const activePathAtStart = this.activeModelPath;
     const update = this.bridge.modelApi?.updateConfig;
     if (!update) {
       this.log.warn('config.service', 'model.update.missingApi');
       return null;
     }
     try {
-      const result = await update(options);
+      const patch = options.patch && Object.prototype.hasOwnProperty.call(options.patch, 'actions')
+        ? { ...options.patch, actions: parseActionCatalog(options.patch.actions) } : options.patch;
+      const result = await update({ ...options, patch });
       if (!result) return null;
+      // IPC 保存期间可能切换模型；保存成功仍返回，但旧结果不覆盖当前模型状态。
+      if (this.activeModelPath !== activePathAtStart
+        || (result.modelPath && this.activeModelPath && result.modelPath !== this.activeModelPath)) return result;
       runInAction(() => {
         this.modelConfig = result.config ?? this.modelConfig;
         this.modelInteraction = result.modelInteraction ?? this.modelInteraction;
@@ -250,8 +267,38 @@ export class ConfigService {
     }
   }
 
+  async getActionSources(modelPath: string): Promise<ActionSourceData> {
+    const read = this.bridge.modelApi?.getActionSources;
+    if (!read) throw new Error('动作参数读取接口不可用，请重启应用');
+    return read(modelPath);
+  }
+
+  async saveActionCatalog(modelPath: string, actions: ActionDefinition[]): Promise<ActionDefinition[]> {
+    const save = this.bridge.modelApi?.saveActionCatalog;
+    if (!save) throw new Error('动作表保存接口不可用，请重启应用');
+    const activePathAtStart = this.activeModelPath;
+    // 单一契约同时校验并投影成普通 DTO，MobX proxy 不得穿过 structured clone。
+    const result = await save({ modelPath, actions: parseActionCatalog(actions) });
+    if (!result?.config || result.modelPath !== modelPath) throw new Error('后端未返回已保存的动作表');
+    const saved = parseActionCatalog(result.config.actions);
+    if (this.activeModelPath === activePathAtStart && this.activeModelPath === modelPath) runInAction(() => {
+      this.modelConfig = { ...result.config, actions: saved };
+      this.lastError = null;
+    });
+    this.log.info('config.service', 'actions.saved', { modelPath, count: saved.length });
+    return saved;
+  }
+
+  async previewAction(modelPath: string, actionId: string): Promise<void> {
+    const preview = this.bridge.modelApi?.previewAction;
+    if (!preview) throw new Error('动作预览接口不可用，请重启应用');
+    const result = await preview({ modelPath, actionId });
+    if (!result?.accepted) throw new Error('模型窗口未接受动作预览');
+  }
+
   previewMotion(group: string, index: number): void {
-    this.bridge.modelApi?.previewMotion?.({ group, index });
+    // IPC payloads must be plain structured-cloneable data, never MobX observable objects.
+    this.bridge.modelApi?.previewMotion?.({ group: String(group), index: Number(index) });
   }
 
   async updateTtsConfig(options: { modelPath?: string; patch: Partial<PetTtsConfig> }): Promise<boolean> {
@@ -309,11 +356,7 @@ export class ConfigService {
 
   dispose(): void {
     for (const dispose of this.disposers.splice(0)) {
-      try {
-        dispose();
-      } catch {
-        // Listener cleanup is best effort during window teardown.
-      }
+      dispose();
     }
     this.log.info('config.service', 'disposed');
   }

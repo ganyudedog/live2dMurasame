@@ -19,11 +19,7 @@ export const useThemeMode = () => {
 
   useEffect(() => {
     applyThemeToDom(theme);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, theme);
-    } catch {
-      // ignore
-    }
+    window.localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 
   const toggle = useMemo(

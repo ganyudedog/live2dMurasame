@@ -50,6 +50,7 @@ export interface TtsPlaybackOptions {
   requestId: string;
   signal?: AbortSignal;
   onChunk?: (receivedBytes: number) => void;
+  onStarted?: () => void;
 }
 
 export interface TtsPlaybackResult {
@@ -73,6 +74,7 @@ export interface TtsPlaybackEvent {
   sentenceIndex?: number;
   state: 'started' | 'finished' | 'cancelled' | 'error' | 'skipped';
   transport: 'livekit' | 'http' | 'none';
+  reason?: string;
 }
 
 export interface TtsWarmupResult {

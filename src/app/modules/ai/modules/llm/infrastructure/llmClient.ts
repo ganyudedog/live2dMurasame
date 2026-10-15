@@ -1,10 +1,19 @@
 import OpenAI from 'openai';
 import { buildStage2SystemPrompt, buildStage2UserPrompt } from '../domain/prompt';
 import type { Stage2LLMConfig, Stage2LLMRequest } from '../domain/types';
+import { promptCacheOptions, readPromptUsage, type PromptUsage } from './promptCache';
 
 interface Stage2LLMClientResult {
   rawText: string;
   usedModel: string;
+  usage?: PromptUsage;
+}
+
+export interface StructuredLLMRequest {
+  systemPrompt: string;
+  userPrompt: string;
+  signal?: AbortSignal;
+  temperature?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 12000;
@@ -40,6 +49,7 @@ export const requestStage2LLM = async (
   });
 
   const requestBody = {
+    ...promptCacheOptions(cfg.baseURL, 'dialogue'),
     model: usedModel,
     temperature: typeof req.temperature === 'number' ? req.temperature : (cfg.temperature ?? 0.7),
     messages: [
@@ -48,6 +58,7 @@ export const requestStage2LLM = async (
         content: buildStage2SystemPrompt({
           displayLang: req.displayLang,
           speakLang: req.speakLang,
+          actionCapability: req.actionCapability,
         }),
       },
       { role: 'user' as const, content: buildStage2UserPrompt({ userText: req.userText, ragContext: req.ragContext }) },
@@ -71,6 +82,7 @@ export const requestStage2LLM = async (
       {
         ...requestBody,
         stream: true,
+        stream_options: { include_usage: true },
       },
       {
         signal,
@@ -78,8 +90,11 @@ export const requestStage2LLM = async (
     );
 
     let rawText = '';
+    let usage = readPromptUsage(null);
     for await (const chunk of stream) {
       signal?.throwIfAborted();
+      // 最后的 usage 帧可以没有 choices，必须在过滤文本之前读取。
+      if (chunk.usage) usage = readPromptUsage(chunk.usage);
       const delta = chunk.choices?.[0]?.delta?.content ?? '';
       if (!delta) continue;
       rawText += delta;
@@ -97,6 +112,7 @@ export const requestStage2LLM = async (
     return {
       rawText: finalText,
       usedModel,
+      usage,
     };
   }
 
@@ -115,5 +131,29 @@ export const requestStage2LLM = async (
   return {
     rawText,
     usedModel,
+    usage: readPromptUsage(response.usage),
   };
+};
+
+/** 供配置型子域复用同一 OpenAI-compatible 通道，不复用日常对话的 JSON Lines 契约。 */
+export const requestStructuredLLM = async (
+  cfg: Stage2LLMConfig,
+  req: StructuredLLMRequest,
+): Promise<Stage2LLMClientResult> => {
+  if (!cfg.apiKey) throw new Error('缺少 API Key，请先在控制面板 AI 页填写');
+  const usedModel = cfg.model ?? '';
+  if (!usedModel.trim()) throw new Error('未配置 AI 模型，请先在控制面板 AI 页填写');
+  const client = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL || undefined, dangerouslyAllowBrowser: true });
+  const response = await client.chat.completions.create({
+    ...promptCacheOptions(cfg.baseURL, 'action-catalog'),
+    model: usedModel,
+    temperature: typeof req.temperature === 'number' ? req.temperature : (cfg.temperature ?? 0.2),
+    messages: [
+      { role: 'system', content: req.systemPrompt },
+      { role: 'user', content: req.userPrompt },
+    ],
+  }, { signal: req.signal });
+  const rawText = response.choices?.[0]?.message?.content?.trim() ?? '';
+  if (!rawText) throw new Error('LLM 返回为空');
+  return { rawText, usedModel, usage: readPromptUsage(response.usage) };
 };

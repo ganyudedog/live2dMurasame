@@ -1,99 +1,103 @@
-import type { ActionCapability, ActionIntentNormalized } from '../domain/types';
+import type { ActionDefinition, ActionTrack } from '../domain/types';
 
-interface Live2DCoreModelLike {
-  getParameterValueById?: (id: string) => number;
-  setParameterValueById?: (id: string, value: number) => void;
+interface Transition {
+  from: number;
+  track: ActionTrack;
+  startedAt: number;
+  enterMs: number;
+  releaseAt: number;
+  returnMs: number;
+  releaseValue?: number;
 }
 
-interface ActiveExecution {
-  action: ActionIntentNormalized;
-  startAt: number;
-  endAt: number;
-}
-
-const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
-
-// ActionExecutor 负责管理和执行模型动作（如摇头、眨眼、张嘴），根据当前的动作能力和意图，周期性地更新模型参数以实现预期的动画效果。
+/** 参数轨迹执行器：进入首帧、线性关键帧动画、回到当前本地结果。 */
 export class ActionExecutor {
-  private active: ActiveExecution | null = null;
-  private capability: ActionCapability = {
-    canShakeHead: false,
-    canBlink: false,
-    canMouth: false,
-  };
+  private readonly transitions = new Map<string, Transition>();
+  private readonly displayed = new Map<string, number>();
+  private pendingGroups: ActionDefinition[][] = [];
+  private groupIndex = 0;
+  private groupEndAt = 0;
 
-  setCapability(capability: ActionCapability): void {
-    this.capability = capability;
+  isActive(now: number): boolean {
+    return this.pendingGroups.length > 0 || now < this.groupEndAt
+      || [...this.transitions.values()].some((transition) => now < transition.releaseAt + transition.returnMs);
   }
 
-  getActiveAction(): ActionIntentNormalized | null {
-    return this.active?.action ?? null;
+  controls(id: string): boolean { return this.transitions.has(id); }
+
+  start(groups: ActionDefinition[][],
+    now: number, current: ReadonlyMap<string, number>): void {
+    this.release(now);
+    this.pendingGroups = groups.slice(1);
+    this.groupIndex = 0;
+    this.startGroup(groups[0], now, current);
   }
 
-  start(action: ActionIntentNormalized, now: number): void {
-    this.active = {
-      action,
-      startAt: now,
-      endAt: now + action.durationMs,
-    };
+  /** 在渲染帧推进顺序组，不使用独立定时器，打断后不会残留回调补播。 */
+  advance(now: number, baseline: () => ReadonlyMap<string, number>): number | undefined {
+    if (!this.pendingGroups.length || now < this.groupEndAt) return undefined;
+    this.startGroup(this.pendingGroups.shift()!, now, baseline());
+    return ++this.groupIndex;
   }
 
-  stop(): void {
-    this.active = null;
-  }
-
-  tick(core: Live2DCoreModelLike, now: number): { finished: boolean; action?: ActionIntentNormalized } {
-    const current = this.active;
-    if (!current) return { finished: false };
-
-    const duration = Math.max(1, current.endAt - current.startAt);
-    const elapsed = Math.max(0, now - current.startAt);
-    const progress = clamp(elapsed / duration, 0, 1);
-
-    this.apply(core, current.action, progress);
-
-    if (progress >= 1) {
-      const endedAction = current.action;
-      this.active = null;
-      return { finished: true, action: endedAction };
+  private startGroup(group: ActionDefinition[], now: number, current: ReadonlyMap<string, number>): void {
+    this.groupEndAt = now + Math.max(...group.map((action) => action.enterMs + action.durationMs + action.returnMs));
+    // 每个动作保留自己的时序；同组参数冲突由后列动作覆盖，其他参数仍并行运行。
+    for (const action of group) for (const track of action.tracks) {
+      const from = current.get(track.parameterId) ?? track.keyframes[0].value;
+      this.displayed.set(track.parameterId, from);
+      this.transitions.set(track.parameterId, { from, track, startedAt: now,
+        enterMs: action.enterMs, returnMs: action.returnMs, releaseAt: now + action.enterMs + action.durationMs });
     }
-
-    return { finished: false };
   }
 
-  private apply(core: Live2DCoreModelLike, action: ActionIntentNormalized, progress: number): void {
-    if (action.kind === 'shake_head') {
-      this.applyShakeHead(core, action.intensity, progress);
-      return;
+  release(now: number): void {
+    this.pendingGroups = [];
+    this.groupEndAt = now;
+    for (const [id, transition] of this.transitions) {
+      if (transition.releaseAt <= now) continue;
+      // 打断从最近实际显示值回退，避免跳到未播放到的终点。
+      transition.releaseValue = this.displayed.get(id) ?? this.animate(transition, now);
+      transition.releaseAt = now;
     }
-    if (action.kind === 'blink') {
-      this.applyBlink(core, action.intensity, progress);
-      return;
+  }
+
+  sample(id: string, baseline: number, now: number): number {
+    const transition = this.transitions.get(id);
+    if (!transition) return baseline;
+    let value: number;
+    if (now >= transition.releaseAt) {
+      const progress = transition.returnMs === 0 ? 1 : Math.min(1, (now - transition.releaseAt) / transition.returnMs);
+      // 自然结束从轨迹末帧回退；本地 Idle 保持运行，终点跟随当前本地值。
+      const from = transition.releaseValue ?? transition.track.keyframes.at(-1)!.value;
+      value = from * (1 - progress) + baseline * progress;
+      if (progress >= 1) {
+        this.transitions.delete(id); this.displayed.delete(id);
+        return baseline;
+      }
+    } else value = this.animate(transition, now);
+    this.displayed.set(id, value);
+    return value;
+  }
+
+  private animate(transition: Transition, now: number): number {
+    const elapsed = Math.max(0, now - transition.startedAt);
+    const points = transition.track.keyframes;
+    if (elapsed < transition.enterMs) return transition.from
+      + (points[0].value - transition.from) * elapsed / transition.enterMs;
+    const time = elapsed - transition.enterMs;
+    for (let i = 1; i < points.length; i++) {
+      if (time <= points[i].timeMs) {
+        const before = points[i - 1];
+        const after = points[i];
+        return before.value + (after.value - before.value) * (time - before.timeMs) / (after.timeMs - before.timeMs);
+      }
     }
-    this.applyMouth(core, action.intensity, progress);
+    return points.at(-1)!.value;
   }
 
-  private applyShakeHead(core: Live2DCoreModelLike, intensity: number, progress: number): void {
-    if (!this.capability.canShakeHead || !this.capability.angleXParamId) return;
-    const base = core.getParameterValueById?.(this.capability.angleXParamId) ?? 0;
-    const amplitude = 4 + intensity * 8;
-    const offset = Math.sin(progress * Math.PI * 2.2) * (1 - progress) * amplitude;
-    core.setParameterValueById?.(this.capability.angleXParamId, clamp(base + offset, -30, 30));
-  }
-
-  private applyBlink(core: Live2DCoreModelLike, intensity: number, progress: number): void {
-    if (!this.capability.canBlink || !this.capability.eyeLParamId || !this.capability.eyeRParamId) return;
-    const close = progress < 0.5 ? progress * 2 : (1 - progress) * 2;
-    const openness = clamp(1 - close * (0.7 + intensity * 0.3), 0, 1);
-    core.setParameterValueById?.(this.capability.eyeLParamId, openness);
-    core.setParameterValueById?.(this.capability.eyeRParamId, openness);
-  }
-
-  private applyMouth(core: Live2DCoreModelLike, intensity: number, progress: number): void {
-    if (!this.capability.canMouth || !this.capability.mouthParamId) return;
-    const base = core.getParameterValueById?.(this.capability.mouthParamId) ?? 0;
-    const pulse = Math.sin(progress * Math.PI);
-    const target = clamp(base + pulse * (0.25 + intensity * 0.55), 0, 1);
-    core.setParameterValueById?.(this.capability.mouthParamId, target);
+  clear(): void {
+    this.transitions.clear(); this.displayed.clear();
+    this.pendingGroups = []; this.groupEndAt = 0; this.groupIndex = 0;
   }
 }

@@ -3,10 +3,11 @@ import type {
   disconnectLiveKitRoom, getLiveKitPlaybackSnapshot, publishLiveKitPlaybackFeedback,
   subscribeLiveKitV3Events, subscribeLiveKitShadowPcm, subscribeLiveKitDecodedAudio,
   publishLiveKitV3Event,
-  setLiveKitPlaybackMuted,
+  setLiveKitPlaybackMuted, subscribeLiveKitAudioLevel,
 } from './LiveKitGateway';
 
 export interface LiveKitPort {
+  subscribeAudioLevel?: typeof subscribeLiveKitAudioLevel;
   getCachedSession: typeof getCachedLiveKitSession;
   ensureSession: typeof ensureLiveKitSession;
   ensureRoomConnected: typeof ensureLiveKitRoomConnected;

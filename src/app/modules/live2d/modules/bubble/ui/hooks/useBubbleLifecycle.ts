@@ -51,11 +51,9 @@ export const useBubbleLifecycle = ({
     const releaseSurrogateAudio = () => {
       const existing = surrogateAudioRef.current;
       if (!existing) return;
-      try { existing.pause?.(); } catch { /* swallow */ }
-      try {
-        existing.src = '';
-        existing.load?.();
-      } catch { /* swallow */ }
+      existing.pause?.();
+      existing.src = '';
+      existing.load?.();
       surrogateAudioRef.current = null;
     };
 
@@ -148,9 +146,7 @@ export const useBubbleLifecycle = ({
           surrogate.removeEventListener('loadedmetadata', handleMetadata);
           surrogate.removeEventListener('error', handleSurrogateError);
         });
-        try {
           surrogate.load();
-        } catch { /* swallow */ }
         applyDuration(null);
       } else {
         applyDuration(null);
@@ -163,7 +159,7 @@ export const useBubbleLifecycle = ({
       }
       if (layoutRafId !== null) window.cancelAnimationFrame(layoutRafId);
       cleanupFns.forEach(fn => {
-        try { fn(); } catch { /* swallow */ }
+        fn();
       });
       releaseSurrogateAudio();
       clearBubbleTimer();

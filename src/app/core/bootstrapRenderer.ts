@@ -1,3 +1,4 @@
+import { bindActionCatalog } from './bindings/bindActionCatalog';
 import { bindLogService } from '../shared/logging/compat';
 import { ServiceContainer } from './di/container';
 import type { WindowKind } from './di/module';
@@ -6,6 +7,7 @@ import { TOKENS } from './serviceTokens';
 import { reaction } from 'mobx';
 import type { AiHostApi, ControlPanelHostApi, DesktopHostApi, Live2dHostApi } from './plugin/types';
 import { bindAiBubble } from './bindings/bindAiBubble';
+import { bindAiActions } from './bindings/bindAiActions';
 
 export interface RendererApplication {
   readonly container: ServiceContainer;
@@ -80,10 +82,12 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
     const config = container.resolve(TOKENS.config);
     bindings.push(
       bindAiBubble(container.resolve(TOKENS.ai), container.resolve(TOKENS.tts), live2d),
+      bindAiActions(container.resolve(TOKENS.ai), container.resolve(TOKENS.tts), live2d),
       reaction(() => electron.drag.active, (active) => live2d.setWindowDragging(active), { fireImmediately: true }),
       reaction(() => config.modelConfig?.bubble,
         (settings) => live2d.configureBubble(settings ?? {}),
         { fireImmediately: true }),
+      bindActionCatalog(config, live2d, electron.bridge.modelApi),
       reaction(() => config.modelInteraction,
         (view) => live2d.configureInteraction(view),
         { fireImmediately: true }),

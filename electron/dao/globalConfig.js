@@ -1,3 +1,4 @@
+import { readActionCatalog } from '../../shared/actionCatalog.js';
 import { DEFAULT_SUBTITLE_SETTINGS, DEFAULT_PUSH_TO_TALK, normalizeSubtitleSettings, normalizePushToTalk } from '../../shared/subtitleSettings.js';
 
 export const DEFAULT_GLOBAL_MODEL_CONFIG = {
@@ -82,6 +83,8 @@ export const DEFAULT_MODEL_CONFIG = {
     topP: 0.8,
     temperature: 0.5,
   },
+  interaction: {},
+  actions: [],
 };
 
 const normalizeTextField = (value) => {
@@ -227,6 +230,7 @@ export const normalizeModelConfig = (input = {}) => {
 
   next.rag = normalizeRagConfig(input && input.rag);
   next.tts = normalizeTtsConfig(input && input.tts);
+  next.actions = readActionCatalog(input && input.actions);
   return next;
 };
 

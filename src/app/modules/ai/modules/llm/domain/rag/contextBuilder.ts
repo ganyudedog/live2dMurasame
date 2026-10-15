@@ -1,4 +1,3 @@
-import type { ActionCapability } from '../../../../../live2d/modules/actions/domain/types';
 import { retrieveRelevantChunks } from './retriever';
 
 export interface RagProfileConfig {
@@ -26,7 +25,6 @@ export interface RuntimeRagConfig {
 export interface BuildRagContextOptions {
   userText: string;
   ragConfig: RuntimeRagConfig;
-  capability?: ActionCapability;
   knowledgeText?: string;
   memory?: Pick<PetModelMemoryState, 'recent' | 'summary'> | null;
 }
@@ -95,16 +93,6 @@ export const normalizeRuntimeRagConfig = (input: unknown): RuntimeRagConfig => {
   };
 };
 
-const buildCapabilityText = (capability?: ActionCapability): string => {
-  if (!capability) return '';
-  const lines = [
-    `shake_head: ${capability.canShakeHead ? 'available' : 'unavailable'}`,
-    `blink: ${capability.canBlink ? 'available' : 'unavailable'}`,
-    `mouth: ${capability.canMouth ? 'available' : 'unavailable'}`,
-  ];
-  return lines.join('\n');
-};
-
 const joinSection = (title: string, content: string): string => {
   const text = String(content ?? '').trim();
   if (!text) return '';
@@ -166,7 +154,6 @@ export const buildRagContext = (options: BuildRagContextOptions): RagContextResu
   sections.push(joinSection('世界观', ragConfig.profile.world));
   sections.push(joinSection('最近对话摘要', buildSummaryText(options.memory?.summary ?? null)));
   sections.push(joinSection('最近对话窗口', buildRecentMemoryText(options.memory?.recent ?? null)));
-  sections.push(joinSection('动作能力表', buildCapabilityText(options.capability)));
 
   let chunks: Array<{ id: string; text: string; score: number }> = [];
   if (ragConfig.retrieval.enabled && options.knowledgeText) {

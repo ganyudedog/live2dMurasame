@@ -38,16 +38,8 @@ export class SharedStoreClient {
 
     const trySendBye = () => {
       if (!this.worker) return;
-      try {
-        this.worker.port.postMessage({ type: 'bye', sourceId: this.sourceId });
-      } catch {
-        // ignore
-      }
-      try {
-        this.worker.port.close();
-      } catch {
-        // ignore
-      }
+      this.worker.port.postMessage({ type: 'bye', sourceId: this.sourceId });
+      this.worker.port.close();
     };
 
     // Electron/Chromium: pagehide 更可靠（包括 bfcache/窗口销毁路径），unload 兜底。
@@ -101,16 +93,8 @@ export class SharedStoreClient {
 
   dispose() {
     if (this.worker) {
-      try {
-        this.worker.port.postMessage({ type: 'bye', sourceId: this.sourceId });
-      } catch {
-        // ignore teardown transport errors
-      }
-      try {
-        this.worker.port.close();
-      } catch {
-        // ignore teardown transport errors
-      }
+      this.worker.port.postMessage({ type: 'bye', sourceId: this.sourceId });
+      this.worker.port.close();
     }
     this.worker = null;
     this.listeners.clear();

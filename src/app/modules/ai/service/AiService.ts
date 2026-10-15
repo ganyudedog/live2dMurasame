@@ -8,7 +8,7 @@ import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import type { AiRegister } from '@app/core/plugin/registers';
 import type { Disposable, TextAiInput, TextAiResponse, TextAiResult } from '@app/core/plugin/types';
-import type { AiDialogueEvent } from '../types';
+import type { AiDialogueEvent, AiActionEvent } from '../types';
 
 export class AiService {
   processing = false;
@@ -24,9 +24,11 @@ export class AiService {
   private extensionRegister: AiRegister | null = null;
   private responseListeners = new Set<(response: TextAiResponse) => void>();
   private dialogueListeners = new Set<(event: AiDialogueEvent) => void>();
+  private actionListeners = new Set<(event: AiActionEvent) => void>();
   private stopChatSpeech: (() => void) | null = null;
   private activeController: AbortController | null = null;
   private activeRequest: ChatRequest | null = null;
+  private lastConversationId: string | null = null;
   private activeDisplayText = '';
   private readonly asrSubscriptions: Array<() => void> = [];
 
@@ -108,6 +110,11 @@ export class AiService {
     return () => this.dialogueListeners.delete(listener);
   }
 
+  onAction(listener: (event: AiActionEvent) => void): Disposable {
+    this.actionListeners.add(listener);
+    return () => this.actionListeners.delete(listener);
+  }
+
   async processChatRequest(request: ChatRequest): Promise<void> {
     if (this.disposed) return;
     if (this.processing) {
@@ -116,6 +123,7 @@ export class AiService {
     const controller = new AbortController();
     this.activeController = controller;
     this.activeRequest = request;
+    this.lastConversationId = request.id;
     this.activeDisplayText = '';
     const isCurrent = () => !controller.signal.aborted && this.activeController === controller && !this.disposed;
 
@@ -140,6 +148,7 @@ export class AiService {
     const consumer = this.tts.createDispatcher(request.id);
     this.stopChatSpeech = consumer.stop;
     this.emitDialogue({ type: 'started', conversationId: request.id });
+    let completeSentences = 0;
     const submittedSpeech = new Set<number>();
     const displayedSentences = new Set<number>();
     const submitSpeech = (sentenceIndex: number, speakText: string, displayText = '') => {
@@ -164,6 +173,7 @@ export class AiService {
         onSentenceDisplayReady: ({ sentenceIndex, displayText }) => prepareDisplay(sentenceIndex, displayText),
         onSentenceStreaming: (sentence) => {
           if (!isCurrent()) return;
+          completeSentences++;
           accumulatedDisplay = accumulatedDisplay
             ? `${accumulatedDisplay}\n${sentence.displayText}`
             : sentence.displayText;
@@ -178,10 +188,16 @@ export class AiService {
           this.emitTextResponse({ requestId: request.id, text: accumulatedDisplay, status: 'streaming' });
           prepareDisplay(sentence.sentenceIndex, sentence.displayText);
           submitSpeech(sentence.sentenceIndex, sentence.speakText, sentence.displayText);
+          if (sentence.actionIntent) this.emitAction({
+            conversationId: request.id, requestId: `${request.id}_s${sentence.sentenceIndex}`,
+            modelVersion: sentence.modelVersion ?? 0, hasSpeech: Boolean(sentence.speakText), intent: sentence.actionIntent,
+          });
           trace.record('sentence.received', {
             requestId: request.id,
             sentenceIndex: sentence.sentenceIndex,
             speakLength: sentence.speakText.length,
+            actionId: sentence.actionIntent?.actionId,
+            modelVersion: sentence.modelVersion,
           });
         },
       });
@@ -198,6 +214,10 @@ export class AiService {
       const finalDisplay = accumulatedDisplay || result.reply?.display_text?.trim() || '';
       if (!displayedSentences.size) prepareDisplay(0, finalDisplay);
       if (!submittedSpeech.size && result.reply?.speak_text) submitSpeech(0, result.reply.speak_text, finalDisplay);
+      if (!completeSentences && result.reply?.action_intent) this.emitAction({
+        conversationId: request.id, requestId: `${request.id}_s0`, modelVersion: result.modelVersion ?? 0,
+        hasSpeech: Boolean(result.reply.speak_text), intent: result.reply.action_intent,
+      });
       this.activeDisplayText = finalDisplay;
       this.stateBus.publishChatRequest({ ...request, status: 'done' });
       this.stateBus.publishChatResponse({
@@ -267,7 +287,10 @@ export class AiService {
       });
       this.emitTextResponse({ requestId: request.id, text: this.activeDisplayText, status: 'cancelled' });
       this.emitDialogue({ type: 'cancelled', conversationId: request.id });
+    } else if (this.lastConversationId) {
+      this.emitDialogue({ type: 'cancelled', conversationId: this.lastConversationId });
     }
+    this.lastConversationId = null;
     runInAction(() => {
       this.processing = false;
       this.activeRequestId = null;
@@ -291,6 +314,7 @@ export class AiService {
     this.cancel('dispose');
     this.responseListeners.clear();
     this.dialogueListeners.clear();
+    this.actionListeners.clear();
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'lifecycle',
       params: {},
@@ -302,6 +326,20 @@ export class AiService {
 
   private emitTextResponse(response: TextAiResponse): void {
     this.responseListeners.forEach((listener) => listener(response));
+  }
+
+  private emitAction(event: AiActionEvent): void {
+    this.actionListeners.forEach((listener) => {
+      // 动作是 best-effort：单个订阅失败不取消 TTS，也不阻止其他订阅接收计划。
+      try { listener(event); }
+      catch (error) {
+        const context = this.log.contextRegistry.register('AiService', {
+          relation: 'action.dispatch', params: { conversationId: event.conversationId, requestId: event.requestId },
+        });
+        try { context.beginTrace('action.dispatch').fail('动作事件订阅执行失败', { intent: event.intent }, error); }
+        finally { context.dispose(); }
+      }
+    });
   }
 
   private emitDialogue(event: AiDialogueEvent): void {

@@ -17,7 +17,7 @@ export const registerDomainIpc = (dependencies) => {
     log: dependencies.logService,
   });
   ipcMain.on('ddd:system:renderer-trace', (event, payload = {}) => {
-    try { dependencies.logService?.mirrorRenderer(event, payload); } catch { /* diagnostics must not break IPC */ }
+    dependencies.logService?.mirrorRenderer(event, payload);
   });
   return { ...live2denv, asrRuntime };
 };

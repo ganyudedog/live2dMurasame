@@ -5,7 +5,7 @@ export const stage2LlmReplySchema = z.object({
   request_id: z.string().trim().min(1).max(120).optional(),
   display_text: z.string().trim().min(1).optional(),
   speak_text: z.string().trim().min(1).optional(),
-  action_intent: actionIntentInputSchema,
+  action_intent: actionIntentInputSchema.optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
 });
 

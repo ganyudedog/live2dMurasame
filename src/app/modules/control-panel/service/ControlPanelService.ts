@@ -20,6 +20,8 @@ import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import type { ControlPanelRegister } from '@app/core/plugin/registers';
 import type { UiContribution } from '@app/core/plugin/types';
+import type { LlmService } from '@app/modules/ai/modules/llm/service/LlmService';
+import { ActionSettingsService } from '../modules/action-settings/service/ActionSettingsService';
 
 export class ControlPanelService {
   activeTab: ControlPanelTabKey = 'home';
@@ -36,17 +38,19 @@ export class ControlPanelService {
   readonly config: ConfigService;
   readonly stateBus: StateBusService;
   readonly interaction: InteractionSettingsService;
+  readonly actionSettings: ActionSettingsService;
   private readonly log: LogService;
   private readonly tts: TtsService;
   private reactions: IReactionDisposer[] = [];
   private aiPersistTimer: number | null = null;
   private extensionRegister: ControlPanelRegister | null = null;
 
-  constructor(config: ConfigService, stateBus: StateBusService, log: LogService, tts: TtsService) {
+  constructor(config: ConfigService, stateBus: StateBusService, log: LogService, tts: TtsService, llm: LlmService) {
     this.config = config;
     this.stateBus = stateBus;
     this.log = log;
     this.tts = tts;
+    this.actionSettings = new ActionSettingsService(llm.actionCatalog, config);
     this.aiSettings = toChatConfig(config.globalModelConfig);
     this.interaction = new InteractionSettingsService({
       persist: (commit) => this.persistInteraction(commit),
@@ -78,6 +82,7 @@ export class ControlPanelService {
   }
 
   start(): void {
+    this.actionSettings.start();
     this.loadChatCache();
     this.reactions.push(
       reaction(
@@ -331,6 +336,7 @@ export class ControlPanelService {
   }
 
   async dispose(): Promise<void> {
+    this.actionSettings.dispose();
     this.reactions.splice(0).forEach((dispose) => dispose());
     await this.interaction.dispose();
     if (this.aiPersistTimer !== null) {

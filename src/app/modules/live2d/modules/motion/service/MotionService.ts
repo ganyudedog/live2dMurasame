@@ -170,16 +170,12 @@ export class MotionService {
 
   private log(...args: any[]) {
     if (this.debug) {
-      try {
-        const [event, data] = args;
-        if (typeof event === 'string') {
-          logDebug('pet.motion', event, { data });
-          return;
-        }
-        logDebug('pet.motion', 'mm', { args });
-      } catch {
-        // ignore
+      const [event, data] = args;
+      if (typeof event === 'string') {
+        logDebug('pet.motion', event, { data });
+        return;
       }
+      logDebug('pet.motion', 'mm', { args });
     }
   }
 

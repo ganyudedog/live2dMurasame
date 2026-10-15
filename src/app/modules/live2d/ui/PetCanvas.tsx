@@ -8,7 +8,6 @@ import { FloatingComposer } from '../modules/interaction/ui/components/FloatingC
 import { Application } from 'pixi.js';
 import type { Live2DModel as Live2DModelType } from '../modules/model/runtime/live2d/runtime';
 import { usePetModel } from '../modules/model/runtime/hooks/usePetModel';
-import { useEyeReset } from '../modules/model/ui/hooks/useEyeReset';
 import { useMousePassthrough } from '../modules/interaction/runtime/hooks/useMousePassthrough';
 import { useBubbleLifecycle } from '../modules/bubble/ui/hooks/useBubbleLifecycle';
 import { usePetCanvasConfigRefs } from './hooks/usePetCanvasConfigRefs';
@@ -192,10 +191,7 @@ const PetCanvas: React.FC = observer(() => {
   const appRef = useRef<Application | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // 动画与帧数
-  const frameCountRef = useRef(0); // 帧计数器
-
-  const paramCacheRef = useRef<string[] | null>(null); // 参数缓存
+  // 鼠标跟随清理
   const detachEyeHandlerRef = useRef<(() => void) | null>(null); // 眼部追踪处理器解绑函数
 
   usePetCanvasBootstrap({
@@ -376,26 +372,6 @@ const PetCanvas: React.FC = observer(() => {
     updateDragHandlePosition(true);
   }, [activeBubbleMeasurement, updateBubblePosition, updateDragHandlePosition]);
 
-  // 检测是否为idle状态
-  const isIdleState = useCallback((motionManager: any): boolean => {
-    if (!motionManager) return true;
-
-    // 多种方式检测是否在idle状态
-    const isFinished = typeof motionManager.isFinished === 'function'
-      ? motionManager.isFinished()
-      : motionManager.isFinished;
-
-    const playingCount = motionManager._playingMotions?.length ?? motionManager.playingMotions?.length;
-    const currentPriority = motionManager._currentPriority ?? motionManager.currentPriority;
-
-    // idle状态的条件：没有正在播放的motion，或者优先级为0/idle
-    return (
-      isFinished === true &&
-      playingCount === 0 &&
-      (currentPriority === undefined || currentPriority === 0 || currentPriority === 'idle')
-    );
-  }, []);
-
   // UI only attaches the Pixi resource; scale scheduling belongs to the service.
   useLayoutEffect(() => {
     const app = appRef.current;
@@ -414,6 +390,16 @@ const PetCanvas: React.FC = observer(() => {
 
   const scheduleApplyLayout = live2dService.layoutService.schedule;
 
+  // Preserve the original idle detection and cursor blend behavior.
+  const isIdleState = useCallback((motionManager: any): boolean => {
+    if (!motionManager) return true;
+    const isFinished = typeof motionManager.isFinished === 'function' ? motionManager.isFinished() : motionManager.isFinished;
+    const playingCount = motionManager._playingMotions?.length ?? motionManager.playingMotions?.length;
+    const currentPriority = motionManager._currentPriority ?? motionManager.currentPriority;
+    return isFinished === true && playingCount === 0 &&
+      (currentPriority === undefined || currentPriority === 0 || currentPriority === 'idle');
+  }, []);
+
   // Live2D 模型生命周期（封装于自定义 Hook）
   usePetModel({
     settingsLoaded: hydrated,
@@ -423,8 +409,6 @@ const PetCanvas: React.FC = observer(() => {
     appRef,
     modelRef,
     detachEyeHandlerRef,
-    frameCountRef,
-    paramCacheRef,
     modelBaseUrlRef,
     pointerX,
     pointerY,
@@ -441,8 +425,6 @@ const PetCanvas: React.FC = observer(() => {
     modelPath,
   });
 
-  // 忽略鼠标时重置模型朝向参数
-  useEyeReset({ ignoreMouse, modelRef });
 
   const canStartModelDrag = useCallback((clientX: number, clientY: number): boolean => {
     const model = modelRef.current;

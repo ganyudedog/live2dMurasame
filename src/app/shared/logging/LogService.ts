@@ -53,6 +53,7 @@ type RegistrationState = {
 const MAX_TRACE_EVENTS = 128;
 const MAX_RETAINED_TRACES = 48;
 const SENSITIVE_KEY = /api.?key|access.?token|token|secret|password|authorization|cookie/i;
+const TOKEN_USAGE_KEYS = new Set(['promptTokens', 'cachedTokens', 'uncachedTokens', 'completionTokens']);
 
 /**
  * Renderer-side structured logging service.
@@ -415,29 +416,36 @@ const serializeValue = (value: unknown, depth = 0, seen = new WeakSet<object>())
   if (depth >= 6) return '[MaxDepth]';
   if (seen.has(value)) return '[Circular]';
   seen.add(value);
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
-      cause: serializeValue(value.cause, depth + 1, seen),
+  // 只检测当前递归路径：多个字段引用同一数组并不构成循环。
+  try {
+    if (value instanceof Error) {
+      return {
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+        cause: serializeValue(value.cause, depth + 1, seen),
+      };
+    }
+    if (value instanceof Date) return value.toISOString();
+    if (value instanceof Map) return {
+      type: 'Map',
+      entries: [...value.entries()].slice(0, 32).map(([key, item]) => [serializeValue(key, depth + 1, seen), serializeValue(item, depth + 1, seen)]),
     };
+    if (value instanceof Set) return {
+      type: 'Set',
+      values: [...value.values()].slice(0, 32).map((item) => serializeValue(item, depth + 1, seen)),
+    };
+    if (Array.isArray(value)) return value.slice(0, 64).map((item) => serializeValue(item, depth + 1, seen));
+    const output: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value).slice(0, 64)) {
+      // 仅放行明确的数值用量字段；凭证 token 及这些字段中的字符串仍脱敏。
+      const usageCount = TOKEN_USAGE_KEYS.has(key) && typeof item === 'number' && Number.isFinite(item) && item >= 0;
+      output[key] = SENSITIVE_KEY.test(key) && !usageCount ? '[redacted]' : serializeValue(item, depth + 1, seen);
+    }
+    return output;
+  } finally {
+    seen.delete(value);
   }
-  if (value instanceof Date) return value.toISOString();
-  if (value instanceof Map) return {
-    type: 'Map',
-    entries: [...value.entries()].slice(0, 32).map(([key, item]) => [serializeValue(key, depth + 1, seen), serializeValue(item, depth + 1, seen)]),
-  };
-  if (value instanceof Set) return {
-    type: 'Set',
-    values: [...value.values()].slice(0, 32).map((item) => serializeValue(item, depth + 1, seen)),
-  };
-  if (Array.isArray(value)) return value.slice(0, 64).map((item) => serializeValue(item, depth + 1, seen));
-  const output: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value).slice(0, 64)) {
-    output[key] = SENSITIVE_KEY.test(key) ? '[redacted]' : serializeValue(item, depth + 1, seen);
-  }
-  return output;
 };
 
 const cloneRecord = (value?: Record<string, unknown>): Record<string, unknown> | undefined => serializeRecord(value);

@@ -16,18 +16,14 @@ export const createMemoryFileService = () => {
       if (typeof modelPath === 'string' && modelPath.trim()) {
         candidates.push(path.resolve(modelPath, raw));
       }
-      try {
-        candidates.push(path.resolve(app.getAppPath(), raw));
-        candidates.push(path.resolve(app.getAppPath(), 'public', raw));
-      } catch { }
+      candidates.push(path.resolve(app.getAppPath(), raw));
+      candidates.push(path.resolve(app.getAppPath(), 'public', raw));
       candidates.push(path.resolve(process.cwd(), raw));
     }
 
     for (const candidate of candidates) {
-      try {
-        const stat = fs.statSync(candidate);
-        if (stat.isFile()) return candidate;
-      } catch { }
+      const stat = fs.statSync(candidate);
+      if (stat.isFile()) return candidate;
     }
     return null;
   };

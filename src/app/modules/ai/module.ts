@@ -33,13 +33,19 @@ export const serviceModules: readonly ServiceModule[] = [
   },
   {
     id: 'pet.ai.llm',
-    windows: ['pet'],
+    windows: ['pet', 'control-panel'],
     register(container) {
-      container.registerSingleton(TOKENS.llm, (scope) => new LlmService({
-        dispatchAction: () => ({ ok: false, state: 'dropped', reason: 'no-capability' }),
-        getActionCapability: () => ({ canShakeHead: false, canBlink: false, canMouth: false }),
-        getConfigSnapshot: () => scope.resolve(TOKENS.config).getSnapshot(),
-      }));
+      container.registerSingleton(TOKENS.llm, (scope) => {
+        const config = scope.resolve(TOKENS.config);
+        const isPet = scope.resolve(TOKENS.bootstrapContext).windowKind === 'pet';
+        return new LlmService({
+          log: scope.resolve(TOKENS.log),
+          getConfigSnapshot: () => config.getSnapshot(),
+          // 版本号属于执行器运行时，用于拒绝切模后的旧回复；控制面板不注入执行器依赖。
+          getActionModelVersion: isPet
+            ? () => scope.resolve(TOKENS.live2d).actions.getCapability().modelVersion : undefined,
+        });
+      });
     },
   },
   {
@@ -47,14 +53,16 @@ export const serviceModules: readonly ServiceModule[] = [
     windows: ['pet', 'control-panel'],
     register(container) {
       container.registerSingleton(TOKENS.liveKit, (scope) => new LiveKitService(scope.resolve(TOKENS.log)));
-      container.registerSingleton(TOKENS.tts, (scope) => new TtsService({
-        log: scope.resolve(TOKENS.log),
-        liveKit: scope.resolve(TOKENS.liveKit),
-        config: scope.resolve(TOKENS.config),
-        autoWarmup: scope.resolve(TOKENS.bootstrapContext).windowKind === 'pet',
-        notifyError: notifyTtsError,
-        getConfigSnapshot: () => scope.resolve(TOKENS.config).getSnapshot(),
-      }));
+      container.registerSingleton(TOKENS.tts, (scope) => {
+        const config = scope.resolve(TOKENS.config);
+        return new TtsService({
+          log: scope.resolve(TOKENS.log),
+          liveKit: scope.resolve(TOKENS.liveKit),
+          config,
+          autoWarmup: scope.resolve(TOKENS.bootstrapContext).windowKind === 'pet',
+          notifyError: notifyTtsError,
+        });
+      });
     },
   },
 ];

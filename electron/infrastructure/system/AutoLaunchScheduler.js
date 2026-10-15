@@ -12,27 +12,23 @@ export const createAutoLaunchScheduler = ({
   const scheduleApplyAutoLaunchSetting = (enabled) => {
     pendingAutoLaunchValue = Boolean(enabled);
     if (autoLaunchApplyTimer !== null) {
-      try {
-        clearTimeout(autoLaunchApplyTimer);
-      } catch { }
+      clearTimeout(autoLaunchApplyTimer);
       autoLaunchApplyTimer = null;
     }
 
     const attempt = () => {
       if (pendingAutoLaunchValue === null) return;
 
-      try {
-        const focused = BrowserWindow.getFocusedWindow();
-        const controlPanelWindow = getControlPanelWindow();
-        const isControlPanelFocused = focused
-          && controlPanelWindow
-          && !controlPanelWindow.isDestroyed()
-          && focused.id === controlPanelWindow.id;
-        if (isControlPanelFocused) {
-          autoLaunchApplyTimer = setTimeout(attempt, debounceMs);
-          return;
-        }
-      } catch { }
+      const focused = BrowserWindow.getFocusedWindow();
+      const controlPanelWindow = getControlPanelWindow();
+      const isControlPanelFocused = focused
+        && controlPanelWindow
+        && !controlPanelWindow.isDestroyed()
+        && focused.id === controlPanelWindow.id;
+      if (isControlPanelFocused) {
+        autoLaunchApplyTimer = setTimeout(attempt, debounceMs);
+        return;
+      }
 
       const value = pendingAutoLaunchValue;
       pendingAutoLaunchValue = null;
@@ -45,9 +41,7 @@ export const createAutoLaunchScheduler = ({
 
   const flushPendingAutoLaunchSetting = () => {
     if (autoLaunchApplyTimer !== null) {
-      try {
-        clearTimeout(autoLaunchApplyTimer);
-      } catch { }
+      clearTimeout(autoLaunchApplyTimer);
       autoLaunchApplyTimer = null;
     }
     if (pendingAutoLaunchValue !== null) {

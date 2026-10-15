@@ -34,6 +34,32 @@ const setup = () => {
 };
 
 describe('voice interruption orchestration', () => {
+  it('keeps early speech independent of action listeners and cancels a lingering completed pose', async () => {
+    const { service, llm, consumers, speechStart } = setup();
+    const actions = vi.fn();
+    const dialogue = vi.fn();
+    service.onAction(() => { throw new Error('animation failed'); });
+    service.onAction(actions);
+    service.onDialogue(dialogue);
+    llm.ask.mockImplementation(async (_text, options) => {
+      options.onSentenceSpeechReady?.({ sentenceIndex: 0, speakText: 'voice' });
+      expect(consumers.get('chat')?.submit).toHaveBeenCalledOnce();
+      expect(actions).not.toHaveBeenCalled();
+      options.onSentenceStreaming?.({ sentenceIndex: 0, speakText: 'voice', displayText: 'text',
+        modelVersion: 5, actionIntent: { actionId: [['cheek', 'turn-head'], 'blink'] } });
+      return { ok: true };
+    });
+    await service.processChatRequest(request('chat'));
+    expect(service.lastError).toBeNull();
+    expect(actions).toHaveBeenCalledWith({ conversationId: 'chat', requestId: 'chat_s0',
+      modelVersion: 5, hasSpeech: true, intent: { actionId: [['cheek', 'turn-head'], 'blink'] } });
+    expect(consumers.get('chat')?.submit).toHaveBeenCalledOnce();
+    expect(dialogue).toHaveBeenCalledWith({ type: 'completed', conversationId: 'chat' });
+    speechStart();
+    expect(dialogue).toHaveBeenLastCalledWith({ type: 'cancelled', conversationId: 'chat' });
+    await service.dispose();
+  });
+
   it('aborts before a final arrives and accepts new input while the old LLM still settles', async () => {
     const { service, llm, tts, stateBus, consumers, speechStart, final } = setup();
     let resolveOld!: (result: { ok: boolean }) => void;

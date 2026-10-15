@@ -17,7 +17,8 @@ describe('renderer module discovery', () => {
     } else {
       expect(tokens).not.toContain(TOKENS.ai.key);
       expect(tokens).not.toContain(TOKENS.asr.key);
-      expect(tokens).not.toContain(TOKENS.llm.key);
+      expect(tokens).toContain(TOKENS.llm.key);
+      expect(tokens).not.toContain('ActionCatalogService');
       expect(eager).not.toContain(TOKENS.ai);
       expect(tokens).toContain(TOKENS.tts.key);
       expect(tokens).toContain(TOKENS.liveKit.key);

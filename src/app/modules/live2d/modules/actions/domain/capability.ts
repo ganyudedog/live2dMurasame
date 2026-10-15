@@ -1,55 +1,31 @@
-import type { ActionCapability } from './types';
+import { PARAMETER_DESCRIPTIONS } from './parameters';
+import type { ActionCapability, ActionCore, ActionDefinition, ParameterCapability } from './types';
 
-interface Live2DCoreModelLike {
-  getParameterCount?: () => number;
-  getParameterId?: (index: number) => string;
-}
-
-const ANGLE_X_CANDIDATES = ['ParamAngleX'];
-const EYE_L_CANDIDATES = ['ParamEyeLOpen', 'ParamEyeLOpening'];
-const EYE_R_CANDIDATES = ['ParamEyeROpen', 'ParamEyeROpening'];
-const MOUTH_CANDIDATES = ['ParamMouthOpenY', 'ParamMouthOpen'];
-// 动作能力探测器，通过检查模型的参数来判断其是否支持特定的动作能力（如摇头、眨眼、张嘴），并返回一个包含能力标志和相关参数ID的对象。
-// 通过检测模型参数来判断其是否支持特定的动作能力（如摇头、眨眼、张嘴），并返回相应的参数ID以供后续使用。
-const collectParamIds = (core: Live2DCoreModelLike): Set<string> => {
-  if (!core || typeof core.getParameterCount !== 'function' || typeof core.getParameterId !== 'function') {
-    return new Set();
+export const readModelParameters = (core: ActionCore): ParameterCapability[] => {
+  // Cubism4's wrapper exposes IDs on the Core model, not getParameterId().
+  const ids = core.getModel?.().parameters.ids;
+  const count = core.getParameterCount?.() ?? ids?.length ?? 0;
+  const result: ParameterCapability[] = [];
+  for (let index = 0; index < count; index++) {
+    const id = ids?.[index] ?? core.getParameterId?.(index);
+    if (!id) continue;
+    const min = core.getParameterMinimumValue?.(index);
+    const max = core.getParameterMaximumValue?.(index);
+    const defaultValue = core.getParameterDefaultValue?.(index);
+    if (![min, max, defaultValue].every((value) => typeof value === 'number' && Number.isFinite(value))) continue;
+    if (min! > max!) continue;
+    result.push({ id, description: PARAMETER_DESCRIPTIONS[id] ?? '', min: min!, max: max!, defaultValue: defaultValue! });
   }
-  try {
-    const count = Number(core.getParameterCount()) || 0;
-    const ids: string[] = [];
-    for (let i = 0; i < count; i++) {
-      const id = core.getParameterId(i);
-      if (typeof id === 'string' && id) ids.push(id);
-    }
-    return new Set(ids);
-  } catch {
-    return new Set();
-  }
+  return result;
 };
 
-// 从候选参数列表中选择第一个在模型参数ID集合中存在的参数ID，如果没有找到则返回undefined。
-const pickParamId = (knownIds: Set<string>, candidates: string[]): string | undefined => {
-  for (const id of candidates) {
-    if (knownIds.has(id)) return id;
-  }
-  return undefined;
-};
-// 检测模型的动作能力，并返回一个包含能力标志和相关参数ID的对象。
-export const detectActionCapability = (core: Live2DCoreModelLike): ActionCapability => {
-  const knownIds = collectParamIds(core);
-  const angleXParamId = pickParamId(knownIds, ANGLE_X_CANDIDATES);
-  const eyeLParamId = pickParamId(knownIds, EYE_L_CANDIDATES);
-  const eyeRParamId = pickParamId(knownIds, EYE_R_CANDIDATES);
-  const mouthParamId = pickParamId(knownIds, MOUTH_CANDIDATES);
-
+export const detectActionCapability = (_parameters: ParameterCapability[], modelVersion: number,
+  actions: ActionDefinition[] = []): ActionCapability => {
+  const writable = new Set(_parameters.map((parameter) => parameter.id));
   return {
-    canShakeHead: Boolean(angleXParamId),
-    canBlink: Boolean(eyeLParamId && eyeRParamId),
-    canMouth: Boolean(mouthParamId),
-    angleXParamId,
-    eyeLParamId,
-    eyeRParamId,
-    mouthParamId,
+    modelVersion,
+    actions: actions
+      .filter((action) => action.tracks.length > 0 && action.tracks.every((track) => writable.has(track.parameterId)))
+      .map(({ id, label, category, description }) => ({ id, label, category, description })),
   };
 };

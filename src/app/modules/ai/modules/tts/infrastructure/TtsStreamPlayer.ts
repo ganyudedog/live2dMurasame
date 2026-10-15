@@ -1,3 +1,4 @@
+import { AudioLevelObserver, type AudioLevelListener } from './AudioLevelObserver';
 import type { TtsPlaybackOptions, TtsPlaybackResult } from '../domain/types';
 
 const OGG_OPUS_MIME = 'audio/ogg; codecs=opus';
@@ -63,33 +64,39 @@ const toArrayBufferChunk = (chunk: Uint8Array): ArrayBuffer => {
 };
 
 export class TtsStreamPlayer {
+  private observer: AudioLevelObserver | null = null;
+  private cancelPlayback: (() => void) | null = null;
+  private didStart = false;
+  private requestController: AbortController | null = null;
+  private readonly onAudioLevel?: AudioLevelListener;
+
+  constructor(onAudioLevel?: AudioLevelListener) { this.onAudioLevel = onAudioLevel; }
+
   private activeAudio: HTMLAudioElement | null = null;
 
   private activeObjectUrl: string | null = null;
 
   stop(): void {
+    this.requestController?.abort();
+    this.requestController = null;
+    this.clearAudio();
+  }
+
+  private clearAudio(): void {
+    this.cancelPlayback?.();
+    this.cancelPlayback = null;
     const audio = this.activeAudio;
     if (audio) {
-      try {
-        audio.pause();
-      } catch {
-        // ignore
-      }
-      try {
-        audio.removeAttribute('src');
-        audio.load();
-      } catch {
-        // ignore
-      }
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
     }
+    this.observer?.dispose();
+    this.observer = null;
     this.activeAudio = null;
 
     if (this.activeObjectUrl) {
-      try {
-        URL.revokeObjectURL(this.activeObjectUrl);
-      } catch {
-        // ignore
-      }
+      URL.revokeObjectURL(this.activeObjectUrl);
       this.activeObjectUrl = null;
     }
   }
@@ -102,31 +109,33 @@ export class TtsStreamPlayer {
     if (options.signal?.aborted) throw createAbortError();
 
     this.stop();
-
+    this.didStart = false;
+    const controller = new AbortController();
+    this.requestController = controller;
+    options = { ...options, signal: options.signal
+      ? AbortSignal.any([options.signal, controller.signal]) : controller.signal };
     const contentType = response.headers.get('content-type');
     const mimeType = parseMimeFromContentType(contentType);
-
-    if (isJsonMime(mimeType)) {
-      return this.playJsonResponse(response, options, mimeType);
-    }
-
-    const streamMime = selectMediaSourceMime(contentType);
-
-    if (streamMime && response.body) {
-      const fallbackResponse = response.clone();
-      try {
-        return await this.playWithMediaSource(response, options, streamMime);
-      } catch (error) {
-        if (isAbortError(error)) throw error;
-        return this.playBuffered(
-          fallbackResponse,
-          options,
-          mimeType ?? OGG_OPUS_MIME,
-        );
+    try {
+      if (isJsonMime(mimeType)) return await this.playJsonResponse(response, options, mimeType);
+      const streamMime = selectMediaSourceMime(contentType);
+      if (streamMime && response.body) {
+        const fallbackResponse = response.clone();
+        try {
+          return await this.playWithMediaSource(response, options, streamMime);
+        } catch (error) {
+          // An older task unwinding must never stop or replace a newer playback.
+          if (controller.signal.aborted) throw createAbortError();
+          const started = this.didStart;
+          this.clearAudio();
+          if (isAbortError(error) || started) throw error;
+          return await this.playBuffered(fallbackResponse, options, mimeType ?? OGG_OPUS_MIME);
+        }
       }
+      return await this.playBuffered(response, options, mimeType ?? OGG_OPUS_MIME);
+    } finally {
+      if (this.requestController === controller) this.requestController = null;
     }
-
-    return this.playBuffered(response, options, mimeType ?? OGG_OPUS_MIME);
   }
 
   private async playJsonResponse(
@@ -140,7 +149,7 @@ export class TtsStreamPlayer {
     const audioUrl = trimText((payload as { audio_url?: unknown; url?: unknown }).audio_url)
       || trimText((payload as { audio_url?: unknown; url?: unknown }).url);
     if (audioUrl) {
-      await this.playByUrl(audioUrl, options.signal);
+      await this.playByUrl(audioUrl, options);
       return { streamed: false, bytesReceived: 0, mimeType: defaultMimeType };
     }
 
@@ -157,7 +166,7 @@ export class TtsStreamPlayer {
       || OGG_OPUS_MIME;
 
     const blob = decodeBase64ToBlob(audioBase64, mimeType);
-    await this.playByBlob(blob, options.signal);
+    await this.playByBlob(blob, options);
     return {
       streamed: false,
       bytesReceived: blob.size,
@@ -175,7 +184,7 @@ export class TtsStreamPlayer {
 
     options.onChunk?.(bytes.byteLength);
     const blob = new Blob([bytes], { type: mimeType });
-    await this.playByBlob(blob, options.signal);
+    await this.playByBlob(blob, options);
     return {
       streamed: false,
       bytesReceived: bytes.byteLength,
@@ -201,114 +210,152 @@ export class TtsStreamPlayer {
     this.activeAudio = audio;
     this.activeObjectUrl = objectUrl;
 
+    const playback = this.observePlayback(audio, options);
     let sourceBuffer: SourceBuffer | null = null;
     const appendQueue: ArrayBuffer[] = [];
     let streamEnded = false;
     let bytesReceived = 0;
     let playStarted = false;
-
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const flushQueue = () => {
-      if (!sourceBuffer) return;
-      if (sourceBuffer.updating) return;
-      if (appendQueue.length > 0) {
+      try {
+        if (!sourceBuffer || sourceBuffer.updating) return;
         const chunk = appendQueue.shift();
         if (chunk) sourceBuffer.appendBuffer(chunk);
-        return;
-      }
-      if (streamEnded && mediaSource.readyState === 'open') {
-        try {
-          mediaSource.endOfStream();
-        } catch {
-          // ignore
-        }
-      }
+        else if (streamEnded && mediaSource.readyState === 'open') mediaSource.endOfStream();
+      } catch (error) { playback.fail(error); }
     };
-
-    await new Promise<void>((resolve, reject) => {
-      const onOpen = () => {
-        try {
-          sourceBuffer = mediaSource.addSourceBuffer(sourceBufferMime);
-          sourceBuffer.mode = 'sequence';
-          sourceBuffer.addEventListener('updateend', flushQueue);
-          resolve();
-        } catch (error) {
-          reject(error);
-        }
-      };
-      const onError = () => reject(new Error('MediaSource 打开失败'));
-      mediaSource.addEventListener('sourceopen', onOpen, { once: true });
-      mediaSource.addEventListener('error', onError, { once: true });
-    });
-
-    const reader = body.getReader();
-    const onAbort = () => {
-      try {
-        reader.cancel();
-      } catch {
-        // ignore
-      }
-    };
-    options.signal?.addEventListener('abort', onAbort, { once: true });
-
+    const onBufferError = () => playback.fail(new Error('TTS 音频缓冲失败'));
     try {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          mediaSource.removeEventListener('sourceopen', onOpen);
+          mediaSource.removeEventListener('error', onError);
+        };
+        const onOpen = () => {
+          cleanup();
+          try {
+            sourceBuffer = mediaSource.addSourceBuffer(sourceBufferMime);
+            sourceBuffer.mode = 'sequence';
+            sourceBuffer.addEventListener('updateend', flushQueue);
+            sourceBuffer.addEventListener('error', onBufferError);
+            resolve();
+          } catch (error) { reject(error); }
+        };
+        const onError = () => { cleanup(); reject(new Error('MediaSource 打开失败')); };
+        mediaSource.addEventListener('sourceopen', onOpen, { once: true });
+        mediaSource.addEventListener('error', onError, { once: true });
+        void playback.done.catch((error) => { cleanup(); reject(error); });
+      });
+      reader = body.getReader();
+      void playback.done.catch(() => reader?.cancel().catch(() => undefined));
+      const startPlayback = () => {
+        if (playStarted) return;
+        playStarted = true;
+        // Reading must continue while play() waits for enough buffered audio.
+        void audio.play().catch(playback.fail);
+      };
       while (true) {
         if (options.signal?.aborted) throw createAbortError();
         const { done, value } = await reader.read();
         if (done) break;
-        if (!value || value.byteLength <= 0) continue;
-
+        if (!value?.byteLength) continue;
         bytesReceived += value.byteLength;
         appendQueue.push(toArrayBufferChunk(value));
         flushQueue();
         options.onChunk?.(bytesReceived);
-
-        if (!playStarted) {
-          playStarted = true;
-          await audio.play();
-        }
+        startPlayback();
       }
-
       streamEnded = true;
       flushQueue();
-      if (!playStarted) {
-        await audio.play();
-      }
-
-      return {
-        streamed: true,
-        bytesReceived,
-        mimeType: sourceBufferMime,
-      };
+      startPlayback();
+      await playback.done;
+      return { streamed: true, bytesReceived, mimeType: sourceBufferMime };
     } finally {
-      options.signal?.removeEventListener('abort', onAbort);
-      try {
+      const finalBuffer = sourceBuffer as SourceBuffer | null;
+      finalBuffer?.removeEventListener('updateend', flushQueue);
+      finalBuffer?.removeEventListener('error', onBufferError);
+      if (reader) {
+        await reader.cancel();
         reader.releaseLock();
-      } catch {
-        // ignore
       }
+      playback.cleanup();
     }
   }
 
-  private async playByBlob(blob: Blob, signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) throw createAbortError();
+  private observePlayback(audio: HTMLAudioElement, options: TtsPlaybackOptions) {
+    let settle!: (error?: unknown) => void;
+    let settled = false;
+    const done = new Promise<void>((resolve, reject) => {
+      settle = (error) => {
+        if (settled) return;
+        settled = true;
+        if (error) reject(error); else resolve();
+      };
+    });
+    // Cancellation/error may arrive while a response is still being read.
+    void done.catch(() => undefined);
+    const onPlaying = () => {
+      if (settled || options.signal?.aborted || this.didStart) return;
+      this.didStart = true;
+      options.onStarted?.();
+    };
+    const onEnded = () => settle();
+    const onError = () => settle(new Error('TTS 音频播放失败'));
+    const onAbort = () => settle(createAbortError());
+    audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    this.cancelPlayback = onAbort;
+    if (options.signal?.aborted) onAbort();
+    const observer = this.onAudioLevel ? new AudioLevelObserver(this.onAudioLevel) : null;
+    this.observer = observer;
+    observer?.observeElement(audio);
+    return {
+      done, fail: (error: unknown) => settle(error),
+      cleanup: () => {
+        audio.removeEventListener('playing', onPlaying);
+        audio.removeEventListener('ended', onEnded);
+        audio.removeEventListener('error', onError);
+        options.signal?.removeEventListener('abort', onAbort);
+        if (this.cancelPlayback === onAbort) this.cancelPlayback = null;
+        audio.pause();
+        observer?.dispose();
+        if (this.observer === observer) this.observer = null;
+        if (this.activeAudio === audio) {
+          this.activeAudio = null;
+          if (this.activeObjectUrl) {
+            URL.revokeObjectURL(this.activeObjectUrl);
+            this.activeObjectUrl = null;
+          }
+        }
+      },
+    };
+  }
 
+  private async playAudio(audio: HTMLAudioElement, options: TtsPlaybackOptions): Promise<void> {
+    this.activeAudio = audio;
+    const playback = this.observePlayback(audio, options);
+    try { await Promise.all([audio.play(), playback.done]); }
+    finally { playback.cleanup(); }
+  }
+
+  private async playByBlob(blob: Blob, options: TtsPlaybackOptions): Promise<void> {
+    options.signal?.throwIfAborted();
     const objectUrl = URL.createObjectURL(blob);
     this.activeObjectUrl = objectUrl;
-
     const audio = new Audio();
     audio.preload = 'auto';
     audio.src = objectUrl;
-    this.activeAudio = audio;
-    await audio.play();
+    await this.playAudio(audio, options);
   }
 
-  private async playByUrl(url: string, signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) throw createAbortError();
-
+  private async playByUrl(url: string, options: TtsPlaybackOptions): Promise<void> {
+    options.signal?.throwIfAborted();
     const audio = new Audio();
     audio.preload = 'auto';
     audio.src = url;
-    this.activeAudio = audio;
-    await audio.play();
+    await this.playAudio(audio, options);
   }
 }

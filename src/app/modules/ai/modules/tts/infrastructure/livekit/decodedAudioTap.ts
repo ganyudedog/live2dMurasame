@@ -24,7 +24,7 @@ export const createDecodedAudioTap = (
       processor.port.close();
     }
     nodes.forEach((node) => {
-      try { node.disconnect(); } catch { /* Already disconnected. */ }
+      node.disconnect();
     });
     void context.close().catch(() => undefined);
   };
@@ -46,11 +46,7 @@ export const createDecodedAudioTap = (
       nodes.push(processor);
       processor.port.onmessage = (event: MessageEvent<Float32Array>) => {
         if (disposed) return;
-        try {
-          observe({ samples: event.data, sampleRate: context.sampleRate });
-        } catch {
-          // Observer failures cannot affect the track or its playback element.
-        }
+        observe({ samples: event.data, sampleRate: context.sampleRate });
       };
       source.connect(processor);
       processor.connect(context.destination);

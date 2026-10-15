@@ -1,5 +1,7 @@
 import { computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import type { Live2DModel } from '../modules/model/runtime/live2d/runtime';
+import { Live2dActionService } from '../modules/actions/service/Live2dActionService';
+import { attachActionRuntime } from '../modules/actions/infrastructure/attachActionRuntime';
 import { MotionService } from '../modules/motion/service/MotionService';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
@@ -28,6 +30,8 @@ export type BubbleMeasurement = {
 };
 
 export class Live2dService {
+  readonly actions: Live2dActionService;
+  private detachActionRuntime: (() => void) | null = null;
   readonly layoutService: Live2dLayoutService;
   readonly bubble = new BubblePresentation();
   readonly dialogue = new BubbleDialogueService();
@@ -68,6 +72,7 @@ export class Live2dService {
   constructor(stateBus: StateBusService, log: LogService, windowApi?: PetWindowAPI, modelApi?: PetModelAPI) {
     this.stateBus = stateBus;
     this.log = log;
+    this.actions = new Live2dActionService(log);
     this.windowApi = windowApi;
     this.modelApi = modelApi;
     this.interaction = new InteractionService({
@@ -136,6 +141,10 @@ export class Live2dService {
   }
 
   setModel(model: Live2DModel | null): void {
+    this.detachActionRuntime?.();
+    this.detachActionRuntime = null;
+    this.actions.attach(model?.internalModel?.coreModel ?? null);
+    if (model) this.detachActionRuntime = attachActionRuntime(model.internalModel, this.actions);
     if (!model) this.layoutService.detach();
     this.motionManager.dispose();
     if (model) this.motionManager.attach(model);
@@ -302,6 +311,9 @@ export class Live2dService {
 
   dispose(): void {
     this.disposed = true;
+    this.detachActionRuntime?.();
+    this.detachActionRuntime = null;
+    this.actions.dispose();
     this.dialogue.dispose();
     this.layoutService.detach();
     this.scaleReaction?.();

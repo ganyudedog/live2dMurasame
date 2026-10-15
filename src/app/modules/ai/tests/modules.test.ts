@@ -51,13 +51,13 @@ describe('AI composition roots', () => {
     disposers.forEach((dispose) => expect(dispose).toHaveBeenCalledOnce());
   });
 
-  it('resolves TTS for the control panel without activating ASR or LLM', async () => {
+  it('resolves TTS and the configuration LLM for the control panel without activating ASR', async () => {
     vi.stubGlobal('window', { localStorage: { getItem: () => null } });
     const container = setup('control-panel');
     expect(container.resolve(TOKENS.tts)).toBeDefined();
     expect(container.resolve(TOKENS.liveKit)).toBeDefined();
     expect(() => container.resolve(TOKENS.asr)).toThrow('not registered');
-    expect(() => container.resolve(TOKENS.llm)).toThrow('not registered');
+    expect(container.resolve(TOKENS.llm)).toBeDefined();
     await container.dispose();
   });
 });

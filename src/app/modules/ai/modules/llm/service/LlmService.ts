@@ -1,10 +1,10 @@
+import { ActionCatalogService } from './ActionCatalogService';
 import { RagService } from './RagService';
-import { readLlmSnapshot, readRemoteLlmConfig, readGlobalConfigFallback } from '../infrastructure/configRepository';
 import { isString, normalizeReplyText, normalizeDisplayLang, normalizeSpeakLang } from '../domain/config';
-import type { TraceScope } from '@app/shared/logging/LogService';
-import { requestStage2LLM } from '../infrastructure/llmClient';
+import type { TraceScope, LogService } from '@app/shared/logging/LogService';
+import { requestStage2LLM, requestStructuredLLM } from '../infrastructure/llmClient';
 import { parseStage2Reply, SentenceStreamParser, type ParsedSentence } from '../domain/replyParser';
-import type { ActionCapability, ActionDispatchResult, ActionIntentInput } from '../../../../live2d/modules/actions/domain/types';
+import type { ActionCapability } from '../../../../live2d/modules/actions/domain/types';
 import type { Stage2AskResult, Stage2LLMConfig } from '../domain/types';
 
 interface Stage2AskOptions {
@@ -21,10 +21,10 @@ interface Stage2AskOptions {
 }
 
 interface LlmServiceOptions {
-  dispatchAction: (input: ActionIntentInput, source?: string) => ActionDispatchResult;
-  getActionCapability?: () => ActionCapability;
+  log?: LogService;
+  getActionModelVersion?: () => number;
   defaultConfig?: Stage2LLMConfig;
-  getConfigSnapshot?: () => PetConfigSnapshot | null | undefined;
+  getConfigSnapshot: () => PetConfigSnapshot | null | undefined;
 }
 
 interface RuntimeBridgeConfig {
@@ -39,20 +39,22 @@ interface Stage2LanguageProfile {
   speakLang: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
 }
 
-// 发送对话请求，获取模型回复，并根据当前的 RAG 配置和记忆状态构建上下文信息，同时处理动作意图的分发和记忆的持久化更新。
+// 发送对话请求，获取模型回复，并根据当前的 RAG 配置和记忆状态构建上下文信息，同时输出逐句动作目标和持久化记忆。
 export class LlmService {
-  private readonly dispatchAction: LlmServiceOptions['dispatchAction'];
-  private readonly getActionCapability?: LlmServiceOptions['getActionCapability'];
+  readonly actionCatalog: ActionCatalogService;
+  private readonly getActionModelVersion?: LlmServiceOptions['getActionModelVersion'];
   private config: Stage2LLMConfig;
-  private readonly getConfigSnapshot?: LlmServiceOptions['getConfigSnapshot'];
+  private readonly getConfigSnapshot: LlmServiceOptions['getConfigSnapshot'];
   private readonly rag: RagService;
+  private readonly log?: LogService;
 
   constructor(options: LlmServiceOptions) {
-    this.dispatchAction = options.dispatchAction;
-    this.getActionCapability = options.getActionCapability;
+    this.log = options.log;
+    this.actionCatalog = new ActionCatalogService((system, user, signal) => this.requestStructured(system, user, signal));
+    this.getActionModelVersion = options.getActionModelVersion;
     this.getConfigSnapshot = options.getConfigSnapshot;
     this.config = options.defaultConfig ?? {};
-    this.rag = new RagService(() => readLlmSnapshot(this.getConfigSnapshot), this.getActionCapability);
+    this.rag = new RagService(this.getConfigSnapshot);
   }
 
   setConfig(patch: Partial<RuntimeBridgeConfig>): RuntimeBridgeConfig {
@@ -68,13 +70,31 @@ export class LlmService {
   }
 
   getConfig(): RuntimeBridgeConfig {
-    const fallback = readGlobalConfigFallback(this.getConfigSnapshot);
+    const globalConfig = this.getConfigSnapshot()?.globalModelConfig;
     return {
-      apiKey: this.config.apiKey ?? fallback.apiKey ?? '',
-      baseURL: this.config.baseURL ?? fallback.baseURL ?? '',
-      model: this.config.model ?? fallback.model ?? '',
+      apiKey: this.config.apiKey ?? globalConfig?.apiKey?.trim() ?? '',
+      baseURL: this.config.baseURL ?? globalConfig?.baseURL?.trim() ?? '',
+      model: this.config.model ?? globalConfig?.model?.trim() ?? '',
       temperature: typeof this.config.temperature === 'number' ? this.config.temperature : 0.4,
     };
+  }
+
+  async requestStructured(systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<string> {
+    const config = this.resolveConfig();
+    const context = this.log?.contextRegistry.register('LlmService', {
+      relation: 'actionCatalog.request', params: { model: config.model }, behavior: '动作表配置请求及缓存用量',
+    });
+    const trace = context?.beginTrace('requestStructured');
+    try {
+      const result = await requestStructuredLLM(config, { systemPrompt, userPrompt, signal, temperature: 0.2 });
+      const usage = { ...(result.usage ?? { cacheStatus: 'unreported' }) };
+      trace?.record('prompt-cache.usage', usage);
+      trace?.end({ model: result.usedModel, ...usage });
+      return result.rawText;
+    } catch (error) {
+      trace?.fail('动作表配置请求失败', { model: config.model }, error);
+      throw error;
+    } finally { context?.dispose(); }
   }
 
   async ask(userText: string, options: Stage2AskOptions): Promise<Stage2AskResult> {
@@ -83,17 +103,33 @@ export class LlmService {
       return { ok: false, error: '请输入有效文本' };
     }
 
+    // 已保存动作表以 Electron 下发的配置快照为准，不依赖渲染器挂载或后置事件绑定。
+    // 只投影语义目录给日常对话；轨迹留给执行器，运行时版本仅用于丢弃切模后的旧回复。
+    const snapshot = this.getConfigSnapshot();
+    const actionCapability: ActionCapability = {
+      modelVersion: this.getActionModelVersion?.() ?? 0,
+      actions: (snapshot?.modelConfig?.actions ?? []).map(({ id, label, category, description }) => ({
+        id, label, category, ...(description === undefined ? {} : { description }),
+      })),
+    };
+    options.trace.record('action.capabilitySnapshot', {
+      source: 'model-config-snapshot', modelPath: snapshot?.activeModelPath,
+      modelVersion: actionCapability.modelVersion, actionCount: actionCapability.actions.length,
+      actions: actionCapability.actions,
+    });
     try {
       options.signal?.throwIfAborted();
-      const resolved = await this.resolveConfig(options);
+      const resolved = this.resolveConfig(options);
       options.signal?.throwIfAborted();
       const ragRuntime = await this.rag.resolve(cleanText, options.trace);
       options.signal?.throwIfAborted();
-      const languageProfile = this.resolveLanguageProfile();
+      const languageProfile = this.resolveLanguageProfile(snapshot);
       const start = performance.now();
       let firstDeltaLatencyMs = -1;
       let streamedRawText = '';
-      const parser = new SentenceStreamParser();
+      const parser = new SentenceStreamParser((diagnostic) => options.trace.record('action.stream', {
+        ...diagnostic, modelVersion: actionCapability.modelVersion,
+      }));
       const publishSentences = (rawText: string) => {
         if (options.signal?.aborted) return;
         // 网络返回的最终文本会 trim；与已消费流相同则不重复提交。
@@ -108,7 +144,7 @@ export class LlmService {
           } else if (event.type === 'display-ready') {
             options.onSentenceDisplayReady?.({ sentenceIndex: event.sentenceIndex, displayText: event.displayText });
           } else {
-            options.onSentenceStreaming?.(event.sentence);
+            options.onSentenceStreaming?.({ ...event.sentence, modelVersion: actionCapability.modelVersion });
           }
         }
       };
@@ -126,6 +162,7 @@ export class LlmService {
           model: resolved.model,
           temperature: resolved.temperature,
           ragContext: ragRuntime.contextText,
+          actionCapability,
           displayLang: languageProfile.displayLang,
           speakLang: languageProfile.speakLang,
           stream: true,
@@ -146,10 +183,12 @@ export class LlmService {
 
       options.signal?.throwIfAborted();
 
+      options.trace.record('ask.usage', { ...(llmResult.usage ?? { cacheStatus: 'unreported' }) });
       publishSentences(llmResult.rawText);
+      parser.finish();
 
       // 解析回复
-      const reply = parseStage2Reply(llmResult.rawText);
+      const reply = parseStage2Reply(llmResult.rawText, (diagnostic) => options.trace.record('reply.parse', diagnostic));
       if (!reply.meta) reply.meta = {};
       reply.meta.model = reply.meta.model ?? llmResult.usedModel;
       reply.meta.latency_ms = Math.round(performance.now() - start);
@@ -165,7 +204,6 @@ export class LlmService {
       reply.speak_text = speakText;
 
 
-      const actionResult = this.dispatchAction(reply.action_intent, 'stage2.llm');
 
       await this.rag.persistConversation(ragRuntime, cleanText, displayText, options.trace);
 
@@ -173,8 +211,7 @@ export class LlmService {
         model: reply.meta.model,
         latencyMs: reply.meta.latency_ms,
         firstDeltaMs: firstDeltaLatencyMs >= 0 ? firstDeltaLatencyMs : undefined,
-        actionState: actionResult.state,
-        actionKind: reply.action_intent.kind,
+        actionId: reply.action_intent?.actionId,
         hasDisplayText: Boolean(displayText),
         hasSpeakText: Boolean(speakText),
         displayLang: languageProfile.displayLang,
@@ -190,7 +227,7 @@ export class LlmService {
           contextText: ragRuntime.contextText,
           chunkCount: ragRuntime.chunkCount,
         },
-        actionResult,
+        modelVersion: actionCapability.modelVersion,
         rawText: llmResult.rawText,
       };
     } catch (e) {
@@ -215,28 +252,11 @@ export class LlmService {
     return this.rag.resolve(cleanText);
   }
 
-  private async resolveConfig(options: Stage2AskOptions): Promise<RuntimeBridgeConfig> {
+  private resolveConfig(options: Stage2LLMConfig = {}): RuntimeBridgeConfig {
     const merged: Stage2LLMConfig = {
-      ...this.config,
+      ...this.getConfig(),
       ...options,
     };
-
-    if (!isString(merged.apiKey) || !isString(merged.baseURL) || !isString(merged.model)) {
-      try {
-        const globalCfg = await readRemoteLlmConfig();
-        if (isString(globalCfg?.apiKey)) {
-          merged.apiKey = globalCfg.apiKey.trim();
-        }
-        if (!isString(merged.baseURL) && isString(globalCfg?.baseURL)) {
-          merged.baseURL = globalCfg.baseURL.trim();
-        }
-        if (!isString(merged.model) && isString(globalCfg?.model)) {
-          merged.model = globalCfg.model.trim();
-        }
-      } catch {
-        // ignore runtime config probe errors
-      }
-    }
 
     if (!isString(merged.model)) throw new Error('未配置 AI 模型，请先在控制面板 AI 页填写');
 
@@ -256,18 +276,10 @@ export class LlmService {
     };
   }
 
-  private resolveLanguageProfile(): Stage2LanguageProfile {
-    try {
-      const snapshot = readLlmSnapshot(this.getConfigSnapshot);
-      const displayLang = normalizeDisplayLang(snapshot?.globalModelConfig?.displayLang);
-      // speakText 语言直接跟随模型 TTS 配置（textLang）。
-      const speakLang = normalizeSpeakLang(snapshot?.modelConfig?.tts?.textLang);
-      return { displayLang, speakLang };
-    } catch {
-      return {
-        displayLang: 'zh',
-        speakLang: 'all_ja',
-      };
-    }
+  private resolveLanguageProfile(snapshot: PetConfigSnapshot | null | undefined): Stage2LanguageProfile {
+    const displayLang = normalizeDisplayLang(snapshot?.globalModelConfig?.displayLang);
+    // speakText 语言直接跟随模型 TTS 配置（textLang）。
+    const speakLang = normalizeSpeakLang(snapshot?.modelConfig?.tts?.textLang);
+    return { displayLang, speakLang };
   }
 }

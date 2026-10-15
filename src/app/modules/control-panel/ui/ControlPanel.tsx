@@ -80,7 +80,12 @@ const ControlPanel: React.FC = observer(() => {
         />
       )}
 
-      {activeTab === 'model-motions' && <MotionSettingsPage />}
+      {activeTab === 'model-motions' && <MotionSettingsPage key={service.actionSettings.view.modelPath} view={service.actionSettings.view}
+        onGenerate={service.actionSettings.generate} onSelect={service.actionSettings.select}
+        onDraftChange={service.actionSettings.setDraft} onPreview={service.actionSettings.preview}
+        onDelete={service.actionSettings.deleteAction} onSubmit={service.actionSettings.submit}
+        onUpdateMetadata={service.actionSettings.updateMetadata}
+        onClearChat={service.actionSettings.clearChat} />}
 
       {activeTab === 'model-interaction' && (
         <InteractionPage manager={service.interaction} />

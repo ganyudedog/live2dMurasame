@@ -13,6 +13,7 @@ import type {
 } from '@app/modules/ai/modules/tts/infrastructure/livekit/protocol';
 import type { TtsCancelRequest, TtsSynthesisRequest } from '../domain/types';
 import type { LogService, TraceScope } from '@app/shared/logging/LogService';
+import { isAbortError } from '@app/shared/utils/errors';
 import { detectTtsTransportMode } from '@app/modules/ai/modules/tts/infrastructure/livekit/transportAdapter';
 
 type V3RuntimeState = {
@@ -49,13 +50,16 @@ const ensureRealtimeConnected = async (
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   if (!normalizedBaseUrl) return false;
   try {
+    signal?.throwIfAborted();
     await dependencies.liveKit.ensureRoomConnected(normalizedBaseUrl, {
       signal,
       reason,
       eventTopic: 'v3.event',
     });
+    signal?.throwIfAborted();
     return true;
   } catch (e) {
+    if (signal?.aborted || isAbortError(e)) throw e;
     trace?.record('livekit.connect.failed', {
       baseUrl: normalizedBaseUrl,
       reason,
@@ -162,11 +166,7 @@ const waitRealtimeSpeakTerminalEvent = async (
 
     const cleanup = () => {
       window.clearTimeout(timeoutId);
-      try {
-        off();
-      } catch {
-        // ignore
-      }
+      off();
       if (signal) {
         signal.removeEventListener('abort', onAbort);
       }
@@ -463,6 +463,7 @@ export const requestTtsSynthesis = async (dependencies: TtsClientDependencies, {
 
   const sessionId = await ensureSession(dependencies, baseUrl, signal, trace);
   await ensureModelReady(dependencies, baseUrl, sessionId, requestId, config, signal, trace);
+  signal?.throwIfAborted();
 
   const payload = buildTtsPayload(
     requestId,
@@ -509,6 +510,7 @@ export const requestTtsSynthesis = async (dependencies: TtsClientDependencies, {
       trace.end({ requestId, sessionId, transport: 'livekit', terminalState: terminal.state });
       return response;
     } catch (e) {
+      if (signal?.aborted || isAbortError(e)) throw e;
       if (backendTerminalFailure || !isLiveKitUnavailableError(e)) {
         trace.record('realtime.speak.failed.noFallback', {
           requestId,
@@ -560,7 +562,11 @@ export const requestTtsSynthesis = async (dependencies: TtsClientDependencies, {
   trace.end({ requestId, sessionId, transport: 'http', status: response.status });
   return response;
   } catch (error) {
-    trace.fail('TTS 合成请求失败', { requestId, baseUrl, preferRealtime }, error);
+    if (signal?.aborted || isAbortError(error)) {
+      trace.end({ requestId, baseUrl, preferRealtime, status: 'cancelled' });
+    } else {
+      trace.fail('TTS 合成请求失败', { requestId, baseUrl, preferRealtime }, error);
+    }
     throw error;
   } finally {
     context.dispose();

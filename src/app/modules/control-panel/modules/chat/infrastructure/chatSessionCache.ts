@@ -64,11 +64,7 @@ const readCacheMap = (): ChatCacheRecord => {
 
 const writeCacheMap = (value: ChatCacheRecord): void => {
   if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // ignore
-  }
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
 };
 
 export const getChatCacheScope = (modelPath?: string | null): string => {

@@ -82,18 +82,10 @@ export const applyReceiverBufferingTarget = (
     jitterBufferTarget?: number;
   };
 
-  try {
-    // playoutDelayHint is expressed in seconds.
-    const targetSeconds = Math.max(0.04, targetMs / 1000);
-    lowLatencyReceiver.playoutDelayHint = targetSeconds;
-  } catch {
-    // Older Chromium builds may expose a read-only implementation.
-  }
-  try {
-    // jitterBufferTarget follows the WebRTC API and is expressed in milliseconds.
-    const targetMilliseconds = Math.max(40, targetMs);
-    lowLatencyReceiver.jitterBufferTarget = targetMilliseconds;
-  } catch {
-    // jitterBufferTarget is not available in every Chromium version.
-  }
+  // playoutDelayHint is expressed in seconds.
+  const targetSeconds = Math.max(0.04, targetMs / 1000);
+  lowLatencyReceiver.playoutDelayHint = targetSeconds;
+  // jitterBufferTarget follows the WebRTC API and is expressed in milliseconds.
+  const targetMilliseconds = Math.max(40, targetMs);
+  lowLatencyReceiver.jitterBufferTarget = targetMilliseconds;
 };

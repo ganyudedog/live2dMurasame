@@ -1,5 +1,6 @@
+import { parseActionIntent } from '../../../../live2d/modules/actions/domain/schema';
 import { stage2LlmReplySchema } from './schema';
-import type { ActionIntentInput } from '../../../../live2d/modules/actions/domain/types';
+import type { ActionIntentInput, ActionSelection } from '../../../../live2d/modules/actions/domain/types';
 import type { Stage2LLMReply } from './types';
 
 /** 流式解析出的业务句子，与输出文本的物理行号无关。 */
@@ -7,6 +8,7 @@ export interface ParsedSentence {
   speakText: string;
   displayText: string;
   actionIntent?: ActionIntentInput;
+  modelVersion?: number;
   /** 该句在当前回复中的连续编号（0-based）。 */
   sentenceIndex: number;
 }
@@ -15,6 +17,14 @@ export type SentenceStreamEvent =
   | { type: 'speech-ready'; sentenceIndex: number; speakText: string }
   | { type: 'display-ready'; sentenceIndex: number; displayText: string }
   | { type: 'sentence-complete'; sentence: ParsedSentence };
+
+/** 动作诊断独立于文本事件，不能改变句子编号或语音提交时机。 */
+export interface ParsedActionDiagnostic {
+  state: 'parsed' | 'dropped';
+  sentenceIndex?: number;
+  reason?: 'invalid-action' | 'missing-sentence-text' | 'invalid-json' | 'incomplete-json';
+  actionId?: ActionSelection;
+}
 
 /** 每次请求独立使用：只扫描新增字符，完整字符串就绪后立即产出，整句完成后再提交句子。 */
 export class SentenceStreamParser {
@@ -30,6 +40,18 @@ export class SentenceStreamParser {
   private lineStart = true;
   private speechReady = false;
   private displayReady = false;
+  private readonly onActionDiagnostic?: (diagnostic: ParsedActionDiagnostic) => void;
+
+  constructor(onActionDiagnostic?: (diagnostic: ParsedActionDiagnostic) => void) {
+    this.onActionDiagnostic = onActionDiagnostic;
+  }
+
+  /** 流结束时记录被截断的动作对象，不尝试猜测或修复其所属句子。 */
+  finish(): void {
+    if (this.depth && this.record.includes('action_intent')) this.diagnose({
+      state: 'dropped', reason: 'incomplete-json', sentenceIndex: this.sentenceIndex ?? undefined,
+    });
+  }
 
   push(deltaText: string): SentenceStreamEvent[] {
     const events: SentenceStreamEvent[] = [];
@@ -103,17 +125,35 @@ export class SentenceStreamParser {
         ? (parsed.speak_text ?? parsed.speakText).trim() : '';
       const displayText = typeof (parsed.display_text ?? parsed.displayText) === 'string'
         ? (parsed.display_text ?? parsed.displayText).trim() : '';
+      const actionIntent = parseActionIntent(parsed.action_intent);
+      if ('action_intent' in parsed) {
+        // 动作必须属于带文本的句子；独立动作行没有可靠播放边界，明确记录丢弃原因。
+        if (!speakText && !displayText) this.diagnose({ state: 'dropped', reason: 'missing-sentence-text', actionId: actionIntent?.actionId });
+        else if (!actionIntent) this.diagnose({ state: 'dropped', reason: 'invalid-action', sentenceIndex: this.getSentenceIndex() });
+        else this.diagnose({ state: 'parsed', sentenceIndex: this.getSentenceIndex(), actionId: actionIntent.actionId });
+      }
       if (speakText || displayText) {
         events.push({ type: 'sentence-complete', sentence: {
           sentenceIndex: this.getSentenceIndex(), speakText, displayText: displayText || speakText,
-          actionIntent: parsed.action_intent ? { ...parsed.action_intent, kind: parsed.action_intent.kind ?? 'blink' } : undefined,
+          actionIntent,
         } });
       }
-    } catch { /* 不完整或无效的记录不提交为完整句子。 */ }
+    } catch {
+      if (this.record.includes('action_intent')) this.diagnose({
+        state: 'dropped', reason: 'invalid-json', sentenceIndex: this.sentenceIndex ?? undefined,
+      });
+    }
     this.record = '';
     this.sentenceIndex = null;
     this.speechReady = false;
     this.displayReady = false;
+  }
+
+  private diagnose(diagnostic: ParsedActionDiagnostic): void {
+    try { this.onActionDiagnostic?.(diagnostic); }
+    catch (error) {
+      console.warn('[SentenceStreamParser] 动作诊断日志写入失败', error);
+    }
   }
 }
 
@@ -133,53 +173,78 @@ const extractJsonCandidate = (raw: string): string => {
   return trimmed;
 };
 
-// 解析 LLM 完整回复（兼容单对象 JSON 与 JSON Lines 两种格式）
-export const parseStage2Reply = (rawText: string): Stage2LLMReply => {
-  const text = String(rawText ?? '').trim();
+export type ReplyParseDiagnostic =
+  | { state: 'json-lines'; recordCount: number; skippedLineCount: number }
+  | { state: 'dropped'; lineNumber: number; reason: 'invalid-json' | 'invalid-record'; message: string };
 
-  // 先尝试标准单对象 JSON 路径
+// 解析 LLM 完整回复（兼容单对象 JSON 与 JSON Lines 两种格式）
+export const parseStage2Reply = (
+  rawText: string,
+  onDiagnostic?: (diagnostic: ReplyParseDiagnostic) => void,
+): Stage2LLMReply => {
+  const text = String(rawText ?? '').trim();
+  const diagnose = (diagnostic: ReplyParseDiagnostic) => {
+    if (!onDiagnostic) {
+      if (diagnostic.state === 'dropped') console.warn('[parseStage2Reply] 跳过无效回复记录', diagnostic);
+      return;
+    }
+    try { onDiagnostic(diagnostic); }
+    catch (error) { console.warn('[parseStage2Reply] 回复解析诊断日志写入失败', diagnostic, error); }
+  };
+
+  // 单对象兼容路径可能遇到合法的 JSON Lines；语法不匹配时继续逐行解析。
   const candidate = extractJsonCandidate(text);
+  let singleObjectError: unknown;
   try {
-    const parsed = JSON.parse(candidate);
+    const parsed: unknown = JSON.parse(candidate);
     const checked = stage2LlmReplySchema.safeParse(parsed);
     if (checked.success) return checked.data;
-  } catch { /* 非标准单对象格式，尝试 JSON Lines */ }
-
+    singleObjectError = checked.error;
+  } catch (error) {
+    // 保留失败原因；若逐行解析也没有有效文本，作为最终错误的 cause 抛出。
+    singleObjectError = error;
+  }
   // JSON Lines 路径：合并所有行的 speak_text / display_text
-  const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('{'));
+  const lines = text.split('\n');
   const allSpeak: string[] = [];
   const allDisplay: string[] = [];
   let lastActionIntent: Stage2LLMReply['action_intent'] | undefined;
+  let recordCount = 0;
+  let skippedLineCount = 0;
 
-  for (const line of lines) {
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (!line.startsWith('{')) continue;
+    let parsed: Record<string, unknown>;
     try {
-      const parsed = JSON.parse(line);
-      if (typeof parsed.speak_text === 'string' && parsed.speak_text.trim()) {
-        allSpeak.push(parsed.speak_text.trim());
-      }
-      if (typeof parsed.display_text === 'string' && parsed.display_text.trim()) {
-        allDisplay.push(parsed.display_text.trim());
-      }
-      if (parsed.action_intent && typeof parsed.action_intent === 'object') {
-        lastActionIntent = {
-          kind: parsed.action_intent.kind ?? 'blink',
-          intensity: parsed.action_intent.intensity,
-          durationMs: parsed.action_intent.durationMs,
-          priority: parsed.action_intent.priority,
-          cooldownMs: parsed.action_intent.cooldownMs,
-          reason: parsed.action_intent.reason,
-        };
-      }
-    } catch { /* 跳过无法解析的行 */ }
+      parsed = JSON.parse(line);
+    } catch (error) {
+      skippedLineCount++;
+      diagnose({ state: 'dropped', lineNumber: index + 1, reason: 'invalid-json',
+        message: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    const speakText = typeof parsed.speak_text === 'string' ? parsed.speak_text.trim() : '';
+    const displayText = typeof parsed.display_text === 'string' ? parsed.display_text.trim() : '';
+    if (!speakText && !displayText) {
+      skippedLineCount++;
+      diagnose({ state: 'dropped', lineNumber: index + 1, reason: 'invalid-record', message: '记录不包含有效的语音或显示文本' });
+      continue;
+    }
+    if (speakText) allSpeak.push(speakText);
+    if (displayText) allDisplay.push(displayText);
+    lastActionIntent = parseActionIntent(parsed.action_intent) ?? lastActionIntent;
+    recordCount++;
   }
 
   if (!allSpeak.length && !allDisplay.length) {
-    throw new Error('LLM 输出不是合法 JSON');
+    throw new Error('LLM 输出不是合法 JSON', { cause: singleObjectError });
   }
+  diagnose({ state: 'json-lines', recordCount, skippedLineCount });
 
   return {
     display_text: allDisplay.join('\n') || allSpeak.join('\n') || '',
     speak_text: allSpeak.join('') || '',
-    action_intent: lastActionIntent ?? { kind: 'blink' },
+    action_intent: lastActionIntent,
   };
 };

@@ -67,7 +67,6 @@ export const resolveVisualCenter = (
     }
     item.index = index;
     if (index < 0 || typeof internal?.getDrawableBounds !== 'function') continue;
-    try {
       const bound = internal.getDrawableBounds(index);
       if (finiteBounds(bound)) {
         // getDrawableBounds is in Live2D canvas space. Convert it through the
@@ -84,7 +83,6 @@ export const resolveVisualCenter = (
           } });
         } else bounds.push({ item, bound });
       }
-    } catch { /* a malformed drawable should not prevent model loading */ }
   }
   if (!bounds.length) return {
     ratio: 0.5, localX: metrics.x + metrics.width / 2, source: 'model-bounds',

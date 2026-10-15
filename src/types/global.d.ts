@@ -135,6 +135,7 @@ declare global {
     interaction?: PetInteractionBindings;
     rag?: PetRagConfig;
     tts?: PetTtsConfig;
+    actions?: import('../../shared/actionCatalog.js').ActionDefinition[];
     [key: string]: unknown;
   }
 
@@ -404,6 +405,10 @@ declare global {
 
   interface PetModelAPI {
     getConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; modelInteraction: PetModelInteractionView | null; configOverrides: Record<string, string> } | undefined>;
+    getActionSources?: (modelPath: string) => Promise<import('../../shared/actionCatalog.js').ActionSourceData>;
+    saveActionCatalog?: (payload: { modelPath: string; actions: import('../../shared/actionCatalog.js').ActionDefinition[] }) => ReturnType<NonNullable<PetModelAPI['updateConfig']>>;
+    previewAction?: (payload: { modelPath: string; actionId: string }) => Promise<{ accepted: boolean }>;
+    onPreviewAction?: (callback: (payload: { modelPath: string; actionId: string }) => void) => (() => void);
     updateConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; modelInteraction: PetModelInteractionView | null; configOverrides: Record<string, string> } | undefined>;
     removeConfig?: (modelPath: string) => Promise<boolean | undefined>;
     onConfigUpdated?: (callback: (payload: { modelPath?: string | null; modelFileUrl?: string | null; modelKey?: string | null; config?: PetModelConfig | null; modelInteraction?: PetModelInteractionView | null; configOverrides?: Record<string, string>; snapshot?: PetConfigSnapshot }) => void) => (() => void) | void;

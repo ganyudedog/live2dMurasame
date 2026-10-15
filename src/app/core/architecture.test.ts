@@ -95,4 +95,18 @@ describe('frontend architecture boundaries', () => {
       }
     }
   });
+
+  it('separates action generation, editor persistence and presentation', () => {
+    const generator = sources['../modules/ai/modules/llm/service/ActionCatalogService.ts'];
+    expect(generator).not.toMatch(/window\.|localStorage|ConfigService|makeAutoObservable/);
+    expect(sources['../modules/ai/modules/llm/service/LlmService.ts']).toContain('new ActionCatalogService');
+    // 服务端 prompt cache 的请求适配不是编辑会话缓存；检查实际存储访问边界。
+    for (const file of files.filter((file) => /ai\/modules\/(action-catalog|llm)\//.test(file))) {
+      expect(sources[file], file).not.toMatch(/localStorage|sessionStorage/);
+    }
+    for (const file of ['../modules/control-panel/ui/pages/MotionSettingsPage.tsx', '../modules/control-panel/ui/components/ActionCatalogChat.tsx']) {
+      expect(importsOf(file).some((target) => target.includes('/service/')), file).toBe(false);
+      expect(sources[file], file).not.toMatch(/window\.|ModelAPI|catalog:.*Service/);
+    }
+  });
 });

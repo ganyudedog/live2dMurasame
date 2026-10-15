@@ -1,3 +1,4 @@
+import { AudioLevelObserver, type AudioLevelListener } from '../AudioLevelObserver';
 import type { LiveKitSessionCreateResponse, LiveKitSessionCreatePayload, LiveKitSessionCreateResponseServer } from './protocol';
 import { normalizeBaseUrl, postRequest } from './httpClient';
 import { toSessionCreateServer, fromSessionCreateServer } from './protocolMapper';
@@ -93,6 +94,8 @@ export type RoomCache = {
   shadowPcmHandlers: Set<LiveKitShadowPcmHandler>;
   decodedAudioHandlers: Set<LiveKitDecodedAudioHandler>;
   decodedAudioTap?: DecodedAudioTap;
+  audioLevelHandlers?: Set<AudioLevelListener>;
+  audioLevelObserver?: AudioLevelObserver;
 };
 
 export type LiveKitPlaybackFeedbackSnapshot = LiveKitPlaybackFeedbackPayload & {
@@ -160,11 +163,7 @@ const ensureHiddenAudioElement = (baseUrl: string): HTMLAudioElement => {
   el.preload = 'auto';
   el.setAttribute('data-livekit-audio', normalizeBaseUrl(baseUrl));
   el.style.display = 'none';
-  try {
-    document.body?.appendChild(el);
-  } catch {
-    // ignore
-  }
+  document.body?.appendChild(el);
   return el;
 };
 
@@ -685,15 +684,12 @@ const attachAudioTrack = (
         prev: cache.attachedAudioTrackSid,
         next: publication.trackSid,
       });
-      try {
-        cache.attachedAudioTrack?.detach(cache.audioEl);
-      } catch {
-        // ignore
-      }
+      cache.attachedAudioTrack?.detach(cache.audioEl);
       resetPlaybackEstimator(cache);
     }
 
     disposeDecodedAudioTap(cache);
+    disposeAudioLevelObserver(cache);
     cache.attachedAudioTrackSid = publication.trackSid;
     cache.attachedAudioTrack = track;
     resetPlaybackEstimator(cache);
@@ -704,6 +700,7 @@ const attachAudioTrack = (
     );
     track.attach(cache.audioEl);
     ensureDecodedAudioTap(cache);
+    ensureAudioLevelObserver(cache);
     void cache.audioEl.play().catch(() => {
       // 浏览器/系统可能限制 autoplay；这里只记日志不抛错。
       warn('livekit.service', 'audio.play.blocked', { trackSid: publication.trackSid });
@@ -747,11 +744,7 @@ const bindRoomLoggingAndHandlers = (cache: RoomCache) => {
         const frame = parseShadowPcmFrame(payload);
         if (!frame) return;
         cache.shadowPcmHandlers.forEach((handler) => {
-          try {
-            handler(frame);
-          } catch {
-            // Recording must never affect the LiveKit playback path.
-          }
+          handler(frame);
         });
         return;
       }
@@ -792,17 +785,49 @@ const bindRoomLoggingAndHandlers = (cache: RoomCache) => {
     .on(RoomEvent.TrackUnsubscribed, (track, publication) => {
       if (track.kind !== 'audio') return;
       if (cache.attachedAudioTrackSid !== publication.trackSid) return;
-      try {
-        cache.attachedAudioTrack?.detach(cache.audioEl);
-      } catch {
-        // ignore
-      }
+      cache.attachedAudioTrack?.detach(cache.audioEl);
       cache.attachedAudioTrack = null;
       cache.attachedAudioTrackSid = null;
       disposeDecodedAudioTap(cache);
+      disposeAudioLevelObserver(cache);
       resetPlaybackEstimator(cache);
       info('livekit.service', 'audio.track.detached', { trackSid: publication.trackSid });
     });
+};
+
+const disposeAudioLevelObserver = (cache: RoomCache): void => {
+  cache.audioLevelObserver?.dispose();
+  cache.audioLevelObserver = undefined;
+};
+
+const ensureAudioLevelObserver = (cache: RoomCache): void => {
+  if (cache.audioLevelObserver || !cache.attachedAudioTrack || !cache.audioLevelHandlers?.size) return;
+  const observer = new AudioLevelObserver((level) => {
+    cache.audioLevelHandlers?.forEach((handler) => {
+      handler(level);
+    });
+  });
+  cache.audioLevelObserver = observer;
+  try {
+    observer.observeStream(new MediaStream([cache.attachedAudioTrack.mediaStreamTrack]),
+      () => !cache.audioEl.muted && !cache.audioEl.paused && cache.audioEl.volume > 0);
+  } catch {
+    disposeAudioLevelObserver(cache);
+  }
+};
+
+export const subscribeLiveKitAudioLevel = (baseUrl: string, handler: AudioLevelListener): (() => void) => {
+  const key = normalizeBaseUrl(baseUrl);
+  const cache = roomByBaseUrl.get(key);
+  if (!cache) { handler(null); return () => undefined; }
+  const handlers = cache.audioLevelHandlers ??= new Set();
+  handlers.add(handler);
+  ensureAudioLevelObserver(cache);
+  return () => {
+    handlers.delete(handler);
+    const current = roomByBaseUrl.get(key);
+    if (current && !handlers.size) disposeAudioLevelObserver(current);
+  };
 };
 
 const disposeDecodedAudioTap = (cache: RoomCache): void => {
@@ -855,16 +880,9 @@ export const ensureLiveKitRoomConnected = async (
 
     if (existing) {
       disposeDecodedAudioTap(existing);
-      try {
-        existing.attachedAudioTrack?.detach(reuseAudioEl);
-      } catch {
-        // ignore
-      }
-      try {
-        existing.room.disconnect();
-      } catch {
-        // ignore
-      }
+      disposeAudioLevelObserver(existing);
+      existing.attachedAudioTrack?.detach(reuseAudioEl);
+      existing.room.disconnect();
       roomByBaseUrl.delete(key);
     }
 
@@ -894,6 +912,7 @@ export const ensureLiveKitRoomConnected = async (
       handlers: reuseHandlers,
       shadowPcmHandlers: existing?.shadowPcmHandlers ?? new Set(),
       decodedAudioHandlers: existing?.decodedAudioHandlers ?? new Set(),
+      audioLevelHandlers: existing?.audioLevelHandlers ?? new Set(),
     };
 
     bindRoomLoggingAndHandlers(cache);
@@ -913,11 +932,7 @@ export const ensureLiveKitRoomConnected = async (
         abortPromise,
       ]);
     } catch (e) {
-      try {
-        room.disconnect();
-      } catch {
-        // ignore
-      }
+      room.disconnect();
       warn('livekit.service', 'room.connect.failed', {
         baseUrl: key,
         err: String(e instanceof Error ? e.message : e),
@@ -948,27 +963,16 @@ export const disconnectLiveKitRoom = (baseUrl: string): void => {
   if (!cache) return;
 
   info('livekit.service', 'room.disconnect', { baseUrl: key });
-  try {
-    cache.room.disconnect();
-  } catch {
-    // ignore
-  }
-
-  try {
-    cache.attachedAudioTrack?.detach(cache.audioEl);
-  } catch {
-    // ignore
-  }
+  cache.room.disconnect();
+  cache.attachedAudioTrack?.detach(cache.audioEl);
 
   resetPlaybackEstimator(cache);
 
-  try {
-    cache.audioEl.remove();
-  } catch {
-    // ignore
-  }
+  cache.audioEl.remove();
 
   disposeDecodedAudioTap(cache);
+  disposeAudioLevelObserver(cache);
+  cache.audioLevelHandlers?.clear();
   cache.decodedAudioHandlers.clear();
   cache.shadowPcmHandlers.clear();
 
@@ -1094,17 +1098,14 @@ const ensureDecodedAudioTap = (cache: RoomCache): void => {
   try {
     const tap = createDecodedAudioTap(cache.attachedAudioTrack.mediaStreamTrack, AudioContextCtor, (frame) => {
       cache.decodedAudioHandlers.forEach((handler) => {
-        try {
-          handler(frame);
-        } catch {
-          // Recording must never interrupt audio playback.
-        }
+        handler(frame);
       });
     });
     cache.decodedAudioTap = tap;
     void tap.ready.catch((error) => {
       if (cache.decodedAudioTap !== tap) return;
       disposeDecodedAudioTap(cache);
+      disposeAudioLevelObserver(cache);
       warn('livekit.service', 'audio.observation.unavailable', { reason: String(error) });
     });
   } catch (error) {

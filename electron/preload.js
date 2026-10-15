@@ -54,6 +54,14 @@ const GlobalAPI = {
 
 const ModelAPI = {
   getConfig: (modelPath) => ipcRenderer.invoke('ddd:modelenv:get', modelPath),
+  getActionSources: (modelPath) => ipcRenderer.invoke('ddd:modelenv:actions:sources', modelPath),
+  saveActionCatalog: (payload) => ipcRenderer.invoke('ddd:modelenv:actions:save', payload),
+  previewAction: (payload) => ipcRenderer.invoke('ddd:modelenv:actions:preview', payload),
+  onPreviewAction: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ddd:modelenv:actions:preview', listener);
+    return () => ipcRenderer.removeListener('ddd:modelenv:actions:preview', listener);
+  },
   updateConfig: (payload) => ipcRenderer.invoke('ddd:modelenv:update', payload),
   removeConfig: (modelPath) => ipcRenderer.invoke('ddd:modelenv:remove', modelPath),
   onConfigUpdated: snapshotStore.onModelConfigUpdated,
@@ -177,7 +185,7 @@ ipcRenderer.on('ddd:live2denv:snapshot:changed', (_event, payload) => {
 });
 
 ipcRenderer.on('ddd:modelenv:changed', (_event, payload) => {
-  snapshotStore.dispatchSnapshotUpdate(payload);
+  snapshotStore.dispatchSnapshotUpdate(payload.snapshot);
 });
 
 ipcRenderer.on('ddd:modelenv:memory:changed', (_event, payload) => {

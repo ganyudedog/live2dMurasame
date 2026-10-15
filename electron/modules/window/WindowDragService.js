@@ -22,13 +22,9 @@ const normalizeWindowDragPayload = (payload = {}) => {
 };
 
 const readCursorPoint = (fallback = {}) => {
-  try {
-    const point = screen.getCursorScreenPoint();
-    if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) {
-      return { x: Math.round(point.x), y: Math.round(point.y) };
-    }
-  } catch {
-    // Optional renderer coordinates are retained only as a fallback diagnostic path.
+  const point = screen.getCursorScreenPoint();
+  if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) {
+    return { x: Math.round(point.x), y: Math.round(point.y) };
   }
   if (Number.isFinite(fallback?.screenX) && Number.isFinite(fallback?.screenY)) {
     return { x: fallback.screenX, y: fallback.screenY };
@@ -56,28 +52,20 @@ export const createWindowDragService = ({ onSessionChange, onSessionSettled, cha
     if (!state?.targetWindow || state.targetWindow.isDestroyed?.()) return;
     if (!Array.isArray(state.releaseHooks) || typeof state.targetWindow.unhookWindowMessage !== 'function') return;
     for (const hook of state.releaseHooks) {
-      try {
-        state.targetWindow.unhookWindowMessage(hook.code);
-      } catch {
-        // Native hook cleanup is best effort during window teardown.
-      }
+      state.targetWindow.unhookWindowMessage(hook.code);
     }
     state.releaseHooks = [];
   };
 
   const notifyRendererDragEnd = ({ targetWindow, reason, screenX, screenY }) => {
     if (!targetWindow || targetWindow.isDestroyed?.()) return;
-    try {
-      targetWindow.webContents.send(channels.event ?? 'ddd:window:drag', {
-        action: 'end',
-        screenX,
-        screenY,
-        source: 'main',
-        reason,
-      });
-    } catch {
-      // The renderer may already be gone when a native release arrives.
-    }
+    targetWindow.webContents.send(channels.event ?? 'ddd:window:drag', {
+      action: 'end',
+      screenX,
+      screenY,
+      source: 'main',
+      reason,
+    });
   };
 
   const clearState = (senderId, options = {}) => {

@@ -5,12 +5,8 @@
  * - 回退到 `Date.now()`：兼容 performance 不存在/不可用的环境。
  */
 export const nowMs = (): number => {
-  try {
-    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
-      return performance.now();
-    }
-  } catch {
-    // ignore
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
   }
   return Date.now();
 };

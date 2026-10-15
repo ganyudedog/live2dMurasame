@@ -21,10 +21,11 @@ describe('TTS client terminal errors and logging', () => {
     let handler: LiveKitV3EventHandler | undefined;
     const trace = { traceId: 'client-trace', record: vi.fn(), end: vi.fn(), fail: vi.fn() };
     const context = { beginTrace: () => trace, dispose: vi.fn() };
+    const unsubscribe = vi.fn();
     const liveKit = {
       ensureRoomConnected: vi.fn().mockResolvedValue(undefined),
       ensureSession: vi.fn().mockResolvedValue({ sessionId: 'session', livekit: { expiresIn: 600 } }),
-      subscribeEvents: vi.fn((_url, callback: LiveKitV3EventHandler) => { handler = callback; return vi.fn(); }),
+      subscribeEvents: vi.fn((_url, callback: LiveKitV3EventHandler) => { handler = callback; return unsubscribe; }),
       publishEvent: vi.fn().mockImplementation(async () => {
         handler?.({ type, session_id: 'session', request_id: 'request', payload }, {});
       }),
@@ -33,7 +34,7 @@ describe('TTS client terminal errors and logging', () => {
     const dependencies = { liveKit: liveKit as unknown as LiveKitService,
       log: { contextRegistry: { register: () => context } } as unknown as LogService };
     const config = { baseUrl, gptWeightsPath: 'gpt', sovitsWeightsPath: 'sovits' } as TtsRuntimeConfig;
-    return { dependencies, config, trace, liveKit };
+    return { dependencies, config, trace, liveKit, context, unsubscribe };
   };
 
   it('keeps the backend reason without misclassifying an engine error as a connection fallback', async () => {
@@ -61,6 +62,45 @@ describe('TTS client terminal errors and logging', () => {
     expect(trace.record.mock.calls.map(([event]) => event)).not.toContain('livekit.connected');
     expect(trace.record.mock.calls.map(([event]) => event)).not.toContain('realtime.speak.terminal');
     expect(trace.end).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('logs cancellation while waiting for TTS as cancellation and cleans up the terminal listener', async () => {
+    const { dependencies, config, trace, liveKit, context, unsubscribe } = setup('http://127.0.0.1:19883', 'tts.started', {});
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const controller = new AbortController();
+    liveKit.publishEvent.mockImplementationOnce(async () => { controller.abort(); });
+    await expect(requestTtsSynthesis(dependencies, {
+      config, requestId: 'request', speakText: 'hello', signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(trace.end).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'request', status: 'cancelled' }));
+    expect(trace.fail).not.toHaveBeenCalled();
+    expect(trace.record.mock.calls.map(([event]) => event)).not.toContain('realtime.speak.failed.noFallback');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(liveKit.disconnectRoom).not.toHaveBeenCalled();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(context.dispose).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops a cancelled connection without starting a session or HTTP fallback', async () => {
+    const { dependencies, config, trace, liveKit } = setup('http://127.0.0.1:19884', 'tts.finished', {});
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const controller = new AbortController();
+    liveKit.ensureRoomConnected.mockImplementationOnce(async () => {
+      controller.abort();
+      throw new DOMException('The connection was aborted', 'AbortError');
+    });
+    await expect(requestTtsSynthesis(dependencies, {
+      config, requestId: 'request', speakText: 'hello', signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(trace.end).toHaveBeenCalledWith(expect.objectContaining({ status: 'cancelled' }));
+    expect(trace.fail).not.toHaveBeenCalled();
+    expect(liveKit.ensureSession).not.toHaveBeenCalled();
+    expect(liveKit.publishEvent).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 });

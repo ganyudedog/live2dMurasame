@@ -1,6 +1,5 @@
 import { TtsPlaybackFeedbackService, type PlaybackFeedbackReporter } from './TtsPlaybackFeedbackService';
 import { saveTtsAudioArtifacts } from '../infrastructure/audioArtifactWriter';
-import { readTtsSnapshot } from '../infrastructure/configRepository';
 import { makeObservable, observable, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import { createSentenceDispatcher } from '../application/sentenceDispatcher';
@@ -22,7 +21,6 @@ export interface TtsServiceOptions {
   log: LogService;
   liveKit: LiveKitPort;
   reportPlaybackFeedback?: PlaybackFeedbackReporter;
-  getConfigSnapshot?: () => PetConfigSnapshot | null | undefined;
   config?: ConfigService;
   autoWarmup?: boolean;
   notifyError?: (message: string) => void;
@@ -37,10 +35,13 @@ export class TtsService {
   private readonly notifyError?: (message: string) => void;
   private stopWarmupReaction: IReactionDisposer | null = null;
   private warmupTimer: number | null = null;
-  private readonly player = new TtsStreamPlayer();
+  private readonly player: TtsStreamPlayer;
+  private readonly audioLevelListeners = new Set<(level: number | null) => void>();
+  private offLiveKitLevel: (() => void) | null = null;
+  private audioBaseUrl: string | null = null;
+  private audioGeneration = 0;
 
   private readonly feedback: TtsPlaybackFeedbackService;
-  private readonly getConfigSnapshot?: TtsServiceOptions['getConfigSnapshot'];
   private readonly log: LogService;
   private readonly liveKit: LiveKitPort;
   private activeTrace: TraceScope | null = null;
@@ -58,9 +59,9 @@ export class TtsService {
 
   constructor(options: TtsServiceOptions) {
     this.log = options.log;
+    this.player = new TtsStreamPlayer((level) => this.emitAudioLevel(level));
     this.liveKit = options.liveKit;
     this.feedback = new TtsPlaybackFeedbackService(options.liveKit, options.reportPlaybackFeedback);
-    this.getConfigSnapshot = options.getConfigSnapshot;
     this.config = options.config;
     this.autoWarmup = options.autoWarmup ?? false;
     this.notifyError = options.notifyError;
@@ -81,6 +82,14 @@ export class TtsService {
 
   createDispatcher(requestId: string) {
     return createSentenceDispatcher(this, requestId, () => this.disposed);
+  }
+
+  onAudioLevel(listener: (level: number | null) => void): () => void {
+    this.audioLevelListeners.add(listener);
+    return () => {
+      this.audioLevelListeners.delete(listener);
+      if (!this.audioLevelListeners.size) this.stopAudioObservation();
+    };
   }
 
   onPlayback(listener: (event: TtsPlaybackEvent) => void): () => void {
@@ -120,6 +129,7 @@ export class TtsService {
     this.feedback.dispose();
     this.player.dispose();
     this.playbackListeners.clear();
+    this.audioLevelListeners.clear();
   }
 
   // 根据当前配置进行预热，预热过程会检查必要的配置项并调用后端接口，记录日志以供分析预热失败的原因和时长。
@@ -132,8 +142,7 @@ export class TtsService {
       };
     }
 
-    const snapshot = readTtsSnapshot(this.getConfigSnapshot);
-    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
+    const ttsConfig = normalizeTtsConfig(this.config?.modelConfig?.tts);
 
     if (!ttsConfig.enabled) {
       return {
@@ -173,8 +182,9 @@ export class TtsService {
   }
 
   cancelActive(reason: string): void {
+    this.stopAudioObservation();
     const requestId = this.activeRequestId;
-    const config = normalizeTtsConfig(readTtsSnapshot(this.getConfigSnapshot)?.modelConfig?.tts);
+    const config = normalizeTtsConfig(this.config?.modelConfig?.tts);
     if (config.baseUrl) this.liveKit.setPlaybackMuted?.(config.baseUrl, true);
     for (const [id, request] of this.requests) {
       this.emitPlayback({ requestId: id, queueGroupId: request.groupId, state: 'cancelled', transport: 'none' });
@@ -192,11 +202,7 @@ export class TtsService {
 
     const active = this.activeAbortController;
     if (active) {
-      try {
-        active.abort();
-      } catch {
-        // ignore
-      }
+      active.abort();
     }
     this.activeAbortController = null;
     this.activeRequestId = null;
@@ -209,8 +215,8 @@ export class TtsService {
     const requestId = normalizeText(input.requestId) || `tts_${Date.now().toString(36)}`;
     const speakText = normalizeText(input.speakText);
     const displayText = normalizeText(input.displayText) || speakText;
-    const notify = (state: TtsPlaybackEvent['state'], transport: TtsPlaybackEvent['transport']) => {
-      this.emitPlayback({ requestId, queueGroupId: input.queueGroupId, sentenceIndex: input.sentenceIndex, state, transport });
+    const notify = (state: TtsPlaybackEvent['state'], transport: TtsPlaybackEvent['transport'], reason?: string) => {
+      this.emitPlayback({ requestId, queueGroupId: input.queueGroupId, sentenceIndex: input.sentenceIndex, state, transport, ...(reason ? { reason } : {}) });
     };
     if (!speakText) {
       notify('skipped', 'none');
@@ -229,11 +235,10 @@ export class TtsService {
       };
     }
 
-    const snapshot = readTtsSnapshot(this.getConfigSnapshot);
-    const ttsConfig = normalizeTtsConfig(snapshot?.modelConfig?.tts);
+    const ttsConfig = normalizeTtsConfig(this.config?.modelConfig?.tts);
 
     if (!ttsConfig.enabled) {
-      notify('skipped', 'none');
+      notify('skipped', 'none', 'tts-disabled');
       return {
         ok: false,
         skipped: true,
@@ -313,6 +318,7 @@ export class TtsService {
     const beginPlaybackObservation = () => {
       if (controller.signal.aborted) return;
       this.liveKit.setPlaybackMuted?.(ttsConfig.baseUrl, false);
+      this.observeLiveKitAudio(ttsConfig.baseUrl);
       this.feedback.stop();
       this.activeAbortController = controller;
       this.activeRequestId = requestId;
@@ -441,10 +447,11 @@ export class TtsService {
 
       await previousHttpPlayback;
       if (controller.signal.aborted) throw new DOMException('The operation was aborted', 'AbortError');
-      notifyPlayback('started', 'http');
+      this.stopAudioObservation();
       const playbackResult = await this.player.playResponse(response, {
         requestId,
         signal: controller.signal,
+        onStarted: () => notifyPlayback('started', 'http'),
         onChunk: (receivedBytes) => {
           if (firstChunkLogged) return;
           firstChunkLogged = true;
@@ -547,7 +554,34 @@ export class TtsService {
     }, 260);
   }
 
+  private observeLiveKitAudio(baseUrl: string): void {
+    if (this.audioBaseUrl === baseUrl && this.offLiveKitLevel) return;
+    this.stopAudioObservation();
+    if (!this.audioLevelListeners.size) return;
+    const generation = this.audioGeneration;
+    this.audioBaseUrl = baseUrl;
+    this.offLiveKitLevel = this.liveKit.subscribeAudioLevel?.(baseUrl, (level) => {
+      if (generation === this.audioGeneration && !this.disposed) this.emitAudioLevel(level);
+    }) ?? null;
+  }
+
+  private stopAudioObservation(): void {
+    this.audioGeneration++;
+    this.offLiveKitLevel?.();
+    this.offLiveKitLevel = null;
+    this.audioBaseUrl = null;
+    this.emitAudioLevel(null);
+  }
+
+  private emitAudioLevel(level: number | null): void {
+    this.audioLevelListeners.forEach((listener) => {
+      listener(level);
+    });
+  }
+
   private emitPlayback(event: TtsPlaybackEvent): void {
-    this.playbackListeners.forEach((listener) => listener(event));
+    this.playbackListeners.forEach((listener) => {
+      listener(event);
+    });
   }
 }

@@ -81,6 +81,16 @@ describe('LogService trace output', () => {
     expect(payload.timeline.at(-1)?.event).toBe('trace.fail');
   });
 
+  it('preserves shared action arrays without mistaking sibling references for cycles', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const log = new LogService(bootstrap());
+    const context = log.contextRegistry.register('Live2dActionService', { relation: 'action.execute' });
+    const actionId = [['a', 'b'], 'c'];
+    context.beginTrace('action.execute').end({ requestedActionId: actionId, actionId });
+    expect(info.mock.calls[0][1].data).toEqual({ requestedActionId: [['a', 'b'], 'c'], actionId: [['a', 'b'], 'c'] });
+    context.dispose();
+  });
+
   it('does not print a second error when a traced error reaches the global handler', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const log = new LogService(bootstrap());
@@ -94,5 +104,16 @@ describe('LogService trace output', () => {
     log.captureException(traced, { origin: 'window.unhandledrejection' });
 
     expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows numeric token usage while continuing to redact credentials and invalid usage values', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const log = new LogService(bootstrap());
+    const context = log.contextRegistry.register('LlmService', { relation: 'usage' });
+    context.beginTrace('usage').end({ promptTokens: 2000, cachedTokens: 1500, uncachedTokens: 500,
+      completionTokens: 12, accessToken: 12345, apiKey: 'secret', invalid: { cachedTokens: 'secret' } });
+    expect(info.mock.calls[0][1].data).toEqual({ promptTokens: 2000, cachedTokens: 1500, uncachedTokens: 500,
+      completionTokens: 12, accessToken: '[redacted]', apiKey: '[redacted]', invalid: { cachedTokens: '[redacted]' } });
+    context.dispose();
   });
 });

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ChatPanel from '../components/ChatPanel';
 import type { ChatMessage, GlobalUiSettings, ModelEntry } from '../../domain/types';
 
 const SCALE_PERSIST_DEBOUNCE_MS = 250;
@@ -162,108 +163,41 @@ export default function HomePage({
           />
         </section>
 
-        {/* 文字对话框 */}
-        <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
-          <div className="rounded-box border border-base-300 bg-base-200/50 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">麦克风（ASR）</div>
-                <div className="text-xs text-base-content/60">
-                  状态：{asrState}
+        <ChatPanel title="对话" description="文字与语音识别共用对话链路，回复后播放语音。"
+          messages={chatMessages} draft={chatDraft} busy={chatSending} error={chatError}
+          onDraftChange={onChatDraftChange} onSubmit={onChatSubmit} onClear={onClearChat}
+          inputLabel="对话输入" placeholder="在这里与 AI 对话，Shift+Enter 换行，Enter 发送"
+          emptyMessage="当前模型暂无会话缓存。你可以在这里输入文字，后续 ASR 也会汇入同一条处理链路。"
+          heightClassName="h-[70vh]" footer="对话按当前模型缓存，回复使用当前配置的语音播放。"
+          beforeHeader={
+            <div className="rounded-box border border-base-300 bg-base-200/50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium">麦克风（ASR）</div>
+                  <div className="text-xs text-base-content/60">
+                    状态：{asrState}
+                  </div>
                 </div>
+                <input
+                  type="checkbox"
+                  className="toggle toggle-primary"
+                  checked={asrEnabled}
+                  disabled={asrSwitchLoading}
+                  onChange={(e) => onToggleAsr(e.target.checked)}
+                />
               </div>
-              <input
-                type="checkbox"
-                className="toggle toggle-primary"
-                checked={asrEnabled}
-                disabled={asrSwitchLoading}
-                onChange={(e) => onToggleAsr(e.target.checked)}
-              />
-            </div>
-            {asrPartialText && (
-              <div className="mt-2 text-xs text-base-content/70 break-all">
-                识别中：{asrPartialText}
-              </div>
-            )}
-            {asrError && (
-              <div className="mt-2 text-xs text-error break-all">
-                错误：{asrError}
-              </div>
-            )}
-          </div>
-
-          <header className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium">对话</div>
-              <div className="text-xs text-base-content/60">文字输入会在前端请求千问，并在返回后触发 TTS 合成</div>
-            </div>
-            <button type="button" className="btn btn-ghost btn-xs" onClick={onClearChat} disabled={chatSending || chatMessages.length === 0}>
-              清空
-            </button>
-          </header>
-          <div className="rounded-box border border-base-300 bg-base-200/40 p-3">
-            <div className="flex h-[70vh] flex-col gap-3">
-              <div className="min-h-0 flex-1 rounded-box border border-base-300 bg-base-300 p-3">
-                <div className="h-full space-y-3 overflow-y-scroll pr-1">
-                  {chatMessages.length === 0 && (
-                    <div className="rounded-box border border-dashed border-base-300 bg-base-100/70 p-3 text-xs text-base-content/60">
-                      当前模型暂无会话缓存。你可以在这里输入文字，后续 ASR 也会汇入同一条处理链路。
-                    </div>
-                  )}
-                  {chatMessages.map((message) => {
-                    const bubbleClass = message.role === 'user'
-                      ? 'chat-bubble chat-bubble-primary'
-                      : message.role === 'system'
-                        ? 'chat-bubble chat-bubble-warning'
-                        : 'chat-bubble';
-                    const alignClass = message.role === 'user' ? 'chat-end' : 'chat-start';
-                    const label = message.role === 'user' ? '你' : message.role === 'system' ? '系统' : 'AI';
-                    return (
-                      <div key={message.id} className={`chat ${alignClass}`}>
-                        <div className="chat-header text-[11px] text-base-content/50">{label}</div>
-                        <div className={bubbleClass}>
-                          <div className="whitespace-pre-wrap wrap-break-word text-sm">{message.text}</div>
-                          {message.status === 'sending' && <div className="mt-1 text-[11px] opacity-70">发送中...</div>}
-                          {message.status === 'error' && message.error && <div className="mt-1 text-[11px] opacity-80">{message.error}</div>}
-                        </div>
-                      </div>
-                    );
-                  })}
+              {asrPartialText && (
+                <div className="mt-2 text-xs text-base-content/70 break-all">
+                  识别中：{asrPartialText}
                 </div>
-              </div>
-
-              <div className="rounded-box border border-base-300 bg-base-100 p-3">
-                <div className="relative">
-                  <textarea
-                    className="textarea textarea-bordered min-h-32 w-full resize-none pr-20 outline-0"
-                    rows={4}
-                    placeholder="在这里与 AI 对话，Shift+Enter 换行，Enter 发送"
-                    value={chatDraft}
-                    disabled={chatSending}
-                    onChange={(e) => onChatDraftChange(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== 'Enter' || e.shiftKey) return;
-                      e.preventDefault();
-                      onChatSubmit();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-primary absolute bottom-3 right-3"
-                    onClick={onChatSubmit}
-                    disabled={chatSending || !chatDraft.trim()}
-                  >
-                    发送
-                  </button>
+              )}
+              {asrError && (
+                <div className="mt-2 text-xs text-error break-all">
+                  错误：{asrError}
                 </div>
-              </div>
+              )}
             </div>
-          </div>
-          {chatError && <div className="text-xs text-error">{chatError}</div>}
-          <div className="text-xs text-base-content/60">
-            说明：这里的会话只做本地缓存恢复；RAG 与 memory 在前端运行时处理，TTS 仅在千问返回文本后触发。
-          </div>
-        </section>
+          } />
       </div>
     </div>
   );

@@ -16,19 +16,35 @@ import type { SubtitleService } from '../modules/subtitle/service/SubtitleServic
 import type { FloatingComposerService } from '../modules/live2d/modules/interaction/service/FloatingComposerService';
 
 export const TOKENS = {
-  subtitle: createServiceToken<SubtitleService>('SubtitleService'),
-  floatingComposer: createServiceToken<FloatingComposerService>('FloatingComposerService'),
-  bootstrapContext: createServiceToken<BootstrapContext>('BootstrapContext'),
-  electron: createServiceToken<ElectronService>('ElectronService'),
-  log: createServiceToken<LogService>('LogService'),
-  config: createServiceToken<ConfigService>('ConfigService'),
-  stateBus: createServiceToken<StateBusService>('StateBusService'),
-  liveKit: createServiceToken<LiveKitService>('LiveKitService'),
-  llm: createServiceToken<LlmService>('LlmService'),
-  tts: createServiceToken<TtsService>('TtsService'),
-  asr: createServiceToken<AsrService>('AsrService'),
-  live2d: createServiceToken<Live2dService>('Live2dService'),
-  ai: createServiceToken<AiService>('AiService'),
-  controlPanel: createServiceToken<ControlPanelService>('ControlPanelService'),
-  pluginRuntime: createServiceToken<PluginRuntime>('PluginRuntime'),
+  core: {
+    bootstrapContext: createServiceToken<BootstrapContext>('BootstrapContext'),
+  },
+  shared: {
+    electron: createServiceToken<ElectronService>('ElectronService'),
+    log: createServiceToken<LogService>('LogService'),
+    config: createServiceToken<ConfigService>('ConfigService'),
+    stateBus: createServiceToken<StateBusService>('StateBusService'),
+  },
+  plugin: {
+    runtime: createServiceToken<PluginRuntime>('PluginRuntime'),
+  },
+  ai: {
+    runtime: createServiceToken<AiService>('AiService'),
+    asr: createServiceToken<AsrService>('AsrService'),
+    llm: createServiceToken<LlmService>('LlmService'),
+    tts: {
+      runtime: createServiceToken<TtsService>('TtsService'),
+      liveKit: createServiceToken<LiveKitService>('LiveKitService'),
+    },
+  },
+  live2d: {
+    runtime: createServiceToken<Live2dService>('Live2dService'),
+    floatingComposer: createServiceToken<FloatingComposerService>('FloatingComposerService'),
+  },
+  controlPanel: {
+    runtime: createServiceToken<ControlPanelService>('ControlPanelService'),
+  },
+  subtitle: {
+    runtime: createServiceToken<SubtitleService>('SubtitleService'),
+  },
 } as const;

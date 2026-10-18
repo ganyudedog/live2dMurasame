@@ -7,11 +7,16 @@ import { ActionCatalogService } from '@app/modules/ai/modules/llm/service/Action
 import { headAction as head, shyAction as shy, actionSources as sources } from '../../../../../../test/fixtures/actionCatalog';
 import { ActionSettingsService } from '../service/ActionSettingsService';
 import { activeMention, referencedActionIds } from '../domain/session';
+import { clearGenerationCheckpoint } from '../infrastructure/generationCache';
 
 const services: ActionSettingsService[] = [];
 
 async function setup() {
   const requestStructured = vi.fn<(...args: Parameters<LlmService['requestStructured']>) => Promise<string>>();
+  requestStructured.mockImplementation(async (prompt) => {
+    if (prompt.includes('当前任务是审查')) return '{"issues":[]}';
+    throw new Error('unexpected LLM request');
+  });
   const saveActionCatalog = vi.fn(async (_path: string, actions: ActionDefinition[]) => actions);
   const getActionSources = vi.fn(async () => sources);
   const previewAction = vi.fn(async () => {});
@@ -27,12 +32,106 @@ beforeEach(() => {
   const store = new Map<string, string>();
   vi.stubGlobal('window', {
     localStorage: { getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => store.set(key, value) },
+      setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key) },
   });
+  clearGenerationCheckpoint('model-a');
+  clearGenerationCheckpoint('model-b');
+  clearGenerationCheckpoint('model-a', 'refine');
+  clearGenerationCheckpoint('model-b', 'refine');
 });
 afterEach(() => { services.splice(0).forEach((service) => service.dispose()); vi.unstubAllGlobals(); });
 
 describe('ActionSettingsService workspace', () => {
+  it('saves executable reactions with remaining advice and restores that advice after reopening', async () => {
+    const { service, config, requestStructured, saveActionCatalog } = await setup();
+    requestStructured.mockImplementation(async (prompt) => prompt.includes('当前任务是审查')
+      ? '{"issues":[{"actionId":"shy","message":"建议预览身体与脸红的衔接"}]}' : JSON.stringify({ actions: [shy] }));
+    await service.generate();
+    expect(service.error).toBeNull();
+    expect(saveActionCatalog).toHaveBeenCalledWith('model-a', [shy]);
+    expect(service.messages.at(-1)).toMatchObject({ status: 'done',
+      reviewNotes: [{ actionId: 'shy', message: '建议预览身体与脸红的衔接' }] });
+    expect(service.messages.at(-1)?.text).toContain('待预览');
+    expect(structuredClone(service.view).messages.at(-1)?.reviewNotes).toEqual(service.messages.at(-1)?.reviewNotes);
+    runInAction(() => { config.modelConfig = { actions: [shy] }; });
+    service.dispose();
+    const reopened = new ActionSettingsService(new ActionCatalogService(requestStructured), config as unknown as ConfigService);
+    services.push(reopened);
+    expect(reopened.messages.at(-1)?.reviewNotes).toEqual(service.messages.at(-1)?.reviewNotes);
+    expect(reopened.messages.at(-1)?.task?.issues).toEqual(service.messages.at(-1)?.task?.issues);
+    expect(reopened.messages.at(-1)?.task?.plan.length).toBeGreaterThan(0);
+    requestStructured.mockResolvedValueOnce('{"message":"先预览再决定"}');
+    await reopened.refine('刚才的建议是什么意思？');
+    expect(JSON.parse(requestStructured.mock.calls.at(-1)![1]).history.at(-1).text).toContain('建议预览身体与脸红的衔接');
+  });
+
+  it('keeps hard protection violations from reaching persistence', async () => {
+    const { service, requestStructured, saveActionCatalog, getActionSources } = await setup();
+    const blocked = { ...sources, parameters: [...sources.parameters,
+      { id: 'ParamAngleY', observedMin: -40, observedMax: 40 }] };
+    const invalid = { ...head, tracks: [{ parameterId: 'ParamAngleY', keyframes: [{ timeMs: 0, value: 30 }] }] };
+    getActionSources.mockResolvedValue(blocked);
+    requestStructured.mockImplementation(async (prompt) => prompt.includes('当前任务是审查')
+      ? '{"issues":[]}' : JSON.stringify({ actions: [invalid] }));
+    await service.generate();
+    expect(service.error).toContain('执行约束仍未满足');
+    expect(saveActionCatalog).not.toHaveBeenCalled();
+    expect(service.actions).toEqual([head]);
+  });
+
+  it('cancels a pending generation, preserves completed analysis and prevents late saves', async () => {
+    const { service, requestStructured, saveActionCatalog } = await setup();
+    let finish!: (text: string) => void;
+    let entered!: () => void;
+    const composing = new Promise<void>((resolve) => { entered = resolve; });
+    requestStructured.mockResolvedValueOnce(JSON.stringify({ actions: [shy] }));
+    requestStructured.mockImplementationOnce(() => { entered(); return new Promise((resolve) => { finish = resolve; }); });
+    const task = service.generate();
+    await composing;
+    expect(service.messages.at(-1)?.text).toContain('编排');
+    expect(service.view.canCancel).toBe(true);
+    service.cancel();
+    expect(service.busy).toBe(false);
+    finish(JSON.stringify({ actions: [shy] }));
+    await task;
+    expect(saveActionCatalog).not.toHaveBeenCalled();
+    expect(service.actions).toEqual([head]);
+    requestStructured.mockClear();
+    requestStructured.mockResolvedValueOnce(JSON.stringify({ actions: [shy] }));
+    await service.generate();
+    expect(requestStructured.mock.calls[0][0]).toContain('彻底重建');
+    expect(saveActionCatalog).toHaveBeenCalledTimes(1);
+    // 成功后删除检查点，下一次明确重建会重新分析。
+    requestStructured.mockClear();
+    requestStructured.mockResolvedValueOnce(JSON.stringify({ actions: [head] })).mockResolvedValueOnce(JSON.stringify({ actions: [head] }));
+    await service.generate();
+    expect(requestStructured.mock.calls[0][0]).toContain('分析当前联合窗口');
+  });
+
+  it('keeps the table on failed review and disables cancellation once persistence starts', async () => {
+    const { service, requestStructured, saveActionCatalog } = await setup();
+    requestStructured.mockResolvedValueOnce(JSON.stringify({ actions: [shy] }))
+      .mockResolvedValueOnce(JSON.stringify({ actions: [shy] })).mockResolvedValueOnce('{"message":"looks good"}');
+    await service.generate();
+    expect(service.error).toContain('审查结果无效');
+    expect(saveActionCatalog).not.toHaveBeenCalled();
+    expect(service.actions).toEqual([head]);
+    let complete!: (actions: ActionDefinition[]) => void;
+    let entered!: () => void;
+    const saving = new Promise<void>((resolve) => { entered = resolve; });
+    saveActionCatalog.mockImplementationOnce(() => { entered(); return new Promise((resolve) => { complete = resolve; }); });
+    requestStructured.mockResolvedValueOnce('{"issues":[]}');
+    const task = service.generate();
+    await saving;
+    expect(service.canCancel).toBe(false);
+    service.cancel();
+    expect(service.busy).toBe(true);
+    complete([shy]);
+    await task;
+    expect(service.actions).toEqual([shy]);
+    expect(service.busy).toBe(false);
+  });
+
   it('edits metadata without calling LLM, preserves trajectories and allows clearing the description', async () => {
     const { service, requestStructured, saveActionCatalog } = await setup();
     expect(await service.updateMetadata('head', ' 侧头倾听 ', ' 表示认真听对方说话 ')).toBe(true);
@@ -63,7 +162,7 @@ describe('ActionSettingsService workspace', () => {
     const { service, requestStructured, saveActionCatalog } = await setup();
     requestStructured.mockResolvedValueOnce('{"message":"旧规则：只要转头"}');
     await service.refine('旧规则：只要转头');
-    requestStructured.mockResolvedValueOnce(JSON.stringify({ actions: [shy] }));
+    requestStructured.mockResolvedValueOnce(JSON.stringify({ actions: [shy] })).mockResolvedValueOnce(JSON.stringify({ actions: [shy] }));
     await service.generate();
     expect(requestStructured.mock.calls[1][1]).not.toContain('旧规则');
     expect(requestStructured.mock.calls[1][1]).not.toContain('currentActions');
@@ -73,7 +172,7 @@ describe('ActionSettingsService workspace', () => {
     expect(service.messages.at(-1)?.text).toContain('旧动作表已替换');
     requestStructured.mockResolvedValueOnce('{"message":"新的上下文"}');
     await service.refine('怎么调整？');
-    expect(requestStructured.mock.calls[2][1]).not.toContain('旧规则');
+    expect(requestStructured.mock.calls.at(-1)![1]).not.toContain('旧规则');
   });
 
   it('sends exact mentioned definitions, native sources for adding actions and separate chat history', async () => {
@@ -87,10 +186,11 @@ describe('ActionSettingsService workspace', () => {
     expect(context.referencedIds).toEqual([head.id]);
     expect(context.actions).toEqual([head]);
     expect(context.parameters).toEqual(sources.parameters);
-    expect(context.evidence.curves[0].samples).toEqual([[0, -20], [1000, 20]]);
+    expect(context.evidence.windows[0].curves[0].samples).toEqual([[0, -20], [1000, 20]]);
     expect(context.history).toEqual([{ role: 'user', text: '可以增加什么？' }, { role: 'assistant', text: '可以新增害羞动作' }]);
     expect(service.actions).toEqual([head, shy]);
-    expect(service.messages.at(-1)).toMatchObject({ text: '已新增害羞动作', status: 'done' });
+    expect(service.messages.at(-1)?.text).toContain('已新增害羞动作');
+    expect(service.messages.at(-1)?.status).toBe('done');
   });
 
   it('allows removing the last action through conversation and through the delete button', async () => {
@@ -166,11 +266,27 @@ describe('ActionSettingsService workspace', () => {
     expect(reopened.messages.at(-1)?.text).toBe('可以预览后调整');
   });
 
+  it('retries backend persistence without paying to regenerate an already reviewed refinement', async () => {
+    const { service, requestStructured, saveActionCatalog } = await setup();
+    const revised = { ...head, returnMs: 700 };
+    requestStructured.mockResolvedValueOnce(JSON.stringify({ actions: [revised] }));
+    saveActionCatalog.mockRejectedValueOnce(new Error('disk failed'));
+    await service.refine('把回退调慢');
+    expect(service.error).toBe('disk failed');
+    const calls = requestStructured.mock.calls.length;
+    await service.refine('把回退调慢');
+    expect(service.error).toBeNull();
+    expect(service.actions).toEqual([revised]);
+    expect(requestStructured).toHaveBeenCalledTimes(calls);
+    expect(saveActionCatalog).toHaveBeenCalledTimes(2);
+  });
+
   it('aborts editing on model switch and discards late LLM replies', async () => {
     const { service, config, requestStructured, saveActionCatalog } = await setup();
     let resolveReply!: (value: string) => void;
     requestStructured.mockImplementationOnce(() => new Promise((resolve) => { resolveReply = resolve; }));
     const pending = service.refine('@head 调整');
+    await vi.waitFor(() => expect(requestStructured).toHaveBeenCalledOnce());
     const signal = requestStructured.mock.calls[0][2];
     runInAction(() => { config.activeModelPath = 'model-b'; config.modelConfig = { actions: [shy] }; });
     expect(signal?.aborted).toBe(true);

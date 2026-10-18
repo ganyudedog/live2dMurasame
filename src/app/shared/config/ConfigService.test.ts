@@ -22,6 +22,17 @@ function setup(bridge: object) {
 }
 
 describe('ConfigService model edit isolation', () => {
+  it('saves action reasoning through the existing global bridge and exposes it in the injected snapshot', async () => {
+    const updateConfig = vi.fn(async (patch: PetGlobalModelConfigPayload) => ({ model: 'user-model', ...patch }));
+    const service = setup({ globalApi: { updateConfig } });
+    await service.updateGlobalConfig({ actionReasoningEffort: 'high' });
+    expect(updateConfig).toHaveBeenCalledExactlyOnceWith({ actionReasoningEffort: 'high' });
+    expect(service.getSnapshot()?.globalModelConfig).toMatchObject({ actionReasoningEffort: 'high', model: 'user-model' });
+    await service.updateGlobalConfig({ actionReasoningEffort: 'default' });
+    expect(service.getSnapshot()?.globalModelConfig?.actionReasoningEffort).toBe('default');
+    service.dispose();
+  });
+
   it('does not switch the active model when an earlier save completes after a model switch', async () => {
     let complete!: (value: typeof oldResult) => void;
     const service = setup({ modelApi: { updateConfig: () => new Promise((resolve) => { complete = resolve; }) } });

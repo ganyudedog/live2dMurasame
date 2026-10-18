@@ -58,9 +58,9 @@ export const usePetModel = ({
   clampAngleY,
   modelPath,
 }: UsePetModelParams): void => {
-  const logService = useService(TOKENS.log);
+  const logService = useService(TOKENS.shared.log);
   const applyLayoutRef = useRef(scheduleApplyLayout);
-  const actions = useService(TOKENS.live2d).actions;
+  const actions = useService(TOKENS.live2d.runtime).actions;
   const eyeLimitRef = useRef(clampEyeBallY);
   const headLimitRef = useRef(clampAngleY);
   useEffect(() => {

@@ -5,8 +5,8 @@ import { TOKENS } from '../serviceTokens';
 import type { UiRenderContext } from './types';
 
 export const PluginPanelHost = observer(({ slot }: { slot: string }) => {
-  const runtime = useService(TOKENS.pluginRuntime);
-  const controlPanel = useService(TOKENS.controlPanel);
+  const runtime = useService(TOKENS.plugin.runtime);
+  const controlPanel = useService(TOKENS.controlPanel.runtime);
   const revision = runtime.revision;
   void revision;
   const contributions = controlPanel.getPluginUiContributions(slot);

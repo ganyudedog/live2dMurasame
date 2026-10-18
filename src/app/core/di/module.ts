@@ -7,7 +7,10 @@ export interface ServiceModule {
   readonly id: string;
   readonly windows: readonly (WindowKind | 'all')[];
   readonly eager?: readonly ServiceToken<unknown>[];
-  register(container: ServiceContainer): void;
+  /** Register this module's services. Grouping modules may omit it. */
+  register?(container: ServiceContainer): void;
+  /** Child modules inherit this module's window scope. */
+  readonly children?: readonly ServiceModule[];
 }
 
 export interface ServiceModuleExports {
@@ -16,4 +19,4 @@ export interface ServiceModuleExports {
 }
 
 export const getServiceModuleDefinitions = (exports: ServiceModuleExports): readonly ServiceModule[] =>
-  exports.serviceModules ?? (exports.serviceModule ? [exports.serviceModule] : []);
+  exports.serviceModule ? [exports.serviceModule] : (exports.serviceModules ?? []);

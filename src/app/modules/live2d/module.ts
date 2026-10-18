@@ -6,14 +6,14 @@ import { FloatingComposerService } from './modules/interaction/service/FloatingC
 export const serviceModule: ServiceModule = {
   id: 'pet.live2d',
   windows: ['pet'],
-  eager: [TOKENS.live2d],
+  eager: [TOKENS.live2d.runtime],
   register(container) {
-    container.registerSingleton(TOKENS.floatingComposer, (scope) => new FloatingComposerService(scope.resolve(TOKENS.stateBus)));
-    container.registerSingleton(TOKENS.live2d, (scope) => new Live2dService(
-      scope.resolve(TOKENS.stateBus),
-      scope.resolve(TOKENS.log),
-      scope.resolve(TOKENS.electron).bridge.windowApi,
-      scope.resolve(TOKENS.electron).bridge.modelApi,
+    container.registerSingleton(TOKENS.live2d.floatingComposer, (scope) => new FloatingComposerService(scope.resolve(TOKENS.shared.stateBus)));
+    container.registerSingleton(TOKENS.live2d.runtime, (scope) => new Live2dService(
+      scope.resolve(TOKENS.shared.stateBus),
+      scope.resolve(TOKENS.shared.log),
+      scope.resolve(TOKENS.shared.electron).bridge.windowApi,
+      scope.resolve(TOKENS.shared.electron).bridge.modelApi,
     ));
   },
 };

@@ -18,20 +18,20 @@ export interface RendererApplication {
 export const bootstrapRenderer = async (windowKind: WindowKind): Promise<RendererApplication> => {
   const container = new ServiceContainer();
   const configSnapshot = window.SnapshotAPI?.getSnapshot?.() ?? window.__PET_CONFIG__ ?? null;
-  container.registerValue(TOKENS.bootstrapContext, {
+  container.registerValue(TOKENS.core.bootstrapContext, {
     windowKind,
     configSnapshot,
     startedAt: Date.now(),
   });
 
   const eagerTokens = registerServiceModules(container, windowKind);
-  const logger = container.resolve(TOKENS.log);
+  const logger = container.resolve(TOKENS.shared.log);
   bindLogService(logger);
   for (const token of eagerTokens) container.resolve(token);
   await container.startServices();
 
-  const pluginRuntime = container.resolve(TOKENS.pluginRuntime);
-  const electron = container.resolve(TOKENS.electron);
+  const pluginRuntime = container.resolve(TOKENS.plugin.runtime);
+  const electron = container.resolve(TOKENS.shared.electron);
   const desktopHostApi: DesktopHostApi = {
     showNotification: async (title, body) => {
       // Notifications remain a host concern; the renderer only receives the
@@ -45,8 +45,8 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
   pluginRuntime.registerHostApi('desktop', desktopHostApi);
 
   if (windowKind === 'pet') {
-    const live2d = container.resolve(TOKENS.live2d);
-    const ai = container.resolve(TOKENS.ai);
+    const live2d = container.resolve(TOKENS.live2d.runtime);
+    const ai = container.resolve(TOKENS.ai.runtime);
     const live2dHostApi: Live2dHostApi = {
       getAvailableMotions: () => live2d.getAvailableMotionsSnapshot(),
       playMotion: (group) => live2d.playMotion(group),
@@ -64,7 +64,7 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
     ai.registerExtensions(pluginRuntime.aiRegister);
   }
   if (windowKind === 'control-panel') {
-    const controlPanel = container.resolve(TOKENS.controlPanel);
+    const controlPanel = container.resolve(TOKENS.controlPanel.runtime);
     const controlPanelHostApi: ControlPanelHostApi = {
       getActiveTab: () => controlPanel.activeTab,
       openTab: (tabId) => controlPanel.setActiveTab(tabId as Parameters<typeof controlPanel.setActiveTab>[0]),
@@ -77,12 +77,12 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
   // Cross-service subscriptions belong to the composition root, not the React tree.
   const bindings: Array<() => void> = [];
   if (windowKind === 'pet') {
-    const live2d = container.resolve(TOKENS.live2d);
-    const electron = container.resolve(TOKENS.electron);
-    const config = container.resolve(TOKENS.config);
+    const live2d = container.resolve(TOKENS.live2d.runtime);
+    const electron = container.resolve(TOKENS.shared.electron);
+    const config = container.resolve(TOKENS.shared.config);
     bindings.push(
-      bindAiBubble(container.resolve(TOKENS.ai), container.resolve(TOKENS.tts), live2d),
-      bindAiActions(container.resolve(TOKENS.ai), container.resolve(TOKENS.tts), live2d),
+      bindAiBubble(container.resolve(TOKENS.ai.runtime), container.resolve(TOKENS.ai.tts.runtime), live2d),
+      bindAiActions(container.resolve(TOKENS.ai.runtime), container.resolve(TOKENS.ai.tts.runtime), live2d),
       reaction(() => electron.drag.active, (active) => live2d.setWindowDragging(active), { fireImmediately: true }),
       reaction(() => config.modelConfig?.bubble,
         (settings) => live2d.configureBubble(settings ?? {}),
@@ -92,7 +92,7 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
         (view) => live2d.configureInteraction(view),
         { fireImmediately: true }),
       reaction(() => config.globalModelConfig?.showDragHandleOnHover !== false,
-        (enabled) => container.resolve(TOKENS.floatingComposer).configure(enabled), { fireImmediately: true }),
+        (enabled) => container.resolve(TOKENS.live2d.floatingComposer).configure(enabled), { fireImmediately: true }),
     );
   }
 

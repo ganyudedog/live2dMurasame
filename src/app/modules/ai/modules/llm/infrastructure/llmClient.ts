@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
+import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions/completions';
 import { buildStage2SystemPrompt, buildStage2UserPrompt } from '../domain/prompt';
-import type { Stage2LLMConfig, Stage2LLMRequest } from '../domain/types';
+import type { ReasoningEffort, ReasoningSummaryEvent, Stage2LLMConfig, Stage2LLMRequest } from '../domain/types';
 import { promptCacheOptions, readPromptUsage, type PromptUsage } from './promptCache';
 
 interface Stage2LLMClientResult {
@@ -13,7 +14,9 @@ export interface StructuredLLMRequest {
   systemPrompt: string;
   userPrompt: string;
   signal?: AbortSignal;
-  temperature?: number;
+  reasoningEffort?: ReasoningEffort;
+  onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
+  stream?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 12000;
@@ -24,6 +27,20 @@ const withTimeoutSignal = (timeoutMs: number): AbortSignal | undefined => {
     return AbortSignalCtor.timeout(timeoutMs);
   }
   return undefined;
+};
+
+// 仅透传用户选择的推理深度；默认不发送，不按厂商或模型名切换协议。
+const reasoningOptions = (effort?: ReasoningEffort): Pick<ChatCompletionCreateParamsNonStreaming, 'reasoning_effort'> =>
+  effort && effort !== 'default' ? { reasoning_effort: effort } : {};
+
+const emitReasoning = (
+  text: unknown,
+  onReasoningSummary: ((event: ReasoningSummaryEvent) => void) | undefined,
+  index?: number,
+): void => {
+  const value = typeof text === 'string' ? text : '';
+  if (!value) return;
+  onReasoningSummary?.({ text: value, delta: value, index });
 };
 
 export const requestStage2LLM = async (
@@ -63,11 +80,7 @@ export const requestStage2LLM = async (
       },
       { role: 'user' as const, content: buildStage2UserPrompt({ userText: req.userText, ragContext: req.ragContext }) },
     ],
-    extra_body: {
-      thinking: {
-        type: "disabled"
-      }
-    }
+    ...reasoningOptions(req.reasoningEffort),
   };
 
   const timeoutSignal = withTimeoutSignal(timeoutMs);
@@ -91,11 +104,17 @@ export const requestStage2LLM = async (
 
     let rawText = '';
     let usage = readPromptUsage(null);
+    let reasoningIndex = 0;
     for await (const chunk of stream) {
       signal?.throwIfAborted();
       // 最后的 usage 帧可以没有 choices，必须在过滤文本之前读取。
       if (chunk.usage) usage = readPromptUsage(chunk.usage);
-      const delta = chunk.choices?.[0]?.delta?.content ?? '';
+      const chunkDelta = chunk.choices?.[0]?.delta as { content?: string; reasoning_summary?: string } | undefined;
+      const reasoningDelta = chunkDelta?.reasoning_summary ?? '';
+      if (reasoningDelta) {
+        emitReasoning(reasoningDelta, req.onReasoningSummary, reasoningIndex++);
+      }
+      const delta = chunkDelta?.content ?? '';
       if (!delta) continue;
       rawText += delta;
       req.onStreamDelta?.({
@@ -123,7 +142,10 @@ export const requestStage2LLM = async (
     },
   );
 
-  const rawText = response.choices?.[0]?.message?.content?.trim() ?? '';
+  const message = response.choices?.[0]?.message as { content?: string; reasoning_summary?: string } | undefined;
+  emitReasoning(message?.reasoning_summary,
+    req.onReasoningSummary, 0);
+  const rawText = message?.content?.trim() ?? '';
   if (!rawText) {
     throw new Error('LLM 返回为空');
   }
@@ -143,17 +165,41 @@ export const requestStructuredLLM = async (
   if (!cfg.apiKey) throw new Error('缺少 API Key，请先在控制面板 AI 页填写');
   const usedModel = cfg.model ?? '';
   if (!usedModel.trim()) throw new Error('未配置 AI 模型，请先在控制面板 AI 页填写');
-  const client = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL || undefined, dangerouslyAllowBrowser: true });
-  const response = await client.chat.completions.create({
+  const client = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL || undefined, dangerouslyAllowBrowser: true, maxRetries: 0 });
+  req.signal?.throwIfAborted();
+  const body = {
     ...promptCacheOptions(cfg.baseURL, 'action-catalog'),
     model: usedModel,
-    temperature: typeof req.temperature === 'number' ? req.temperature : (cfg.temperature ?? 0.2),
+    // 动作任务不额外指定采样温度，避免与显式推理深度产生参数冲突。
     messages: [
-      { role: 'system', content: req.systemPrompt },
-      { role: 'user', content: req.userPrompt },
+      { role: 'system' as const, content: req.systemPrompt },
+      { role: 'user' as const, content: req.userPrompt },
     ],
-  }, { signal: req.signal });
-  const rawText = response.choices?.[0]?.message?.content?.trim() ?? '';
+    ...reasoningOptions(req.reasoningEffort),
+  };
+  if (req.stream) {
+    const stream = await client.chat.completions.create({ ...body, stream: true, stream_options: { include_usage: true } }, { signal: req.signal });
+    let rawText = '';
+    let usage = readPromptUsage(null);
+    let summaryIndex = 0;
+    for await (const chunk of stream) {
+      req.signal?.throwIfAborted();
+      if (chunk.usage) usage = readPromptUsage(chunk.usage);
+      const delta = chunk.choices?.[0]?.delta as { content?: string; reasoning_summary?: string } | undefined;
+      // 原始 reasoning_content 不是摘要，不保存或展示到任务历史。
+      emitReasoning(delta?.reasoning_summary, req.onReasoningSummary, summaryIndex++);
+      rawText += delta?.content ?? '';
+    }
+    req.signal?.throwIfAborted();
+    if (!rawText.trim()) throw new Error('LLM 返回为空');
+    return { rawText: rawText.trim(), usedModel, usage };
+  }
+  const response = await client.chat.completions.create({ ...body, stream: false }, { signal: req.signal });
+  req.signal?.throwIfAborted();
+  const message = response.choices?.[0]?.message as { content?: string; reasoning_summary?: string } | undefined;
+  emitReasoning(message?.reasoning_summary,
+    req.onReasoningSummary, 0);
+  const rawText = message?.content?.trim() ?? '';
   if (!rawText) throw new Error('LLM 返回为空');
   return { rawText, usedModel, usage: readPromptUsage(response.usage) };
 };

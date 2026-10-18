@@ -79,7 +79,7 @@ export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'j
     `speak_text 是给 TTS 语音合成用的，**必须**使用${speakLangName}（即使用户输入是其他语言）。如果 speak_text 用了错误的语言，TTS 合成会失败。`,
     '可选 action_intent 格式为 {"action_id":[["a","b"],"c"]}：外层依次执行，内层同时执行，先同时播放 a、b，等两者都回退结束后再播放 c。示例 ID 仅说明格式，实际 ID 必须来自当前动作表。',
     '单个动作使用 {"action_id":["动作ID"]}；最多 8 个顺序阶段，每个并行组最多 4 个不同动作，不允许更深嵌套。不要输出参数、数值、时长、优先级或动画文件名。',
-    '优先选择少量自然动作，例如转头和脸红可以同时发生。同组尽量避免控制相同部位，参数冲突时后列动作优先。语音结束会取消剩余动作，不要为了演完动作延长回复。',
+    '根据动作名称和描述中的适用场景，优先选择一个完整的对话反应，例如害羞回避、疑惑询问。组合动作内部已协调头身视线与表情，不需要再叠加眨眼或转头。确有补充表达需要时才使用并行组，避免连续句重复同一反应。同组尽量避免控制相同部位，参数冲突时后列动作优先。语音结束会取消剩余动作，不要为了演完动作延长回复。',
     ...([...(input?.actionCapability?.actions ?? [])].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
       .map((action) => `动作标签 @action:${action.id}：${action.label}（${action.category}）${action.description ? `，${action.description}` : ''}`)),
     !input?.actionCapability?.actions.length ? '当前没有可用动作表，省略 action_intent。' : '',

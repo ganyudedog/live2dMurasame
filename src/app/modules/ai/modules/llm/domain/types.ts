@@ -1,5 +1,14 @@
 import type { ActionIntentInput, ActionCapability } from '../../../../live2d/modules/actions/domain/types';
 
+/** 显式请求参数；default 表示不覆盖接口默认值，不根据模型名称猜测能力。 */
+export type ReasoningEffort = PetReasoningEffort;
+
+export interface ReasoningSummaryEvent {
+  text: string;
+  delta?: string;
+  index?: number;
+}
+
 export interface Stage2LLMConfig {
   apiKey?: string;
   baseURL?: string;
@@ -20,6 +29,8 @@ export interface Stage2LLMRequest {
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
   // 是否启用流式输出（降低首字等待时间）
   stream?: boolean;
+  reasoningEffort?: ReasoningEffort;
+  onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
   // 流式增量回调：每次收到模型增量文本时触发
   onStreamDelta?: (event: {
     deltaText: string;

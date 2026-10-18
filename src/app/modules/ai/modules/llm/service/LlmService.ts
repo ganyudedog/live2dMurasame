@@ -5,7 +5,8 @@ import type { TraceScope, LogService } from '@app/shared/logging/LogService';
 import { requestStage2LLM, requestStructuredLLM } from '../infrastructure/llmClient';
 import { parseStage2Reply, SentenceStreamParser, type ParsedSentence } from '../domain/replyParser';
 import type { ActionCapability } from '../../../../live2d/modules/actions/domain/types';
-import type { Stage2AskResult, Stage2LLMConfig } from '../domain/types';
+import type { ReasoningSummaryEvent, Stage2AskResult, Stage2LLMConfig } from '../domain/types';
+import type { GenerationProgress } from '../domain/action-catalog/generation';
 
 interface Stage2AskOptions {
   signal?: AbortSignal;
@@ -18,6 +19,7 @@ interface Stage2AskOptions {
   onSentenceStreaming?: (sentence: ParsedSentence) => void;
   onSentenceSpeechReady?: (sentence: { sentenceIndex: number; speakText: string }) => void;
   onSentenceDisplayReady?: (sentence: { sentenceIndex: number; displayText: string }) => void;
+  onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
 }
 
 interface LlmServiceOptions {
@@ -50,7 +52,8 @@ export class LlmService {
 
   constructor(options: LlmServiceOptions) {
     this.log = options.log;
-    this.actionCatalog = new ActionCatalogService((system, user, signal) => this.requestStructured(system, user, signal));
+    this.actionCatalog = new ActionCatalogService((system, user, signal, requestOptions) =>
+      this.requestStructured(system, user, signal, requestOptions));
     this.getActionModelVersion = options.getActionModelVersion;
     this.getConfigSnapshot = options.getConfigSnapshot;
     this.config = options.defaultConfig ?? {};
@@ -79,14 +82,25 @@ export class LlmService {
     };
   }
 
-  async requestStructured(systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<string> {
+  async requestStructured(systemPrompt: string, userPrompt: string, signal?: AbortSignal, requestOptions?: {
+    onReasoningSummary?: (text: string) => void;
+    task?: { taskId: string; versionId: string; stage?: GenerationProgress['stage'] };
+  }): Promise<string> {
     const config = this.resolveConfig();
+    const reasoningEffort = this.getConfigSnapshot()?.globalModelConfig?.actionReasoningEffort ?? 'default';
     const context = this.log?.contextRegistry.register('LlmService', {
-      relation: 'actionCatalog.request', params: { model: config.model }, behavior: '动作表配置请求及缓存用量',
+      relation: 'actionCatalog.request', params: { model: config.model, reasoningEffort, ...requestOptions?.task },
+      behavior: '动作任务请求、推理深度、摘要与缓存用量',
     });
     const trace = context?.beginTrace('requestStructured');
+    let reasoningSummary = '';
     try {
-      const result = await requestStructuredLLM(config, { systemPrompt, userPrompt, signal, temperature: 0.2 });
+      const result = await requestStructuredLLM(config, { systemPrompt, userPrompt, signal, stream: true, reasoningEffort,
+        onReasoningSummary: (event) => {
+          reasoningSummary = (reasoningSummary + (event.delta ?? event.text)).slice(-2000);
+          requestOptions?.onReasoningSummary?.(reasoningSummary);
+        } });
+      if (reasoningSummary) trace?.record('reasoning.summary', { reasoningEffort, text: reasoningSummary });
       const usage = { ...(result.usage ?? { cacheStatus: 'unreported' }) };
       trace?.record('prompt-cache.usage', usage);
       trace?.end({ model: result.usedModel, ...usage });
@@ -167,6 +181,7 @@ export class LlmService {
           speakLang: languageProfile.speakLang,
           stream: true,
           signal: options.signal,
+          onReasoningSummary: options.onReasoningSummary,
           onStreamDelta: ({ deltaText, aggregateText }) => {
             if (options.signal?.aborted) return;
             if (firstDeltaLatencyMs < 0 && String(deltaText).trim()) {

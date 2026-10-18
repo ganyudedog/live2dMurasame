@@ -120,19 +120,19 @@ describe('action catalog complete data path', () => {
         const panelConfig = environment.openRenderer();
         const createLlm = (config) => {
             const container = new ServiceContainer();
-            container.registerValue(TOKENS.config, config);
-            container.registerValue(TOKENS.log, new LogService({ windowKind, configSnapshot: null, startedAt: 0 }));
-            container.registerValue(TOKENS.bootstrapContext, { windowKind });
+            container.registerValue(TOKENS.shared.config, config);
+            container.registerValue(TOKENS.shared.log, new LogService({ windowKind, configSnapshot: null, startedAt: 0 }));
+            container.registerValue(TOKENS.core.bootstrapContext, { windowKind });
             if (windowKind === 'pet') {
                 // 未挂载 core 的执行器目录为空，不能用它抹掉已持久化动作目录。
                 const actions = new Live2dActionService();
                 actions.attach(null);
-                container.registerValue(TOKENS.live2d, { actions });
+                container.registerValue(TOKENS.live2d.runtime, { actions });
                 disposers.push(() => actions.dispose());
                 expect(actions.getCapability().actions).toEqual([]);
             }
             serviceModules.find(({ id }) => id === 'pet.ai.llm').register(container);
-            const llm = container.resolve(TOKENS.llm);
+            const llm = container.resolve(TOKENS.ai.llm);
             disposers.push(() => llm.dispose());
             return llm;
         };
@@ -189,7 +189,8 @@ describe('action catalog complete data path', () => {
         const petConfig = environment.openRenderer();
         const llm = new LlmService({ getConfigSnapshot: () => panelConfig.getSnapshot() });
         disposers.push(() => llm.dispose());
-        const request = vi.spyOn(llm, 'requestStructured').mockResolvedValue(JSON.stringify({ actions: [headAction] }));
+        const request = vi.spyOn(llm, 'requestStructured').mockImplementation(async (prompt) =>
+            prompt.includes('当前任务是审查') ? '{"issues":[]}' : JSON.stringify({ actions: [headAction] }));
         const workspace = new ActionSettingsService(llm.actionCatalog, panelConfig);
         workspace.start();
         disposers.push(() => workspace.dispose());
@@ -202,7 +203,8 @@ describe('action catalog complete data path', () => {
         disposers.push(bindActionCatalog(petConfig, { actions }, environment.modelApi));
         await workspace.generate();
         expect(workspace.error).toBeNull();
-        expect(JSON.parse(request.mock.calls[0][1]).sources.curves[0].samples[1][1]).toBe(20);
+        expect(JSON.parse(request.mock.calls[0][1]).sources.windows[0].curves[0].samples[1][1]).toBe(20);
+        expect(request.mock.calls.some(([prompt]) => prompt.includes('当前任务是审查'))).toBe(true);
         expect(JSON.parse(fs.readFileSync(getModelConfigPathFor(modelPath), 'utf8')).actions).toEqual([headAction]);
         expect(petConfig.modelConfig?.actions).toEqual([headAction]);
         expect(actions.getCapability().actions.map(({ id }) => id)).toEqual(['head']);

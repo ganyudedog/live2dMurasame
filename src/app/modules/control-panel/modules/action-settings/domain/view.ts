@@ -8,11 +8,14 @@ export interface ActionSettingsView {
   messages: ActionCatalogMessage[];
   draft: string;
   busy: boolean;
+  canCancel: boolean;
+  taskNotice: string | null;
   error: string | null;
 }
 
 export interface ActionSettingsCallbacks {
   onGenerate: () => Promise<void>;
+  onCancel: () => void;
   onSelect: (id: string) => void;
   onDraftChange: (value: string) => void;
   onPreview: (id: string) => Promise<void>;

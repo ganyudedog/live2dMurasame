@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeModelConfig } from './globalConfig.js';
+import { normalizeModelConfig, normalizeGlobalModelConfig } from './globalConfig.js';
 import { headAction } from '../../src/test/fixtures/actionCatalog';
 
 describe('model action configuration persistence contract', () => {
@@ -15,5 +15,18 @@ describe('model action configuration persistence contract', () => {
 
   it('retains an explicit empty table', () => {
     expect(normalizeModelConfig({ actions: [] }).actions).toEqual([]);
+  });
+});
+
+
+describe('explicit action reasoning settings', () => {
+  it.each(['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'])('preserves %s through a disk round trip', (actionReasoningEffort) => {
+    const saved = JSON.stringify(normalizeGlobalModelConfig({ model: 'my-model-alias', actionReasoningEffort }));
+    expect(normalizeGlobalModelConfig(JSON.parse(saved))).toMatchObject({ model: 'my-model-alias', actionReasoningEffort });
+  });
+
+  it('loads existing configurations without inventing a model capability', () => {
+    expect(normalizeGlobalModelConfig({ model: 'deepseek-v4-flash' }).actionReasoningEffort).toBe('default');
+    expect(normalizeGlobalModelConfig({ actionReasoningEffort: 'unexpected' }).actionReasoningEffort).toBe('default');
   });
 });

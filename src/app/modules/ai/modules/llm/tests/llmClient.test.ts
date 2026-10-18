@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { requestStage2LLM, requestStructuredLLM } from '../infrastructure/llmClient';
 import type { ActionCapability } from '../../../../live2d/modules/actions/domain/types';
 
-const network = vi.hoisted(() => ({ create: vi.fn() }));
-vi.mock('openai', () => ({ default: class { chat = { completions: { create: network.create } }; } }));
+const network = vi.hoisted(() => ({ create: vi.fn(), responses: vi.fn() }));
+vi.mock('openai', () => ({ default: class { chat = { completions: { create: network.create } }; responses = { create: network.responses }; } }));
 afterEach(() => vi.resetAllMocks());
 const config = { apiKey: 'test-key', model: 'test-model', baseURL: 'https://api.openai.com/v1' };
 const actions: ActionCapability = { modelVersion: 1, actions: [
@@ -13,6 +13,35 @@ const actions: ActionCapability = { modelVersion: 1, actions: [
 const response = { choices: [{ message: { content: '{"display_text":"hello"}' } }] };
 
 describe('provider prompt cache and streaming usage', () => {
+  it.each([
+    ['https://api.openai.com/v1', 'gpt-5.1'],
+    ['https://api.deepseek.com', 'deepseek-v4-flash'],
+    ['http://localhost:8000/v1', 'custom-alias'],
+  ])('sends explicit depth unchanged for %s / %s without guessing protocol', async (baseURL, model) => {
+    network.create.mockResolvedValue({ choices: [{ message: { content: '{"actions":[]}' } }] });
+    await requestStructuredLLM({ ...config, baseURL, model }, {
+      systemPrompt: 'rules', userPrompt: 'curves', reasoningEffort: 'high',
+    });
+    const body = network.create.mock.lastCall![0];
+    expect(body).toMatchObject({ model, reasoning_effort: 'high' });
+    expect(body).not.toHaveProperty('thinking');
+    expect(body).not.toHaveProperty('extra_body');
+    expect(body).not.toHaveProperty('temperature');
+    expect(network.responses).not.toHaveBeenCalled();
+  });
+
+  it('omits reasoning parameters by default and preserves provider errors without a second request', async () => {
+    network.create.mockResolvedValue(response);
+    for (const reasoningEffort of [undefined, 'default'] as const) {
+      await requestStructuredLLM({ ...config, model: 'gpt-6' }, { systemPrompt: 'rules', userPrompt: 'curves', reasoningEffort });
+      expect(network.create.mock.lastCall![0]).not.toHaveProperty('reasoning_effort');
+    }
+    const error = new Error('unsupported reasoning_effort');
+    network.create.mockRejectedValueOnce(error);
+    await expect(requestStructuredLLM(config, { systemPrompt: 'rules', userPrompt: 'curves', reasoningEffort: 'xhigh' })).rejects.toBe(error);
+    expect(network.create).toHaveBeenCalledTimes(3);
+  });
+
   it('keeps the full system prefix stable across user inputs, action order and runtime versions', async () => {
     network.create.mockResolvedValue(response);
     await requestStage2LLM(config, { userText: 'hello', actionCapability: actions });
@@ -65,5 +94,31 @@ describe('provider prompt cache and streaming usage', () => {
     expect(miss.usage).toMatchObject({ cachedTokens: 0, uncachedTokens: 500, cacheStatus: 'miss' });
     expect(network.create.mock.lastCall![0]).toMatchObject({ prompt_cache_key: 'live2d-action-catalog-v1',
       messages: [{ role: 'system', content: 'fixed rules' }, { role: 'user', content: 'parameters' }] });
+  });
+
+  it('does not inject action reasoning depth into daily conversation', async () => {
+    network.create.mockResolvedValue(response);
+    await requestStage2LLM({ ...config, model: 'deepseek-v4-flash', baseURL: 'https://api.deepseek.com' }, { userText: 'hello' });
+    expect(network.create.mock.lastCall![0]).not.toHaveProperty('thinking');
+    expect(network.create.mock.lastCall![0]).not.toHaveProperty('reasoning_effort');
+    expect(network.responses).not.toHaveBeenCalled();
+  });
+
+  it('streams explicit reasoning requests and keeps raw reasoning out of summaries', async () => {
+    const summary = vi.fn();
+    network.create.mockImplementation(async function* () {
+      yield { choices: [{ delta: { reasoning_content: 'private reasoning' } }] };
+      yield { choices: [{ delta: { reasoning_summary: '接口提供的摘要' } }] };
+      yield { choices: [{ delta: { content: '{"actions":[]}' } }] };
+      yield { choices: [], usage: { prompt_tokens: 100, completion_tokens: 20 } };
+    });
+    const result = await requestStructuredLLM({ ...config, baseURL: 'https://api.deepseek.com' }, {
+      systemPrompt: 'rules', userPrompt: 'parameters', reasoningEffort: 'high', stream: true, onReasoningSummary: summary,
+    });
+    expect(network.create.mock.calls[0][0]).toMatchObject({ reasoning_effort: 'high', stream: true });
+    expect(network.create.mock.calls[0][0]).not.toHaveProperty('extra_body');
+    expect(summary).toHaveBeenCalledOnce();
+    expect(summary).toHaveBeenCalledWith(expect.objectContaining({ text: '接口提供的摘要' }));
+    expect(result).toMatchObject({ rawText: '{"actions":[]}', usage: { promptTokens: 100, completionTokens: 20 } });
   });
 });

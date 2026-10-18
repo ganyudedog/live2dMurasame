@@ -5,10 +5,10 @@ import { PluginRuntime } from './PluginRuntime';
 export const serviceModule: ServiceModule = {
   id: 'core.plugin-runtime',
   windows: ['all'],
-  eager: [TOKENS.pluginRuntime],
+  eager: [TOKENS.plugin.runtime],
   register(container) {
-    container.registerSingleton(TOKENS.pluginRuntime, (scope) => new PluginRuntime(
-      scope.resolve(TOKENS.log),
+    container.registerSingleton(TOKENS.plugin.runtime, (scope) => new PluginRuntime(
+      scope.resolve(TOKENS.shared.log),
       'desktop',
     ));
   },

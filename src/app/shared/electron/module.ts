@@ -5,8 +5,8 @@ import { ElectronService } from './ElectronService';
 export const serviceModule: ServiceModule = {
   id: 'core.electron',
   windows: ['all'],
-  eager: [TOKENS.electron],
+  eager: [TOKENS.shared.electron],
   register(container) {
-    container.registerSingleton(TOKENS.electron, () => new ElectronService());
+    container.registerSingleton(TOKENS.shared.electron, () => new ElectronService());
   },
 };

@@ -17,7 +17,7 @@ import { PluginPanelHost } from '@app/core/plugin/PluginPanelHost';
 import { SubtitleSettings } from '../modules/subtitle/ui/SubtitleSettings';
 
 const ControlPanel: React.FC = observer(() => {
-  const service = useService(TOKENS.controlPanel);
+  const service = useService(TOKENS.controlPanel.runtime);
   const { theme, toggle } = useThemeMode();
   const activeTab = service.config.hydrated && service.modelPaths.length === 0
     ? 'model-manage'
@@ -81,7 +81,7 @@ const ControlPanel: React.FC = observer(() => {
       )}
 
       {activeTab === 'model-motions' && <MotionSettingsPage key={service.actionSettings.view.modelPath} view={service.actionSettings.view}
-        onGenerate={service.actionSettings.generate} onSelect={service.actionSettings.select}
+        onGenerate={service.actionSettings.generate} onCancel={service.actionSettings.cancel} onSelect={service.actionSettings.select}
         onDraftChange={service.actionSettings.setDraft} onPreview={service.actionSettings.preview}
         onDelete={service.actionSettings.deleteAction} onSubmit={service.actionSettings.submit}
         onUpdateMetadata={service.actionSettings.updateMetadata}
@@ -96,6 +96,8 @@ const ControlPanel: React.FC = observer(() => {
           model={service.aiSettings.model}
           apiBaseUrl={service.aiSettings.baseURL}
           apiKey={service.aiSettings.apiKey}
+          actionReasoningEffort={service.config.globalModelConfig?.actionReasoningEffort}
+          onActionReasoningEffortChange={(actionReasoningEffort) => void service.config.updateGlobalConfig({ actionReasoningEffort }).catch(reportError)}
           displayLang={service.aiSettings.displayLang}
           onChange={(next) => service.setAiSettings({
             model: next.model,

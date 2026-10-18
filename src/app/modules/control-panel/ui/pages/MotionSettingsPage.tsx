@@ -5,7 +5,7 @@ import ActionCatalogChat, { ACTION_DRAG_TYPE } from '../components/ActionCatalog
 
 const categoryLabels = { head: '头部', gaze: '视线', blink: '眨眼', emotion: '情绪', body: '身体', other: '其他' };
 
-const MotionSettingsPage = ({ view, onGenerate, onSelect, onDraftChange, onPreview, onDelete, onUpdateMetadata, onSubmit, onClearChat }: { view: ActionSettingsView } & ActionSettingsCallbacks) => {
+const MotionSettingsPage = ({ view, onGenerate, onCancel, onSelect, onDraftChange, onPreview, onDelete, onUpdateMetadata, onSubmit, onClearChat }: { view: ActionSettingsView } & ActionSettingsCallbacks) => {
   const chatRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<{ id: string; label: string; description: string } | null>(null);
   const referenceAction = (id: string) => {
@@ -24,11 +24,13 @@ const MotionSettingsPage = ({ view, onGenerate, onSelect, onDraftChange, onPrevi
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">动作设置</h1>
-          <p className="text-xs text-base-content/60">重新生成会替换当前模型的整个动作表，后续调整在下方对话中完成。</p>
+          <p className="text-xs text-base-content/60">自动分析、编排和检查组合动作，通过后替换整表。后续调整在下方对话中完成。</p>
         </div>
-        <button type="button" className="btn btn-primary btn-sm shrink-0" disabled={view.busy}
-          onClick={() => void onGenerate()}>重新生成动作表</button>
+        {view.canCancel ? <button type="button" className="btn btn-outline btn-sm shrink-0" onClick={onCancel}>取消生成 / 调整</button>
+          : <button type="button" className="btn btn-primary btn-sm shrink-0" disabled={view.busy}
+            onClick={() => void onGenerate()}>{view.busy ? '正在提交…' : '重新生成动作表'}</button>}
       </header>
+      {view.taskNotice && <p role="status" className="text-xs text-base-content/70">{view.taskNotice}</p>}
       <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
         <header className="flex items-center justify-between">
           <div className="text-sm font-medium">动作表</div>

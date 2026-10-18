@@ -22,12 +22,12 @@ const count = (value: unknown): number | undefined =>
 
 export const readPromptUsage = (value: unknown): PromptUsage => {
   const usage = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const details = usage.prompt_tokens_details as { cached_tokens?: unknown } | null | undefined;
-  const promptTokens = count(usage.prompt_tokens);
+  const details = (usage.prompt_tokens_details ?? usage.input_tokens_details) as { cached_tokens?: unknown } | null | undefined;
+  const promptTokens = count(usage.prompt_tokens) ?? count(usage.input_tokens);
   const cachedTokens = count(usage.prompt_cache_hit_tokens) ?? count(details?.cached_tokens);
   const uncachedTokens = count(usage.prompt_cache_miss_tokens)
     ?? (promptTokens !== undefined && cachedTokens !== undefined ? Math.max(0, promptTokens - cachedTokens) : undefined);
-  const completionTokens = count(usage.completion_tokens);
+  const completionTokens = count(usage.completion_tokens) ?? count(usage.output_tokens);
   return { ...(promptTokens !== undefined ? { promptTokens } : {}),
     ...(cachedTokens !== undefined ? { cachedTokens } : {}),
     ...(uncachedTokens !== undefined ? { uncachedTokens } : {}),

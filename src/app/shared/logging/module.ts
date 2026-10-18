@@ -5,8 +5,8 @@ import { LogService } from './LogService';
 export const serviceModule: ServiceModule = {
   id: 'core.logging',
   windows: ['all'],
-  eager: [TOKENS.log],
+  eager: [TOKENS.shared.log],
   register(container) {
-    container.registerSingleton(TOKENS.log, (scope) => new LogService(scope.resolve(TOKENS.bootstrapContext)));
+    container.registerSingleton(TOKENS.shared.log, (scope) => new LogService(scope.resolve(TOKENS.core.bootstrapContext)));
   },
 };

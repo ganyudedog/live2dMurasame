@@ -6,6 +6,8 @@ declare global {
   // 模型的加载状态
   type PetModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
+  type PetReasoningEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
   // 全局模型设置负载
   // 此处对应配置文件GlobalModelConfig.json中的字段
   interface PetGlobalModelConfigPayload {
@@ -18,6 +20,7 @@ declare global {
     model?: string;
     apiKey?: string;
     baseURL?: string;
+    actionReasoningEffort?: PetReasoningEffort;
     displayLang?: 'zh' | 'en' | 'ja' | 'ko';
     asr?: PetAsrConfig;
     subtitle?: Partial<import('../../shared/subtitleSettings.js').SubtitleSettings>;

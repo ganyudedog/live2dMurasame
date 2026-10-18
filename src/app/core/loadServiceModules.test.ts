@@ -10,18 +10,18 @@ describe('renderer module discovery', () => {
     const eager = registerServiceModules(container, windowKind);
     const tokens = register.mock.calls.map(([token]) => token.key);
     expect(new Set(tokens).size).toBe(tokens.length);
-    expect(tokens).toContain(TOKENS.pluginRuntime.key);
+    expect(tokens).toContain(TOKENS.plugin.runtime.key);
     if (windowKind === 'pet') {
-      expect(tokens).toEqual(expect.arrayContaining([TOKENS.ai.key, TOKENS.asr.key, TOKENS.llm.key, TOKENS.tts.key, TOKENS.liveKit.key]));
-      expect(eager).toContain(TOKENS.ai);
+      expect(tokens).toEqual(expect.arrayContaining([TOKENS.ai.runtime.key, TOKENS.ai.asr.key, TOKENS.ai.llm.key, TOKENS.ai.tts.runtime.key, TOKENS.ai.tts.liveKit.key]));
+      expect(eager).toContain(TOKENS.ai.runtime);
     } else {
-      expect(tokens).not.toContain(TOKENS.ai.key);
-      expect(tokens).not.toContain(TOKENS.asr.key);
-      expect(tokens).toContain(TOKENS.llm.key);
+      expect(tokens).not.toContain(TOKENS.ai.runtime.key);
+      expect(tokens).not.toContain(TOKENS.ai.asr.key);
+      expect(tokens).toContain(TOKENS.ai.llm.key);
       expect(tokens).not.toContain('ActionCatalogService');
-      expect(eager).not.toContain(TOKENS.ai);
-      expect(tokens).toContain(TOKENS.tts.key);
-      expect(tokens).toContain(TOKENS.liveKit.key);
+      expect(eager).not.toContain(TOKENS.ai.runtime);
+      expect(tokens).toContain(TOKENS.ai.tts.runtime.key);
+      expect(tokens).toContain(TOKENS.ai.tts.liveKit.key);
     }
   });
 });

@@ -8,23 +8,23 @@ import type { ElectronService } from '@app/shared/electron/ElectronService';
 import type { LogService } from '@app/shared/logging/LogService';
 import * as ai from '../module';
 import { serviceModule as panel } from '../../control-panel/module';
+import { registerServiceModuleTree } from '@app/core/loadServiceModules';
 
-const modules = [...getServiceModuleDefinitions(ai), panel];
 const discovered = import.meta.glob('../**/module.ts');
 
 const setup = (windowKind: WindowKind) => {
   const container = new ServiceContainer();
-  container.registerValue(TOKENS.bootstrapContext, { windowKind, configSnapshot: null, startedAt: Date.now() });
-  container.registerValue(TOKENS.config, { getSnapshot: () => null, globalModelConfig: null } as unknown as ConfigService);
-  container.registerValue(TOKENS.stateBus, { asr: { enabled: false }, chatConfig: {} } as unknown as StateBusService);
-  container.registerValue(TOKENS.electron, { bridge: {} } as ElectronService);
-  container.registerValue(TOKENS.log, { contextRegistry: { register: () => ({
+  container.registerValue(TOKENS.core.bootstrapContext, { windowKind, configSnapshot: null, startedAt: Date.now() });
+  container.registerValue(TOKENS.shared.config, { getSnapshot: () => null, globalModelConfig: null } as unknown as ConfigService);
+  container.registerValue(TOKENS.shared.stateBus, { asr: { enabled: false }, chatConfig: {} } as unknown as StateBusService);
+  container.registerValue(TOKENS.shared.electron, { bridge: {} } as ElectronService);
+  container.registerValue(TOKENS.shared.log, { contextRegistry: { register: () => ({
     beginTrace: () => ({ end: vi.fn(), fail: vi.fn() }), dispose: vi.fn(),
   }) } } as unknown as LogService);
-  const eager = modules.filter((module) => module.windows.includes(windowKind)).flatMap((module) => {
-    module.register(container);
-    return module.eager ?? [];
-  });
+  const eager = [
+    ...getServiceModuleDefinitions(ai).flatMap((module) => registerServiceModuleTree(container, module, windowKind)),
+    ...registerServiceModuleTree(container, panel, windowKind),
+  ];
   eager.forEach((token) => container.resolve(token));
   return container;
 };
@@ -34,18 +34,19 @@ describe('AI composition roots', () => {
 
   it('discovers one AI entry that exports all of its registrations', () => {
     expect(Object.keys(discovered)).toEqual(['../module.ts']);
-    expect(getServiceModuleDefinitions(ai).map((module) => module.id)).toEqual([
-      'pet.ai', 'pet.ai.asr', 'pet.ai.llm', 'pet.ai.tts',
+    expect(getServiceModuleDefinitions(ai).map((module) => module.id)).toEqual(['pet.ai']);
+    expect(ai.serviceModule.children?.map((module) => module.id)).toEqual([
+      'pet.ai.asr', 'pet.ai.llm', 'pet.ai.tts', 'pet.ai.runtime',
     ]);
     expect(getServiceModuleDefinitions({ serviceModule: panel })).toEqual([panel]);
   });
 
   it('resolves each pet domain once and disposes it through the container', async () => {
     const container = setup('pet');
-    const domains = [container.resolve(TOKENS.llm), container.resolve(TOKENS.tts), container.resolve(TOKENS.asr)];
+    const domains = [container.resolve(TOKENS.ai.llm), container.resolve(TOKENS.ai.tts.runtime), container.resolve(TOKENS.ai.asr)];
     const disposers = domains.map((domain) => vi.spyOn(domain, 'dispose'));
-    expect(container.resolve(TOKENS.ai)).toBe(container.resolve(TOKENS.ai));
-    expect(container.resolve(TOKENS.tts)).toBe(domains[1]);
+    expect(container.resolve(TOKENS.ai.runtime)).toBe(container.resolve(TOKENS.ai.runtime));
+    expect(container.resolve(TOKENS.ai.tts.runtime)).toBe(domains[1]);
     await container.startServices();
     await container.dispose();
     disposers.forEach((dispose) => expect(dispose).toHaveBeenCalledOnce());
@@ -54,10 +55,10 @@ describe('AI composition roots', () => {
   it('resolves TTS and the configuration LLM for the control panel without activating ASR', async () => {
     vi.stubGlobal('window', { localStorage: { getItem: () => null } });
     const container = setup('control-panel');
-    expect(container.resolve(TOKENS.tts)).toBeDefined();
-    expect(container.resolve(TOKENS.liveKit)).toBeDefined();
-    expect(() => container.resolve(TOKENS.asr)).toThrow('not registered');
-    expect(container.resolve(TOKENS.llm)).toBeDefined();
+    expect(container.resolve(TOKENS.ai.tts.runtime)).toBeDefined();
+    expect(container.resolve(TOKENS.ai.tts.liveKit)).toBeDefined();
+    expect(() => container.resolve(TOKENS.ai.asr)).toThrow('not registered');
+    expect(container.resolve(TOKENS.ai.llm)).toBeDefined();
     await container.dispose();
   });
 });

@@ -45,7 +45,7 @@ const installGlobalErrorLogging = (log: LogService): void => {
 export const mountApplication = async (): Promise<void> => {
   const windowKind = resolveWindowKind(window.location.search);
   const application = await bootstrapRenderer(windowKind);
-  const log = application.container.resolve(TOKENS.log);
+  const log = application.container.resolve(TOKENS.shared.log);
   installGlobalErrorLogging(log);
   const mountContext = log.contextRegistry.register('renderer', {
     relation: 'mount',
@@ -70,7 +70,7 @@ export const mountApplication = async (): Promise<void> => {
     </StrictMode>,
   );
 
-  const live2d = windowKind === 'pet' ? application.container.resolve(TOKENS.live2d) : null;
+  const live2d = windowKind === 'pet' ? application.container.resolve(TOKENS.live2d.runtime) : null;
   const stopMeasurement = live2d ? bindBubbleMeasurementRoot(live2d) : null;
 
   window.addEventListener('pagehide', () => {

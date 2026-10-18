@@ -8,6 +8,8 @@ export default function AiSettingsPage({
   apiBaseUrl,
   apiKey,
   displayLang,
+  actionReasoningEffort = 'default',
+  onActionReasoningEffortChange,
   onChange,
   modelConfig,
   asrConfig,
@@ -21,6 +23,8 @@ export default function AiSettingsPage({
   apiBaseUrl: string;
   apiKey: string;
   displayLang: 'zh' | 'en' | 'ja' | 'ko';
+  actionReasoningEffort?: PetReasoningEffort;
+  onActionReasoningEffortChange: (value: PetReasoningEffort) => void;
   onChange: (next: {
     model: string;
     apiBaseUrl: string;
@@ -101,6 +105,22 @@ export default function AiSettingsPage({
               displayLang,
             })}
           />
+
+          <label htmlFor="action-reasoning-effort" className="text-xs text-base-content/70 text-right">动作任务推理深度</label>
+          <div>
+            <select id="action-reasoning-effort" className="select select-sm select-bordered w-full"
+              value={actionReasoningEffort}
+              onChange={(event) => onActionReasoningEffortChange(event.target.value as PetReasoningEffort)}>
+              <option value="default">接口默认</option>
+              <option value="none">关闭（none）</option>
+              <option value="minimal">最少（minimal）</option>
+              <option value="low">低（low）</option>
+              <option value="medium">中（medium）</option>
+              <option value="high">高（high）</option>
+              <option value="xhigh">最高（xhigh）</option>
+            </select>
+            <p className="mt-1 text-xs text-base-content/60">用于动作表生成与微调。选择接口支持的深度；“接口默认”不发送推理参数，其他选项直接作为 reasoning_effort 发送。</p>
+          </div>
 
           <div className="text-xs text-base-content/70 text-right">展示语言</div>
           <select

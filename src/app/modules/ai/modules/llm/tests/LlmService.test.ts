@@ -34,6 +34,26 @@ describe('LLM and RAG orchestration', () => {
     service.dispose();
   });
 
+  it('reads action reasoning depth from each injected snapshot and leaves dialogue independent', async () => {
+    let depth: PetReasoningEffort = 'high';
+    const service = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: {
+      apiKey: 'key', model: 'user-alias', actionReasoningEffort: depth,
+    }, modelConfig: { actions: [] } }) as unknown as PetConfigSnapshot });
+    vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: '{"actions":[]}', usedModel: 'user-alias' });
+    await service.requestStructured('generate', 'curves');
+    expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ reasoningEffort: 'high', stream: true }));
+    depth = 'low';
+    await service.requestStructured('refine', 'curves');
+    expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ reasoningEffort: 'low' }));
+    depth = 'default';
+    await service.requestStructured('generate', 'curves');
+    expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ reasoningEffort: 'default' }));
+    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"hello"}', usedModel: 'user-alias' });
+    await service.ask('hello', { trace: { record: vi.fn() } as unknown as TraceScope });
+    expect(vi.mocked(requestStage2LLM).mock.lastCall![1]).not.toHaveProperty('reasoningEffort');
+    service.dispose();
+  });
+
   it('reports missing injected configuration instead of reading stale global bridges', async () => {
     const remote = vi.fn(() => ({ apiKey: 'stale-key', model: 'stale-model' }));
     vi.stubGlobal('window', { SnapshotAPI: { getSnapshot: remote }, AIAPI: { getConfig: remote } });

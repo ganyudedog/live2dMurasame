@@ -14,6 +14,7 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   apiKey: '',
   baseURL: '',
   displayLang: 'zh',
+  actionReasoningEffort: 'default',
   asr: {
     endpointPresetVersion: 1,
     profile: 'conversation',
@@ -264,6 +265,9 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   }
   if (typeof settings.baseURL === 'string') {
     next.baseURL = settings.baseURL;
+  }
+  if (['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(settings.actionReasoningEffort)) {
+    next.actionReasoningEffort = settings.actionReasoningEffort;
   }
   if (settings.displayLang === 'zh' || settings.displayLang === 'en' || settings.displayLang === 'ja' || settings.displayLang === 'ko') {
     next.displayLang = settings.displayLang;

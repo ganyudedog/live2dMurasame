@@ -1,3 +1,4 @@
+import { parseGenerationTask } from './generationCache';
 import { ACTION_SESSION_MESSAGE_LIMIT, type ActionCatalogMessage, type ActionCatalogSession } from '../domain/session';
 
 const STORAGE_KEY = 'pet:action-catalog:sessions';
@@ -20,6 +21,11 @@ export function readActionSession(modelPath: string): ActionCatalogSession {
     return [{ id: item.id, role: item.role,
       text: item.status === 'sending' ? '上次调整未完成，请重新发送。' : item.text,
       resetsContext: item.resetsContext === true,
+      reviewNotes: Array.isArray(item.reviewNotes) ? item.reviewNotes.filter((note) => note
+        && typeof note.actionId === 'string' && typeof note.message === 'string')
+        .map(({ actionId, message }) => ({ actionId, message })) : undefined,
+      task: parseGenerationTask(item.task),
+      reasoningSummary: typeof item.reasoningSummary === 'string' ? item.reasoningSummary.slice(-2000) : undefined,
       status: item.status === 'sending' || item.status === 'error' ? 'error' : 'done' }];
   }).slice(-ACTION_SESSION_MESSAGE_LIMIT);
   return { draft: typeof session.draft === 'string' ? session.draft : '', messages };

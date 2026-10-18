@@ -5,12 +5,12 @@ import { ConfigService } from './ConfigService';
 export const serviceModule: ServiceModule = {
   id: 'core.config',
   windows: ['all'],
-  eager: [TOKENS.config],
+  eager: [TOKENS.shared.config],
   register(container) {
-    container.registerSingleton(TOKENS.config, (scope) => new ConfigService(
-      scope.resolve(TOKENS.electron),
-      scope.resolve(TOKENS.log),
-      scope.resolve(TOKENS.bootstrapContext),
+    container.registerSingleton(TOKENS.shared.config, (scope) => new ConfigService(
+      scope.resolve(TOKENS.shared.electron),
+      scope.resolve(TOKENS.shared.log),
+      scope.resolve(TOKENS.core.bootstrapContext),
     ));
   },
 };

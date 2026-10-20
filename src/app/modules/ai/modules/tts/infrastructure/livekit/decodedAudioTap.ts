@@ -46,7 +46,11 @@ export const createDecodedAudioTap = (
       nodes.push(processor);
       processor.port.onmessage = (event: MessageEvent<Float32Array>) => {
         if (disposed) return;
-        observe({ samples: event.data, sampleRate: context.sampleRate });
+        try {
+          observe({ samples: event.data, sampleRate: context.sampleRate });
+        } catch {
+          // 观察器只负责旁路分析（如音量/口型），不能破坏音频播放线程。
+        }
       };
       source.connect(processor);
       processor.connect(context.destination);

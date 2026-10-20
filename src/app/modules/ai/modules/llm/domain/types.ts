@@ -23,7 +23,7 @@ export interface Stage2LLMRequest {
   userText: string;
   model?: string;
   temperature?: number;
-  ragContext?: string;
+  memoryContext?: string;
   actionCapability?: ActionCapability;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
@@ -56,9 +56,9 @@ export interface Stage2LLMReply {
 export interface Stage2AskResult {
   ok: boolean;
   reply?: Stage2LLMReply;
-  rag?: {
+  memory?: {
     contextText: string;
-    chunkCount: number;
+    episodeCount: number;
   };
   modelVersion?: number;
   error?: string;

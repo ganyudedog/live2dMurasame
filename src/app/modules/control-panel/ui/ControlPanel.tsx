@@ -11,8 +11,7 @@ import AiSettingsPage from './pages/AiSettingsPage';
 import ModelSelectPage from './pages/ModelSelectPage';
 import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
-import RagSettingsPage from './pages/RagSettingsPage';
-import RagParamsPage from './pages/RagParamsPage';
+import PersonaSettingsPage from './pages/PersonaSettingsPage';
 import { PluginPanelHost } from '@app/core/plugin/PluginPanelHost';
 import { SubtitleSettings } from '../modules/subtitle/ui/SubtitleSettings';
 
@@ -96,6 +95,8 @@ const ControlPanel: React.FC = observer(() => {
           model={service.aiSettings.model}
           apiBaseUrl={service.aiSettings.baseURL}
           apiKey={service.aiSettings.apiKey}
+          memoryReasoningEffort={service.config.globalModelConfig?.memoryReasoningEffort}
+          onMemoryReasoningEffortChange={(memoryReasoningEffort) => void service.config.updateGlobalConfig({ memoryReasoningEffort }).catch(reportError)}
           actionReasoningEffort={service.config.globalModelConfig?.actionReasoningEffort}
           onActionReasoningEffortChange={(actionReasoningEffort) => void service.config.updateGlobalConfig({ actionReasoningEffort }).catch(reportError)}
           displayLang={service.aiSettings.displayLang}
@@ -118,15 +119,8 @@ const ControlPanel: React.FC = observer(() => {
         /><div className="px-4 pb-4"><SubtitleSettings config={service.config.globalModelConfig ?? {}} onChange={(patch) => service.config.updateGlobalConfig(patch)} /></div></div>
       )}
 
-      {activeTab === 'ai-rag' && (
-        <RagSettingsPage
-          modelConfig={service.modelConfig}
-          onModelConfigChange={(next) => service.persistModelConfig(next).catch(reportError)}
-        />
-      )}
-
-      {activeTab === 'ai-rag-params' && (
-        <RagParamsPage
+      {activeTab === 'ai-persona' && (
+        <PersonaSettingsPage
           modelConfig={service.modelConfig}
           onModelConfigChange={(next) => service.persistModelConfig(next).catch(reportError)}
         />

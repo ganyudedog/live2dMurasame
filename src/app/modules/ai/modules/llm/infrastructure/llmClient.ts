@@ -17,6 +17,7 @@ export interface StructuredLLMRequest {
   reasoningEffort?: ReasoningEffort;
   onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
   stream?: boolean;
+  cachePurpose?: 'action-catalog' | 'memory';
 }
 
 const DEFAULT_TIMEOUT_MS = 12000;
@@ -78,7 +79,7 @@ export const requestStage2LLM = async (
           actionCapability: req.actionCapability,
         }),
       },
-      { role: 'user' as const, content: buildStage2UserPrompt({ userText: req.userText, ragContext: req.ragContext }) },
+      { role: 'user' as const, content: buildStage2UserPrompt({ userText: req.userText, memoryContext: req.memoryContext }) },
     ],
     ...reasoningOptions(req.reasoningEffort),
   };
@@ -168,7 +169,7 @@ export const requestStructuredLLM = async (
   const client = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL || undefined, dangerouslyAllowBrowser: true, maxRetries: 0 });
   req.signal?.throwIfAborted();
   const body = {
-    ...promptCacheOptions(cfg.baseURL, 'action-catalog'),
+    ...promptCacheOptions(cfg.baseURL, req.cachePurpose ?? 'action-catalog'),
     model: usedModel,
     // 动作任务不额外指定采样温度，避免与显式推理深度产生参数冲突。
     messages: [

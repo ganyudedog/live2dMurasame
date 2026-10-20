@@ -1,5 +1,5 @@
 import { ActionCatalogService } from './ActionCatalogService';
-import { RagService } from './RagService';
+import { MemoryService } from './MemoryService';
 import { isString, normalizeReplyText, normalizeDisplayLang, normalizeSpeakLang } from '../domain/config';
 import type { TraceScope, LogService } from '@app/shared/logging/LogService';
 import { requestStage2LLM, requestStructuredLLM } from '../infrastructure/llmClient';
@@ -41,13 +41,13 @@ interface Stage2LanguageProfile {
   speakLang: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
 }
 
-// 发送对话请求，获取模型回复，并根据当前的 RAG 配置和记忆状态构建上下文信息，同时输出逐句动作目标和持久化记忆。
+// 发送对话请求，获取模型回复，并根据当前的人设、核心记忆和按需召回的历史片段构建上下文，同时输出逐句动作目标和持久化记忆。
 export class LlmService {
   readonly actionCatalog: ActionCatalogService;
   private readonly getActionModelVersion?: LlmServiceOptions['getActionModelVersion'];
   private config: Stage2LLMConfig;
   private readonly getConfigSnapshot: LlmServiceOptions['getConfigSnapshot'];
-  private readonly rag: RagService;
+  private readonly memory: MemoryService;
   private readonly log?: LogService;
 
   constructor(options: LlmServiceOptions) {
@@ -57,7 +57,8 @@ export class LlmService {
     this.getActionModelVersion = options.getActionModelVersion;
     this.getConfigSnapshot = options.getConfigSnapshot;
     this.config = options.defaultConfig ?? {};
-    this.rag = new RagService(this.getConfigSnapshot);
+    this.memory = new MemoryService(this.getConfigSnapshot,
+      (system, user, signal) => this.requestMemoryStructured(system, user, signal));
   }
 
   setConfig(patch: Partial<RuntimeBridgeConfig>): RuntimeBridgeConfig {
@@ -111,6 +112,28 @@ export class LlmService {
     } finally { context?.dispose(); }
   }
 
+  private async requestMemoryStructured(systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<string> {
+    const config = this.resolveConfig();
+    const reasoningEffort = this.getConfigSnapshot()?.globalModelConfig?.memoryReasoningEffort ?? 'default';
+    const context = this.log?.contextRegistry.register('LlmService', {
+      relation: 'memory.consolidation', params: { model: config.model, reasoningEffort },
+      behavior: '使用结构化 LLM 请求归纳对话记忆，再由 Electron 持久化核心记忆',
+    });
+    const trace = context?.beginTrace('consolidateMemory');
+    try {
+      const result = await requestStructuredLLM(config, {
+        systemPrompt, userPrompt, signal, stream: false, cachePurpose: 'memory', reasoningEffort,
+      });
+      const usage = { ...(result.usage ?? { cacheStatus: 'unreported' }) };
+      trace?.record('prompt-cache.usage', usage);
+      trace?.end({ model: result.usedModel, ...usage });
+      return result.rawText;
+    } catch (error) {
+      trace?.fail('记忆整理请求失败', { model: config.model }, error);
+      throw error;
+    } finally { context?.dispose(); }
+  }
+
   async ask(userText: string, options: Stage2AskOptions): Promise<Stage2AskResult> {
     const cleanText = String(userText ?? '').trim();
     if (!cleanText) {
@@ -135,7 +158,7 @@ export class LlmService {
       options.signal?.throwIfAborted();
       const resolved = this.resolveConfig(options);
       options.signal?.throwIfAborted();
-      const ragRuntime = await this.rag.resolve(cleanText, options.trace);
+      const memoryRuntime = await this.memory.resolve(cleanText, options.trace, snapshot);
       options.signal?.throwIfAborted();
       const languageProfile = this.resolveLanguageProfile(snapshot);
       const start = performance.now();
@@ -175,7 +198,7 @@ export class LlmService {
           userText: cleanText,
           model: resolved.model,
           temperature: resolved.temperature,
-          ragContext: ragRuntime.contextText,
+          memoryContext: memoryRuntime.contextText,
           actionCapability,
           displayLang: languageProfile.displayLang,
           speakLang: languageProfile.speakLang,
@@ -220,7 +243,9 @@ export class LlmService {
 
 
 
-      await this.rag.persistConversation(ragRuntime, cleanText, displayText, options.trace);
+      await this.memory.persistConversation(memoryRuntime, cleanText, displayText, options.trace);
+      // 整理在回复已经交付后后台运行，不增加当前 TTS/动作链路的首包延迟。
+      void this.memory.consolidateIfNeeded(memoryRuntime, options.trace, options.signal);
 
       options.trace.record('ask.ok', {
         model: reply.meta.model,
@@ -231,16 +256,22 @@ export class LlmService {
         hasSpeakText: Boolean(speakText),
         displayLang: languageProfile.displayLang,
         speakLang: languageProfile.speakLang,
-        ragChunks: ragRuntime.chunkCount,
-        memoryMessages: ragRuntime.memoryState?.recent?.messages?.length ?? 0,
+        memoryEpisodes: memoryRuntime.episodeRecall?.matches?.length
+          ?? memoryRuntime.memoryState?.episodeCount
+          ?? memoryRuntime.memoryState?.episodeDates?.length
+          ?? 0,
+        memoryConversations: memoryRuntime.memoryState?.state?.conversationCount ?? 0,
       });
 
       return {
         ok: true,
         reply,
-        rag: {
-          contextText: ragRuntime.contextText,
-          chunkCount: ragRuntime.chunkCount,
+        memory: {
+          contextText: memoryRuntime.contextText,
+          episodeCount: memoryRuntime.episodeRecall?.matches?.length
+            ?? memoryRuntime.memoryState?.episodeCount
+            ?? memoryRuntime.memoryState?.episodeDates?.length
+            ?? 0,
         },
         modelVersion: actionCapability.modelVersion,
         rawText: llmResult.rawText,
@@ -256,15 +287,18 @@ export class LlmService {
   }
 
   dispose(): void {
-    this.rag.dispose();
+    this.memory.dispose();
   }
 
-  async previewRag(userText: string): Promise<{ contextText: string; chunkCount: number }> {
-    const cleanText = String(userText ?? '').trim();
-    if (!cleanText) {
-      return { contextText: '', chunkCount: 0 };
-    }
-    return this.rag.resolve(cleanText);
+  async previewMemoryContext(userText = ''): Promise<{ contextText: string; episodeCount: number }> {
+    const runtime = await this.memory.resolve(userText);
+    return {
+      contextText: runtime.contextText,
+      episodeCount: runtime.episodeRecall?.matches?.length
+        ?? runtime.memoryState?.episodeCount
+        ?? runtime.memoryState?.episodeDates?.length
+        ?? 0,
+    };
   }
 
   private resolveConfig(options: Stage2LLMConfig = {}): RuntimeBridgeConfig {

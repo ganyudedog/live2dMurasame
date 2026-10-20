@@ -1,4 +1,4 @@
-import { toChatConfig, buildRagConfig, trimText, shouldPreheatTts, createId, createMessage } from '../domain/configuration';
+import { toChatConfig, buildPersonaConfig, trimText, shouldPreheatTts, createId, createMessage } from '../domain/configuration';
 import { actionBound, computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import { DEFAULT_GLOBAL_UI_SETTINGS, DEFAULT_MODEL_CONFIG } from '../domain/defaults';
 import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '../modules/chat/infrastructure/chatSessionCache';
@@ -148,7 +148,7 @@ export class ControlPanelService {
         ...(persisted.bubble as Partial<ModelConfig['bubble']>),
       },
       interaction: persisted.interaction,
-      rag: buildRagConfig(persisted.rag, DEFAULT_MODEL_CONFIG.rag),
+      persona: buildPersonaConfig(persisted.persona, DEFAULT_MODEL_CONFIG.persona),
       tts: {
         ...DEFAULT_MODEL_CONFIG.tts,
         ...(persisted.tts as Partial<ModelConfig['tts']>),

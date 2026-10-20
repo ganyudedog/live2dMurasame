@@ -15,6 +15,7 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   baseURL: '',
   displayLang: 'zh',
   actionReasoningEffort: 'default',
+  memoryReasoningEffort: 'default',
   asr: {
     endpointPresetVersion: 1,
     profile: 'conversation',
@@ -50,22 +51,12 @@ export const DEFAULT_MODEL_CONFIG = {
     side: 'auto',
     sideWidth: 260,
   },
-  rag: {
-    profile: {
-      personal: '',
-      speakingStyle: '',
-      relation: '',
-      banned: '',
-      world: '',
-    },
-    retrieval: {
-      enabled: true,
-      topK: 3,
-      threshold: 0.6,
-      knowledgeBasePath: '',
-      embeddingModel: 'bge-m3',
-      rerankerModel: 'bge-reranker-v2-m3',
-    },
+  persona: {
+    personal: '',
+    speakingStyle: '',
+    relation: '',
+    banned: '',
+    world: '',
   },
   tts: {
     enabled: false,
@@ -96,9 +87,9 @@ const toSafeObject = (value) => {
   return value && typeof value === 'object' ? value : {};
 };
 
-const normalizeRagProfile = (input = {}) => {
+const normalizePersona = (input = {}) => {
   const source = toSafeObject(input);
-  const next = { ...DEFAULT_MODEL_CONFIG.rag.profile };
+  const next = { ...DEFAULT_MODEL_CONFIG.persona };
   next.personal = normalizeTextField(source.personal);
   next.speakingStyle = normalizeTextField(source.speakingStyle);
   next.relation = normalizeTextField(source.relation);
@@ -110,40 +101,6 @@ const normalizeRagProfile = (input = {}) => {
     next.banned = source.mustFollow;
   }
   return next;
-};
-
-const normalizeRagRetrieval = (input = {}) => {
-  const source = toSafeObject(input);
-  const next = { ...DEFAULT_MODEL_CONFIG.rag.retrieval };
-  if (typeof source.enabled === 'boolean') next.enabled = source.enabled;
-  if (Number.isFinite(source.topK)) next.topK = Math.max(1, Math.floor(source.topK));
-  if (Number.isFinite(source.threshold)) next.threshold = Math.max(0, Math.min(1, source.threshold));
-  if (typeof source.knowledgeBasePath === 'string') next.knowledgeBasePath = source.knowledgeBasePath;
-  if (typeof source.embeddingModel === 'string' && source.embeddingModel.trim()) {
-    next.embeddingModel = source.embeddingModel;
-  }
-  if (typeof source.rerankerModel === 'string' && source.rerankerModel.trim()) {
-    next.rerankerModel = source.rerankerModel;
-  }
-  return next;
-};
-
-const normalizeRagConfig = (input = {}) => {
-  if (!input || typeof input !== 'object') {
-    return {
-      profile: { ...DEFAULT_MODEL_CONFIG.rag.profile },
-      retrieval: { ...DEFAULT_MODEL_CONFIG.rag.retrieval },
-    };
-  }
-
-  const source = toSafeObject(input);
-  const profileSource = source.profile && typeof source.profile === 'object' ? source.profile : source;
-  const retrievalSource = source.retrieval && typeof source.retrieval === 'object' ? source.retrieval : source;
-
-  return {
-    profile: normalizeRagProfile(profileSource),
-    retrieval: normalizeRagRetrieval(retrievalSource),
-  };
 };
 
 const clampNumber = (value, fallback, min, max) => {
@@ -229,7 +186,15 @@ export const normalizeModelConfig = (input = {}) => {
   if (interaction) next.interaction = interaction;
   else delete next.interaction;
 
-  next.rag = normalizeRagConfig(input && input.rag);
+  // `persona` is the canonical model configuration block. Existing model
+  // files may still contain the old `rag.profile` shape; migrate it once on
+  // load and never expose the retrieval configuration to the runtime.
+  const legacyRag = input && input.rag && typeof input.rag === 'object' ? input.rag : {};
+  const personaSource = input && input.persona && typeof input.persona === 'object'
+    ? input.persona
+    : (legacyRag.profile && typeof legacyRag.profile === 'object' ? legacyRag.profile : legacyRag);
+  next.persona = normalizePersona(personaSource);
+  delete next.rag;
   next.tts = normalizeTtsConfig(input && input.tts);
   next.actions = readActionCatalog(input && input.actions);
   return next;
@@ -268,6 +233,9 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   }
   if (['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(settings.actionReasoningEffort)) {
     next.actionReasoningEffort = settings.actionReasoningEffort;
+  }
+  if (['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(settings.memoryReasoningEffort)) {
+    next.memoryReasoningEffort = settings.memoryReasoningEffort;
   }
   if (settings.displayLang === 'zh' || settings.displayLang === 'en' || settings.displayLang === 'ja' || settings.displayLang === 'ko') {
     next.displayLang = settings.displayLang;

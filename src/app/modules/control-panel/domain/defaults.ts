@@ -16,22 +16,12 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     side: 'auto',
     sideWidth: 260,
   },
-  rag: {
-    profile: {
-      personal: '',
-      speakingStyle: '',
-      relation: '',
-      banned: '',
-      world: '',
-    },
-    retrieval: {
-      enabled: true,
-      topK: 3,
-      threshold: 0.6,
-      knowledgeBasePath: '',
-      embeddingModel: 'bge-m3',
-      rerankerModel: 'bge-reranker-v2-m3',
-    },
+  persona: {
+    personal: '',
+    speakingStyle: '',
+    relation: '',
+    banned: '',
+    world: '',
   },
   tts: {
     enabled: false,

@@ -79,15 +79,16 @@ export class ActionDiagnostics {
 
   record(operation: string, data: Record<string, unknown>, error?: unknown): void {
     if (!this.log) return;
-    const context = this.log.contextRegistry.register(this.serviceName, {
-      relation: operation, params: data, behavior: 'Live2D 模型或音量观察生命周期',
-    });
     try {
+      const context = this.log.contextRegistry.register(this.serviceName, {
+        relation: operation, params: data, behavior: 'Live2D 模型或音量观察生命周期',
+      });
       const trace = context.beginTrace(operation);
       if (error !== undefined) trace.fail('Live2D 动作渲染失败', data, error);
       else trace.end(data);
-    } finally {
       context.dispose();
+    } catch {
+      // 诊断链路是旁路能力，日志实现故障不能中断模型绑定或动作执行。
     }
   }
 }

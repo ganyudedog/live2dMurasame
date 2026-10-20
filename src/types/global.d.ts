@@ -21,6 +21,7 @@ declare global {
     apiKey?: string;
     baseURL?: string;
     actionReasoningEffort?: PetReasoningEffort;
+    memoryReasoningEffort?: PetReasoningEffort;
     displayLang?: 'zh' | 'en' | 'ja' | 'ko';
     asr?: PetAsrConfig;
     subtitle?: Partial<import('../../shared/subtitleSettings.js').SubtitleSettings>;
@@ -58,29 +59,12 @@ declare global {
     [key: string]: unknown;
   }
 
-  interface PetRagProfileConfig {
+  interface PetPersonaConfig {
     personal?: string;
     speakingStyle?: string;
     relation?: string;
     banned?: string;
     world?: string;
-    [key: string]: unknown;
-  }
-
-  interface PetRagRetrievalConfig {
-    enabled?: boolean;
-    topK?: number;
-    threshold?: number;
-    knowledgeBasePath?: string;
-    embeddingModel?: string;
-    rerankerModel?: string;
-    [key: string]: unknown;
-  }
-
-  // 模型细节配置
-  interface PetRagConfig {
-    profile?: PetRagProfileConfig;
-    retrieval?: PetRagRetrievalConfig;
     [key: string]: unknown;
   }
 
@@ -136,7 +120,7 @@ declare global {
   interface PetModelConfig {
     bubble?: PetBubbleConfig;
     interaction?: PetInteractionBindings;
-    rag?: PetRagConfig;
+    persona?: PetPersonaConfig;
     tts?: PetTtsConfig;
     actions?: import('../../shared/actionCatalog.js').ActionDefinition[];
     [key: string]: unknown;
@@ -273,51 +257,27 @@ declare global {
     [key: string]: unknown;
   }
 
-  interface PetModelMemoryMessage {
-    id?: string;
-    role?: string;
-    text?: string;
-    source?: string;
-    name?: string;
-    ts?: number;
-    meta?: Record<string, unknown>;
-  }
-
-  interface PetModelMemoryRecent {
-    version: number;
-    messages: PetModelMemoryMessage[];
-    updatedAt: number;
-  }
-
-  interface PetModelMemorySummary {
-    version: number;
-    summary: string;
-    facts: string[];
-    open_loops: string[];
-    updatedAt: number;
-  }
-
-  interface PetModelMemoryMeta {
-    version: number;
-    messageCount: number;
-    lastSummarizedCount: number;
-    lastMessageAt: number;
-    updatedAt: number;
-  }
-
   interface PetModelMemoryState {
     modelPath: string | null;
     modelKey: string | null;
-    recent: PetModelMemoryRecent | null;
-    summary: PetModelMemorySummary | null;
-    meta: PetModelMemoryMeta | null;
-  }
-
-  interface PetModelMemoryUpdatePayload {
-    modelPath?: string;
-    recent?: Partial<PetModelMemoryRecent>;
-    summary?: Partial<PetModelMemorySummary>;
-    meta?: Partial<PetModelMemoryMeta>;
+    coreText?: string;
+    /** @deprecated 仅为旧渲染器兼容字段；新链路只返回日期索引，正文通过 recallEpisodes 按需读取。 */
+    episodes?: Array<{ date: string; content: string; tier?: number }>;
+    episodeDates?: string[];
+    episodeCount?: number;
+    actionCatalogChat?: string;
+    /** 待由记忆整理任务压缩到 MEMORY.md 的最新对话片段。 */
+    pendingEpisodeText?: string;
+    pendingThroughCount?: number;
+    pendingSinceDate?: string;
+    state?: {
+      version: number;
+      conversationCount: number;
+      lastConversationAt: number;
+      lastConsolidatedCount: number;
+      lastDecayDate: string;
+      legacyMigratedAt?: number;
+    } | null;
   }
 
   interface PetWindowBoundsChangedPayload {
@@ -370,10 +330,7 @@ declare global {
       state: 'started' | 'queued' | 'dropped';
       reason?: string;
     };
-    rag?: {
-      contextText: string;
-      chunkCount: number;
-    };
+    memory?: { contextText: string; episodeCount: number };
     voice?: PetChatVoiceOutput;
     rawText?: string;
   }
@@ -423,8 +380,17 @@ declare global {
 
   interface PetMemoryAPI {
     get?: (payload?: { modelPath?: string }) => Promise<PetModelMemoryState | undefined>;
-    update?: (payload: PetModelMemoryUpdatePayload) => Promise<PetModelMemoryState | undefined>;
-    readRagTextFile?: (payload: { knowledgeBasePath?: string; modelPath?: string }) => Promise<{ ok: boolean; path: string | null; content: string; error?: string } | undefined>;
+    recallEpisodes?: (payload: { modelPath?: string; dates: string[]; query?: string; speaker?: 'user' | 'assistant' | 'both'; approximate?: boolean; maxChars?: number }) => Promise<{
+      status: 'ok' | 'no-match' | 'expired' | 'empty';
+      dates: string[];
+      approximate?: boolean;
+      matches?: Array<{ date: string; time: string; conversationCount: number; userText: string; assistantText: string; score: number; ageBand: number | null }>;
+      text: string;
+    } | undefined>;
+    appendConversation?: (payload: { modelPath?: string; userText: string; assistantText: string; at?: number }) => Promise<PetModelMemoryState | undefined>;
+    updateCore?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
+    replaceActionCatalogChat?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
+    consolidate?: (payload: { modelPath?: string; content: string; processedThroughCount: number }) => Promise<PetModelMemoryState | undefined>;
     onUpdated?: (callback: (payload: PetModelMemoryState) => void) => (() => void) | void;
   }
 

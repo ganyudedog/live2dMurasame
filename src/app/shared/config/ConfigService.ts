@@ -289,6 +289,10 @@ export class ConfigService {
     return saved;
   }
 
+  async replaceActionCatalogChat(modelPath: string, content: string): Promise<void> {
+    await this.bridge.memoryApi?.replaceActionCatalogChat?.({ modelPath, content });
+  }
+
   async previewAction(modelPath: string, actionId: string): Promise<void> {
     const preview = this.bridge.modelApi?.previewAction;
     if (!preview) throw new Error('动作预览接口不可用，请重启应用');

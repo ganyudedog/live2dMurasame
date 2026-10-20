@@ -10,20 +10,15 @@ export const toChatConfig = (config: PetGlobalModelConfig | null | undefined): C
     : 'zh',
 });
 
-export const buildRagConfig = (persisted: unknown, defaults: ModelConfig['rag']): ModelConfig['rag'] => {
+export const buildPersonaConfig = (persisted: unknown, defaults: ModelConfig['persona']): ModelConfig['persona'] => {
   const source = isRecord(persisted) ? persisted : {};
-  const profile = isRecord(source.profile) ? source.profile : source;
-  const retrieval = isRecord(source.retrieval) ? source.retrieval : source;
   return {
-    profile: {
-      ...defaults.profile,
-      ...profile,
-      banned: typeof profile.banned === 'string'
-        ? profile.banned
-        : typeof profile.mustFollow === 'string' ? profile.mustFollow : defaults.profile.banned,
-    },
-    retrieval: { ...defaults.retrieval, ...retrieval },
-  } as ModelConfig['rag'];
+    ...defaults,
+    ...source,
+    banned: typeof source.banned === 'string'
+      ? source.banned
+      : typeof source.mustFollow === 'string' ? source.mustFollow : defaults.banned,
+  } as ModelConfig['persona'];
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;

@@ -27,6 +27,10 @@ export class ElectronBridgeService {
     return window.AsrAPI;
   }
 
+  get memoryApi(): PetMemoryAPI | undefined {
+    return window.MemoryAPI;
+  }
+
   get subtitleApi(): PetSubtitleAPI | undefined { return window.SubtitleAPI; }
 
   get aiApi(): PetAIAPI | undefined {

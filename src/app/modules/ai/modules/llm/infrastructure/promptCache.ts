@@ -1,5 +1,5 @@
 /** Chat Completions 的前缀缓存由提供商保存；请求仍携带完整上下文。 */
-export const promptCacheOptions = (baseURL: string | undefined, purpose: 'dialogue' | 'action-catalog') => {
+export const promptCacheOptions = (baseURL: string | undefined, purpose: 'dialogue' | 'action-catalog' | 'memory') => {
   // 第三方兼容端点不强塞 OpenAI 专用字段。DeepSeek 等服务自动复用相同前缀。
   let official = !baseURL;
   if (baseURL) {

@@ -78,8 +78,11 @@ const ModelAPI = {
 
 const MemoryAPI = {
   get: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:get', payload),
-  update: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:update', payload),
-  readRagTextFile: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:read-rag', payload),
+  recallEpisodes: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:episodes:recall', payload),
+  appendConversation: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:append', payload),
+  updateCore: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:update-core', payload),
+  replaceActionCatalogChat: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:action-chat:replace', payload),
+  consolidate: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:consolidate', payload),
   onUpdated: snapshotStore.onModelMemoryUpdated,
 };
 

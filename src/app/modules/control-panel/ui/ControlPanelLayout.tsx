@@ -33,8 +33,7 @@ const MENU_STRUCTURE: MenuGroup[] = [
     collapsible: true,
     items: [
       { key: 'ai-settings', label: 'AI 设置' },
-      { key: 'ai-rag', label: 'RAG 设置' },
-      { key: 'ai-rag-params', label: 'RAG 参数' },
+      { key: 'ai-persona', label: '角色人设' },
     ],
   },
 ];

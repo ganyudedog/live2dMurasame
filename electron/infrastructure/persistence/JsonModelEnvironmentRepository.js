@@ -4,7 +4,7 @@ import { ModelId } from '../../modules/modelenv/domain/ModelId.js';
 import { ModelEnvironment } from '../../modules/modelenv/domain/ModelEnvironment.js';
 
 export class JsonModelEnvironmentRepository {
-  constructor({ fields = ['bubble', 'interaction', 'rag', 'tts', 'actions'] } = {}) {
+  constructor({ fields = ['bubble', 'interaction', 'persona', 'tts', 'actions'] } = {}) {
     this.fields = Array.isArray(fields) ? [...fields] : null;
   }
 

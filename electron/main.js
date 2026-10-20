@@ -4,7 +4,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyAutoLaunchSetting } from './infrastructure/system/ElectronAutoLaunchAdapter.js';
 import { createAutoLaunchScheduler } from './infrastructure/system/AutoLaunchScheduler.js';
-import { createMemoryFileService } from './modules/modelenv/infrastructure/MemoryFileService.js';
 import { registerDomainIpc } from './interface/ipc/registerDomainIpc.js';
 import { JsonLive2dEnvironmentRepository } from './infrastructure/persistence/JsonLive2dEnvironmentRepository.js';
 import { JsonModelEnvironmentRepository } from './infrastructure/persistence/JsonModelEnvironmentRepository.js';
@@ -218,7 +217,6 @@ const ensureControlPanelWindow = () => {
 
 const isControlPanelVisible = () => Boolean(controlPanelWindow?.isVisible());
 
-const { readRagTextFile } = createMemoryFileService();
 const { scheduleApplyAutoLaunchSetting, flushPendingAutoLaunchSetting } = createAutoLaunchScheduler({
     getControlPanelWindow: () => controlPanelWindow,
     apply: (enabled) => applyAutoLaunchSetting(enabled, backendLog),
@@ -256,7 +254,6 @@ applicationIpc = registerDomainIpc({
             extensions: kind === 'ref' ? ['wav', 'ogg', 'mp3', 'flac', 'aac', 'm4a'] : ['ckpt', 'pt', 'bin', 'safetensors', 'pth'],
         }, { name: '所有文件', extensions: ['*'] }],
     }),
-    readRagTextFile,
     scheduleAutoLaunchSetting: scheduleApplyAutoLaunchSetting,
     getMainWindow: () => mainWindow,
     logService: backendLog,

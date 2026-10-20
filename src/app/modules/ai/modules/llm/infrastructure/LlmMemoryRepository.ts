@@ -3,11 +3,26 @@ export class LlmMemoryRepository {
     return await window.MemoryAPI?.get?.({ modelPath }) ?? null;
   }
 
-  update(patch: Parameters<NonNullable<PetMemoryAPI['update']>>[0]) {
-    return window.MemoryAPI?.update?.(patch);
+  recallEpisodes(payload: {
+    modelPath: string;
+    dates: string[];
+    query?: string;
+    speaker?: 'user' | 'assistant' | 'both';
+    approximate?: boolean;
+    maxChars?: number;
+  }) {
+    return window.MemoryAPI?.recallEpisodes?.(payload);
   }
 
-  readKnowledge(knowledgeBasePath: string, modelPath?: string) {
-    return window.MemoryAPI?.readRagTextFile?.({ knowledgeBasePath, modelPath });
+  appendConversation(payload: { modelPath: string; userText: string; assistantText: string; at?: number }) {
+    return window.MemoryAPI?.appendConversation?.(payload);
+  }
+
+  updateCore(payload: { modelPath: string; content: string }) {
+    return window.MemoryAPI?.updateCore?.(payload);
+  }
+
+  consolidate(payload: { modelPath: string; content: string; processedThroughCount: number }) {
+    return window.MemoryAPI?.consolidate?.(payload);
   }
 }

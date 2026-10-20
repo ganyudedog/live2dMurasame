@@ -25,6 +25,7 @@ export class ActionSettingsService {
   private scope = '';
   private epoch = 0;
   private controller: AbortController | null = null;
+  private persistedActionTranscript = '';
   private readonly generator: ActionCatalogService;
   private readonly config: ConfigService;
 
@@ -66,6 +67,7 @@ export class ActionSettingsService {
     this.controller = null;
     this.epoch++;
     this.scope = this.config.activeModelPath ?? '';
+    this.persistedActionTranscript = '';
     const session = readActionSession(this.scope);
     this.messages = session.messages;
     this.draft = session.draft;
@@ -391,6 +393,16 @@ export class ActionSettingsService {
   private cacheSession(): void {
     try { writeActionSession(this.scope, { draft: this.draft, messages: this.messages }); }
     catch { this.taskNotice = '编辑会话缓存写入失败；已完成步骤保留在当前窗口，请勿刷新。'; }
+    const transcript = this.messages.filter((message) => message.status !== 'sending')
+      .map((message) => `### ${message.role}\n\n${message.text.trim()}`)
+      .filter((block) => block.trim())
+      .join('\n\n');
+    if (!this.scope || transcript === this.persistedActionTranscript) return;
+    this.persistedActionTranscript = transcript;
+    const replace = this.config.replaceActionCatalogChat;
+    if (replace) void replace.call(this.config, this.scope, transcript).catch(() => {
+      // Markdown 会话归档属于辅助数据，失败不阻断动作表保存或微调。
+    });
   }
 
 }

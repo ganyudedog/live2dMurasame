@@ -45,7 +45,7 @@ describe('provider prompt cache and streaming usage', () => {
   it('keeps the full system prefix stable across user inputs, action order and runtime versions', async () => {
     network.create.mockResolvedValue(response);
     await requestStage2LLM(config, { userText: 'hello', actionCapability: actions });
-    await requestStage2LLM(config, { userText: 'different', ragContext: 'new memory',
+    await requestStage2LLM(config, { userText: 'different', memoryContext: 'new memory',
       actionCapability: { modelVersion: 9, actions: [...actions.actions].reverse() } });
     const first = network.create.mock.calls[0][0];
     const second = network.create.mock.calls[1][0];

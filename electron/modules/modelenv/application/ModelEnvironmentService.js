@@ -34,9 +34,10 @@ export class ModelEnvironmentService {
       ...patch,
       bubble: merge('bubble'),
       interaction: Object.prototype.hasOwnProperty.call(patch, 'interaction') ? patch.interaction : base.interaction,
-      rag: merge('rag'),
+      persona: merge('persona'),
       tts: merge('tts'),
     };
+    delete configuration.rag;
     if (Object.prototype.hasOwnProperty.call(patch, 'actions')) {
       configuration.actions = parseActionCatalog(patch.actions);
       if (configuration.actions.length) {
@@ -86,8 +87,30 @@ export class ModelEnvironmentService {
     return modelPath ? this.memoryRepository.load(modelPath) : null;
   }
 
+  recallMemoryEpisodes(modelPath, query) {
+    return modelPath ? this.memoryRepository.recallEpisodes(modelPath, query) : {
+      status: 'empty', dates: [], matches: [], text: '', approximate: Boolean(query?.approximate),
+    };
+  }
+
   updateMemory(modelPath, patch) {
     return modelPath ? this.memoryRepository.save(modelPath, patch) : null;
+  }
+
+  appendMemoryConversation(modelPath, conversation) {
+    return modelPath ? this.memoryRepository.appendConversation(modelPath, conversation) : null;
+  }
+
+  updateMemoryCore(modelPath, content) {
+    return modelPath ? this.memoryRepository.updateCore(modelPath, content) : null;
+  }
+
+  replaceActionCatalogChat(modelPath, content) {
+    return modelPath ? this.memoryRepository.replaceActionCatalogChat(modelPath, content) : null;
+  }
+
+  consolidateMemory(modelPath, content, processedThroughCount) {
+    return modelPath ? this.memoryRepository.consolidate(modelPath, content, processedThroughCount) : null;
   }
 
   clear(modelPath) {

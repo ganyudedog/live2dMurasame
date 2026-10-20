@@ -2,7 +2,7 @@ import type { ActionCapability } from '../../../../live2d/modules/actions/domain
 
 export interface BuildPromptInput {
   userText: string;
-  ragContext?: string;
+  memoryContext?: string;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
 }
@@ -71,7 +71,7 @@ export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'j
     '你是 Live2D 桌宠的角色对话助手。',
     '你的输出必须是严格的 JSON Lines，不要包裹在 markdown 代码块（```）中，不要添加额外的注释或说明文字。',
     CONVERSATION_STYLE,
-    '如果提供了 RAG 上下文，你必须优先遵守其中的人设、关系、禁忌、世界观、最近对话记忆与知识片段。',
+    '如果提供了角色设定和记忆上下文，你必须优先遵守其中的人设、关系、禁忌、世界观与记忆。',
     '输出格式（JSON Lines）：',
     OUTPUT_CONTRACT,
     // 固定规则完整放在前部；语言及动作目录在后部，减少编辑动作时失效的缓存前缀。
@@ -89,9 +89,9 @@ export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'j
 
 export const buildStage2UserPrompt = (input: BuildPromptInput): string => {
   const parts = [];
-  if (input.ragContext) {
-    parts.push('以下是可用 RAG 上下文，仅在相关时引用，不要编造未出现的信息：');
-    parts.push(input.ragContext);
+  if (input.memoryContext) {
+    parts.push('以下是当前角色设定与记忆，只在相关时使用，不要编造其中没有的信息：');
+    parts.push(input.memoryContext);
   }
   parts.push(`用户输入：${input.userText}`);
   return parts.join('\n\n');

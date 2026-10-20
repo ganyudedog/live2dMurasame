@@ -5,8 +5,7 @@ export type ControlPanelTabKey =
   | 'model-motions'
   | 'model-interaction'
   | 'ai-settings'
-  | 'ai-rag'
-  | 'ai-rag-params';
+  | 'ai-persona';
 
 import type { AsrConfig } from '@app/modules/ai/modules/asr/domain/config';
 export type { AsrConfig } from '@app/modules/ai/modules/asr/domain/config';
@@ -62,22 +61,12 @@ export type BubbleConfig = {
 export type ModelConfig = {
   bubble: BubbleConfig;
   interaction?: PetInteractionBindings;
-  rag: {
-    profile: {
-      personal: string;
-      speakingStyle: string;
-      relation: string;
-      banned: string;
-      world: string;
-    };
-    retrieval: {
-      enabled: boolean;
-      topK: number;
-      threshold: number;
-      knowledgeBasePath: string;
-      embeddingModel: string;
-      rerankerModel: string;
-    };
+  persona: {
+    personal: string;
+    speakingStyle: string;
+    relation: string;
+    banned: string;
+    world: string;
   };
   tts: {
     enabled: boolean;

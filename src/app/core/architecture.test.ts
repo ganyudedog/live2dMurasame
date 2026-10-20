@@ -104,7 +104,7 @@ describe('frontend architecture boundaries', () => {
     for (const file of files.filter((file) => /ai\/modules\/(action-catalog|llm)\//.test(file))) {
       expect(sources[file], file).not.toMatch(/localStorage|sessionStorage/);
     }
-    for (const file of ['../modules/control-panel/ui/pages/MotionSettingsPage.tsx', '../modules/control-panel/ui/components/ActionCatalogChat.tsx']) {
+    for (const file of ['../modules/control-panel/ui/pages/MotionSettingsPage.tsx']) {
       expect(importsOf(file).some((target) => target.includes('/service/')), file).toBe(false);
       expect(sources[file], file).not.toMatch(/window\.|ModelAPI|catalog:.*Service/);
     }

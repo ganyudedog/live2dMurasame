@@ -16,16 +16,41 @@ export interface ActionCatalogMessage {
 export interface ActionCatalogSession {
   draft: string;
   messages: ActionCatalogMessage[];
+  /** 本会话选择的推理深度；缺省视为关闭。 */
+  reasoningEffort?: PetReasoningEffort;
 }
 
 export const ACTION_SESSION_MESSAGE_LIMIT = 40;
 
-/** 引用使用稳定 ID，显示名修改后仍能指向同一个动作。 */
-export function actionMention(id: string): string { return `@action:${id}`; }
+/**
+ * 输入框里的引用：整体是一个标签，插入的文本就是显示名（不带 @），
+ * 排版长度按显示名计算、整块删除；稳定 ID 只在发送给模型前还原。
+ */
+export function actionMention(action: { id: string; label: string }): string {
+  return action.label.trim() || action.id;
+}
 
-export function referencedActionIds(text: string): string[] {
-  return [...new Set(Array.from(text.matchAll(/(?:^|[^\w@:-])@(?:action:)?([a-z0-9_-]+)(?![a-z0-9_:-])/g),
-    (match) => match[1]))];
+export function referencedActionIds(text: string,
+  actions: ReadonlyArray<{ id: string; label: string }> = []): string[] {
+  const ids = new Set(Array.from(text.matchAll(/(?:^|[^\w@:-])@(?:action:)?([a-z0-9_-]+)(?![a-z0-9_:-])/g),
+    (match) => match[1]));
+  // 标签文本是显示名：按名称回填稳定 ID；未知名称交给服务层校验。
+  for (const action of actions) {
+    const label = action.label.trim();
+    if (label && text.includes(label)) ids.add(action.id);
+  }
+  return [...ids];
+}
+
+/** 交给模型的指令把显示名标签还原成 @action:<id>，与动作目录的书写保持一致。 */
+export function replaceMentionsWithIds(text: string,
+  actions: ReadonlyArray<{ id: string; label: string }>): string {
+  let result = text;
+  for (const action of [...actions].sort((left, right) => right.label.length - left.label.length)) {
+    const label = action.label.trim();
+    if (label) result = result.replaceAll(label, `@action:${action.id}`);
+  }
+  return result;
 }
 
 export function activeMention(text: string, cursor: number): { start: number; query: string } | null {

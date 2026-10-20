@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelConfig } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
 
@@ -208,17 +208,12 @@ export default function TTSSettingsPage({
   };
 
   return (
-    <div className="p-4 space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">TTS 设置</h1>
-        <p className="text-xs text-base-content/60">为当前模型配置语音合成参数。音频格式与流式开关在 AI 设置中全局生效。</p>
-      </div>
-
-      <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-4">
-        <header className="flex items-center justify-between">
-          <div className="text-sm font-medium">基础</div>
-          <label className="label cursor-pointer gap-2">
-            <span className="label-text text-xs">启用 TTS</span>
+    <div className="space-y-4">
+      <section className="rounded-box border border-base-300 bg-base-100 p-3 space-y-3">
+        <header className="flex items-center justify-between gap-2">
+          <div className="text-sm font-medium">合成服务</div>
+          <label className="flex cursor-pointer items-center gap-2">
+            <span className="text-xs text-base-content/55">启用 TTS</span>
             <input
               type="checkbox"
               className="toggle toggle-sm"
@@ -229,32 +224,32 @@ export default function TTSSettingsPage({
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">Provider</span>
+          <label className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-base-content/55">Provider</span>
             </div>
-            <input type="text" className="input input-sm input-bordered w-full" value="gpt-sovits" disabled />
+            <input type="text" className="input input-sm w-full" value="gpt-sovits" disabled />
           </label>
 
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">服务地址</span>
+          <label className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-base-content/55">服务地址</span>
             </div>
             <input
               type="text"
-              className="input input-sm input-bordered w-full"
+              className="input input-sm w-full"
               value={draft.baseUrl}
               placeholder="http://127.0.0.1:9880"
               onChange={(e) => ttsDraft.commit({ ...draft, baseUrl: e.target.value })}
             />
           </label>
 
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">文本语言</span>
+          <label className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-base-content/55">文本语言</span>
             </div>
             <select
-              className="select select-sm select-bordered w-full"
+              className="select select-sm w-full"
               value={draft.textLang}
               onChange={(e) => ttsDraft.commit({ ...draft, textLang: e.target.value as TtsUiDraft['textLang'] })}
             >
@@ -264,12 +259,12 @@ export default function TTSSettingsPage({
             </select>
           </label>
 
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">参考语言</span>
+          <label className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-base-content/55">参考语言</span>
             </div>
             <select
-              className="select select-sm select-bordered w-full"
+              className="select select-sm w-full"
               value={draft.promptLang}
               onChange={(e) => ttsDraft.commit({ ...draft, promptLang: e.target.value as TtsUiDraft['promptLang'] })}
             >
@@ -279,12 +274,12 @@ export default function TTSSettingsPage({
             </select>
           </label>
 
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">文本切分</span>
+          <label className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-base-content/55">文本切分</span>
             </div>
             <select
-              className="select select-sm select-bordered w-full"
+              className="select select-sm w-full"
               value={draft.textSplitMode}
               onChange={(e) => ttsDraft.commit({ ...draft, textSplitMode: e.target.value as TtsUiDraft['textSplitMode'] })}
             >
@@ -304,22 +299,22 @@ export default function TTSSettingsPage({
               checked={draft.useLastGeneratedAsRef}
               onChange={(e) => ttsDraft.commit({ ...draft, useLastGeneratedAsRef: e.target.checked })}
             />
-            <span className="label-text text-xs">复用上次生成音频作为参考</span>
+            <span className="text-xs text-base-content/55">复用上次生成音频作为参考</span>
           </label>
         </div>
       </section>
 
-      <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
+      <section className="rounded-box border border-base-300 bg-base-100 p-3 space-y-3">
         <header className="text-sm font-medium">数值参数</header>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="form-control">
+          <label className="flex flex-col gap-1">
             <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="label-text text-xs truncate">语言速度</span>
+              <span className="text-xs text-base-content/55 truncate">语言速度</span>
               <div className="w-full">
                 <input
                   type="number"
-                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  className="input input-xs w-full text-right tabular-nums"
                   min={SLIDER_LIMITS.speedFactor.min}
                   max={SLIDER_LIMITS.speedFactor.max}
                   step={DEFAULT_SLIDER_STEPS.speedFactor}
@@ -342,13 +337,13 @@ export default function TTSSettingsPage({
             />
           </label>
 
-          <label className="form-control">
+          <label className="flex flex-col gap-1">
             <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="label-text text-xs truncate">片段间隔</span>
+              <span className="text-xs text-base-content/55 truncate">片段间隔</span>
               <div className="w-full">
                 <input
                   type="number"
-                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  className="input input-xs w-full text-right tabular-nums"
                   min={SLIDER_LIMITS.fragmentInterval.min}
                   max={SLIDER_LIMITS.fragmentInterval.max}
                   step={DEFAULT_SLIDER_STEPS.fragmentInterval}
@@ -371,13 +366,13 @@ export default function TTSSettingsPage({
             />
           </label>
 
-          <label className="form-control">
+          <label className="flex flex-col gap-1">
             <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="label-text text-xs truncate">topK</span>
+              <span className="text-xs text-base-content/55 truncate">topK</span>
               <div className="w-full">
                 <input
                   type="number"
-                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  className="input input-xs w-full text-right tabular-nums"
                   min={SLIDER_LIMITS.topK.min}
                   max={SLIDER_LIMITS.topK.max}
                   step={DEFAULT_SLIDER_STEPS.topK}
@@ -401,13 +396,13 @@ export default function TTSSettingsPage({
 
           </label>
 
-          <label className="form-control">
+          <label className="flex flex-col gap-1">
             <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="label-text text-xs truncate">topP</span>
+              <span className="text-xs text-base-content/55 truncate">topP</span>
               <div className="w-full">
                 <input
                   type="number"
-                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  className="input input-xs w-full text-right tabular-nums"
                   min={SLIDER_LIMITS.topP.min}
                   max={SLIDER_LIMITS.topP.max}
                   step={DEFAULT_SLIDER_STEPS.topP}
@@ -430,13 +425,13 @@ export default function TTSSettingsPage({
             />
           </label>
 
-          <label className="form-control">
+          <label className="flex flex-col gap-1">
             <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="label-text text-xs truncate">temperature</span>
+              <span className="text-xs text-base-content/55 truncate">temperature</span>
               <div className="w-full">
                 <input
                   type="number"
-                  className="input input-xs input-bordered w-full text-right tabular-nums"
+                  className="input input-xs w-full text-right tabular-nums"
                   min={SLIDER_LIMITS.temperature.min}
                   max={SLIDER_LIMITS.temperature.max}
                   step={DEFAULT_SLIDER_STEPS.temperature}
@@ -461,18 +456,18 @@ export default function TTSSettingsPage({
         </div>
       </section>
 
-      <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
+      <section className="rounded-box border border-base-300 bg-base-100 p-3 space-y-3">
         <header className="text-sm font-medium">路径与参考音频</header>
 
         <div className="space-y-3">
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">GPT 权重路径</span>
+          <label className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-base-content/55">GPT 权重路径</span>
             </div>
             <div className="join w-full">
               <input
                 type="text"
-                className="input input-sm input-bordered join-item w-full"
+                className="input input-sm join-item w-full"
                 value={draft.gptWeightsPath}
                 placeholder="GPT_weights_v2Pro/xxx.ckpt"
                 onChange={(e) => ttsDraft.commit({ ...draft, gptWeightsPath: e.target.value })}
@@ -481,14 +476,14 @@ export default function TTSSettingsPage({
             </div>
           </label>
 
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">SoVITS 权重路径</span>
+          <label className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-base-content/55">SoVITS 权重路径</span>
             </div>
             <div className="join w-full">
               <input
                 type="text"
-                className="input input-sm input-bordered join-item w-full"
+                className="input input-sm join-item w-full"
                 value={draft.sovitsWeightsPath}
                 placeholder="SoVITS_weights_v2Pro/xxx.pth"
                 onChange={(e) => ttsDraft.commit({ ...draft, sovitsWeightsPath: e.target.value })}
@@ -497,14 +492,14 @@ export default function TTSSettingsPage({
             </div>
           </label>
 
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">参考音频路径</span>
+          <label className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-base-content/55">参考音频路径</span>
             </div>
             <div className="join w-full">
               <input
                 type="text"
-                className="input input-sm input-bordered join-item w-full"
+                className="input input-sm join-item w-full"
                 value={draft.refAudioPath}
                 placeholder="assets/ref.wav"
                 onChange={(e) => ttsDraft.commit({ ...draft, refAudioPath: e.target.value })}
@@ -513,13 +508,11 @@ export default function TTSSettingsPage({
             </div>
           </label>
 
-          <label className="form-control">
-            <div className="label py-0">
-              <span className="label-text text-xs">参考音频文本</span>
-            </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-base-content/55">参考音频文本</span>
+            {/* 宽度固定、不可拖拽拉伸；高度随内容在 min/max 之间自适应，超出后内部滚动 */}
             <textarea
-              className="textarea textarea-sm textarea-bordered w-full"
-              rows={3}
+              className="textarea textarea-sm min-h-20 max-h-40 w-full resize-none overflow-y-auto field-sizing-content"
               value={draft.refAudioText}
               placeholder="输入参考音频对应文本"
               onChange={(e) => ttsDraft.commit({ ...draft, refAudioText: e.target.value })}

@@ -13,7 +13,6 @@ import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
 import PersonaSettingsPage from './pages/PersonaSettingsPage';
 import { PluginPanelHost } from '@app/core/plugin/PluginPanelHost';
-import { SubtitleSettings } from '../modules/subtitle/ui/SubtitleSettings';
 
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel.runtime);
@@ -30,6 +29,10 @@ const ControlPanel: React.FC = observer(() => {
     [reportError, service],
   );
   const previewScale = useCallback((scale: number) => service.stateBus.publishScale(scale), [service]);
+  const persistScale = useCallback(
+    (scale: number) => service.persistGlobalSettings({ scale }).catch(reportError),
+    [reportError, service],
+  );
   const gotoModels = useCallback(() => service.setActiveTab('model-manage'), [service]);
 
   return (
@@ -42,14 +45,15 @@ const ControlPanel: React.FC = observer(() => {
       {activeTab === 'home' && (
         <HomePage
           model={service.selectedModel}
-          globalSettings={service.globalSettings}
-          onGlobalSettingsChange={persistGlobalSettings}
+          scale={service.stateBus.scale}
           onScalePreview={previewScale}
+          onScalePersist={persistScale}
           onGotoModels={gotoModels}
           chatMessages={service.chatMessages}
           chatDraft={service.chatDraft}
           chatSending={service.chatSending}
           chatError={service.chatError}
+          chatReasoningEffort={service.chatReasoningEffort}
           asrEnabled={service.stateBus.asr.enabled}
           asrState={service.stateBus.asr.state}
           asrPartialText={service.stateBus.asr.partialText}
@@ -59,6 +63,7 @@ const ControlPanel: React.FC = observer(() => {
           onChatSubmit={service.submitChat.bind(service)}
           onClearChat={service.clearChat}
           onToggleAsr={(enabled) => void service.toggleAsr(enabled)}
+          onChatReasoningEffortChange={service.setChatReasoningEffort}
         />
       )}
 
@@ -80,10 +85,19 @@ const ControlPanel: React.FC = observer(() => {
       )}
 
       {activeTab === 'model-motions' && <MotionSettingsPage key={service.actionSettings.view.modelPath} view={service.actionSettings.view}
+        voice={{
+          enabled: service.stateBus.asr.enabled,
+          state: service.stateBus.asr.state,
+          partialText: service.stateBus.asr.partialText,
+          error: service.stateBus.asr.error,
+          loading: service.asrSwitchLoading,
+          onToggle: (enabled) => void service.toggleAsr(enabled),
+        }}
         onGenerate={service.actionSettings.generate} onCancel={service.actionSettings.cancel} onSelect={service.actionSettings.select}
         onDraftChange={service.actionSettings.setDraft} onPreview={service.actionSettings.preview}
         onDelete={service.actionSettings.deleteAction} onSubmit={service.actionSettings.submit}
         onUpdateMetadata={service.actionSettings.updateMetadata}
+        onReasoningEffortChange={service.actionSettings.setReasoningEffort}
         onClearChat={service.actionSettings.clearChat} />}
 
       {activeTab === 'model-interaction' && (
@@ -91,14 +105,12 @@ const ControlPanel: React.FC = observer(() => {
       )}
 
       {activeTab === 'ai-settings' && (
-        <div className="space-y-4"><AiSettingsPage
+        <AiSettingsPage
           model={service.aiSettings.model}
           apiBaseUrl={service.aiSettings.baseURL}
           apiKey={service.aiSettings.apiKey}
           memoryReasoningEffort={service.config.globalModelConfig?.memoryReasoningEffort}
           onMemoryReasoningEffortChange={(memoryReasoningEffort) => void service.config.updateGlobalConfig({ memoryReasoningEffort }).catch(reportError)}
-          actionReasoningEffort={service.config.globalModelConfig?.actionReasoningEffort}
-          onActionReasoningEffortChange={(actionReasoningEffort) => void service.config.updateGlobalConfig({ actionReasoningEffort }).catch(reportError)}
           displayLang={service.aiSettings.displayLang}
           onChange={(next) => service.setAiSettings({
             model: next.model,
@@ -106,6 +118,8 @@ const ControlPanel: React.FC = observer(() => {
             baseURL: next.apiBaseUrl,
             displayLang: next.displayLang,
           })}
+          globalConfig={service.config.globalModelConfig ?? {}}
+          onGlobalConfigChange={(patch) => service.config.updateGlobalConfig(patch)}
           modelConfig={service.modelConfig}
           asrConfig={service.asrConfig}
           preheatState={service.ttsPreheatState}
@@ -116,7 +130,7 @@ const ControlPanel: React.FC = observer(() => {
             return null;
           })}
           onAsrConfigChange={(next) => service.persistAsrConfig(next).catch(reportError)}
-        /><div className="px-4 pb-4"><SubtitleSettings config={service.config.globalModelConfig ?? {}} onChange={(patch) => service.config.updateGlobalConfig(patch)} /></div></div>
+        />
       )}
 
       {activeTab === 'ai-persona' && (

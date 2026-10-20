@@ -32,7 +32,7 @@ export default function ModelSelectPage({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">模型选择</h1>
-          <p className="text-xs text-base-content/60">模型路径来自 liv2denv.json（绝对路径）</p>
+          <p className="text-xs text-base-content/60">模型路径来自 live2denv.json</p>
         </div>
         <div className="flex items-center gap-2">
           <button type="button" className="btn btn-sm btn-primary" onClick={onAddModel}>
@@ -45,7 +45,7 @@ export default function ModelSelectPage({
         <div className="rounded-box border border-base-300 bg-base-100 p-4">
           <div className="text-sm font-medium">当前选择</div>
           <div className="mt-1 text-sm">名称：{selected.name}</div>
-          <div className="text-xs text-base-content/60 break-all">路径：{selected.path}</div>
+          <div className="mt-0.5 text-xs text-base-content/60 break-all">路径：{selected.path}</div>
         </div>
       )}
 
@@ -67,8 +67,8 @@ export default function ModelSelectPage({
 
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="text-sm font-medium truncate">{name}</div>
-                  <div className="text-xs text-base-content/60 break-all mt-1">{modelPath}</div>
+                  <div className="text-sm font-medium truncate">模型名称：{name}</div>
+                  <div className="text-xs text-base-content/60 break-all mt-1">路径：{modelPath}</div>
                 </div>
                   <button
                     type="button"

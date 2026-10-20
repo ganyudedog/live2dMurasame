@@ -1,19 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChatPanel from '../components/ChatPanel';
-import type { ChatMessage, GlobalUiSettings, ModelEntry } from '../../domain/types';
+import { useScaleControl } from '../hooks/useScaleControl';
+import type { ChatMessage, ModelEntry } from '../../domain/types';
 
-const SCALE_PERSIST_DEBOUNCE_MS = 250;
+const MIC_STATE_LABEL: Record<PetMicState, string> = {
+  off: '语音输入',
+  requesting: '等待授权',
+  active: '识别中',
+  denied: '未授权',
+  error: '异常',
+};
 
 export default function HomePage({
   model,
-  globalSettings,
-  onGlobalSettingsChange,
+  scale,
   onScalePreview,
+  onScalePersist,
   onGotoModels,
   chatMessages,
   chatDraft,
   chatSending,
   chatError,
+  chatReasoningEffort,
   asrEnabled,
   asrState,
   asrPartialText,
@@ -23,16 +30,18 @@ export default function HomePage({
   onChatSubmit,
   onClearChat,
   onToggleAsr,
+  onChatReasoningEffortChange,
 }: {
   model: ModelEntry;
-  globalSettings: GlobalUiSettings;
-  onGlobalSettingsChange: (patch: Partial<GlobalUiSettings>) => Promise<void>;
+  scale: number;
   onScalePreview: (scale: number) => void;
+  onScalePersist: (scale: number) => Promise<void>;
   onGotoModels: () => void;
   chatMessages: ChatMessage[];
   chatDraft: string;
   chatSending: boolean;
   chatError: string | null;
+  chatReasoningEffort: PetReasoningEffort;
   asrEnabled: boolean;
   asrState: PetMicState;
   asrPartialText: string;
@@ -42,163 +51,85 @@ export default function HomePage({
   onChatSubmit: () => void;
   onClearChat: () => void;
   onToggleAsr: (nextEnabled: boolean) => void | Promise<void>;
+  onChatReasoningEffortChange: (effort: PetReasoningEffort) => void;
 }) {
-  const [scaleDraft, setScaleDraft] = useState(globalSettings.scale);
-  const scaleLabel = useMemo(() => scaleDraft.toFixed(2), [scaleDraft]);
-  const scalePersistTimerRef = useRef<number | null>(null);
-  const latestScaleRef = useRef(globalSettings.scale);
-  const scaleDraggingRef = useRef(false);
-  const ignoreRemoteScaleUntilRef = useRef(0);
-  const scaleDirtyRef = useRef(false);
-  const persistScaleRef = useRef(onGlobalSettingsChange);
-
-  useEffect(() => {
-    persistScaleRef.current = onGlobalSettingsChange;
-  }, [onGlobalSettingsChange]);
-
-  useEffect(() => {
-    // SharedWorker delivery is asynchronous. Its older echo must not move a range
-    // thumb that is currently owned by the pointer gesture.
-    if (scaleDraggingRef.current) return;
-    if (performance.now() < ignoreRemoteScaleUntilRef.current) return;
-    latestScaleRef.current = globalSettings.scale;
-    setScaleDraft(globalSettings.scale);
-  }, [globalSettings.scale]);
-
-  const scheduleScalePersist = useCallback((nextScale: number) => {
-    latestScaleRef.current = nextScale;
-    scaleDirtyRef.current = true;
-    if (scalePersistTimerRef.current != null) {
-      window.clearTimeout(scalePersistTimerRef.current);
-    }
-    scalePersistTimerRef.current = window.setTimeout(() => {
-      scalePersistTimerRef.current = null;
-      scaleDirtyRef.current = false;
-      persistScaleRef.current({ scale: latestScaleRef.current }).catch(() => {});
-    }, SCALE_PERSIST_DEBOUNCE_MS);
-  }, []);
-
-  const finishScaleGesture = useCallback(() => {
-    if (!scaleDraggingRef.current) return;
-    scaleDraggingRef.current = false;
-    const finalScale = latestScaleRef.current;
-    // Re-publish the final sample so a coalesced worker batch cannot finish on an
-    // earlier pointer sample.
-    ignoreRemoteScaleUntilRef.current = performance.now() + 50;
-    onScalePreview(finalScale);
-    scheduleScalePersist(finalScale);
-  }, [onScalePreview, scheduleScalePersist]);
-
-  useEffect(() => {
-    return () => {
-      if (scalePersistTimerRef.current != null) {
-        window.clearTimeout(scalePersistTimerRef.current);
-        scalePersistTimerRef.current = null;
-      }
-      if (!scaleDirtyRef.current) return;
-      persistScaleRef.current({ scale: latestScaleRef.current }).catch(() => {});
-    };
-  }, []);
+  const scaleControl = useScaleControl({ scale, onPreview: onScalePreview, onPersist: onScalePersist });
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold">首页</h1>
-          <p className="text-xs text-base-content/60">当前模型与基本操作</p>
-        </div>
-        <button type="button" className="btn btn-sm btn-outline" onClick={onGotoModels}>
+    <div className="flex h-full min-h-0 flex-col gap-3 p-5">
+      {/* 顶部工具条独立成卡，与页面底色区分：模型大小占满中间，右侧切模型。 */}
+      <div className="flex shrink-0 items-center gap-3 rounded-box border border-base-300 bg-base-100 px-3 py-2">
+        <span className="shrink-0 text-xs text-base-content/50">模型大小</span>
+        <input
+          type="range"
+          min={0.3}
+          max={2}
+          step={0.01}
+          aria-label="模型大小"
+          value={scaleControl.value}
+          onPointerDown={(event) => scaleControl.beginGesture(event.currentTarget, event.pointerId)}
+          onPointerUp={(event) => {
+            if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+              event.currentTarget.releasePointerCapture?.(event.pointerId);
+            }
+            scaleControl.finishGesture();
+          }}
+          onLostPointerCapture={scaleControl.finishGesture}
+          onPointerCancel={scaleControl.finishGesture}
+          onBlur={scaleControl.finishGesture}
+          onChange={(event) => scaleControl.changeScale(Number.parseFloat(event.target.value))}
+          className="range range-xs min-w-0 flex-1"
+        />
+        <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-base-content/45">
+          {scaleControl.label}
+        </span>
+        <button
+          type="button"
+          className="btn btn-outline btn-sm shrink-0"
+          title={`当前模型：${model.name}`}
+          onClick={onGotoModels}
+        >
           切换模型
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {/* 当前模型 */}
-        <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
-          <header className="flex items-center justify-between">
-            <div className="text-sm font-medium">当前模型</div>
-            <span className="badge badge-outline">{model.id}</span>
-          </header>
-          <div className="text-sm">名称：{model.name}</div>
-          <div className="text-xs text-base-content/60 break-all">路径：{model.path}</div>
-        </section>
-
-        {/* Scale 调整 */}
-        <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-3">
-          <header className="flex items-center justify-between">
-            <div className="text-sm font-medium">缩放</div>
-            <span className="text-xs text-base-content/60">{scaleLabel}</span>
-          </header>
-          <input
-            type="range"
-            min={0.3}
-            max={2}
-            step={0.01}
-            value={scaleDraft}
-            onPointerDown={(event) => {
-              scaleDraggingRef.current = true;
-              // Keep the range owner alive when the pointer leaves the thumb.
-              // Without capture, pointerup can be lost and the next gesture
-              // appears to require an extra click before it starts.
-              event.currentTarget.setPointerCapture?.(event.pointerId);
-            }}
-            onPointerUp={(event) => {
-              if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-                event.currentTarget.releasePointerCapture?.(event.pointerId);
-              }
-              finishScaleGesture();
-            }}
-            onLostPointerCapture={finishScaleGesture}
-            onPointerCancel={finishScaleGesture}
-            onBlur={finishScaleGesture}
-            onChange={(e) => {
-              const nextScale = Number.parseFloat(e.target.value);
-              setScaleDraft(nextScale);
-              latestScaleRef.current = nextScale;
-              ignoreRemoteScaleUntilRef.current = performance.now() + 50;
-              onScalePreview(nextScale);
-              scheduleScalePersist(nextScale);
-            }}
-            className="range range-xs"
-          />
-        </section>
-
-        <ChatPanel title="对话" description="文字与语音识别共用对话链路，回复后播放语音。"
-          messages={chatMessages} draft={chatDraft} busy={chatSending} error={chatError}
-          onDraftChange={onChatDraftChange} onSubmit={onChatSubmit} onClear={onClearChat}
-          inputLabel="对话输入" placeholder="在这里与 AI 对话，Shift+Enter 换行，Enter 发送"
-          emptyMessage="当前模型暂无会话缓存。你可以在这里输入文字，后续 ASR 也会汇入同一条处理链路。"
-          heightClassName="h-[70vh]" footer="对话按当前模型缓存，回复使用当前配置的语音播放。"
-          beforeHeader={
-            <div className="rounded-box border border-base-300 bg-base-200/50 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">麦克风（ASR）</div>
-                  <div className="text-xs text-base-content/60">
-                    状态：{asrState}
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  className="toggle toggle-primary"
-                  checked={asrEnabled}
-                  disabled={asrSwitchLoading}
-                  onChange={(e) => onToggleAsr(e.target.checked)}
-                />
-              </div>
-              {asrPartialText && (
-                <div className="mt-2 text-xs text-base-content/70 break-all">
-                  识别中：{asrPartialText}
-                </div>
-              )}
-              {asrError && (
-                <div className="mt-2 text-xs text-error break-all">
-                  错误：{asrError}
-                </div>
-              )}
-            </div>
-          } />
-      </div>
+      <ChatPanel
+        fill
+        showHeader={false}
+        title="对话"
+        messages={chatMessages}
+        draft={chatDraft}
+        busy={chatSending}
+        error={chatError}
+        onDraftChange={onChatDraftChange}
+        onSubmit={onChatSubmit}
+        inputLabel="对话输入"
+        placeholder="在这里与 AI 对话，Shift+Enter 换行，Enter 发送"
+        emptyMessage="还没有对话。直接输入文字即可开始，语音识别结果会汇入同一条链路。"
+        reasoningEffort={{
+          value: chatReasoningEffort,
+          disabled: chatSending,
+          onChange: onChatReasoningEffortChange,
+        }}
+        toolbar={
+          <button
+            type="button"
+            className="btn btn-outline btn-error btn-xs ml-auto"
+            disabled={chatSending || chatMessages.length === 0}
+            onClick={onClearChat}
+          >
+            清空对话
+          </button>
+        }
+        voiceInput={{
+          enabled: asrEnabled,
+          statusLabel: MIC_STATE_LABEL[asrState] ?? '语音输入',
+          partialText: asrPartialText,
+          errorText: asrError,
+          loading: asrSwitchLoading,
+          onChange: (next) => void onToggleAsr(next),
+        }}
+      />
     </div>
   );
 }

@@ -5,3 +5,72 @@ body,html {
   background-color: transparent;
 }
 
+/*
+ * 表单控件不用 outline 表示聚焦：那圈线在卡片里很扎眼。
+ * 1) 下面这条对 daisyUI 组件类无条件生效 —— 关键点是 select 展开列表时匹配的是
+ *    :open 而不是 :focus，之前只清 :focus/:focus-visible 就会漏掉这个状态；
+ * 2) 聚焦时描边、底色、阴影与静止状态完全一致，交互反馈改由悬停动画承担。
+ * 规则放在所有 layer 之外，优先级高于 base/components/utilities。
+ */
+:is(.input, .select, .textarea, .btn, .toggle, .checkbox, .radio, .range, .tab, .file-input) {
+  outline: none !important;
+  outline-offset: 0 !important;
+}
+
+:where(input, select, textarea, button, a, [tabindex]):focus,
+:where(input, select, textarea, button, a, [tabindex]):focus-visible,
+:where(input, select, textarea, button, a, [tabindex]):focus-within,
+:where(select, details, dialog):open {
+  outline: none !important;
+  outline-offset: 0 !important;
+}
+
+.input,
+.select,
+.textarea {
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+/* 聚焦：daisyUI 会把 --input-color 提到实色、把两层内阴影换成单层，
+   这里原样写回静止态的值，聚焦与静止像素一致。 */
+.input:focus,
+.input:focus-within,
+.select:focus,
+.select:focus-within,
+.select:open,
+.textarea:focus,
+.textarea:focus-within {
+  --input-color: color-mix(in oklab, var(--color-base-content) 20%, #0000) !important;
+  box-shadow:
+    0 1px color-mix(in oklab, var(--input-color) calc(var(--depth, 1) * 10%), #0000) inset,
+    0 -1px oklch(100% 0 0 / calc(var(--depth, 1) * 0.1)) inset !important;
+}
+
+/* 悬停：描边明显一点 + 底色微亮，作为唯一的交互反馈 */
+.input:hover,
+.select:hover,
+.textarea:hover {
+  --input-color: color-mix(in oklab, var(--color-base-content) 38%, #0000) !important;
+  background-color: color-mix(in oklab, var(--color-base-content) 4%, var(--color-base-100)) !important;
+}
+
+/* 颜色选择器：去掉原生色块的内边距，做成一个小圆角色票 */
+.color-swatch {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--color-base-300);
+  border-radius: 0.25rem;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+
+.color-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 0.2rem;
+}

@@ -16,6 +16,8 @@ export interface ChatRequest {
   status: 'pending' | 'processing' | 'done' | 'error' | 'cancelled';
   createdAt: number;
   voice?: { profile: 'conversation' | 'agent'; refined: boolean };
+  /** 本轮对话由用户选择的思考深度；缺省表示不发送该参数，沿用接口默认值。 */
+  reasoningEffort?: PetReasoningEffort;
 }
 
 /**

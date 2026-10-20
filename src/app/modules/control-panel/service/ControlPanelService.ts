@@ -29,7 +29,11 @@ export class ControlPanelService {
   chatMessages: ChatMessage[] = [];
   chatSending = false;
   chatError: string | null = null;
+  /** 日常对话的思考深度，由用户在对话区逐轮选择，随请求下发；默认关闭思考。 */
+  chatReasoningEffort: PetReasoningEffort = 'none';
   asrSwitchLoading = false;
+  /** 已归入动作编辑输入框的语音请求，避免重复广播被追加两次。 */
+  private lastActionAsrId = '';
   aiSettings: ChatConfig;
   aiSettingsPending = false;
   ttsPreheatState: 'idle' | 'pending' | 'ok' | 'failed' = 'idle';
@@ -63,6 +67,7 @@ export class ControlPanelService {
       chatMessages: observableRef,
       chatSending: observable,
       chatError: observable,
+      chatReasoningEffort: observable,
       asrSwitchLoading: observable,
       aiSettings: observableRef,
       aiSettingsPending: observable,
@@ -76,6 +81,7 @@ export class ControlPanelService {
       selectedModel: computed,
       setActiveTab: actionBound,
       setChatDraft: actionBound,
+      setChatReasoningEffort: actionBound,
       clearChat: actionBound,
       setAiSettings: actionBound,
     });
@@ -90,10 +96,11 @@ export class ControlPanelService {
         () => this.loadChatCache(),
       ),
       reaction(
-        () => [this.currentModelPath, this.chatDraft, this.chatMessages] as const,
+        () => [this.currentModelPath, this.chatDraft, this.chatMessages, this.chatReasoningEffort] as const,
         () => writeChatSessionCache(getChatCacheScope(this.currentModelPath), {
           draftText: this.chatDraft,
           messages: this.chatMessages,
+          reasoningEffort: this.chatReasoningEffort,
           updatedAt: Date.now(),
         }),
       ),
@@ -202,6 +209,13 @@ export class ControlPanelService {
 
   setChatDraft(value: string): void {
     this.chatDraft = value;
+  }
+
+  /** 逐轮对话的思考深度属于用户当次选择，只影响下一轮请求，不改全局配置。 */
+  setChatReasoningEffort(effort: PetReasoningEffort): void {
+    if (this.chatReasoningEffort === effort) return;
+    this.chatReasoningEffort = effort;
+    this.logTrace('chat', 'reasoningEffort.changed', { effort }).end({ effort });
   }
 
   clearChat(): void {
@@ -320,6 +334,7 @@ export class ControlPanelService {
       source: 'text',
       status: 'pending',
       createdAt: now,
+      reasoningEffort: this.chatReasoningEffort,
     };
     runInAction(() => {
       this.chatDraft = '';
@@ -332,7 +347,11 @@ export class ControlPanelService {
       ];
     });
     this.stateBus.publishChatRequest(request);
-    this.logTrace('chat', 'submit', { requestId, textLength: text.length }).end({ status: 'pending' });
+    this.logTrace('chat', 'submit', {
+      requestId,
+      textLength: text.length,
+      reasoningEffort: this.chatReasoningEffort,
+    }).end({ status: 'pending' });
   }
 
   async dispose(): Promise<void> {
@@ -363,6 +382,7 @@ export class ControlPanelService {
     runInAction(() => {
       this.chatDraft = cache.draftText;
       this.chatMessages = cache.messages;
+      this.chatReasoningEffort = cache.reasoningEffort ?? 'none';
       this.chatSending = false;
       this.chatError = null;
     });
@@ -370,6 +390,13 @@ export class ControlPanelService {
 
   private applyChatRequest(request: ChatRequest | null): void {
     if (!request || request.source !== 'asr') return;
+    // 动作设置页正在编辑动作表：语音结果先落到输入框，由用户确认后再提交。
+    if (this.activeTab === 'model-motions') {
+      if (this.lastActionAsrId === request.id) return;
+      this.lastActionAsrId = request.id;
+      this.actionSettings.appendDraft(request.text);
+      return;
+    }
     if (this.chatMessages.some((message) => message.requestId === request.id && message.source === 'asr')) return;
     runInAction(() => {
       this.chatMessages = [

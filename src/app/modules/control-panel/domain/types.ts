@@ -32,6 +32,8 @@ export type ChatMessage = {
 export type ChatSessionCache = {
   draftText: string;
   messages: ChatMessage[];
+  /** 该模型下最近一次选择的对话思考深度。 */
+  reasoningEffort?: PetReasoningEffort;
   updatedAt: number;
 };
 

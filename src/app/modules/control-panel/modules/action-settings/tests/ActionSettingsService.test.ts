@@ -6,7 +6,7 @@ import type { LlmService } from '@app/modules/ai/modules/llm/service/LlmService'
 import { ActionCatalogService } from '@app/modules/ai/modules/llm/service/ActionCatalogService';
 import { headAction as head, shyAction as shy, actionSources as sources } from '../../../../../../test/fixtures/actionCatalog';
 import { ActionSettingsService } from '../service/ActionSettingsService';
-import { activeMention, referencedActionIds } from '../domain/session';
+import { actionMention, activeMention, referencedActionIds, replaceMentionsWithIds } from '../domain/session';
 import { clearGenerationCheckpoint } from '../infrastructure/generationCache';
 
 const services: ActionSettingsService[] = [];
@@ -308,5 +308,16 @@ describe('action mentions', () => {
     expect(activeMention('调整 @action:sh', 13)).toEqual({ start: 3, query: 'sh' });
     expect(activeMention('@害羞', 3)).toEqual({ start: 0, query: '害羞' });
     expect(activeMention('把@害羞', 4)).toEqual({ start: 1, query: '害羞' });
+  });
+
+  it('inserts one name tag without the @ trigger and resolves it back to the stable ID', () => {
+    const actions = [{ id: 'head', label: '转头' }, { id: 'shy', label: '害羞' }];
+    expect(actionMention({ id: 'head', label: '转头' })).toBe('转头');
+    // 标签里是名称，发送前按名称回填稳定 ID，再交给模型时还原成动作目录写法。
+    expect(referencedActionIds('把转头幅度调大，害羞 更明显', actions)).toEqual(['head', 'shy']);
+    expect(replaceMentionsWithIds('把转头幅度调大，害羞 更明显', actions))
+      .toBe('把@action:head幅度调大，@action:shy 更明显');
+    // 未知名称不会凭空生成引用，仍由服务层按 ID 校验。
+    expect(referencedActionIds('不存在的动作', actions)).toEqual([]);
   });
 });

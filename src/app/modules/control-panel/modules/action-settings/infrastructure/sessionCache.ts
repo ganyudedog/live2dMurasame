@@ -10,6 +10,12 @@ function readSessions(): Record<string, unknown> {
   } catch { return {}; }
 }
 
+const REASONING_EFFORTS: readonly PetReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+
+function normalizeReasoningEffort(value: unknown): PetReasoningEffort {
+  return REASONING_EFFORTS.find((effort) => effort === value) ?? 'none';
+}
+
 export function readActionSession(modelPath: string): ActionCatalogSession {
   const value = readSessions()[modelPath];
   if (!value || typeof value !== 'object') return { draft: '', messages: [] };
@@ -28,7 +34,8 @@ export function readActionSession(modelPath: string): ActionCatalogSession {
       reasoningSummary: typeof item.reasoningSummary === 'string' ? item.reasoningSummary.slice(-2000) : undefined,
       status: item.status === 'sending' || item.status === 'error' ? 'error' : 'done' }];
   }).slice(-ACTION_SESSION_MESSAGE_LIMIT);
-  return { draft: typeof session.draft === 'string' ? session.draft : '', messages };
+  return { draft: typeof session.draft === 'string' ? session.draft : '', messages,
+    reasoningEffort: normalizeReasoningEffort(session.reasoningEffort) };
 }
 
 export function writeActionSession(modelPath: string, session: ActionCatalogSession): void {
@@ -36,6 +43,7 @@ export function writeActionSession(modelPath: string, session: ActionCatalogSess
   const sessions = readSessions();
   Object.defineProperty(sessions, modelPath, { value: {
     draft: session.draft, messages: session.messages.slice(-ACTION_SESSION_MESSAGE_LIMIT),
+    reasoningEffort: normalizeReasoningEffort(session.reasoningEffort),
   }, enumerable: true, configurable: true });
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
 }

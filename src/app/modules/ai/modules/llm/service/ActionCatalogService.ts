@@ -5,9 +5,11 @@ import { inspectActions, validateActions } from '../domain/action-catalog/qualit
 import { describeCandidates, parseReactionPlans } from '../domain/action-catalog/planning.js';
 import type { CompositionCheckpoint, GenerationBudget, GenerationOptions, GenerationProgress, GenerationTaskState, ProgressListener, QualityIssue, ReviewCheckpoint } from '../domain/action-catalog/generation.js';
 import { checkGenerationCancelled as cancelled } from '../domain/action-catalog/generation.js';
+import type { ReasoningEffort } from '../domain/types.js';
 
 type StructuredRequest = (system: string, user: string, signal?: AbortSignal, options?: {
   onReasoningSummary?: (text: string) => void;
+  reasoningEffort?: ReasoningEffort;
   task?: { taskId: string; versionId: string; stage?: GenerationProgress['stage'] };
 }) => Promise<string>;
 export interface ActionCatalogRefinement {
@@ -103,6 +105,7 @@ class ActionTaskRuntime {
       });
       const raw = await Promise.race([request(prompt, text, controller.signal, {
         task: { taskId: this.state.taskId, versionId: this.state.currentVersionId, stage: this.state.stage },
+        ...(this.options.reasoningEffort ? { reasoningEffort: this.options.reasoningEffort } : {}),
         onReasoningSummary: (summary) => {
           if (!signal?.aborted && !controller.signal.aborted) this.options.onReasoningSummary?.(summary);
         },
@@ -201,10 +204,13 @@ class ActionTaskRuntime {
 /** LlmService 子域：仅编排生成任务；存储、UI、IPC 仍由配置工作区负责。 */
 export class ActionCatalogService {
   private readonly request: StructuredRequest;
+  /** 无运行时（直接请求）时使用的推理深度；运行时路径由 options 携带。 */
+  private taskReasoningEffort?: ReasoningEffort;
   constructor(request: StructuredRequest) { this.request = request; }
 
   async generate(sources: ActionSourceData, signal?: AbortSignal,
     onProgress?: ProgressListener, options: GenerationOptions = {}): Promise<ActionDefinition[]> {
+    this.taskReasoningEffort = options.reasoningEffort;
     const runtime = new ActionTaskRuntime(options);
     try {
       const progress = (value: GenerationProgress): void => runtime.progress(value, onProgress);
@@ -314,6 +320,7 @@ export class ActionCatalogService {
 
   async refine(input: ActionCatalogRefinement, signal?: AbortSignal,
     onProgress?: ProgressListener, options: GenerationOptions = {}): Promise<ActionCatalogReply> {
+    this.taskReasoningEffort = options.reasoningEffort;
     const runtime = new ActionTaskRuntime(options);
     try {
       const progress = (value: GenerationProgress): void => runtime.progress(value, onProgress);
@@ -511,7 +518,8 @@ export class ActionCatalogService {
     onReasoningSummary?: (text: string) => void): Promise<Record<string, unknown>> {
     cancelled(signal);
     const raw = runtime ? await runtime.invoke(this.request, prompt, input, signal)
-      : await this.request(prompt, JSON.stringify(input), signal, { onReasoningSummary });
+      : await this.request(prompt, JSON.stringify(input), signal, { onReasoningSummary,
+        ...(this.taskReasoningEffort ? { reasoningEffort: this.taskReasoningEffort } : {}) });
     cancelled(signal); // 即使提供商忽略abort，也不能消费迟到结果或继续下一轮。
     try {
       const result = this.decode(raw);
@@ -548,7 +556,8 @@ export class ActionCatalogService {
       const fullPrompt = prompt + '\n' + ACTION_RUNTIME_CONTRACT
         + '\n可额外返回 summary，简要说明本步结论和实际修改，不输出内部思考过程。';
       const raw = runtime ? await runtime.invoke(this.request, fullPrompt, body, signal)
-        : await this.request(fullPrompt, JSON.stringify(body), signal, { onReasoningSummary });
+        : await this.request(fullPrompt, JSON.stringify(body), signal, { onReasoningSummary,
+          ...(this.taskReasoningEffort ? { reasoningEffort: this.taskReasoningEffort } : {}) });
       cancelled(signal);
       try {
         const record = this.decode(raw);

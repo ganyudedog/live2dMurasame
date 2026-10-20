@@ -5,7 +5,7 @@ import type { TraceScope, LogService } from '@app/shared/logging/LogService';
 import { requestStage2LLM, requestStructuredLLM } from '../infrastructure/llmClient';
 import { parseStage2Reply, SentenceStreamParser, type ParsedSentence } from '../domain/replyParser';
 import type { ActionCapability } from '../../../../live2d/modules/actions/domain/types';
-import type { ReasoningSummaryEvent, Stage2AskResult, Stage2LLMConfig } from '../domain/types';
+import type { ReasoningEffort, ReasoningSummaryEvent, Stage2AskResult, Stage2LLMConfig } from '../domain/types';
 import type { GenerationProgress } from '../domain/action-catalog/generation';
 
 interface Stage2AskOptions {
@@ -15,6 +15,8 @@ interface Stage2AskOptions {
   temperature?: number;
   apiKey?: string;
   baseURL?: string;
+  /** 本轮对话的思考深度；default 表示不发送 reasoning_effort，沿用接口默认值。 */
+  reasoningEffort?: ReasoningEffort;
   // 同一解析器分别报告字段就绪和整句完成，共享连续的业务句子编号。
   onSentenceStreaming?: (sentence: ParsedSentence) => void;
   onSentenceSpeechReady?: (sentence: { sentenceIndex: number; speakText: string }) => void;
@@ -85,10 +87,13 @@ export class LlmService {
 
   async requestStructured(systemPrompt: string, userPrompt: string, signal?: AbortSignal, requestOptions?: {
     onReasoningSummary?: (text: string) => void;
+    /** 调用方指定的推理深度，例如动作会话；缺省回落到全局动作配置。 */
+    reasoningEffort?: ReasoningEffort;
     task?: { taskId: string; versionId: string; stage?: GenerationProgress['stage'] };
   }): Promise<string> {
     const config = this.resolveConfig();
-    const reasoningEffort = this.getConfigSnapshot()?.globalModelConfig?.actionReasoningEffort ?? 'default';
+    const reasoningEffort = requestOptions?.reasoningEffort
+      ?? this.getConfigSnapshot()?.globalModelConfig?.actionReasoningEffort ?? 'default';
     const context = this.log?.contextRegistry.register('LlmService', {
       relation: 'actionCatalog.request', params: { model: config.model, reasoningEffort, ...requestOptions?.task },
       behavior: '动作任务请求、推理深度、摘要与缓存用量',
@@ -202,6 +207,8 @@ export class LlmService {
           actionCapability,
           displayLang: languageProfile.displayLang,
           speakLang: languageProfile.speakLang,
+          // 未选择深度时不携带该字段，避免把 undefined 交给请求适配器。
+          ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
           stream: true,
           signal: options.signal,
           onReasoningSummary: options.onReasoningSummary,
@@ -256,6 +263,7 @@ export class LlmService {
         hasSpeakText: Boolean(speakText),
         displayLang: languageProfile.displayLang,
         speakLang: languageProfile.speakLang,
+        reasoningEffort: options.reasoningEffort ?? 'default',
         memoryEpisodes: memoryRuntime.episodeRecall?.matches?.length
           ?? memoryRuntime.memoryState?.episodeCount
           ?? memoryRuntime.memoryState?.episodeDates?.length

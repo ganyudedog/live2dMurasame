@@ -1,4 +1,5 @@
 import type { ActionDefinition } from '../../../../../../../../shared/actionCatalog.js';
+import type { ReasoningEffort } from '../types.js';
 
 export const GENERATION_VERSION = 'composite-reactions-v1';
 export interface GenerationBudget {
@@ -78,6 +79,8 @@ export interface GenerationOptions {
   constraints?: GenerationConstraints;
   budget?: GenerationBudget;
   checkpoint?: GenerationCheckpoint;
+  /** 本任务的推理深度；缺省时由调用方全局配置决定。 */
+  reasoningEffort?: ReasoningEffort;
   onCheckpoint?: (checkpoint: GenerationCheckpoint) => void;
   onReviewReport?: (report: GenerationReviewReport) => void;
   onTaskState?: (state: GenerationTaskState) => void;

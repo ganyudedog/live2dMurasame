@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactElement, ReactNode, TextareaHTMLAttributes } f
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import ChatPanel, { ChatComposer } from './ChatPanel';
-import ActionCatalogChat from './ActionCatalogChat';
+import MotionSettingsPage from '../pages/MotionSettingsPage';
 import type { ActionSettingsView } from '../../modules/action-settings/domain/view';
 
 function inputIn(node: ReactNode): ReactElement<TextareaHTMLAttributes<HTMLTextAreaElement>> | undefined {
@@ -50,6 +50,16 @@ describe('shared chat composition', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('renders the action name as one inline tag without the @ trigger', () => {
+    const html = renderToStaticMarkup(<ChatPanel {...base} draft="@转头 再明显一点" onSubmit={vi.fn()}
+      title="动作表" messages={[]} emptyMessage="空会话"
+      mentions={[{ id: 'head', label: '转头', category: 'head' }]} />);
+    expect(html).toContain('data-mention-overlay');
+    // 标签文本就是显示名（长度按名称算）、不带 @，底色按类别着色，与 textarea 逐字对齐。
+    expect(html).toContain('rounded-sm bg-primary/20">转头<');
+    expect(html).toContain('>@转头 再明显一点</textarea>');
+  });
+
   it('renders normal conversation and action details through the same chat surface', () => {
     const html = renderToStaticMarkup(<ChatPanel {...base} onSubmit={vi.fn()} title="对话" description="说明"
       messages={[{ id: 'm1', role: 'assistant', text: '回复', status: 'error', error: '连接失败' }]}
@@ -57,17 +67,22 @@ describe('shared chat composition', () => {
     expect(html).toContain('语音状态');
     expect(html).toContain('连接失败');
     expect(html).toContain('role="log"');
-    const view: ActionSettingsView = { modelPath: 'pet', actions: [], selectedId: null, draft: '@action:head ',
-      busy: false, canCancel: false, taskNotice: null, error: null,
+    const view: ActionSettingsView = { modelPath: 'pet', reasoningEffort: 'none', draft: '@action:head ',
+      busy: false, canCancel: false, taskNotice: null, error: null, selectedId: null,
+      actions: [{ id: 'head', label: '转头', category: 'head', durationMs: 1000, enterMs: 200, returnMs: 200, tracks: [] }],
       messages: [{ id: 'task', role: 'assistant', text: '检查完成', status: 'done', reasoningSummary: '已调整衔接',
         reviewNotes: [{ actionId: 'head', message: '预览转头' }] }] };
-    const actions = renderToStaticMarkup(<ActionCatalogChat view={view} onDraftChange={vi.fn()}
-      onSubmit={vi.fn()} onClearChat={vi.fn()} />);
+    const actions = renderToStaticMarkup(<MotionSettingsPage view={view}
+      voice={{ enabled: false, state: 'off', partialText: '', error: null, loading: false, onToggle: vi.fn() }}
+      onGenerate={vi.fn(async () => {})} onCancel={vi.fn()} onSelect={vi.fn()} onReasoningEffortChange={vi.fn()}
+      onDraftChange={vi.fn()} onPreview={vi.fn(async () => {})} onDelete={vi.fn(async () => {})}
+      onUpdateMetadata={vi.fn(async () => true)} onSubmit={vi.fn(async () => {})} onClearChat={vi.fn()} />);
     expect(actions).toContain('role="log"');
     expect(actions).toContain('已调整衔接');
     expect(actions).toContain('预览转头');
-    expect(actions).toContain('@head');
-    expect(actions).toContain('新增动作');
+    expect(actions).toContain('动作表查看');
     expect(actions).toContain('动作表微调输入');
+    expect(actions).toContain('思考深度');
+    expect(actions).toContain('转头');
   });
 });

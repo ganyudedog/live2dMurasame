@@ -11,12 +11,13 @@ export const SubtitleWindow = observer(() => {
   const fontSize = subtitleFontSize(state.bounds.width, state.bounds.height);
   const lineHeight = fontSize * 1.35;
   const interactive = !state.settings.locked;
+  // 背景透明度始终由设置决定（预览时也一样，否则调外观时看不到效果）；
+  // 未锁定时保留极低的 1/255 底色，Windows 上全透明像素收不到鼠标事件。
+  const opacity = Math.max(interactive ? 1 / 255 : 0, state.settings.backgroundOpacity);
   const style: CSSProperties = { position: 'fixed', inset: 0, padding: '8px 16px', overflow: 'hidden', userSelect: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8,
     cursor: interactive ? 'move' : 'default', opacity: state.fading ? 0 : 1, transition: 'opacity 200ms ease',
-    // Keep unlocked transparent pixels hit-testable on Windows, including preview.
-    background: hovered && interactive ? 'rgba(24,24,24,0.3)'
-      : `rgba(24,24,24,${Math.max(interactive ? 1 / 255 : 0, state.phase === 'preview' ? 0 : state.settings.backgroundOpacity)})`,
+    background: hovered && interactive ? 'rgba(24,24,24,0.3)' : `rgba(24,24,24,${opacity})`,
     boxShadow: hovered && interactive ? 'inset 0 0 0 1px rgba(255,255,255,.7)' : 'none',
     color: state.settings.textColor, fontSize, lineHeight: `${lineHeight}px`, fontWeight: 600,
     fontFamily: '"Microsoft YaHei", sans-serif', textAlign: 'center',

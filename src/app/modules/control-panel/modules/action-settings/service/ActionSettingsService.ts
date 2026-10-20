@@ -4,7 +4,7 @@ import { parseActionCatalog, type ActionSourceData } from '../../../../../../../
 import type { ActionSettingsView } from '../domain/view';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { ActionDefinition } from '@app/modules/live2d/modules/actions/domain/types';
-import { ACTION_SESSION_MESSAGE_LIMIT, referencedActionIds, type ActionCatalogMessage } from '../domain/session';
+import { ACTION_SESSION_MESSAGE_LIMIT, referencedActionIds, replaceMentionsWithIds, type ActionCatalogMessage } from '../domain/session';
 import { readActionSession, writeActionSession } from '../infrastructure/sessionCache';
 import type { GenerationConstraints, GenerationProgress, GenerationReviewReport, GenerationTaskState } from '@app/modules/ai/modules/llm/domain/action-catalog/generation';
 import { clearGenerationCheckpoint, generationKey, readGenerationCheckpoint, writeGenerationCheckpoint } from '../infrastructure/generationCache';
@@ -21,6 +21,8 @@ export class ActionSettingsService {
   canCancel = false;
   taskNotice: string | null = null;
   error: string | null = null;
+  /** 本会话推理深度：只影响本页的生成与微调请求，不写全局配置。 */
+  reasoningEffort: PetReasoningEffort = 'none';
   private disposers: IReactionDisposer[] = [];
   private scope = '';
   private epoch = 0;
@@ -71,6 +73,7 @@ export class ActionSettingsService {
     const session = readActionSession(this.scope);
     this.messages = session.messages;
     this.draft = session.draft;
+    this.reasoningEffort = session.reasoningEffort ?? 'none';
     this.actions = (this.config.modelConfig?.actions ?? []) as ActionDefinition[];
     this.sources = null;
     this.taskNotice = null;
@@ -98,7 +101,20 @@ export class ActionSettingsService {
   }
 
   select(id: string): void { this.selectedId = id; }
+  setReasoningEffort(effort: PetReasoningEffort): void {
+    if (this.reasoningEffort === effort) return;
+    this.reasoningEffort = effort;
+    this.cacheSession();
+  }
   setDraft(value: string): void { this.draft = value; this.cacheSession(); }
+  /** 语音输入在动作页直接落到输入框；说出来的内容先复核再发送。 */
+  appendDraft(text: string): void {
+    const value = text.trim();
+    if (!value) return;
+    const needsSpace = Boolean(this.draft) && !/\s$/.test(this.draft);
+    this.draft = `${this.draft}${needsSpace ? ' ' : ''}${value} `;
+    this.cacheSession();
+  }
   clearChat(): void {
     if (this.busy) return;
     this.messages = [];
@@ -119,7 +135,8 @@ export class ActionSettingsService {
       if (this.error) throw new Error(this.error);
       if (!this.sources?.motions.length) throw new Error('当前模型没有可用于生成动作表的参数曲线');
       const constraints = this.constraints();
-      const key = await generationKey({ sources: this.sources, constraints, llm: this.config.globalModelConfig });
+      const key = await generationKey({ sources: this.sources, constraints,
+        reasoningEffort: this.reasoningEffort, llm: this.config.globalModelConfig });
       if (!this.isCurrent(request)) return;
       const checkpoint = readGenerationCheckpoint(request.path, key);
       if (checkpoint) runInAction(() => {
@@ -134,7 +151,7 @@ export class ActionSettingsService {
       let report: GenerationReviewReport | undefined;
       const next = await this.generator.generate(this.sources, request.controller.signal,
         (progress) => this.showProgress(request, pending, progress), {
-          constraints, checkpoint,
+          constraints, checkpoint, reasoningEffort: this.reasoningEffort,
           onReviewReport: (value) => { report = value; },
           onReasoningSummary: (summary) => { if (this.isCurrent(request)) runInAction(() => {
             pending.reasoningSummary = summary.slice(-2000);
@@ -193,19 +210,22 @@ export class ActionSettingsService {
       if (!this.sources) await this.load();
       if (!this.sources) throw new Error(this.error ?? '无法读取模型动作参数');
       if (!this.isCurrent(request)) return;
-      const ids = referencedActionIds(instruction);
+      const ids = referencedActionIds(instruction, this.actions);
       const missing = ids.filter((id) => !this.actions.some((action) => action.id === id));
       if (missing.length) throw new Error(`引用的动作不存在：${missing.join('、')}。请从动作表重新选择。`);
+      // 输入框里是 @显示名 标签，交给模型的指令还原成动作目录里的 @action:<id>。
+      const resolved = replaceMentionsWithIds(instruction, this.actions);
       const constraints = this.constraints();
       const key = await generationKey({ mode: 'refine', sources: this.sources, actions: this.actions,
-        instruction, constraints, llm: this.config.globalModelConfig });
+        instruction, constraints, reasoningEffort: this.reasoningEffort, llm: this.config.globalModelConfig });
       if (!this.isCurrent(request)) return;
       const checkpoint = readGenerationCheckpoint(request.path, key, 'refine');
       if (checkpoint?.task) runInAction(() => { pending.task = this.taskView(checkpoint.task!, '恢复微调任务'); });
       let report: GenerationReviewReport | undefined;
       const reply = await this.generator.refine({ sources: this.sources, actions: parseActionCatalog(this.actions),
-        referencedIds: ids, history, instruction }, request.controller.signal,
+        referencedIds: ids, history, instruction: resolved }, request.controller.signal,
         (progress) => this.showProgress(request, pending, progress), { constraints, checkpoint,
+          reasoningEffort: this.reasoningEffort,
           onCheckpoint: (value) => {
             if (!this.isCurrent(request)) return;
             const persisted = writeGenerationCheckpoint(request.path, key, value, 'refine');
@@ -292,7 +312,7 @@ export class ActionSettingsService {
       messages: this.messages.map((message) => ({ ...message,
         reviewNotes: message.reviewNotes?.map((note) => ({ ...note })),
         task: message.task ? JSON.parse(JSON.stringify(message.task)) : undefined })), draft: this.draft, busy: this.busy, canCancel: this.canCancel,
-      taskNotice: this.taskNotice, error: this.error };
+      taskNotice: this.taskNotice, error: this.error, reasoningEffort: this.reasoningEffort };
   }
 
   cancel(): void {
@@ -391,7 +411,7 @@ export class ActionSettingsService {
   }
 
   private cacheSession(): void {
-    try { writeActionSession(this.scope, { draft: this.draft, messages: this.messages }); }
+    try { writeActionSession(this.scope, { draft: this.draft, messages: this.messages, reasoningEffort: this.reasoningEffort }); }
     catch { this.taskNotice = '编辑会话缓存写入失败；已完成步骤保留在当前窗口，请勿刷新。'; }
     const transcript = this.messages.filter((message) => message.status !== 'sending')
       .map((message) => `### ${message.role}\n\n${message.text.trim()}`)

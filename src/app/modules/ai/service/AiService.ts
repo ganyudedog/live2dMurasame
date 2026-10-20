@@ -133,15 +133,17 @@ export class AiService {
       this.lastError = null;
     });
     this.stateBus.publishChatRequest({ ...request, status: 'processing' });
+    const reasoningEffort = request.reasoningEffort ?? 'default';
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'chat.request',
-      params: { requestId: request.id, source: request.source, textLength: request.text.trim().length },
+      params: { requestId: request.id, source: request.source, textLength: request.text.trim().length, reasoningEffort },
       behavior: '执行 Stage2 对话、流式句子处理、TTS 队列和状态总线更新',
     });
     const trace = context.beginTrace('processChatRequest', {
       requestId: request.id,
       source: request.source,
       textLength: request.text.trim().length,
+      reasoningEffort,
     });
 
     let accumulatedDisplay = '';
@@ -169,6 +171,8 @@ export class AiService {
         signal: controller.signal,
         apiKey: aiConfig.apiKey,
         baseURL: aiConfig.baseURL,
+        // 每轮对话的思考深度由用户当次选择；default 不发送推理参数。
+        reasoningEffort,
         onSentenceSpeechReady: ({ sentenceIndex, speakText }) => submitSpeech(sentenceIndex, speakText),
         onSentenceDisplayReady: ({ sentenceIndex, displayText }) => prepareDisplay(sentenceIndex, displayText),
         onSentenceStreaming: (sentence) => {

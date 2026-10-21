@@ -15,8 +15,8 @@ interface Stage2AskOptions {
   temperature?: number;
   apiKey?: string;
   baseURL?: string;
-  /** 本轮对话的思考深度；default 表示不发送 reasoning_effort，沿用接口默认值。 */
-  reasoningEffort?: ReasoningEffort;
+  /** 本轮对话的思考深度；空值表示该模型不接受 reasoning_effort，请求里不带该字段。 */
+  reasoningEffort?: ReasoningEffort | '';
   // 同一解析器分别报告字段就绪和整句完成，共享连续的业务句子编号。
   onSentenceStreaming?: (sentence: ParsedSentence) => void;
   onSentenceSpeechReady?: (sentence: { sentenceIndex: number; speakText: string }) => void;
@@ -63,11 +63,14 @@ export class LlmService {
       (system, user, signal) => this.requestMemoryStructured(system, user, signal));
   }
 
-  setConfig(patch: Partial<RuntimeBridgeConfig>): RuntimeBridgeConfig {
+  setConfig(patch: Partial<RuntimeBridgeConfig> & { reasoningEffort?: ReasoningEffort | '' }): RuntimeBridgeConfig {
     const next: Stage2LLMConfig = { ...this.config };
     if (isString(patch.apiKey)) next.apiKey = patch.apiKey.trim();
     if (isString(patch.baseURL)) next.baseURL = patch.baseURL.trim();
-    if (isString(patch.model)) next.model = patch.model.trim();
+    // 模型允许被显式清空：用户删掉所有模型后，动作表生成应当报“未配置”而不是沿用上一个模型。
+    if (typeof patch.model === 'string') next.model = patch.model.trim();
+    // 深度只接受显式值：空串表示该模型不接受 reasoning_effort，请求体里不带这个字段。
+    if (patch.reasoningEffort !== undefined) next.reasoningEffort = patch.reasoningEffort;
     if (typeof patch.temperature === 'number' && Number.isFinite(patch.temperature)) {
       next.temperature = Math.max(0, Math.min(1.5, patch.temperature));
     }
@@ -80,33 +83,35 @@ export class LlmService {
     return {
       apiKey: this.config.apiKey ?? globalConfig?.apiKey?.trim() ?? '',
       baseURL: this.config.baseURL ?? globalConfig?.baseURL?.trim() ?? '',
-      model: this.config.model ?? globalConfig?.model?.trim() ?? '',
+      // 这里是动作表生成用的模型（对话请求在 ask() 里显式带上自己的模型）。
+      model: this.config.model ?? '',
       temperature: typeof this.config.temperature === 'number' ? this.config.temperature : 0.4,
     };
   }
 
+  /** 动作表生成：模型与思考深度来自前端的动作表选择，缺一就不猜。 */
   async requestStructured(systemPrompt: string, userPrompt: string, signal?: AbortSignal, requestOptions?: {
     onReasoningSummary?: (text: string) => void;
-    /** 调用方指定的推理深度，例如动作会话；缺省回落到全局动作配置。 */
-    reasoningEffort?: ReasoningEffort;
     task?: { taskId: string; versionId: string; stage?: GenerationProgress['stage'] };
   }): Promise<string> {
-    const config = this.resolveConfig();
-    const reasoningEffort = requestOptions?.reasoningEffort
-      ?? this.getConfigSnapshot()?.globalModelConfig?.actionReasoningEffort ?? 'default';
+    const model = this.config.model?.trim() ?? '';
+    if (!model) throw new Error('未选择动作表模型，请先在动作设置里选择');
+    const reasoningEffort = this.config.reasoningEffort ?? '';
+    const config = this.resolveConfig({ model });
     const context = this.log?.contextRegistry.register('LlmService', {
       relation: 'actionCatalog.request', params: { model: config.model, reasoningEffort, ...requestOptions?.task },
-      behavior: '动作任务请求、推理深度、摘要与缓存用量',
+      behavior: '动作任务请求与摘要、缓存用量',
     });
     const trace = context?.beginTrace('requestStructured');
     let reasoningSummary = '';
     try {
-      const result = await requestStructuredLLM(config, { systemPrompt, userPrompt, signal, stream: true, reasoningEffort,
+      const result = await requestStructuredLLM(config, { systemPrompt, userPrompt, signal, stream: true,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
         onReasoningSummary: (event) => {
           reasoningSummary = (reasoningSummary + (event.delta ?? event.text)).slice(-2000);
           requestOptions?.onReasoningSummary?.(reasoningSummary);
         } });
-      if (reasoningSummary) trace?.record('reasoning.summary', { reasoningEffort, text: reasoningSummary });
+      if (reasoningSummary) trace?.record('reasoning.summary', { text: reasoningSummary });
       const usage = { ...(result.usage ?? { cacheStatus: 'unreported' }) };
       trace?.record('prompt-cache.usage', usage);
       trace?.end({ model: result.usedModel, ...usage });
@@ -118,8 +123,12 @@ export class LlmService {
   }
 
   private async requestMemoryStructured(systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<string> {
-    const config = this.resolveConfig();
-    const reasoningEffort = this.getConfigSnapshot()?.globalModelConfig?.memoryReasoningEffort ?? 'default';
+    const globalConfig = this.getConfigSnapshot()?.globalModelConfig;
+    const memoryModel = globalConfig?.memoryModel?.trim() ?? '';
+    if (!memoryModel) throw new Error('未选择记忆整理模型，请先在 AI 设置的记忆整理里选择');
+    // 记忆整理用独立模型与深度：它由后台自动触发，所以这两项由后端持久化，不走前端缓存。
+    const config = this.resolveConfig({ model: memoryModel });
+    const reasoningEffort = globalConfig?.memoryReasoningEffort;
     const context = this.log?.contextRegistry.register('LlmService', {
       relation: 'memory.consolidation', params: { model: config.model, reasoningEffort },
       behavior: '使用结构化 LLM 请求归纳对话记忆，再由 Electron 持久化核心记忆',
@@ -127,7 +136,8 @@ export class LlmService {
     const trace = context?.beginTrace('consolidateMemory');
     try {
       const result = await requestStructuredLLM(config, {
-        systemPrompt, userPrompt, signal, stream: false, cachePurpose: 'memory', reasoningEffort,
+        systemPrompt, userPrompt, signal, stream: false, cachePurpose: 'memory',
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       });
       const usage = { ...(result.usage ?? { cacheStatus: 'unreported' }) };
       trace?.record('prompt-cache.usage', usage);
@@ -263,7 +273,7 @@ export class LlmService {
         hasSpeakText: Boolean(speakText),
         displayLang: languageProfile.displayLang,
         speakLang: languageProfile.speakLang,
-        reasoningEffort: options.reasoningEffort ?? 'default',
+        reasoningEffort: options.reasoningEffort ?? undefined,
         memoryEpisodes: memoryRuntime.episodeRecall?.matches?.length
           ?? memoryRuntime.memoryState?.episodeCount
           ?? memoryRuntime.memoryState?.episodeDates?.length

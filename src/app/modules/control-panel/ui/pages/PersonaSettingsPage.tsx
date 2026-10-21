@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ModelConfig } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
-import { Field, SettingsCard } from '../components/SettingsSection';
+import { Field, SettingsCard } from '../components/common/SettingsSection';
 
 const isSamePersona = (left: ModelConfig['persona'], right: ModelConfig['persona']) => (
   left.personal === right.personal

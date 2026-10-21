@@ -16,7 +16,7 @@ let state: SharedState = {
     throttled: false,
     lastUpdatedAt: 0,
   },
-  config: { model: '', apiKey: '', baseURL: '', displayLang: 'zh' },
+  config: { model: '', apiKey: '', baseURL: '', displayLang: 'zh', reasoningEffort: '' },
   chat: { request: null, response: null },
 };
 
@@ -121,6 +121,11 @@ const applyOp = (op: PatchOp) => {
   if (op.path === 'config.displayLang') {
     const next = (op.value === 'en' || op.value === 'ja' || op.value === 'ko') ? op.value : 'zh';
     state = { ...state, config: { ...state.config, displayLang: next } };
+    return;
+  }
+  if (op.path === 'config.reasoningEffort' && typeof op.value === 'string') {
+    // 空字符串表示该模型不接受该参数；值域由探测决定，这里只做透传。
+    state = { ...state, config: { ...state.config, reasoningEffort: op.value as PetReasoningEffort | '' } };
     return;
   }
   // ── chat.request（完整对象）──

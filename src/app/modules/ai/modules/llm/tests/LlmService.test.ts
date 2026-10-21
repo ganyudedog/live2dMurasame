@@ -10,42 +10,60 @@ vi.mock('../infrastructure/llmClient', () => ({ requestStage2LLM: vi.fn(), reque
 describe('LLM and RAG orchestration', () => {
   afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
-  it('uses the current user memory reasoning setting for background consolidation', async () => {
-    let depth: PetReasoningEffort | undefined = 'high';
+  it('uses the persisted memory model and depth for background consolidation', async () => {
+    let memoryModel = 'memory-model';
+    let depth: PetReasoningEffort | '' = 'high';
+    const trace = { record: vi.fn() };
     const memory = { coreText: '# 核心记忆', pendingEpisodeText: '新的对话'.repeat(600), pendingThroughCount: 1,
       state: { conversationCount: 1, lastConsolidatedCount: 0, lastConversationAt: Date.now() } };
     vi.stubGlobal('window', { MemoryAPI: { get: vi.fn().mockResolvedValue(memory),
       appendConversation: vi.fn().mockResolvedValue(memory), consolidate: vi.fn().mockResolvedValue(memory) } });
     const service = new LlmService({ getConfigSnapshot: () => ({ activeModelPath: 'model-a', globalModelConfig: {
-      apiKey: 'key', model: 'model', memoryReasoningEffort: depth, actionReasoningEffort: 'low',
+      apiKey: 'key', model: 'chat-model', memoryModel, memoryReasoningEffort: depth,
     }, modelConfig: { actions: [] } }) as unknown as PetConfigSnapshot });
-    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"你好"}', usedModel: 'model' });
-    vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: '{"coreText":"# 核心记忆","processedThroughCount":1}', usedModel: 'model' });
-    await service.ask('你好', { trace: { record: vi.fn() } as unknown as TraceScope });
-    await vi.waitFor(() => expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(),
+    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"你好"}', usedModel: 'chat-model' });
+    // 对话模型由控制面板按前端选择下发；后端不再有单值 model 兜底。
+    service.setConfig({ model: 'chat-model' });
+    vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: '{"coreText":"# 核心记忆","processedThroughCount":1}', usedModel: 'memory-model' });
+    await service.ask('你好', { trace: trace as unknown as TraceScope });
+    // 记忆整理用独立模型，不借用对话模型。
+    await vi.waitFor(() => expect(requestStructuredLLM).toHaveBeenLastCalledWith(
+      expect.objectContaining({ model: 'memory-model' }),
       expect.objectContaining({ cachePurpose: 'memory', reasoningEffort: 'high' })));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    depth = undefined;
-    await service.ask('你好', { trace: { record: vi.fn() } as unknown as TraceScope });
-    await vi.waitFor(() => expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(),
-      expect.objectContaining({ cachePurpose: 'memory', reasoningEffort: 'default' })));
+    // 空深度不再有 “default” 语义：该模型不接受就不带这个参数。
+    depth = '';
+    await service.ask('你好', { trace: trace as unknown as TraceScope });
+    await vi.waitFor(() => expect(vi.mocked(requestStructuredLLM).mock.lastCall![1]).not.toHaveProperty('reasoningEffort'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // 没配记忆整理模型就不调用，也不回落到对话模型。
+    memoryModel = '';
+    const calls = vi.mocked(requestStructuredLLM).mock.calls.length;
+    await service.ask('你好', { trace: trace as unknown as TraceScope });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(requestStructuredLLM).mock.calls.length).toBe(calls);
+    expect(trace.record).toHaveBeenCalledWith('memory.consolidation.skipped',
+      expect.objectContaining({ reason: 'no-memory-model' }));
     service.dispose();
   });
 
   it('uses the injected live snapshot for both structured generation and dialogue', async () => {
     const remote = vi.fn(() => { throw new Error('global config must not be read'); });
     vi.stubGlobal('window', { SnapshotAPI: { getSnapshot: remote }, AIAPI: { getConfig: remote } });
-    let snapshot = { globalModelConfig: { apiKey: ' first-key ', model: ' first-model ', baseURL: ' http://first ' },
+    let snapshot = { globalModelConfig: { apiKey: ' first-key ', baseURL: ' http://first ' },
       modelConfig: { actions: [] } } as unknown as PetConfigSnapshot;
     const service = new LlmService({ getConfigSnapshot: () => snapshot });
+    // 模型由控制面板按前端选择下发；凭据仍然逐次读快照。
+    service.setConfig({ model: 'first-model' });
     vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: '{"actions":[]}', usedModel: 'first-model' });
     await service.requestStructured('generate actions', 'model parameters');
     expect(requestStructuredLLM).toHaveBeenCalledWith({ apiKey: 'first-key', model: 'first-model',
       baseURL: 'http://first', temperature: 0.4 }, expect.anything());
 
     // Electron 后续下发新快照时，下一次请求读取新配置，不保留构造时的副本。
-    snapshot = { globalModelConfig: { apiKey: 'next-key', model: 'next-model', baseURL: 'http://next', displayLang: 'en' },
+    snapshot = { globalModelConfig: { apiKey: 'next-key', baseURL: 'http://next', displayLang: 'en' },
       modelConfig: { actions: [shyAction], tts: { textLang: 'all_en' } } } as unknown as PetConfigSnapshot;
+    service.setConfig({ model: 'next-model' });
     vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"hello","speak_text":"hello"}', usedModel: 'next-model' });
     expect(await service.ask('hello', { trace: { record: vi.fn() } as unknown as TraceScope })).toMatchObject({ ok: true });
     expect(requestStage2LLM).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'next-key', model: 'next-model', baseURL: 'http://next' }),
@@ -56,23 +74,37 @@ describe('LLM and RAG orchestration', () => {
     service.dispose();
   });
 
-  it('reads action reasoning depth from each injected snapshot and leaves dialogue independent', async () => {
-    let depth: PetReasoningEffort = 'high';
+  it('sends the action-table model and its own depth, and nothing when the model has no depth', async () => {
     const service = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: {
-      apiKey: 'key', model: 'user-alias', actionReasoningEffort: depth,
+      apiKey: 'key',
     }, modelConfig: { actions: [] } }) as unknown as PetConfigSnapshot });
+    // 动作表的模型与深度同样来自前端缓存，由控制面板下发。
+    service.setConfig({ model: 'user-alias', reasoningEffort: 'medium' });
     vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: '{"actions":[]}', usedModel: 'user-alias' });
     await service.requestStructured('generate', 'curves');
-    expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ reasoningEffort: 'high', stream: true }));
-    depth = 'low';
+    expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(),
+      expect.objectContaining({ stream: true, reasoningEffort: 'medium' }));
+    // 模型不接受深度时（空串）请求体里没有这个字段。
+    service.setConfig({ reasoningEffort: '' });
     await service.requestStructured('refine', 'curves');
-    expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ reasoningEffort: 'low' }));
-    depth = 'default';
-    await service.requestStructured('generate', 'curves');
-    expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ reasoningEffort: 'default' }));
+    expect(vi.mocked(requestStructuredLLM).mock.lastCall![1]).not.toHaveProperty('reasoningEffort');
+    // 对话请求带自己的深度，不会借用动作表的。
     vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"hello"}', usedModel: 'user-alias' });
     await service.ask('hello', { trace: { record: vi.fn() } as unknown as TraceScope });
     expect(vi.mocked(requestStage2LLM).mock.lastCall![1]).not.toHaveProperty('reasoningEffort');
+    service.dispose();
+  });
+
+  it('refuses to generate actions without an explicit action model', async () => {
+    const service = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: {
+      apiKey: 'key',
+    }, modelConfig: { actions: [] } }) as unknown as PetConfigSnapshot });
+    // 删光模型后必须报错，而不是静默沿用上一次的模型或接口默认值。
+    service.setConfig({ model: '' });
+    await expect(service.requestStructured('generate', 'curves')).rejects.toThrow('未选择动作表模型');
+    service.setConfig({ model: 'user-alias' });
+    vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: '{"actions":[]}', usedModel: 'user-alias' });
+    await expect(service.requestStructured('generate', 'curves')).resolves.toContain('actions');
     service.dispose();
   });
 
@@ -83,7 +115,7 @@ describe('LLM and RAG orchestration', () => {
     expect(service.getConfig()).toEqual({ apiKey: '', model: '', baseURL: '', temperature: 0.4 });
     expect(await service.ask('hello', { trace: { record: vi.fn() } as unknown as TraceScope }))
       .toMatchObject({ ok: false, error: expect.stringContaining('未配置 AI 模型') });
-    await expect(service.requestStructured('generate', 'parameters')).rejects.toThrow('未配置 AI 模型');
+    await expect(service.requestStructured('generate', 'parameters')).rejects.toThrow('未选择动作表模型');
     expect(requestStage2LLM).not.toHaveBeenCalled();
     expect(requestStructuredLLM).not.toHaveBeenCalled();
     expect(remote).not.toHaveBeenCalled();

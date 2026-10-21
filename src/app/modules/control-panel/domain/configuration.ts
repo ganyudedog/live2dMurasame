@@ -1,13 +1,18 @@
 import type { ChatConfig } from '@app/shared/state-bus/sharedStateTypes';
 import type { ChatMessage, ModelConfig } from './types';
 
-export const toChatConfig = (config: PetGlobalModelConfig | null | undefined): ChatConfig => ({
-  model: typeof config?.model === 'string' ? config.model : '',
+/** 模型与思考深度来自前端缓存（llmSelectionCache），其余来自后端全局配置。 */
+export const toChatConfig = (
+  config: PetGlobalModelConfig | null | undefined,
+  selection?: { model?: string; effort?: PetReasoningEffort | '' },
+): ChatConfig => ({
+  model: typeof selection?.model === 'string' ? selection.model : '',
   apiKey: typeof config?.apiKey === 'string' ? config.apiKey : '',
   baseURL: typeof config?.baseURL === 'string' ? config.baseURL : '',
   displayLang: config?.displayLang === 'en' || config?.displayLang === 'ja' || config?.displayLang === 'ko'
     ? config.displayLang
     : 'zh',
+  reasoningEffort: selection?.effort ?? '',
 });
 
 export const buildPersonaConfig = (persisted: unknown, defaults: ModelConfig['persona']): ModelConfig['persona'] => {

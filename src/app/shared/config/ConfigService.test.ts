@@ -22,14 +22,15 @@ function setup(bridge: object) {
 }
 
 describe('ConfigService model edit isolation', () => {
-  it('saves action reasoning through the existing global bridge and exposes it in the injected snapshot', async () => {
-    const updateConfig = vi.fn(async (patch: PetGlobalModelConfigPayload) => ({ model: 'user-model', ...patch }));
+  it('saves the memory model and depth through the existing global bridge', async () => {
+    const updateConfig = vi.fn(async (patch: PetGlobalModelConfigPayload) => ({ baseURL: 'http://x', ...patch }));
     const service = setup({ globalApi: { updateConfig } });
-    await service.updateGlobalConfig({ actionReasoningEffort: 'high' });
-    expect(updateConfig).toHaveBeenCalledExactlyOnceWith({ actionReasoningEffort: 'high' });
-    expect(service.getSnapshot()?.globalModelConfig).toMatchObject({ actionReasoningEffort: 'high', model: 'user-model' });
-    await service.updateGlobalConfig({ actionReasoningEffort: 'default' });
-    expect(service.getSnapshot()?.globalModelConfig?.actionReasoningEffort).toBe('default');
+    await service.updateGlobalConfig({ memoryModel: 'memory-model', memoryReasoningEffort: 'high' });
+    expect(updateConfig).toHaveBeenCalledExactlyOnceWith({ memoryModel: 'memory-model', memoryReasoningEffort: 'high' });
+    expect(service.getSnapshot()?.globalModelConfig).toMatchObject({ memoryModel: 'memory-model', memoryReasoningEffort: 'high', baseURL: 'http://x' });
+    // 空字符串表示该模型不接受该参数，仍然要落盘，不能用 “default” 之类的隐式语义。
+    await service.updateGlobalConfig({ memoryReasoningEffort: '' });
+    expect(service.getSnapshot()?.globalModelConfig?.memoryReasoningEffort).toBe('');
     service.dispose();
   });
 

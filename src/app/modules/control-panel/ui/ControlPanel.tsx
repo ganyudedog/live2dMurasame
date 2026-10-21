@@ -6,7 +6,7 @@ import { TOKENS } from '@app/core/serviceTokens';
 import ControlPanelLayout from './ControlPanelLayout';
 import { useThemeMode } from './theme';
 import HomePage from './pages/HomePage';
-import InteractionPage from '../modules/interaction/ui/InteractionPage';
+import InteractionPage from './pages/InteractionPage';
 import AiSettingsPage from './pages/AiSettingsPage';
 import ModelSelectPage from './pages/ModelSelectPage';
 import ModelParamsPage from './pages/ModelParamsPage';
@@ -54,6 +54,8 @@ const ControlPanel: React.FC = observer(() => {
           chatSending={service.chatSending}
           chatError={service.chatError}
           chatReasoningEffort={service.chatReasoningEffort}
+          llmModels={service.llmModels}
+          chatModel={service.aiSettings.model}
           asrEnabled={service.stateBus.asr.enabled}
           asrState={service.stateBus.asr.state}
           asrPartialText={service.stateBus.asr.partialText}
@@ -64,6 +66,7 @@ const ControlPanel: React.FC = observer(() => {
           onClearChat={service.clearChat}
           onToggleAsr={(enabled) => void service.toggleAsr(enabled)}
           onChatReasoningEffortChange={service.setChatReasoningEffort}
+          onChatModelChange={service.setChatModel}
         />
       )}
 
@@ -97,7 +100,11 @@ const ControlPanel: React.FC = observer(() => {
         onDraftChange={service.actionSettings.setDraft} onPreview={service.actionSettings.preview}
         onDelete={service.actionSettings.deleteAction} onSubmit={service.actionSettings.submit}
         onUpdateMetadata={service.actionSettings.updateMetadata}
-        onReasoningEffortChange={service.actionSettings.setReasoningEffort}
+        llmModels={service.llmModels}
+        actionModel={service.actionModel}
+        actionReasoningEffort={service.actionReasoningEffort}
+        onActionModelChange={service.setActionModel}
+        onActionReasoningEffortChange={service.setActionReasoningEffort}
         onClearChat={service.actionSettings.clearChat} />}
 
       {activeTab === 'model-interaction' && (
@@ -106,18 +113,21 @@ const ControlPanel: React.FC = observer(() => {
 
       {activeTab === 'ai-settings' && (
         <AiSettingsPage
-          model={service.aiSettings.model}
           apiBaseUrl={service.aiSettings.baseURL}
           apiKey={service.aiSettings.apiKey}
-          memoryReasoningEffort={service.config.globalModelConfig?.memoryReasoningEffort}
-          onMemoryReasoningEffortChange={(memoryReasoningEffort) => void service.config.updateGlobalConfig({ memoryReasoningEffort }).catch(reportError)}
           displayLang={service.aiSettings.displayLang}
+          llmModels={service.llmModels}
+          memoryModel={service.memoryModel}
+          memoryReasoningEffort={service.memoryReasoningEffort}
           onChange={(next) => service.setAiSettings({
-            model: next.model,
+            ...service.aiSettings,
             apiKey: next.apiKey,
             baseURL: next.apiBaseUrl,
             displayLang: next.displayLang,
           })}
+          onLlmModelsChange={(llmModels) => service.config.updateGlobalConfig({ llmModels })
+            .then(() => service.syncSelection())}
+          onMemoryChange={(patch) => void service.config.updateGlobalConfig(patch).catch(reportError)}
           globalConfig={service.config.globalModelConfig ?? {}}
           onGlobalConfigChange={(patch) => service.config.updateGlobalConfig(patch)}
           modelConfig={service.modelConfig}

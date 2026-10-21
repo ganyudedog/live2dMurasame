@@ -1,6 +1,6 @@
 import type { ActionIntentInput, ActionCapability } from '../../../../live2d/modules/actions/domain/types';
 
-/** 显式请求参数；default 表示不覆盖接口默认值，不根据模型名称猜测能力。 */
+/** 显式请求参数；空值表示该模型不接受该参数，请求里不带这个字段，也不替接口猜默认值。 */
 export type ReasoningEffort = PetReasoningEffort;
 
 export interface ReasoningSummaryEvent {
@@ -16,6 +16,8 @@ export interface Stage2LLMConfig {
   // ai的发散程度，数值越大越发散，默认为0.4
   temperature?: number;
   timeoutMs?: number;
+  // 空字符串表示该模型不接受该参数；请求体里不带 reasoning_effort。
+  reasoningEffort?: ReasoningEffort | '';
 }
 
 export interface Stage2LLMRequest {
@@ -29,7 +31,8 @@ export interface Stage2LLMRequest {
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
   // 是否启用流式输出（降低首字等待时间）
   stream?: boolean;
-  reasoningEffort?: ReasoningEffort;
+  // 空字符串表示该模型不接受该参数；请求体里不带 reasoning_effort。
+  reasoningEffort?: ReasoningEffort | '';
   onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
   // 流式增量回调：每次收到模型增量文本时触发
   onStreamDelta?: (event: {

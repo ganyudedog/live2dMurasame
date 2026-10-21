@@ -1,8 +1,8 @@
 import { observer } from 'mobx-react-lite';
 import { useMemo, useState } from 'react';
-import Modal from '../../../ui/components/Modal';
-import { motionFile, motionKey, motionLabel, tierOf, WEIGHT_MAX, WEIGHT_TIERS } from '../domain/interaction';
-import type { InteractionSettingsService } from '../service/InteractionSettingsService';
+import Modal from '../components/common/Modal';
+import { motionFile, motionKey, motionLabel, tierOf, WEIGHT_MAX, WEIGHT_TIERS } from '../../modules/interaction/domain/interaction';
+import type { InteractionSettingsService } from '../../modules/interaction/service/InteractionSettingsService';
 
 const baseName = (motion: PetMotionDescriptor) => motionFile(motion.file);
 

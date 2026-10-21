@@ -13,7 +13,7 @@ describe('LLM-backed memory consolidation', () => {
       processedThroughCount: 8,
     }));
     const trace = { record: vi.fn() };
-    const service = new MemoryService(() => null, request);
+    const service = new MemoryService(() => ({ globalModelConfig: { memoryModel: 'memory-model' } }) as unknown as PetConfigSnapshot, request);
     const runtime = {
       contextText: '', modelPath: 'model-a',
       memoryState: {
@@ -40,7 +40,7 @@ describe('LLM-backed memory consolidation', () => {
     const consolidate = vi.fn();
     vi.stubGlobal('window', { MemoryAPI: { consolidate } });
     const request = vi.fn().mockResolvedValue(JSON.stringify({ coreText: '# 核心记忆', processedThroughCount: 99 }));
-    const service = new MemoryService(() => null, request);
+    const service = new MemoryService(() => ({ globalModelConfig: { memoryModel: 'memory-model' } }) as unknown as PetConfigSnapshot, request);
     const runtime = {
       contextText: '', modelPath: 'model-a', memoryState: {
         modelPath: 'model-a', modelKey: 'model-a',
@@ -58,5 +58,27 @@ describe('LLM-backed memory consolidation', () => {
     await service.consolidateIfNeeded(runtime);
     expect(request).toHaveBeenCalledOnce();
     expect(consolidate).not.toHaveBeenCalled();
+  });
+
+  it('skips consolidation with an explicit trace when no memory model is configured', async () => {
+    const consolidate = vi.fn();
+    vi.stubGlobal('window', { MemoryAPI: { consolidate } });
+    const request = vi.fn();
+    // 没配记忆整理模型就不调用，也不借用对话模型。
+    const service = new MemoryService(() => ({ globalModelConfig: { memoryModel: '' } }) as unknown as PetConfigSnapshot, request);
+    const trace = { record: vi.fn() };
+    const runtime = {
+      contextText: '', modelPath: 'model-a', memoryState: {
+        modelPath: 'model-a', modelKey: 'model-a', coreText: '# 核心记忆',
+        pendingEpisodeText: '待整理', pendingThroughCount: 8,
+        state: { version: 1, conversationCount: 8, lastConversationAt: Date.now() - 86400000, lastConsolidatedCount: 0, lastDecayDate: '' },
+      },
+    };
+
+    await service.consolidateIfNeeded(runtime, trace as never);
+    expect(request).not.toHaveBeenCalled();
+    expect(consolidate).not.toHaveBeenCalled();
+    expect(trace.record).toHaveBeenCalledWith('memory.consolidation.skipped',
+      expect.objectContaining({ reason: 'no-memory-model' }));
   });
 });

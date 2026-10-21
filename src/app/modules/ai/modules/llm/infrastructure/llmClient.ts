@@ -14,7 +14,7 @@ export interface StructuredLLMRequest {
   systemPrompt: string;
   userPrompt: string;
   signal?: AbortSignal;
-  reasoningEffort?: ReasoningEffort;
+  reasoningEffort?: ReasoningEffort | '';
   onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
   stream?: boolean;
   cachePurpose?: 'action-catalog' | 'memory';
@@ -30,9 +30,12 @@ const withTimeoutSignal = (timeoutMs: number): AbortSignal | undefined => {
   return undefined;
 };
 
-// 仅透传用户选择的推理深度；默认不发送，不按厂商或模型名切换协议。
-const reasoningOptions = (effort?: ReasoningEffort): Pick<ChatCompletionCreateParamsNonStreaming, 'reasoning_effort'> =>
-  effort && effort !== 'default' ? { reasoning_effort: effort } : {};
+// 仅透传用户选择的推理深度；空值不发送，不按厂商或模型名切换协议。
+// 档位值域由接口决定（可能含 ultra/max 等扩展档位），SDK 的联合类型只是已知子集，故在此处放宽。
+const reasoningOptions = (effort?: ReasoningEffort | ''): Pick<ChatCompletionCreateParamsNonStreaming, 'reasoning_effort'> =>
+  effort
+    ? { reasoning_effort: effort as ChatCompletionCreateParamsNonStreaming['reasoning_effort'] }
+    : {};
 
 const emitReasoning = (
   text: unknown,

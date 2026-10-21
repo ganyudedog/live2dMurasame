@@ -16,8 +16,6 @@ export interface ActionCatalogMessage {
 export interface ActionCatalogSession {
   draft: string;
   messages: ActionCatalogMessage[];
-  /** 本会话选择的推理深度；缺省视为关闭。 */
-  reasoningEffort?: PetReasoningEffort;
 }
 
 export const ACTION_SESSION_MESSAGE_LIMIT = 40;

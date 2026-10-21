@@ -12,6 +12,7 @@ import type {
 import type { ConfigService } from '../config/ConfigService';
 import type { ElectronService } from '../electron/ElectronService';
 import type { LogService } from '../logging/LogService';
+import { loadLlmSelection } from './llmSelectionCache';
 
 const DEFAULT_ASR_STATE: SharedState['asr'] = {
   enabled: false,
@@ -27,6 +28,7 @@ const DEFAULT_CHAT_CONFIG: ChatConfig = {
   apiKey: '',
   baseURL: '',
   displayLang: 'zh',
+  reasoningEffort: '',
 };
 
 export class StateBusService {
@@ -101,6 +103,7 @@ export class StateBusService {
       { path: 'config.apiKey', value: config.apiKey },
       { path: 'config.baseURL', value: config.baseURL },
       { path: 'config.displayLang', value: config.displayLang },
+      { path: 'config.reasoningEffort', value: config.reasoningEffort ?? '' },
     ], 'ai.config');
   }
 
@@ -127,11 +130,14 @@ export class StateBusService {
     if (typeof globalConfig?.scale === 'number' && Number.isFinite(globalConfig.scale)) {
       this.publishScale(globalConfig.scale);
     }
+    // 模型与深度不落后端，但要在这里读一次：桌宠窗口可能先于控制面板发起请求。
+    const selection = loadLlmSelection(Array.isArray(globalConfig?.llmModels) ? globalConfig.llmModels : [], 'chat');
     this.publishChatConfig({
-      model: typeof globalConfig?.model === 'string' ? globalConfig.model : '',
+      model: selection.model,
       apiKey: typeof globalConfig?.apiKey === 'string' ? globalConfig.apiKey : '',
       baseURL: typeof globalConfig?.baseURL === 'string' ? globalConfig.baseURL : '',
       displayLang: normalizeDisplayLang(globalConfig?.displayLang),
+      reasoningEffort: selection.effort,
     });
   }
 
@@ -189,6 +195,9 @@ export class StateBusService {
       else if (op.path === 'config.apiKey' && typeof op.value === 'string') nextConfig = { ...nextConfig, apiKey: op.value };
       else if (op.path === 'config.baseURL' && typeof op.value === 'string') nextConfig = { ...nextConfig, baseURL: op.value };
       else if (op.path === 'config.displayLang' && typeof op.value === 'string') nextConfig = { ...nextConfig, displayLang: normalizeDisplayLang(op.value) };
+      else if (op.path === 'config.reasoningEffort' && typeof op.value === 'string') {
+        nextConfig = { ...nextConfig, reasoningEffort: op.value as PetReasoningEffort | '' };
+      }
       else if (op.path === 'chat.request') this.chatRequest = op.value as ChatRequest;
       else if (op.path === 'chat.response') this.chatResponse = op.value as ChatResponse;
     }

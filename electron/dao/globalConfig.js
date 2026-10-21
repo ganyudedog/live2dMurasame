@@ -1,5 +1,10 @@
 import { readActionCatalog } from '../../shared/actionCatalog.js';
 import { DEFAULT_SUBTITLE_SETTINGS, DEFAULT_PUSH_TO_TALK, normalizeSubtitleSettings, normalizePushToTalk } from '../../shared/subtitleSettings.js';
+import {
+  normalizeEfforts,
+  normalizeLlmModels,
+  normalizeMemorySelection,
+} from '../../shared/llmModels.js';
 
 export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   scale: 1.0,
@@ -10,12 +15,14 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   pushToTalk: DEFAULT_PUSH_TO_TALK,
   forcedFollow: false,
   debugModeEnabled: false,
-  model: 'deepseek-v4-flash',
   apiKey: '',
   baseURL: '',
   displayLang: 'zh',
-  actionReasoningEffort: 'default',
-  memoryReasoningEffort: 'default',
+  // 用户从 /models 里挑出来的模型，以及每个模型探测得到的思考深度档位。
+  llmModels: [],
+  // 记忆整理必须由后端持有：它由后台自动触发，不能依赖某个窗口的内存态。
+  memoryModel: '',
+  memoryReasoningEffort: '',
   asr: {
     endpointPresetVersion: 1,
     profile: 'conversation',
@@ -222,21 +229,27 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
   if (typeof settings.debugModeEnabled === 'boolean') {
     next.debugModeEnabled = settings.debugModeEnabled;
   }
-  if (typeof settings.model === 'string') {
-    next.model = settings.model.trim();
-  }
   if (typeof settings.apiKey === 'string') {
     next.apiKey = settings.apiKey;
   }
   if (typeof settings.baseURL === 'string') {
     next.baseURL = settings.baseURL;
   }
-  if (['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(settings.actionReasoningEffort)) {
-    next.actionReasoningEffort = settings.actionReasoningEffort;
-  }
-  if (['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(settings.memoryReasoningEffort)) {
-    next.memoryReasoningEffort = settings.memoryReasoningEffort;
-  }
+  // 迁移：旧配置只有一个 model 字段，把它种进注册表；对话用哪个模型由前端缓存决定，
+  // 因此这里不再保留既做“默认值”又做“程序兜底”的 model 字段。
+  const legacyModel = typeof settings.model === 'string' ? settings.model.trim() : '';
+  const declaredModels = Array.isArray(settings.llmModels)
+    ? settings.llmModels
+    : (legacyModel ? [{ id: legacyModel, efforts: [], effortsSource: 'none', probedAt: 0 }] : []);
+  next.llmModels = normalizeLlmModels(declaredModels);
+  const memory = normalizeMemorySelection(
+    next.llmModels,
+    typeof settings.memoryModel === 'string' && settings.memoryModel.trim() ? settings.memoryModel : legacyModel,
+    // 档位值域开放（可能含 ultra/max 等扩展档位），只校验形状，具体合法性由模型的档位集合约束。
+    normalizeEfforts([settings.memoryReasoningEffort])[0] ?? '',
+  );
+  next.memoryModel = memory.memoryModel;
+  next.memoryReasoningEffort = memory.memoryReasoningEffort;
   if (settings.displayLang === 'zh' || settings.displayLang === 'en' || settings.displayLang === 'ja' || settings.displayLang === 'ko') {
     next.displayLang = settings.displayLang;
   }

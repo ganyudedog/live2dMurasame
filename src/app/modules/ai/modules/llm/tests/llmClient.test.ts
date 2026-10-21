@@ -32,7 +32,7 @@ describe('provider prompt cache and streaming usage', () => {
 
   it('omits reasoning parameters by default and preserves provider errors without a second request', async () => {
     network.create.mockResolvedValue(response);
-    for (const reasoningEffort of [undefined, 'default'] as const) {
+    for (const reasoningEffort of [undefined, ''] as const) {
       await requestStructuredLLM({ ...config, model: 'gpt-6' }, { systemPrompt: 'rules', userPrompt: 'curves', reasoningEffort });
       expect(network.create.mock.lastCall![0]).not.toHaveProperty('reasoning_effort');
     }

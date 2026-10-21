@@ -6,7 +6,19 @@ declare global {
   // 模型的加载状态
   type PetModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
-  type PetReasoningEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  /**
+   * 思考深度的线上协议值；空字符串/缺省表示不发送 reasoning_effort。
+   * 值域是开放的：接口可以声明扩展档位（ultra、max 等），能力集合一律以模型探测结果为准。
+   */
+  type PetReasoningEffort = string;
+
+  /** 已登记的大模型；efforts 只能来自接口自身（列表扩展字段 / 报错枚举 / 逐档探测）。 */
+  interface PetLlmModel {
+    id: string;
+    efforts: PetReasoningEffort[];
+    effortsSource: 'catalog' | 'error' | 'probe' | 'none';
+    probedAt: number;
+  }
 
   // 全局模型设置负载
   // 此处对应配置文件GlobalModelConfig.json中的字段
@@ -17,11 +29,11 @@ declare global {
     autoLaunch?: boolean;
     forcedFollow?: boolean;
     debugModeEnabled?: boolean;
-    model?: string;
     apiKey?: string;
     baseURL?: string;
-    actionReasoningEffort?: PetReasoningEffort;
-    memoryReasoningEffort?: PetReasoningEffort;
+    llmModels?: PetLlmModel[];
+    memoryModel?: string;
+    memoryReasoningEffort?: PetReasoningEffort | '';
     displayLang?: 'zh' | 'en' | 'ja' | 'ko';
     asr?: PetAsrConfig;
     subtitle?: Partial<import('../../shared/subtitleSettings.js').SubtitleSettings>;

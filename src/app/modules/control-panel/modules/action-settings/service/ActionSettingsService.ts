@@ -21,8 +21,6 @@ export class ActionSettingsService {
   canCancel = false;
   taskNotice: string | null = null;
   error: string | null = null;
-  /** 本会话推理深度：只影响本页的生成与微调请求，不写全局配置。 */
-  reasoningEffort: PetReasoningEffort = 'none';
   private disposers: IReactionDisposer[] = [];
   private scope = '';
   private epoch = 0;
@@ -30,12 +28,16 @@ export class ActionSettingsService {
   private persistedActionTranscript = '';
   private readonly generator: ActionCatalogService;
   private readonly config: ConfigService;
+  private readonly getTarget: () => { model: string; effort: PetReasoningEffort | '' };
 
-  constructor(generator: ActionCatalogService, config: ConfigService) {
+  constructor(generator: ActionCatalogService, config: ConfigService,
+    getTarget: () => { model: string; effort: PetReasoningEffort | '' } = () => ({ model: '', effort: '' })) {
     this.generator = generator;
     this.config = config;
-    makeAutoObservable<this, 'generator' | 'config' | 'controller' | 'disposers'>(this,
-      { generator: false, config: false, controller: false, disposers: false, sources: observableRef }, { autoBind: true });
+    this.getTarget = getTarget;
+    makeAutoObservable<this, 'generator' | 'config' | 'getTarget' | 'controller' | 'disposers'>(this,
+      { generator: false, config: false, getTarget: false, controller: false, disposers: false, sources: observableRef },
+      { autoBind: true });
     this.syncModel();
   }
 
@@ -73,7 +75,6 @@ export class ActionSettingsService {
     const session = readActionSession(this.scope);
     this.messages = session.messages;
     this.draft = session.draft;
-    this.reasoningEffort = session.reasoningEffort ?? 'none';
     this.actions = (this.config.modelConfig?.actions ?? []) as ActionDefinition[];
     this.sources = null;
     this.taskNotice = null;
@@ -101,11 +102,6 @@ export class ActionSettingsService {
   }
 
   select(id: string): void { this.selectedId = id; }
-  setReasoningEffort(effort: PetReasoningEffort): void {
-    if (this.reasoningEffort === effort) return;
-    this.reasoningEffort = effort;
-    this.cacheSession();
-  }
   setDraft(value: string): void { this.draft = value; this.cacheSession(); }
   /** 语音输入在动作页直接落到输入框；说出来的内容先复核再发送。 */
   appendDraft(text: string): void {
@@ -135,8 +131,9 @@ export class ActionSettingsService {
       if (this.error) throw new Error(this.error);
       if (!this.sources?.motions.length) throw new Error('当前模型没有可用于生成动作表的参数曲线');
       const constraints = this.constraints();
+      // 身份里带上本次使用的模型与深度：换模型后不能复用上一个模型的中间结果。
       const key = await generationKey({ sources: this.sources, constraints,
-        reasoningEffort: this.reasoningEffort, llm: this.config.globalModelConfig });
+        llm: this.config.globalModelConfig, target: this.getTarget() });
       if (!this.isCurrent(request)) return;
       const checkpoint = readGenerationCheckpoint(request.path, key);
       if (checkpoint) runInAction(() => {
@@ -151,7 +148,7 @@ export class ActionSettingsService {
       let report: GenerationReviewReport | undefined;
       const next = await this.generator.generate(this.sources, request.controller.signal,
         (progress) => this.showProgress(request, pending, progress), {
-          constraints, checkpoint, reasoningEffort: this.reasoningEffort,
+          constraints, checkpoint,
           onReviewReport: (value) => { report = value; },
           onReasoningSummary: (summary) => { if (this.isCurrent(request)) runInAction(() => {
             pending.reasoningSummary = summary.slice(-2000);
@@ -217,7 +214,7 @@ export class ActionSettingsService {
       const resolved = replaceMentionsWithIds(instruction, this.actions);
       const constraints = this.constraints();
       const key = await generationKey({ mode: 'refine', sources: this.sources, actions: this.actions,
-        instruction, constraints, reasoningEffort: this.reasoningEffort, llm: this.config.globalModelConfig });
+        instruction, constraints, llm: this.config.globalModelConfig, target: this.getTarget() });
       if (!this.isCurrent(request)) return;
       const checkpoint = readGenerationCheckpoint(request.path, key, 'refine');
       if (checkpoint?.task) runInAction(() => { pending.task = this.taskView(checkpoint.task!, '恢复微调任务'); });
@@ -225,7 +222,6 @@ export class ActionSettingsService {
       const reply = await this.generator.refine({ sources: this.sources, actions: parseActionCatalog(this.actions),
         referencedIds: ids, history, instruction: resolved }, request.controller.signal,
         (progress) => this.showProgress(request, pending, progress), { constraints, checkpoint,
-          reasoningEffort: this.reasoningEffort,
           onCheckpoint: (value) => {
             if (!this.isCurrent(request)) return;
             const persisted = writeGenerationCheckpoint(request.path, key, value, 'refine');
@@ -312,7 +308,7 @@ export class ActionSettingsService {
       messages: this.messages.map((message) => ({ ...message,
         reviewNotes: message.reviewNotes?.map((note) => ({ ...note })),
         task: message.task ? JSON.parse(JSON.stringify(message.task)) : undefined })), draft: this.draft, busy: this.busy, canCancel: this.canCancel,
-      taskNotice: this.taskNotice, error: this.error, reasoningEffort: this.reasoningEffort };
+      taskNotice: this.taskNotice, error: this.error };
   }
 
   cancel(): void {
@@ -411,7 +407,7 @@ export class ActionSettingsService {
   }
 
   private cacheSession(): void {
-    try { writeActionSession(this.scope, { draft: this.draft, messages: this.messages, reasoningEffort: this.reasoningEffort }); }
+    try { writeActionSession(this.scope, { draft: this.draft, messages: this.messages }); }
     catch { this.taskNotice = '编辑会话缓存写入失败；已完成步骤保留在当前窗口，请勿刷新。'; }
     const transcript = this.messages.filter((message) => message.status !== 'sending')
       .map((message) => `### ${message.role}\n\n${message.text.trim()}`)

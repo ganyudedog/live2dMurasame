@@ -133,7 +133,9 @@ export class AiService {
       this.lastError = null;
     });
     this.stateBus.publishChatRequest({ ...request, status: 'processing' });
-    const reasoningEffort = request.reasoningEffort ?? 'default';
+    // 深度是跨窗口的单点真值（ChatConfig），空字符串表示该模型不接受该参数。
+    const aiConfig = this.stateBus.chatConfig;
+    const reasoningEffort = aiConfig.reasoningEffort ?? '';
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'chat.request',
       params: { requestId: request.id, source: request.source, textLength: request.text.trim().length, reasoningEffort },
@@ -165,14 +167,14 @@ export class AiService {
     };
 
     try {
-      const aiConfig = this.stateBus.chatConfig;
       const result = await this.llm.ask(request.text.trim(), {
         trace,
         signal: controller.signal,
+        model: aiConfig.model,
         apiKey: aiConfig.apiKey,
         baseURL: aiConfig.baseURL,
-        // 每轮对话的思考深度由用户当次选择；default 不发送推理参数。
-        reasoningEffort,
+        // 每轮对话的思考深度由用户当前选择的模型决定；空值不发送推理参数。
+        ...(reasoningEffort ? { reasoningEffort } : {}),
         onSentenceSpeechReady: ({ sentenceIndex, speakText }) => submitSpeech(sentenceIndex, speakText),
         onSentenceDisplayReady: ({ sentenceIndex, displayText }) => prepareDisplay(sentenceIndex, displayText),
         onSentenceStreaming: (sentence) => {

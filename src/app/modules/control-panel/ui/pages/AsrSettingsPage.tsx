@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Field, SettingsCard } from '../components/SettingsSection';
+import { Field, SettingsCard } from '../components/common/SettingsSection';
 import type { AsrConfig } from '../../domain/types';
 
 export default function AsrSettingsPage({

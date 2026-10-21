@@ -16,8 +16,6 @@ export interface ChatRequest {
   status: 'pending' | 'processing' | 'done' | 'error' | 'cancelled';
   createdAt: number;
   voice?: { profile: 'conversation' | 'agent'; refined: boolean };
-  /** 本轮对话由用户选择的思考深度；缺省表示不发送该参数，沿用接口默认值。 */
-  reasoningEffort?: PetReasoningEffort;
 }
 
 /**
@@ -40,6 +38,11 @@ export interface ChatConfig {
   apiKey: string;
   baseURL: string;
   displayLang: 'zh' | 'en' | 'ja' | 'ko';
+  /**
+   * 当前对话模型的思考深度；空字符串表示该模型不接受 reasoning_effort，请求里不带该字段。
+   * 深度是跨窗口的单点真值，语音与悬浮输入发起的请求也走这一份，不再各自携带。
+   */
+  reasoningEffort?: PetReasoningEffort | '';
 }
 
 export type SharedState = {
@@ -74,7 +77,7 @@ export type PatchOp = {
     | 'asr.enabled' | 'asr.state' | 'asr.partialText'
     | 'asr.error' | 'asr.throttled' | 'asr.lastUpdatedAt'
     // config（标量独立字段）
-    | 'config.model' | 'config.apiKey' | 'config.baseURL' | 'config.displayLang'
+    | 'config.model' | 'config.apiKey' | 'config.baseURL' | 'config.displayLang' | 'config.reasoningEffort'
     // chat 对象
     | 'chat.request' | 'chat.response';
   value: number | boolean | string | null | ChatRequest | ChatResponse;

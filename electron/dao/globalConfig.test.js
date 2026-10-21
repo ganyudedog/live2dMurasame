@@ -18,15 +18,57 @@ describe('model action configuration persistence contract', () => {
   });
 });
 
-
-describe('explicit action reasoning settings', () => {
-  it.each(['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'])('preserves %s through a disk round trip', (actionReasoningEffort) => {
-    const saved = JSON.stringify(normalizeGlobalModelConfig({ model: 'my-model-alias', actionReasoningEffort }));
-    expect(normalizeGlobalModelConfig(JSON.parse(saved))).toMatchObject({ model: 'my-model-alias', actionReasoningEffort });
+describe('llm model registry persistence contract', () => {
+  it('migrates the legacy single model field into the registry', () => {
+    const config = normalizeGlobalModelConfig({ model: 'deepseek-chat' });
+    expect(config.llmModels).toEqual([{ id: 'deepseek-chat', efforts: [], effortsSource: 'none', probedAt: 0 }]);
+    expect(config).not.toHaveProperty('model');
+    // 旧 model 只做迁移来源，不会自动变成记忆整理模型。
+    expect(config.memoryModel).toBe('deepseek-chat');
   });
 
-  it('loads existing configurations without inventing a model capability', () => {
-    expect(normalizeGlobalModelConfig({ model: 'deepseek-v4-flash' }).actionReasoningEffort).toBe('default');
-    expect(normalizeGlobalModelConfig({ actionReasoningEffort: 'unexpected' }).actionReasoningEffort).toBe('default');
+  it('keeps declared effort order, deduplicates, and keeps protocol-external tiers', () => {
+    const config = normalizeGlobalModelConfig({
+      llmModels: [{ id: ' reasoner ', efforts: ['high', 'low', 'high', 'ultra', 'max'], effortsSource: 'probe',
+        probedAt: 1712345678.9 }],
+    });
+    // 顺序 = 接口给出的顺序（第一项是默认档），值域开放：ultra/max 不能被裁掉。
+    expect(config.llmModels).toEqual([
+      { id: 'reasoner', efforts: ['high', 'low', 'ultra', 'max'], effortsSource: 'probe', probedAt: 1712345678 },
+    ]);
+  });
+
+  it('drops effort values that are not identifier-shaped', () => {
+    const config = normalizeGlobalModelConfig({
+      llmModels: [{ id: 'a', efforts: ['low', '', '__probe_effort__', 'a'.repeat(40), 42, null, 'high'] }],
+    });
+    expect(config.llmModels[0].efforts).toEqual(['low', 'high']);
+  });
+
+  it('drops duplicate and empty model identifiers', () => {
+    const config = normalizeGlobalModelConfig({
+      llmModels: [{ id: 'a' }, { id: ' a ' }, { id: '   ' }, { id: 'b' }],
+    });
+    expect(config.llmModels.map((model) => model.id)).toEqual(['a', 'b']);
+  });
+
+  it('never keeps a memory model that is not registered', () => {
+    const config = normalizeGlobalModelConfig({ llmModels: [{ id: 'a' }], memoryModel: 'ghost', memoryReasoningEffort: 'high' });
+    expect(config.memoryModel).toBe('');
+    expect(config.memoryReasoningEffort).toBe('');
+  });
+
+  it('falls back to the first supported effort of the memory model instead of an interface default', () => {
+    const config = normalizeGlobalModelConfig({
+      llmModels: [{ id: 'a', efforts: ['low', 'high'], effortsSource: 'probe', probedAt: 1 }],
+      memoryModel: 'a',
+      memoryReasoningEffort: 'medium',
+    });
+    expect(config.memoryReasoningEffort).toBe('low');
+  });
+
+  it('drops the removed action reasoning field', () => {
+    const config = normalizeGlobalModelConfig({ actionReasoningEffort: 'high' });
+    expect(config).not.toHaveProperty('actionReasoningEffort');
   });
 });

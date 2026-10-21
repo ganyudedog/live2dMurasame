@@ -133,6 +133,8 @@ describe('action catalog complete data path', () => {
             }
             serviceModules.find(({ id }) => id === 'pet.ai.llm').register(container);
             const llm = container.resolve(TOKENS.ai.llm);
+            // 模型由控制面板按前端选择下发，等价于 ControlPanelService.pushChatModel。
+            llm.setConfig({ model: 'test-model' });
             disposers.push(() => llm.dispose());
             return llm;
         };

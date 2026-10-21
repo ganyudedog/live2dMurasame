@@ -1,5 +1,6 @@
-import ChatPanel from '../components/ChatPanel';
+import ChatPanel from '../components/common/ChatPanel';
 import { useScaleControl } from '../hooks/useScaleControl';
+import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';
 import type { ChatMessage, ModelEntry } from '../../domain/types';
 
 const MIC_STATE_LABEL: Record<PetMicState, string> = {
@@ -21,6 +22,8 @@ export default function HomePage({
   chatSending,
   chatError,
   chatReasoningEffort,
+  llmModels,
+  chatModel,
   asrEnabled,
   asrState,
   asrPartialText,
@@ -31,6 +34,7 @@ export default function HomePage({
   onClearChat,
   onToggleAsr,
   onChatReasoningEffortChange,
+  onChatModelChange,
 }: {
   model: ModelEntry;
   scale: number;
@@ -41,7 +45,9 @@ export default function HomePage({
   chatDraft: string;
   chatSending: boolean;
   chatError: string | null;
-  chatReasoningEffort: PetReasoningEffort;
+  chatReasoningEffort: PetReasoningEffort | '';
+  llmModels: PetLlmModel[];
+  chatModel: string;
   asrEnabled: boolean;
   asrState: PetMicState;
   asrPartialText: string;
@@ -51,9 +57,12 @@ export default function HomePage({
   onChatSubmit: () => void;
   onClearChat: () => void;
   onToggleAsr: (nextEnabled: boolean) => void | Promise<void>;
-  onChatReasoningEffortChange: (effort: PetReasoningEffort) => void;
+  onChatReasoningEffortChange: (effort: PetReasoningEffort | '') => void;
+  onChatModelChange: (modelId: string) => void;
 }) {
   const scaleControl = useScaleControl({ scale, onPreview: onScalePreview, onPersist: onScalePersist });
+  // 思考深度只在当前模型确实有档位时出现；空集不是“默认值”，而是接口不接受该参数。
+  const efforts = findModelEfforts(llmModels, chatModel);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-5">
@@ -106,11 +115,20 @@ export default function HomePage({
         inputLabel="对话输入"
         placeholder="在这里与 AI 对话，Shift+Enter 换行，Enter 发送"
         emptyMessage="还没有对话。直接输入文字即可开始，语音识别结果会汇入同一条链路。"
-        reasoningEffort={{
-          value: chatReasoningEffort,
+        model={llmModels.length ? {
+          label: 'Model',
+          value: chatModel,
+          options: modelOptionList(llmModels),
           disabled: chatSending,
-          onChange: onChatReasoningEffortChange,
-        }}
+          onChange: onChatModelChange,
+        } : undefined}
+        effort={efforts.length ? {
+          label: 'Reasoning',
+          value: chatReasoningEffort || efforts[0],
+          options: effortOptionList(efforts),
+          disabled: chatSending,
+          onChange: (value) => onChatReasoningEffortChange(value as PetReasoningEffort),
+        } : undefined}
         toolbar={
           <button
             type="button"

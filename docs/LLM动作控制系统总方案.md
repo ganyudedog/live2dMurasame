@@ -74,9 +74,11 @@ ControlPanelService.actionSettings
 - 运行时为 ActionCatalogService 内部的每请求对象，不注册独立 Agent 服务，不访问存储、IPC 或 UI。
 - task 带 schemaVersion、taskId、revision/currentVersionId/bestVersionId、运行状态、本次与累计预算、稳定 issueId、最近24条修订摘要。checkpoint 同时保存最佳版本实际轨迹及其审查意见、逐组审查进度、逐批修订进度和最后一个已付费答复。
 - 问题 ID 由任务分配；审查提示要求复用旧 ID，只处理之前未解决的目标。优先满足硬执行约束，再按剩余表现问题数量选择最佳候选。这个排序不是视觉评分，不代表模型真实观感已通过验收。
-- 移除 InferenceAdapter 与 fast/deep 模式。动作设置复用 LlmService 的结构化请求，通过 AI 设置中的 actionReasoningEffort 显式指定推理深度，生成与微调均生效。
-- 深度为 default/none/minimal/low/medium/high/xhigh；default 不发送推理参数，其余原样作为 Chat Completions 的 reasoning_effort 发送。支持哪些值由用户所接接口决定，错误直接显示，不猜模型能力，不根据模型名或地址自动切换 Responses/Chat Completions。
-- 深度经 ConfigService → IPC → 后端配置归一化保存，Electron 快照注入后由 LlmService 在每次请求时读取；它同时参与任务 checkpoint 身份，改变设置不会复用旧设置的生成结果。日常对话不受动作推理深度影响，保留原请求参数。
+- 移除 InferenceAdapter 与 fast/deep 模式。动作设置复用 LlmService 的结构化请求；动作表有自己独立的前端选择（模型 + 思考强度），与对话互不影响。
+- 动作表与对话一样不再有后端推理深度字段：globalConfig.actionReasoningEffort 已删除。动作表的模型与深度随请求下发，任务身份摘要（generationKey）把 target={model,effort} 计入，换模型后不复用上一个模型的中间结果；模型为空时直接报「未选择动作表模型」，请求不发送 reasoning_effort。
+- 思考深度只属于前端选择：模型由用户在 AI 设置里通过 /models 列表自行添加（llmModels 持久化在后端），每个模型支持的档位由探测得到（先发一个非法值读拒绝消息里的枚举，400/422 都算，读不到再逐档发最小请求），前端只提供这些档位，默认取第一档；模型不接受该参数时整个控件不显示，请求里也不带该字段。
+- 档位值域是开放的：接口可以声明 none/minimal/low/medium/high/xhigh 之外的扩展档位（例如 ultra、max），探测结果原样保留并按接口顺序展示，不用固定白名单裁剪；只有像 `__probe_effort__` 这种非标识符形态的值会被丢弃。
+- 对话与动作表的模型/深度都是渲染进程的本地选择（localStorage，两个独立槽位），不落后端；后端只持久化模型清单与记忆整理用的模型和深度。记忆整理没有配置模型时明确跳过（trace: memory.consolidation.skipped），不借用对话模型兜底。
 - 原始 reasoning_content 不作为摘要。UI 展示兼容接口明确提供的 reasoning_summary 和模型公开输出的 summary（本步结论/修改说明），并与最终动作 JSON 分流。中途网络失败、时间预算、取消和协议错误不会提交不完整动作表。
 - 正式动作表仍只经 ConfigService → IPC → 后端 DAO 提交；任务 checkpoint 和编辑会话由控制面板工作区缓存。暂不接入记忆整理或外部 Agent Harness。
 

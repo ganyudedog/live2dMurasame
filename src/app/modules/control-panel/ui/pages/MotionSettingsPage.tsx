@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import ChatPanel from '../components/ChatPanel';
-import Modal from '../components/Modal';
+import ChatPanel from '../components/common/ChatPanel.js';
+import Modal from '../components/common/Modal.js';
 import type { ActionSettingsView, ActionSettingsCallbacks } from '../../modules/action-settings/domain/view';
 import { actionMention, activeMention } from '../../modules/action-settings/domain/session';
+import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';
 import type { ActionCategory } from '../../../../../../shared/actionCatalog.js';
 
 const CATEGORY_META: Record<ActionCategory, { label: string; badge: string; stamp: string; dot: string }> = {
@@ -33,10 +34,16 @@ export interface MotionVoiceProps {
 }
 
 const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDraftChange, onPreview, onDelete,
-  onUpdateMetadata, onSubmit, onClearChat, onReasoningEffortChange }: {
+  onUpdateMetadata, onSubmit, onClearChat, llmModels, actionModel, actionReasoningEffort,
+  onActionModelChange, onActionReasoningEffortChange }: {
   view: ActionSettingsView;
   voice: MotionVoiceProps;
-  onReasoningEffortChange: (effort: PetReasoningEffort) => void;
+  /** 动作表生成用的模型与思考强度；两者都只存前端缓存。 */
+  llmModels: readonly PetLlmModel[];
+  actionModel: string;
+  actionReasoningEffort: PetReasoningEffort | '';
+  onActionModelChange: (modelId: string) => void;
+  onActionReasoningEffortChange: (effort: PetReasoningEffort | '') => void;
 } & ActionSettingsCallbacks) => {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -53,6 +60,8 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
   const editingId = editing?.id ?? null;
 
   const mention = dismissed ? null : activeMention(view.draft, cursor);
+  // 只有当前动作表模型探测出的档位可选；没有档位时整块控件不出现。
+  const actionEfforts = findModelEfforts(llmModels, actionModel);
   const suggestions = mention ? view.actions.filter((action) => action.id.includes(mention.query)
     || action.label.toLowerCase().includes(mention.query)) : [];
   const selectedChoice = Math.min(choice, Math.max(0, suggestions.length - 1));
@@ -128,8 +137,21 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
       inputLabel="动作表微调输入"
       placeholder="描述调整要求，输入 @ 引用动作。Shift+Enter 换行，Enter 发送"
       emptyMessage="例如：新增一个害羞动作，或输入 @ 引用某个动作后说明要改成什么样。"
-      reasoningEffort={{ value: view.reasoningEffort, disabled: view.busy, onChange: onReasoningEffortChange }}
       mentions={view.actions.map((action) => ({ id: action.id, label: action.label, category: action.category }))}
+      model={llmModels.length ? {
+        label: 'Model',
+        value: actionModel,
+        options: modelOptionList(llmModels),
+        disabled: view.busy,
+        onChange: onActionModelChange,
+      } : undefined}
+      effort={actionEfforts.length ? {
+        label: 'Reasoning',
+        value: actionReasoningEffort || actionEfforts[0],
+        options: effortOptionList(actionEfforts),
+        disabled: view.busy,
+        onChange: (value) => onActionReasoningEffortChange(value as PetReasoningEffort),
+      } : undefined}
       voiceInput={{
         enabled: voice.enabled,
         statusLabel: MIC_STATE_LABEL[voice.state] ?? '语音输入',

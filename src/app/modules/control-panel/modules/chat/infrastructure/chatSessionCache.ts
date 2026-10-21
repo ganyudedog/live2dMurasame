@@ -31,15 +31,7 @@ const normalizeMessage = (value: unknown): ChatMessage | null => {
   };
 };
 
-/** 对话区可选值；不包含接口默认，未选中时按关闭思考处理。 */
-const REASONING_EFFORTS: readonly PetReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-
-const normalizeReasoningEffort = (value: unknown): PetReasoningEffort => (
-  typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
-    ? value as PetReasoningEffort
-    : 'none'
-);
-
+/** 对话区的草稿与消息按 Live2D 模型分仓；模型与思考深度属于全局选择，见 selectionCache。 */
 const normalizeSession = (value: unknown): ChatSessionCache | null => {
   if (!isObjectRecord(value)) return null;
   const draftText = typeof value.draftText === 'string' ? value.draftText : '';
@@ -50,7 +42,6 @@ const normalizeSession = (value: unknown): ChatSessionCache | null => {
   return {
     draftText,
     updatedAt,
-    reasoningEffort: normalizeReasoningEffort(value.reasoningEffort),
     messages,
   };
 };
@@ -84,7 +75,7 @@ export const getChatCacheScope = (modelPath?: string | null): string => {
 
 export const readChatSessionCache = (scope: string): ChatSessionCache => {
   const map = readCacheMap();
-  return map[scope] ?? { draftText: '', messages: [], reasoningEffort: 'none', updatedAt: 0 };
+  return map[scope] ?? { draftText: '', messages: [], updatedAt: 0 };
 };
 
 export const writeChatSessionCache = (scope: string, session: ChatSessionCache): void => {
@@ -92,7 +83,6 @@ export const writeChatSessionCache = (scope: string, session: ChatSessionCache):
   map[scope] = {
     draftText: session.draftText,
     updatedAt: session.updatedAt,
-    reasoningEffort: normalizeReasoningEffort(session.reasoningEffort),
     messages: session.messages.slice(-MAX_CACHE_MESSAGES),
   };
   writeCacheMap(map);

@@ -2,6 +2,7 @@ import { toChatConfig, buildPersonaConfig, trimText, shouldPreheatTts, createId,
 import { actionBound, computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import { DEFAULT_GLOBAL_UI_SETTINGS, DEFAULT_MODEL_CONFIG } from '../domain/defaults';
 import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '../modules/chat/infrastructure/chatSessionCache';
+import { loadLlmSelection, saveLlmSelection } from '@app/shared/state-bus/llmSelectionCache';
 import { InteractionSettingsService } from '../modules/interaction/service/InteractionSettingsService';
 import type { InteractionCommit } from '../modules/interaction/domain/interaction';
 import type {
@@ -29,13 +30,13 @@ export class ControlPanelService {
   chatMessages: ChatMessage[] = [];
   chatSending = false;
   chatError: string | null = null;
-  /** 日常对话的思考深度，由用户在对话区逐轮选择，随请求下发；默认关闭思考。 */
-  chatReasoningEffort: PetReasoningEffort = 'none';
   asrSwitchLoading = false;
   /** 已归入动作编辑输入框的语音请求，避免重复广播被追加两次。 */
   private lastActionAsrId = '';
   aiSettings: ChatConfig;
   aiSettingsPending = false;
+  /** 动作表生成的模型与思考强度；与对话一样只存前端缓存。 */
+  actionSelection: { model: string; effort: PetReasoningEffort | '' };
   ttsPreheatState: 'idle' | 'pending' | 'ok' | 'failed' = 'idle';
   ttsPreheatMessage = '尚未触发自动预热';
 
@@ -45,6 +46,7 @@ export class ControlPanelService {
   readonly actionSettings: ActionSettingsService;
   private readonly log: LogService;
   private readonly tts: TtsService;
+  private readonly llm: LlmService;
   private reactions: IReactionDisposer[] = [];
   private aiPersistTimer: number | null = null;
   private extensionRegister: ControlPanelRegister | null = null;
@@ -54,8 +56,12 @@ export class ControlPanelService {
     this.stateBus = stateBus;
     this.log = log;
     this.tts = tts;
-    this.actionSettings = new ActionSettingsService(llm.actionCatalog, config);
-    this.aiSettings = toChatConfig(config.globalModelConfig);
+    this.llm = llm;
+    this.actionSettings = new ActionSettingsService(llm.actionCatalog, config,
+      () => ({ model: this.actionModel, effort: this.actionReasoningEffort }));
+    // 对话与动作表各自持有一份前端选择；后端只保存记忆整理用的模型与深度。
+    this.aiSettings = toChatConfig(config.globalModelConfig, loadLlmSelection(this.llmModels, 'chat'));
+    this.actionSelection = loadLlmSelection(this.llmModels, 'action');
     this.interaction = new InteractionSettingsService({
       persist: (commit) => this.persistInteraction(commit),
       preview: (motion) => this.config.previewMotion(motion.group, motion.index),
@@ -67,10 +73,10 @@ export class ControlPanelService {
       chatMessages: observableRef,
       chatSending: observable,
       chatError: observable,
-      chatReasoningEffort: observable,
       asrSwitchLoading: observable,
       aiSettings: observableRef,
       aiSettingsPending: observable,
+      actionSelection: observableRef,
       ttsPreheatState: observable,
       ttsPreheatMessage: observable,
       globalSettings: computed,
@@ -79,9 +85,18 @@ export class ControlPanelService {
       modelPaths: computed,
       currentModelPath: computed,
       selectedModel: computed,
+      chatReasoningEffort: computed,
+      llmModels: computed,
+      memoryModel: computed,
+      memoryReasoningEffort: computed,
+      actionModel: computed,
+      actionReasoningEffort: computed,
       setActiveTab: actionBound,
       setChatDraft: actionBound,
       setChatReasoningEffort: actionBound,
+      setChatModel: actionBound,
+      setActionModel: actionBound,
+      setActionReasoningEffort: actionBound,
       clearChat: actionBound,
       setAiSettings: actionBound,
     });
@@ -96,11 +111,10 @@ export class ControlPanelService {
         () => this.loadChatCache(),
       ),
       reaction(
-        () => [this.currentModelPath, this.chatDraft, this.chatMessages, this.chatReasoningEffort] as const,
+        () => [this.currentModelPath, this.chatDraft, this.chatMessages] as const,
         () => writeChatSessionCache(getChatCacheScope(this.currentModelPath), {
           draftText: this.chatDraft,
           messages: this.chatMessages,
-          reasoningEffort: this.chatReasoningEffort,
           updatedAt: Date.now(),
         }),
       ),
@@ -117,9 +131,14 @@ export class ControlPanelService {
         (aiConfig) => {
           if (this.aiSettingsPending) return;
           runInAction(() => {
-            this.aiSettings = toChatConfig(aiConfig);
+            this.aiSettings = toChatConfig(aiConfig, this.chatSelection);
           });
+          this.stateBus.publishChatConfig(this.aiSettings);
         },
+      ),
+      reaction(
+        () => this.config.globalModelConfig?.llmModels,
+        () => this.syncSelection(),
       ),
       reaction(
         () => [this.currentModelPath, this.config.modelInteraction] as const,
@@ -130,6 +149,7 @@ export class ControlPanelService {
       ),
     );
     this.stateBus.publishChatConfig(this.aiSettings);
+    this.pushActionSelection();
     this.logTrace('lifecycle', 'start', {
       modelPath: this.currentModelPath,
       modelCount: this.modelPaths.length,
@@ -179,6 +199,37 @@ export class ControlPanelService {
     return normalizeAsrConfig(this.config.globalModelConfig?.asr);
   }
 
+  /** 已登记的大模型；后端只持有“有哪些可选”，对话用哪个由前端缓存决定。 */
+  get llmModels(): PetLlmModel[] {
+    const models = this.config.globalModelConfig?.llmModels;
+    return Array.isArray(models) ? models : [];
+  }
+
+  get memoryModel(): string {
+    return this.config.globalModelConfig?.memoryModel ?? '';
+  }
+
+  get memoryReasoningEffort(): PetReasoningEffort | '' {
+    return this.config.globalModelConfig?.memoryReasoningEffort ?? '';
+  }
+
+  /** 对话模型与深度：唯一真值来自 llmSelectionCache，深度只能取该模型探测出的档位。 */
+  private get chatSelection(): { model: string; effort: PetReasoningEffort | '' } {
+    return loadLlmSelection(this.llmModels, 'chat');
+  }
+
+  get chatReasoningEffort(): PetReasoningEffort | '' {
+    return this.aiSettings.reasoningEffort ?? '';
+  }
+
+  get actionModel(): string {
+    return this.actionSelection.model;
+  }
+
+  get actionReasoningEffort(): PetReasoningEffort | '' {
+    return this.actionSelection.effort;
+  }
+
   async persistAsrConfig(next: AsrConfig): Promise<void> {
     await this.persistGlobalSettings({ asr: next });
   }
@@ -212,10 +263,64 @@ export class ControlPanelService {
   }
 
   /** 逐轮对话的思考深度属于用户当次选择，只影响下一轮请求，不改全局配置。 */
-  setChatReasoningEffort(effort: PetReasoningEffort): void {
-    if (this.chatReasoningEffort === effort) return;
-    this.chatReasoningEffort = effort;
-    this.logTrace('chat', 'reasoningEffort.changed', { effort }).end({ effort });
+  setChatReasoningEffort(effort: PetReasoningEffort | ''): void {
+    if (this.aiSettings.reasoningEffort === effort) return;
+    const next = saveLlmSelection(this.llmModels, 'chat', { effort });
+    runInAction(() => {
+      this.aiSettings = { ...this.aiSettings, model: next.model, reasoningEffort: next.effort };
+    });
+    this.stateBus.publishChatConfig(this.aiSettings);
+    this.logTrace('chat', 'reasoningEffort.changed', { effort: next.effort }).end({ effort: next.effort });
+  }
+
+  /** 切换对话模型；深度跟着落到该模型支持的第一档。 */
+  setChatModel(modelId: string): void {
+    if (this.aiSettings.model === modelId) return;
+    const next = saveLlmSelection(this.llmModels, 'chat', { model: modelId });
+    runInAction(() => {
+      this.aiSettings = { ...this.aiSettings, model: next.model, reasoningEffort: next.effort };
+    });
+    this.stateBus.publishChatConfig(this.aiSettings);
+    this.logTrace('chat', 'model.changed', { model: next.model, effort: next.effort })
+      .end({ model: next.model, effort: next.effort });
+  }
+
+  /** 切换动作表生成用的模型；深度同样落到该模型的第一档。 */
+  setActionModel(modelId: string): void {
+    if (this.actionSelection.model === modelId) return;
+    const next = saveLlmSelection(this.llmModels, 'action', { model: modelId });
+    runInAction(() => { this.actionSelection = next; });
+    this.pushActionSelection();
+    this.logTrace('action', 'model.changed', { model: next.model, effort: next.effort })
+      .end({ model: next.model, effort: next.effort });
+  }
+
+  setActionReasoningEffort(effort: PetReasoningEffort | ''): void {
+    if (this.actionSelection.effort === effort) return;
+    const next = saveLlmSelection(this.llmModels, 'action', { effort });
+    runInAction(() => { this.actionSelection = next; });
+    this.pushActionSelection();
+    this.logTrace('action', 'reasoningEffort.changed', { effort: next.effort }).end({ effort: next.effort });
+  }
+
+  /** 模型注册表变更后同步两份前端选择，避免缓存指向已删除的模型。 */
+  syncSelection(): void {
+    const chat = loadLlmSelection(this.llmModels, 'chat');
+    const action = loadLlmSelection(this.llmModels, 'action');
+    runInAction(() => {
+      this.aiSettings = { ...this.aiSettings, model: chat.model, reasoningEffort: chat.effort };
+      this.actionSelection = action;
+    });
+    this.stateBus.publishChatConfig(this.aiSettings);
+    this.pushActionSelection();
+  }
+
+  /** 动作表生成读的是 LlmService 自持有的配置，这里把前端选择推给它。 */
+  private pushActionSelection(): void {
+    this.llm.setConfig({
+      model: this.actionSelection.model,
+      reasoningEffort: this.actionSelection.effort,
+    });
   }
 
   clearChat(): void {
@@ -334,7 +439,6 @@ export class ControlPanelService {
       source: 'text',
       status: 'pending',
       createdAt: now,
-      reasoningEffort: this.chatReasoningEffort,
     };
     runInAction(() => {
       this.chatDraft = '';
@@ -382,7 +486,6 @@ export class ControlPanelService {
     runInAction(() => {
       this.chatDraft = cache.draftText;
       this.chatMessages = cache.messages;
-      this.chatReasoningEffort = cache.reasoningEffort ?? 'none';
       this.chatSending = false;
       this.chatError = null;
     });
@@ -433,7 +536,8 @@ export class ControlPanelService {
   private async persistAiSettings(): Promise<void> {
     const current = this.aiSettings;
     try {
-      await this.config.updateGlobalConfig({ model: current.model, apiKey: current.apiKey, baseURL: current.baseURL, displayLang: current.displayLang });
+      // 模型与深度只存在前端缓存；后端只保留凭据与展示语言。
+      await this.config.updateGlobalConfig({ apiKey: current.apiKey, baseURL: current.baseURL, displayLang: current.displayLang });
       runInAction(() => {
         this.aiSettingsPending = false;
       });

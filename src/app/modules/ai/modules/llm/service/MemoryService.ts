@@ -102,6 +102,11 @@ export class MemoryService {
     if (!this.requestStructured || !state || !pendingText || pendingThroughCount <= (state.lastConsolidatedCount ?? 0)) return;
     const modelPath = runtime.modelPath;
     if (!isString(modelPath)) return;
+    // 记忆整理模型由后端持久化；没配就是没配，不借用对话模型兜底。
+    if (!this.getConfigSnapshot()?.globalModelConfig?.memoryModel?.trim()) {
+      trace?.record('memory.consolidation.skipped', { modelPath, reason: 'no-memory-model' });
+      return;
+    }
     const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date());
     const lastConversationDate = state.lastConversationAt
       ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date(state.lastConversationAt))

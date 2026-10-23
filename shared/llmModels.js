@@ -1,7 +1,7 @@
 // 档位是**开放**值域：接口可以声明协议之外的扩展档位（例如 ultra、max）。
 // 这里只维护「已知顺序」，用于逐档探测的候选序列；绝不作为白名单去裁剪接口给出的值。
 export const KNOWN_REASONING_EFFORTS = Object.freeze([
-  'none', 'minimal', 'low', 'medium', 'high', 'xhigh',
+  'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max',
 ]);
 
 export const EFFORT_SOURCES = Object.freeze(['catalog', 'error', 'probe', 'none']);

@@ -2,9 +2,9 @@ import { Children, isValidElement } from 'react';
 import type { KeyboardEvent, ReactElement, ReactNode, TextareaHTMLAttributes } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import ChatPanel, { ChatComposer } from './common/ChatPanel';
-import MotionSettingsPage from '../pages/MotionSettingsPage';
-import type { ActionSettingsView } from '../../modules/action-settings/domain/view';
+import ChatPanel, { ChatComposer } from './ChatPanel';
+import MotionSettingsPage from '../../pages/MotionSettingsPage';
+import type { ActionSettingsView } from '../../../modules/action-settings/domain/view';
 
 function inputIn(node: ReactNode): ReactElement<TextareaHTMLAttributes<HTMLTextAreaElement>> | undefined {
   for (const child of Children.toArray(node)) {

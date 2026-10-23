@@ -16,6 +16,7 @@ const SEARCH_THRESHOLD = 8;
 /**
  * 模型清单只有一个概念：这个接口提供的全部模型，左侧勾选即启用。
  * 没有“添加模型”表单——接口的 /models 就是全集，取消勾选即移除，重新获取即可再勾回来。
+ * 重新获取后列表只跟接口返回的一致：接口不再返回的模型会被判定丢失并移除。
  */
 export function ModelRegistryCard({
   models,
@@ -46,12 +47,16 @@ export function ModelRegistryCard({
   const disabled = fetching || Boolean(busyLabel);
 
   const registered = new Set(models.map((model) => model.id));
-  const rows: ModelRow[] = [
-    ...models.map((model) => ({ id: model.id, registered: true, model })),
-    ...available
-      .filter((model) => !registered.has(model.id))
-      .map((model) => ({ id: model.id, registered: false, remote: model })),
-  ];
+  const byId = new Map(models.map((model) => [model.id, model]));
+  // 顺序固定跟接口返回的一致：勾选/取消只改状态，绝不因为启用而换位置。
+  const rows: ModelRow[] = available.length
+    ? available.map((remote) => ({
+      id: remote.id,
+      registered: registered.has(remote.id),
+      model: byId.get(remote.id),
+      remote,
+    }))
+    : models.map((model) => ({ id: model.id, registered: true, model }));
   const keyword = query.trim().toLowerCase();
   const visible = keyword ? rows.filter((row) => row.id.toLowerCase().includes(keyword)) : rows;
 
@@ -96,7 +101,9 @@ export function ModelRegistryCard({
               disabled={disabled}
               onChange={(event) => onToggle(row.id, event.target.checked)} />
             <div className="min-w-0 flex-1">
-              <p className="truncate font-mono text-xs">{row.id}</p>
+              <p className={`truncate font-mono text-xs ${row.registered ? 'text-base-content' : 'text-base-content/60'}`}>
+                {row.id}
+              </p>
               <p className="truncate text-[11px] text-base-content/45">
                 {row.model ? `思考深度：${describeEfforts(row.model)}` : (row.remote?.efforts.length
                   ? `接口声明：${row.remote.efforts.join(' / ')}`

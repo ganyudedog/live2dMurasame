@@ -5,7 +5,8 @@ export type ControlPanelTabKey =
   | 'model-motions'
   | 'model-interaction'
   | 'ai-settings'
-  | 'ai-persona';
+  | 'ai-persona'
+  | (string & {});
 
 import type { AsrConfig } from '@app/modules/ai/modules/asr/domain/config';
 export type { AsrConfig } from '@app/modules/ai/modules/asr/domain/config';

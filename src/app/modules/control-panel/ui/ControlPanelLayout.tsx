@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import type { ControlPanelTabKey, ThemeMode } from '../domain/types';
 
 type MenuItem = {
-  key: ControlPanelTabKey;
+  key: string;
   label: string;
 };
 
@@ -41,12 +41,14 @@ const MENU_STRUCTURE: MenuGroup[] = [
 export default function ControlPanelLayout({
   activeTab,
   onTabChange,
+  pluginPages = [],
   theme,
   onToggleTheme,
   children,
 }: {
   activeTab: ControlPanelTabKey;
   onTabChange: (key: ControlPanelTabKey) => void;
+  pluginPages?: readonly { tabId: string; title: string }[];
   theme: ThemeMode;
   onToggleTheme: () => void;
   children: React.ReactNode;
@@ -135,6 +137,35 @@ export default function ControlPanelLayout({
                 </li>
               );
             })}
+            {(
+              <li key="extensions">
+                <details open>
+                  <summary>插件</summary>
+                  <ul>
+                    <li>
+                      <a href="#" className={activeTab === 'plugins' ? 'active bg-primary text-primary-content' : ''}
+                        onClick={(event) => { event.preventDefault(); onTabChange('plugins'); }}>
+                        插件列表
+                      </a>
+                    </li>
+                    {pluginPages.map((page) => (
+                      <li key={page.tabId}>
+                        <a
+                          href="#"
+                          className={page.tabId === activeTab ? 'active bg-primary text-primary-content' : ''}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            onTabChange(page.tabId);
+                          }}
+                        >
+                          {page.title}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </li>
+            )}
           </ul>
         </nav>
 

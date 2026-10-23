@@ -5,7 +5,16 @@ import type { WindowKind } from './di/module';
 import { registerServiceModules } from './loadServiceModules';
 import { TOKENS } from './serviceTokens';
 import { reaction } from 'mobx';
-import type { AiHostApi, ControlPanelHostApi, DesktopHostApi, Live2dHostApi } from './plugin/types';
+import type {
+  AiConversationHostApi,
+  AiModelCatalogHostApi,
+  ControlPanelHostApi,
+  DesktopNotificationsHostApi,
+  DesktopWindowHostApi,
+  Live2dHostApi,
+} from './plugin';
+import { PluginConversationHost } from './plugin/PluginConversationHost';
+import { createDefaultConversationExecutor } from './plugin/createDefaultConversationExecutor';
 import { bindAiBubble } from './bindings/bindAiBubble';
 import { bindAiActions } from './bindings/bindAiActions';
 
@@ -15,7 +24,10 @@ export interface RendererApplication {
   dispose(): Promise<void>;
 }
 
-export const bootstrapRenderer = async (windowKind: WindowKind): Promise<RendererApplication> => {
+export const bootstrapRenderer = async (
+  windowKind: WindowKind,
+  externalPlugins: readonly unknown[] = [],
+): Promise<RendererApplication> => {
   const container = new ServiceContainer();
   const configSnapshot = window.SnapshotAPI?.getSnapshot?.() ?? window.__PET_CONFIG__ ?? null;
   container.registerValue(TOKENS.core.bootstrapContext, {
@@ -32,7 +44,7 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
 
   const pluginRuntime = container.resolve(TOKENS.plugin.runtime);
   const electron = container.resolve(TOKENS.shared.electron);
-  const desktopHostApi: DesktopHostApi = {
+  const desktopNotificationsApi: DesktopNotificationsHostApi = {
     showNotification: async (title, body) => {
       // Notifications remain a host concern; the renderer only receives the
       // capability exposed by the bridge, never ipcRenderer itself.
@@ -40,28 +52,37 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
         new Notification(title, { body });
       }
     },
+  };
+  const desktopWindowApi: DesktopWindowHostApi = {
     getWindowGeometry: async () => (await electron.bridge.windowApi?.getWindowGeometry?.()) ?? null,
   };
-  pluginRuntime.registerHostApi('desktop', desktopHostApi);
+  pluginRuntime.registerHostApi('desktopNotifications', 'desktop.notifications', desktopNotificationsApi);
+  pluginRuntime.registerHostApi('desktopWindow', 'desktop.window', desktopWindowApi);
+
+  const config = container.resolve(TOKENS.shared.config);
+  const getLlmModels = () => (Array.isArray(config.globalModelConfig?.llmModels)
+    ? config.globalModelConfig.llmModels
+    : []);
+  const aiModelsApi: AiModelCatalogHostApi = {
+    getModels: () => getLlmModels().map(({ id, efforts }) => ({ id, efforts })),
+    subscribe: (listener) => reaction(() => JSON.stringify(getLlmModels()), () => listener()),
+  };
+  pluginRuntime.registerHostApi('aiModels', 'ai.models', aiModelsApi);
 
   if (windowKind === 'pet') {
     const live2d = container.resolve(TOKENS.live2d.runtime);
-    const ai = container.resolve(TOKENS.ai.runtime);
+    const config = container.resolve(TOKENS.shared.config);
+    const pluginAi = new PluginConversationHost(createDefaultConversationExecutor(config, logger));
     const live2dHostApi: Live2dHostApi = {
       getAvailableMotions: () => live2d.getAvailableMotionsSnapshot(),
       playMotion: (group) => live2d.playMotion(group),
       interruptMotion: (group) => live2d.interruptMotion(group),
       getModelState: () => ({ loaded: Boolean(live2d.model), status: live2d.modelLoadStatus }),
     };
-    const aiHostApi: AiHostApi = {
-      sendText: (input) => ai.submitText(input),
-      cancel: (requestId) => ai.cancel(requestId ? `plugin:${requestId}` : 'plugin-cancel'),
-      onResponse: (listener) => ai.onTextResponse(listener),
-    };
-    pluginRuntime.registerHostApi('live2d', live2dHostApi);
-    pluginRuntime.registerHostApi('ai', aiHostApi);
+    const aiConversationHostApi: AiConversationHostApi = pluginAi;
+    pluginRuntime.registerHostApi('live2d', 'live2d.runtime', live2dHostApi);
+    pluginRuntime.registerHostApi('aiConversations', 'ai.conversations', aiConversationHostApi);
     live2d.registerExtensions(pluginRuntime.live2dRegister);
-    ai.registerExtensions(pluginRuntime.aiRegister);
   }
   if (windowKind === 'control-panel') {
     const controlPanel = container.resolve(TOKENS.controlPanel.runtime);
@@ -69,9 +90,16 @@ export const bootstrapRenderer = async (windowKind: WindowKind): Promise<Rendere
       getActiveTab: () => controlPanel.activeTab,
       openTab: (tabId) => controlPanel.setActiveTab(tabId as Parameters<typeof controlPanel.setActiveTab>[0]),
     };
-    pluginRuntime.registerHostApi('controlPanel', controlPanelHostApi);
+    pluginRuntime.registerHostApi('controlPanel', 'control-panel.navigation', controlPanelHostApi);
     controlPanel.registerExtensions(pluginRuntime.controlPanelRegister);
   }
+  externalPlugins.forEach((plugin) => {
+    try {
+      pluginRuntime.registerExternalPlugin(plugin);
+    } catch (error) {
+      logger.error('plugin.runtime', 'external-registration.failed', { error: String(error) });
+    }
+  });
   await pluginRuntime.activateAll();
 
   // Cross-service subscriptions belong to the composition root, not the React tree.

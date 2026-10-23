@@ -8,6 +8,7 @@ import { registerDomainIpc } from './interface/ipc/registerDomainIpc.js';
 import { JsonLive2dEnvironmentRepository } from './infrastructure/persistence/JsonLive2dEnvironmentRepository.js';
 import { JsonModelEnvironmentRepository } from './infrastructure/persistence/JsonModelEnvironmentRepository.js';
 import { JsonModelMemoryRepository } from './infrastructure/persistence/JsonModelMemoryRepository.js';
+import { PluginStorageService } from './modules/plugins/PluginStorageService.js';
 import { Live2dEnvironmentService } from './modules/live2denv/application/Live2dEnvironmentService.js';
 import { ModelEnvironmentService } from './modules/modelenv/application/ModelEnvironmentService.js';
 import { WindowApplicationService } from './modules/window/WindowApplicationService.js';
@@ -257,6 +258,9 @@ applicationIpc = registerDomainIpc({
     scheduleAutoLaunchSetting: scheduleApplyAutoLaunchSetting,
     getMainWindow: () => mainWindow,
     logService: backendLog,
+    pluginStorageService: new PluginStorageService({
+        directory: () => path.join(app.getPath('userData'), 'config', 'plugins'),
+    }),
 });
 const asrRuntime = applicationIpc.asrRuntime;
 const unsubscribeSettings = live2dEnvironmentService.onSettingsChanged(({ settings, patch }) => {

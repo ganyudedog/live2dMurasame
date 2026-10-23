@@ -183,6 +183,19 @@ const TtsDiagnosticsAPI = {
   saveArtifacts: (artifacts) => ipcRenderer.invoke('ddd:tts:save-artifacts', { artifacts }),
 };
 
+const PluginStorageAPI = {
+  get: (pluginId, key) => ipcRenderer.invoke('ddd:plugin:storage:get', { pluginId, key }),
+  set: (pluginId, key, value) => ipcRenderer.invoke('ddd:plugin:storage:set', { pluginId, key, value }),
+  delete: (pluginId, key) => ipcRenderer.invoke('ddd:plugin:storage:delete', { pluginId, key }),
+  onChanged: (pluginId, callback) => {
+    const listener = (_event, payload) => {
+      if (payload?.pluginId === pluginId && typeof payload.key === 'string') callback(payload.key);
+    };
+    ipcRenderer.on('ddd:plugin:storage:changed', listener);
+    return () => ipcRenderer.removeListener('ddd:plugin:storage:changed', listener);
+  },
+};
+
 ipcRenderer.on('ddd:live2denv:snapshot:changed', (_event, payload) => {
   snapshotStore.dispatchSnapshotUpdate(payload);
 });
@@ -207,3 +220,4 @@ contextBridge.exposeInMainWorld('AsrAPI', AsrAPI);
 contextBridge.exposeInMainWorld('SubtitleAPI', SubtitleAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);
 contextBridge.exposeInMainWorld('TtsDiagnosticsAPI', TtsDiagnosticsAPI);
+contextBridge.exposeInMainWorld('PluginStorageAPI', PluginStorageAPI);

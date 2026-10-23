@@ -23,12 +23,15 @@ export interface Stage2LLMConfig {
 export interface Stage2LLMRequest {
   signal?: AbortSignal;
   userText: string;
+  /** Optional plugin/host-owned system instruction for isolated conversations. */
+  systemPrompt?: string;
   model?: string;
   temperature?: number;
   memoryContext?: string;
   actionCapability?: ActionCapability;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
-  speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
+  speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto' | null;
+  speechEnabled?: boolean;
   // 是否启用流式输出（降低首字等待时间）
   stream?: boolean;
   // 空字符串表示该模型不接受该参数；请求体里不带 reasoning_effort。

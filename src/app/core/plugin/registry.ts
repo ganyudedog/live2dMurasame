@@ -7,11 +7,12 @@ export class ContributionRegistry<T extends { id: string }> {
 
   register(ownerId: string, contribution: T): Disposable {
     if (!ownerId.trim()) throw new Error('A contribution owner is required');
-    if (this.entries.has(contribution.id)) {
-      throw new Error(`Duplicate contribution: ${contribution.id}`);
+    const key = `${ownerId}/${contribution.id}`;
+    if (this.entries.has(key)) {
+      throw new Error(`Duplicate contribution: ${key}`);
     }
-    this.entries.set(contribution.id, { ownerId, value: contribution });
-    return () => this.entries.delete(contribution.id);
+    this.entries.set(key, { ownerId, value: contribution });
+    return () => this.entries.delete(key);
   }
 
   removeOwner(ownerId: string): void {
@@ -44,19 +45,22 @@ export class ContributionRegistry<T extends { id: string }> {
 }
 
 export class HostApiRegistry {
-  private readonly apis = new Map<string, HostApi>();
+  private readonly apis = new Map<string, { api: HostApi; permission: string }>();
 
-  register<T extends HostApi>(id: string, api: T): void {
+  register<T extends HostApi>(id: string, api: T, permission: string): void {
     if (this.apis.has(id)) throw new Error(`Duplicate HostApi: ${id}`);
-    this.apis.set(id, api);
+    this.apis.set(id, { api, permission });
   }
 
   get<T extends HostApi>(id: string): T | undefined {
-    return this.apis.get(id) as T | undefined;
+    return this.apis.get(id)?.api as T | undefined;
   }
 
-  snapshot(): Readonly<Record<string, unknown>> {
-    return Object.fromEntries(this.apis.entries());
+  snapshot(permissions?: readonly string[]): Record<string, unknown> {
+    const allowed = permissions ? new Set(permissions) : null;
+    return Object.fromEntries([...this.apis.entries()]
+      .filter(([, value]) => !allowed || allowed.has(value.permission))
+      .map(([id, value]) => [id, value.api]));
   }
 }
 

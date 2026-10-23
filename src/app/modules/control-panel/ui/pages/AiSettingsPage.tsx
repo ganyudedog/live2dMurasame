@@ -4,6 +4,7 @@ import AsrSettingsPage from './AsrSettingsPage';
 import { SubtitleSettings } from '../components/subtitle/SubtitleSettingsCard';
 import { Field, SettingsCard } from '../components/common/SettingsSection';
 import { ModelRegistryCard } from '../components/ai/ModelRegistryCard';
+import { keepFetchedModels } from '../components/ai/keepFetchedModels';
 import { MemoryModelCard } from '../components/ai/MemoryModelCard';
 import { probeModelEfforts } from '@app/modules/ai/modules/llm/infrastructure/effortProbe';
 import { listRemoteModels, type RemoteModel } from '@app/modules/ai/modules/llm/infrastructure/modelCatalog';
@@ -89,7 +90,10 @@ export default function AiSettingsPage({
 
   const canFetch = Boolean(apiBaseUrl.trim());
 
-  /** 拉取接口提供的全部模型；清单只是候选，勾选与否才决定启用哪些。 */
+  /**
+   * 拉取接口提供的全部模型。清单是权威来源：接口这次没返回的模型直接从后端清单里删掉，
+   * 不保留“以前选过但现在不存在”的残项。
+   */
   const fetchModels = async () => {
     if (!canFetch) {
       setFetchError('先填写 Base URL：模型清单是从这个地址的 /models 拉取的。');
@@ -101,7 +105,14 @@ export default function AiSettingsPage({
     setNotice(null);
     try {
       // 免鉴权的本地接口允许不带 API Key；需要鉴权时接口会返回 401，再让用户补 Key。
-      setAvailable(await listRemoteModels({ apiKey, baseURL: apiBaseUrl }));
+      const fetched = await listRemoteModels({ apiKey, baseURL: apiBaseUrl });
+      setAvailable(fetched);
+      const { kept, dropped } = keepFetchedModels(llmModels, fetched);
+      if (dropped.length) {
+        await onLlmModelsChange(kept);
+        if (memoryModel && dropped.includes(memoryModel)) onMemoryChange({ memoryModel: '', memoryReasoningEffort: '' });
+        setNotice(`接口已不再返回：${dropped.join('、')}，已从模型清单移除`);
+      }
     } catch (reason) {
       setAvailable([]);
       setFetchError(reason instanceof Error ? reason.message : String(reason));

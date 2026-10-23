@@ -435,6 +435,13 @@ declare global {
     }>;
   }
 
+  interface PetPluginStorageAPI {
+    get?: (pluginId: string, key: string) => Promise<unknown>;
+    set?: (pluginId: string, key: string, value: unknown) => Promise<void>;
+    delete?: (pluginId: string, key: string) => Promise<boolean>;
+    onChanged?: (pluginId: string, callback: (key: string) => void) => () => void;
+  }
+
   type PetMicState = 'off' | 'requesting' | 'active' | 'denied' | 'error';
 
   interface PetAsrStatus {
@@ -531,6 +538,7 @@ declare global {
     SubtitleAPI?: PetSubtitleAPI;
     SystemAPI?: PetSystemAPI;
     TtsDiagnosticsAPI?: PetTtsDiagnosticsAPI;
+    PluginStorageAPI?: PetPluginStorageAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
   }
 }

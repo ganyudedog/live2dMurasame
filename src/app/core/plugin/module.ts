@@ -10,6 +10,7 @@ export const serviceModule: ServiceModule = {
     container.registerSingleton(TOKENS.plugin.runtime, (scope) => new PluginRuntime(
       scope.resolve(TOKENS.shared.log),
       'desktop',
+      scope.resolve(TOKENS.core.bootstrapContext).windowKind,
     ));
   },
 };

@@ -4,12 +4,14 @@ import { useService } from '../useService';
 import { TOKENS } from '../serviceTokens';
 import type { UiRenderContext } from './types';
 
-export const PluginPanelHost = observer(({ slot }: { slot: string }) => {
+export const PluginPanelHost = observer(({ slot, tabId }: { slot?: string; tabId?: string }) => {
   const runtime = useService(TOKENS.plugin.runtime);
-  const controlPanel = useService(TOKENS.controlPanel.runtime);
   const revision = runtime.revision;
   void revision;
-  const contributions = controlPanel.getPluginUiContributions(slot);
+  const page = tabId ? runtime.getControlPanelPage(tabId) : null;
+  const contributions = page
+    ? [{ ownerId: page.ownerId, contribution: page.contribution }]
+    : slot ? runtime.getUiContributions(slot) : [];
   return (
     <div className="space-y-4">
       {contributions.map(({ ownerId, contribution }) => {
@@ -20,7 +22,7 @@ export const PluginPanelHost = observer(({ slot }: { slot: string }) => {
           </PluginErrorBoundary>
         );
         return (
-          <section key={contribution.id} className="rounded-box border border-base-300 bg-base-100 p-4">
+          <section key={`${ownerId}/${contribution.id}`} className="rounded-box border border-base-300 bg-base-100 p-4">
             <h2 className="mb-3 text-lg font-semibold">{contribution.title}</h2>
             {content}
           </section>

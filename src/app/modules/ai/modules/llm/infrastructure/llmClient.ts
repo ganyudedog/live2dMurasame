@@ -76,11 +76,13 @@ export const requestStage2LLM = async (
     messages: [
       {
         role: 'system' as const,
-        content: buildStage2SystemPrompt({
-          displayLang: req.displayLang,
-          speakLang: req.speakLang,
-          actionCapability: req.actionCapability,
-        }),
+        content: req.systemPrompt?.trim()
+          ? `${req.systemPrompt.trim()}\n\n${buildOutputContract(req)}`
+          : buildStage2SystemPrompt({
+            displayLang: req.displayLang,
+            speakLang: req.speakLang ?? undefined,
+            actionCapability: req.actionCapability,
+          }),
       },
       { role: 'user' as const, content: buildStage2UserPrompt({ userText: req.userText, memoryContext: req.memoryContext }) },
     ],
@@ -159,6 +161,29 @@ export const requestStage2LLM = async (
     usedModel,
     usage: readPromptUsage(response.usage),
   };
+};
+
+const buildOutputContract = (request: Stage2LLMRequest): string => {
+  const displayLang = request.displayLang === 'en' ? '英语'
+    : request.displayLang === 'ja' ? '日语'
+      : request.displayLang === 'ko' ? '韩语' : '中文';
+  if (request.speechEnabled === false) return [
+    '输出必须是 JSON Lines，每行一个独立 JSON 对象，不得使用 Markdown 代码围栏。',
+    '{ "display_text": "回复文本" }',
+    `display_text 必须使用${displayLang}。不要输出 speak_text 或 action_intent。`,
+    '对象之间不要添加逗号，不要使用数组包裹。',
+  ].join('\n');
+  const speakLang = request.speakLang === 'all_zh' ? '中文'
+    : request.speakLang === 'all_en' ? '英语'
+      : request.speakLang === 'all_ko' ? '韩语'
+        : request.speakLang === 'all_yue' ? '粤语'
+          : request.speakLang === 'auto' ? '自动选择的语音语言' : '日语';
+  return [
+    '输出必须是 JSON Lines，每行一个独立 JSON 对象，不得使用 Markdown 代码围栏。',
+    '{ "speak_text": "朗读文本", "display_text": "回复文本" }',
+    `display_text 必须使用${displayLang}；speak_text 必须使用${speakLang}。`,
+    '对象之间不要添加逗号，不要使用数组包裹。',
+  ].join('\n');
 };
 
 /** 供配置型子域复用同一 OpenAI-compatible 通道，不复用日常对话的 JSON Lines 契约。 */

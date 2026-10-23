@@ -3,6 +3,7 @@ import { registerModelenvIpc } from './registerModelenvIpc.js';
 import { registerMemoryIpc } from './registerMemoryIpc.js';
 import { registerWindowIpc } from './registerWindowIpc.js';
 import { registerAsrIpc } from './registerAsrIpc.js';
+import { registerPluginIpc } from './registerPluginIpc.js';
 import { ipcMain } from 'electron';
 
 export const registerDomainIpc = (dependencies) => {
@@ -11,6 +12,7 @@ export const registerDomainIpc = (dependencies) => {
   registerModelenvIpc(domainDependencies);
   registerMemoryIpc(domainDependencies);
   registerWindowIpc(dependencies);
+  registerPluginIpc(dependencies);
   const asrRuntime = registerAsrIpc({
     live2dEnvironmentService: dependencies.live2dEnvironmentService,
     channelPrefix: 'ddd:live2denv:asr',

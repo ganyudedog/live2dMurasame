@@ -66,6 +66,39 @@ describe('reasoning-effort probing against unknown OpenAI-compatible gateways', 
     expect(outcome).toEqual({ status: 'ok', efforts: ['low', 'high'], source: 'error' });
   });
 
+  it('reads the enumeration from a 502 that wraps the upstream 400 as an escaped JSON string', async () => {
+    // 真实网关的响应：外层 502，正文把上游的 400 当字符串塞进 message，档位用 | 分隔且再转义一层。
+    const upstream = JSON.stringify({
+      error: {
+        message: 'Invalid option: expected one of ' + ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+          .map((value) => `"${value}"`).join('|'),
+        type: 'invalid_request_error',
+        param: 'reasoning.effort',
+        code: 'invalid_request_error',
+      },
+    });
+    const calls = stubFetch(() => reply(502), {
+      error: {
+        message: "inference request failed: failed to invoke model 'deepseek/deepseek-v4.1-flash-1017' from Vercel: "
+          + `request failed with status 400: ${upstream}`,
+        type: 'upstream_error',
+        balance_cny: 9.912949999999983,
+      },
+    });
+    const outcome = await probeModelEfforts(options);
+    expect(outcome).toEqual({ status: 'ok',
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], source: 'error' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('still reports unknown for a 5xx that says nothing about tiers', async () => {
+    const calls = stubFetch(() => reply(502, 'upstream timeout'));
+    const outcome = await probeModelEfforts(options);
+    expect(outcome.status).toBe('unknown');
+    expect(outcome.message).toBe('upstream timeout');
+    expect(calls).toHaveLength(1);
+  });
+
   it('concludes "no depth" when the gateway says the parameter is unsupported', async () => {
     const calls = stubFetch(() => badRequest('Unrecognized request argument supplied: reasoning_effort'));
     const outcome = await probeModelEfforts(options);

@@ -104,6 +104,22 @@ describe('provider prompt cache and streaming usage', () => {
     expect(network.responses).not.toHaveBeenCalled();
   });
 
+  it('uses a plugin-owned system prompt and a text-only output contract when speech is disabled', async () => {
+    network.create.mockResolvedValue(response);
+    await requestStage2LLM(config, {
+      userText: 'question',
+      systemPrompt: 'Plugin-owned QQ assistant prompt.',
+      displayLang: 'zh',
+      speakLang: null,
+      speechEnabled: false,
+    });
+    const systemPrompt = network.create.mock.lastCall![0].messages[0].content;
+    expect(systemPrompt).toContain('Plugin-owned QQ assistant prompt.');
+    expect(systemPrompt).toContain('{ "display_text": "回复文本" }');
+    expect(systemPrompt).toContain('不要输出 speak_text 或 action_intent');
+    expect(systemPrompt).not.toContain('朗读文本');
+  });
+
   it('streams explicit reasoning requests and keeps raw reasoning out of summaries', async () => {
     const summary = vi.fn();
     network.create.mockImplementation(async function* () {

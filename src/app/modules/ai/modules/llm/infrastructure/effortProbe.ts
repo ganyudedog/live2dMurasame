@@ -106,10 +106,10 @@ const sendWithTokenFallback = async (args: Parameters<typeof sendProbe>[0]): Pro
   return retried;
 };
 
-const mentionsEffort = (message: string): boolean => /reasoning[_\s-]?effort|reasoning/i.test(message);
+const mentionsEffort = (message: string): boolean => /reasoning[._\s-]?effort|reasoning/i.test(message);
 
 const mentionsUnsupported = (message: string): boolean => (
-  /unrecognized|unsupported|unknown|not supported|does not support|not available|extra inputs|invalid parameter/i.test(message)
+  /unrecognized|unsupported|unknown|not supported|does not support|not available|extra inputs|invalid parameter|invalid option/i.test(message)
 );
 
 /** 枚举引导词之后的那一段，例如 “expected one of `none`, `low`, ..., `max`”。 */
@@ -118,15 +118,44 @@ const QUOTED = /`([^`]+)`|'([^']+)'|"([^"]+)"/g;
 // 出现在同一段里但不是档位的参数名。
 const NOT_A_TIER = new Set(['reasoning_effort', 'reasoning', 'model', 'messages', 'max_tokens', 'max_completion_tokens']);
 
+const MAX_UNWRAP_DEPTH = 3;
+
+/**
+ * 网关经常把上游的错误体当字符串塞进 message 里，甚至再转义一层：
+ *   "…status 400: {\"error\":{\"message\":\"Invalid option: expected one of \\\"none\\\"|…\"}}"
+ * 逐层剥到真正的报错文本为止。
+ */
+const unwrapMessage = (message: string, depth = 0): string => {
+  if (!message || depth >= MAX_UNWRAP_DEPTH) return message;
+  const start = message.indexOf('{');
+  const end = message.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(message.slice(start, end + 1)) as Record<string, unknown> | null;
+      const inner = asText(parsed?.error) || asText(parsed?.message) || asText(parsed?.detail);
+      if (inner && inner !== message) return unwrapMessage(inner, depth + 1);
+    } catch { /* 不是完整 JSON，退到下面的反转义 */ }
+  }
+  if (message.includes('\\"')) {
+    const unescaped = message.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    if (unescaped !== message) return unwrapMessage(unescaped, depth + 1);
+  }
+  return message;
+};
+
 /**
  * 从拒绝消息里抽出接口自己枚举的档位。
- * 先只看引导词之后的部分，避免把 "reasoning_effort" 之类的词当成档位；
- * 没有引号列表时退化为按逗号分隔。
+ * 先剥掉嵌套/转义的上游 JSON，再只看引导词之后的部分，避免把参数名当成档位；
+ * 引号列表优先，没有引号就按逗号、竖线等分隔符切。
  */
 export const readEnumeratedEfforts = (message: string): PetReasoningEffort[] => {
-  const segment = message.match(ENUM_SEGMENT)?.[1] ?? message;
+  const text = unwrapMessage(message);
+  const segment = text.match(ENUM_SEGMENT)?.[1] ?? text;
   const quoted: string[] = [];
   for (const match of segment.matchAll(QUOTED)) {
+    // 紧跟冒号的是 JSON 的键（如 "type":"invalid_request_error"），枚举到此为止。
+    const rest = segment.slice((match.index ?? 0) + match[0].length);
+    if (/^\s*:/.test(rest)) break;
     const value = (match[1] ?? match[2] ?? match[3] ?? '').trim();
     if (value) quoted.push(value);
   }
@@ -156,13 +185,14 @@ export const probeModelEfforts = async (
   // A：非法值探针，一次请求就能拿到枚举或"不支持"的结论。
   const invalid = await sendWithTokenFallback({ ...base, effort: PROBE_VALUE, tokenParam: 'max_completion_tokens' });
   if (!invalid.ok) {
+    // 先找枚举：网关常把上游的 400 包成 4xx/5xx 再返回，状态码本身不决定正文有没有答案。
+    const enumerated = readEnumeratedEfforts(invalid.message);
+    if (enumerated.length) return { status: 'ok', efforts: enumerated, source: 'error' };
+    if (mentionsUnsupported(invalid.message) && mentionsEffort(invalid.message)) {
+      return { status: 'ok', efforts: [], source: 'error' };
+    }
     if (isRateLimitedOrBroken(invalid.status) || isUnusableEndpoint(invalid.status)) {
       return { status: 'unknown', efforts: [], source: 'probe', message: invalid.message };
-    }
-    if (isValidationRejection(invalid)) {
-      const enumerated = readEnumeratedEfforts(invalid.message);
-      if (enumerated.length) return { status: 'ok', efforts: enumerated, source: 'error' };
-      if (mentionsUnsupported(invalid.message)) return { status: 'ok', efforts: [], source: 'error' };
     }
   }
 

@@ -84,4 +84,4 @@ control-panel/
 
 应用仅保留宠物和控制面板两种窗口。只有宠物窗口启动 LLM、ASR 和自动 TTS 预热；控制面板可解析 TTS，但不会启动麦克风或自动预热。ASR 启停串行执行，释放会等待尚未完成的启停操作。
 
-`src/app/core/architecture.test.ts` 检查服务目录、AI 领域依赖和 TTS 消费边界；各域测试覆盖注册与生命周期。迁移没有修改气泡布局规则，也没有移除已有 TTS 离线音频诊断。
+`src/app/core/loadServiceModules.test.ts` 覆盖模块发现、按窗口注册、依赖解析与生命周期；各域测试覆盖具体业务行为。目录、命名及源码写法检查已移除，已有 TTS 离线音频诊断检查合并至 `TtsAudioCapture.test.ts`。

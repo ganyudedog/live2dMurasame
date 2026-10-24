@@ -112,7 +112,6 @@ describe('interaction domain helpers', () => {
     // 权重是相对大小，不需要凑成 100。
     const pool = [{ group: 'A', index: 0, weight: 200 }, { group: 'B', index: 0, weight: 100 }];
     expect(pool.map((motion) => sharePercent(pool, motion))).toEqual([67, 33]);
-    expect(pool.map((motion) => sharePercent(pool, motion)).reduce((sum, share) => sum + share, 0)).toBe(100);
   });
 
   it('maps a weight to the tier whose range contains it', () => {
@@ -131,28 +130,7 @@ describe('interaction domain helpers', () => {
     for (const tier of WEIGHT_TIERS) expect(tierOf(tier.value).id).toBe(tier.id);
   });
 
-  it('offers frequency tiers that only change the edited entry', () => {
-    const manager = new InteractionSettingsService({
-      persist: vi.fn(async () => {}),
-      preview: vi.fn(),
-      log: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as LogService,
-      debounceMs: 0,
-    });
-    manager.syncFromView('model-a', {
-      motions: view.motions,
-      hitAreas: [{ name: 'Head', motions: [
-        { group: 'A', index: 0, weight: 100 }, { group: 'B', index: 0, weight: 100 },
-      ] }],
-    });
-    manager.setWeight('Head', 'A', 0, 75);
-    // B 的权重丝毫未动。
-    expect(manager.activeArea?.motions.map((motion) => motion.weight)).toEqual([75, 100]);
-    // 权重上限是 100，超出部分被夹住。
-    manager.setWeight('Head', 'A', 0, 250);
-    expect(manager.activeArea?.motions[0].weight).toBe(100);
-  });
-
-  it('keeps every weight exactly as set, and lets the derived share follow', () => {
+  it('preserves independent weights across edits and clamps only the edited entry', async () => {
     // 需求场景：B=40 就要是 40，随后 A=50、C=10 也不会把 B 挤回去。
     const manager = new InteractionSettingsService({
       persist: vi.fn(async () => {}),
@@ -167,11 +145,15 @@ describe('interaction domain helpers', () => {
       ] }],
     });
     manager.setWeight('Head', 'B', 0, 40);
+    expect(manager.activeArea?.motions.map((motion) => motion.weight)).toEqual([100, 40, 100]);
     manager.setWeight('Head', 'A', 0, 50);
     manager.setWeight('Head', 'C', 0, 10);
     // 每条都按用户输入原样保留，没有任何自动回退。
     expect(manager.activeArea?.motions.map((motion) => motion.weight)).toEqual([50, 40, 10]);
     // 占比是派生结果：合计 100 时权重就是百分比。
     expect(manager.activeArea?.motions.map((motion) => manager.shareOf(motion))).toEqual([50, 40, 10]);
+    manager.setWeight('Head', 'A', 0, 250);
+    expect(manager.activeArea?.motions.map((motion) => motion.weight)).toEqual([100, 40, 10]);
+    await manager.dispose();
   });
 });

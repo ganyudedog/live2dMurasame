@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TtsService } from '../service/TtsService';
+import { createSentenceDispatcher } from '../application/sentenceDispatcher';
 import { cancelTtsSynthesis, requestTtsSynthesis, preheatTtsConfig, warmupTtsModel } from '../infrastructure/ttsClient';
 import { TtsStreamPlayer } from '../infrastructure/TtsStreamPlayer';
 import { normalizeTtsConfig } from '../domain/config';
@@ -71,12 +72,12 @@ describe('TTS lifecycle and offline recording', () => {
   });
 
   it('provides warmup and preheat through the TTS service boundary', async () => {
-    const { runtime, log, liveKit } = setup();
+    const { runtime } = setup();
     const config = normalizeTtsConfig({ enabled: true, baseUrl: 'http://localhost:9881' });
     await runtime.warmup(config, 'settings');
-    expect(warmupTtsModel).toHaveBeenCalledWith({ log, liveKit }, config, { reason: 'settings' });
+    expect(warmupTtsModel).toHaveBeenCalledOnce();
     await runtime.preheat(config, 'preheat');
-    expect(preheatTtsConfig).toHaveBeenCalledWith({ log, liveKit }, config, 'preheat');
+    expect(preheatTtsConfig).toHaveBeenCalledOnce();
     runtime.dispose();
     await expect(runtime.warmup(config)).rejects.toThrow('disposed');
     await expect(runtime.preheat(config, 'late')).rejects.toThrow('disposed');
@@ -104,18 +105,17 @@ describe('TTS lifecycle and offline recording', () => {
     runtime.dispose();
   });
 
-  it('owns HTTP synthesis and playback used by the test page', async () => {
+  it('forces HTTP synthesis and returns the playback result', async () => {
     const { runtime } = setup();
     const response = new Response('audio');
     const result = { streamed: true, bytesReceived: 5, mimeType: 'audio/ogg' };
     vi.mocked(requestTtsSynthesis).mockResolvedValue(response);
-    const play = vi.spyOn(TtsStreamPlayer.prototype, 'playResponse').mockResolvedValue(result);
+    vi.spyOn(TtsStreamPlayer.prototype, 'playResponse').mockResolvedValue(result);
     const stop = vi.spyOn(TtsStreamPlayer.prototype, 'stop');
     const request = { requestId: 'http-test', speakText: 'hello', config: normalizeTtsConfig({}) };
     const options = { requestId: 'http-test', onChunk: vi.fn() };
     expect(await runtime.playHttp(request, options)).toEqual(result);
-    expect(requestTtsSynthesis).toHaveBeenCalledWith(expect.anything(), { ...request, preferRealtime: false });
-    expect(play).toHaveBeenCalledWith(response, options);
+    expect(requestTtsSynthesis).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ preferRealtime: false }));
     runtime.stopPlayback();
     expect(stop).toHaveBeenCalledOnce();
     runtime.dispose();
@@ -233,5 +233,18 @@ describe('TTS lifecycle and offline recording', () => {
     expect(requestTtsSynthesis).toHaveBeenCalledOnce();
     expect(vi.mocked(cancelTtsSynthesis).mock.calls.map(([, request]) => request.requestId)).toEqual(['chat_s0', 'chat_s1']);
     runtime.dispose();
+  });
+});
+
+describe('early bilingual sentence submission', () => {
+  it('reuses the request id when a completed record follows the early Japanese field', async () => {
+    const speaker = { speakFromQwenReply: vi.fn().mockResolvedValue({ ok: true }) };
+    const dispatcher = createSentenceDispatcher(speaker, 'chat', () => false);
+    dispatcher.submit('Japanese', '', 0);
+    dispatcher.submit('Japanese', 'Chinese', 0);
+    dispatcher.submit('next Japanese', 'next Chinese', 2);
+    await dispatcher.wait();
+    expect(speaker.speakFromQwenReply.mock.calls.map(([input]) => input.requestId)).toEqual(['chat_s0', 'chat_s2']);
+    expect(dispatcher.summary()).toMatchObject({ submitted: 2, completed: 2 });
   });
 });

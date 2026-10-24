@@ -1,6 +1,7 @@
 import { observable, runInAction } from 'mobx';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AsrService } from '../service/AsrService';
+import { normalizeAsrConfig } from '../domain/config';
 import type { ElectronService } from '@app/shared/electron/ElectronService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import type { LogService } from '@app/shared/logging/LogService';
@@ -143,5 +144,15 @@ describe('ASR service lifecycle', () => {
     await vi.waitFor(() => expect(service.lastError).toBe('missing vad'));
     expect(capture.start).not.toHaveBeenCalled();
     await service.dispose();
+  });
+});
+
+describe('ASR endpoint configuration', () => {
+  it('migrates the old default pair but preserves custom values and updated presets', () => {
+    const legacy = { rule1MinTrailingSilence: 2.4, rule2MinTrailingSilence: 1.2 };
+    expect(normalizeAsrConfig(legacy)).toMatchObject({ endpointPresetVersion: 1, rule1MinTrailingSilence: 1.2, rule2MinTrailingSilence: 0.7 });
+    expect(normalizeAsrConfig({ ...legacy, endpointPresetVersion: 1 })).toMatchObject(legacy);
+    const custom = { rule1MinTrailingSilence: 1.4, rule2MinTrailingSilence: 0.8 };
+    expect(normalizeAsrConfig(custom)).toMatchObject(custom);
   });
 });

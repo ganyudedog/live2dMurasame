@@ -1,3 +1,4 @@
+import { normalizeAstrBotSender } from './protocol';
 import type { AiConversationHostApi, ConversationChannel, ConversationResponse, PluginLogger } from './types';
 import type { AstrBotBridgeSettings } from './settings';
 import { normalizeInteractionSettings } from './settings';
@@ -126,9 +127,24 @@ export class AstrBotBridgeClient {
     if (!this.handshakeAccepted || !isAstrBotQqMessage(message)) return;
     if (this.pending.has(message.requestId)) { this.sendError(message.requestId, message.conversationId, 'Duplicate request id'); return; }
     this.pending.add(message.requestId);
+    const sender = normalizeAstrBotSender(message.sender);
+    this.options.logger.info('message.identity', {
+      requestId: message.requestId, conversationId: message.conversationId,
+      senderPresent: Boolean(sender), senderFields: Object.keys(message.sender ?? {}),
+      idType: typeof message.sender?.id, userIdType: typeof message.sender?.user_id,
+    });
+    if (!sender) this.options.logger.warn('message.sender.missing', {
+      requestId: message.requestId, reason: 'Bridge payload has no supported sender id',
+    });
     const result = this.channel?.sendText({
       text: message.text, requestId: message.requestId, conversationId: message.conversationId,
       interactionKey: message.interactionKey,
+      sender,
+      memoryArchive: {
+        platform: 'qq',
+        scope: message.memoryArchive.startsWith('episode/user/') ? 'private' : 'group',
+        id: message.memoryArchive.split('/').at(-1)!,
+      },
       systemPrompt: this.settings.systemPrompt,
       displayLang: message.displayLang ?? this.settings.displayLang,
       speakLang: message.speakLang === undefined ? (this.settings.speakLang || null) : message.speakLang,

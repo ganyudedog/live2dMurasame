@@ -1,5 +1,6 @@
 import {
   loadModelMemoryDocuments,
+  loadRecentModelMemoryTurns,
   recallModelMemoryEpisodes,
   appendModelMemoryConversation,
   updateModelMemoryCore,
@@ -12,6 +13,8 @@ export class JsonModelMemoryRepository {
   load(modelPath) {
     return loadModelMemoryDocuments(modelPath);
   }
+
+  loadRecentTurns(modelPath, query) { return loadRecentModelMemoryTurns(modelPath, query); }
 
   recallEpisodes(modelPath, query) {
     return recallModelMemoryEpisodes(modelPath, query);

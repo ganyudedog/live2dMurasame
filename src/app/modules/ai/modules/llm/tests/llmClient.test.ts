@@ -13,6 +13,18 @@ const actions: ActionCapability = { modelVersion: 1, actions: [
 const response = { choices: [{ message: { content: '{"display_text":"hello"}' } }] };
 
 describe('provider prompt cache and streaming usage', () => {
+  it('sends chronological history before the current question exactly once', async () => {
+    network.create.mockResolvedValue(response);
+    const historyMessages = [{ role: 'user' as const, content: '能说喜欢我吗' },
+      { role: 'assistant' as const, content: '有些不好意思' }];
+    await requestStage2LLM(config, { userText: '可是我想听嘛', historyMessages });
+    const messages = network.create.mock.lastCall![0].messages;
+    expect(messages).toHaveLength(4);
+    expect(messages[1]).toEqual(historyMessages[0]);
+    expect(messages[2]).toEqual({ role: 'assistant', content: JSON.stringify({ display_text: '有些不好意思' }) });
+    expect(messages[3]).toMatchObject({ role: 'user', content: expect.stringContaining('可是我想听嘛') });
+  });
+
   it.each([
     ['https://api.openai.com/v1', 'gpt-5.1'],
     ['https://api.deepseek.com', 'deepseek-v4-flash'],

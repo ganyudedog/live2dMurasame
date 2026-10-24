@@ -390,16 +390,34 @@ declare global {
     onPreviewMotion?: (callback: (payload: { group: string; index: number }) => void) => (() => void) | void;
   }
 
+  interface PetMemoryArchive {
+    platform: string;
+    scope: 'group' | 'private';
+    id: string;
+  }
+
+  interface PetMemoryTurn {
+    date: string;
+    time: string;
+    conversationCount: number;
+    userText: string;
+    assistantText: string;
+    conversationId?: string;
+    sender?: { id: string; displayName?: string };
+  }
+
   interface PetMemoryAPI {
+    loadRecentTurns?: (payload: { modelPath: string; archive?: PetMemoryArchive }) => Promise<{ turns: PetMemoryTurn[] }>;
+
     get?: (payload?: { modelPath?: string }) => Promise<PetModelMemoryState | undefined>;
-    recallEpisodes?: (payload: { modelPath?: string; dates: string[]; query?: string; speaker?: 'user' | 'assistant' | 'both'; approximate?: boolean; maxChars?: number }) => Promise<{
+    recallEpisodes?: (payload: { modelPath?: string; archive?: PetMemoryArchive; dates: string[]; query?: string; speaker?: 'user' | 'assistant' | 'both'; approximate?: boolean; maxChars?: number }) => Promise<{
       status: 'ok' | 'no-match' | 'expired' | 'empty';
       dates: string[];
       approximate?: boolean;
       matches?: Array<{ date: string; time: string; conversationCount: number; userText: string; assistantText: string; score: number; ageBand: number | null }>;
       text: string;
     } | undefined>;
-    appendConversation?: (payload: { modelPath?: string; userText: string; assistantText: string; at?: number }) => Promise<PetModelMemoryState | undefined>;
+    appendConversation?: (payload: { modelPath?: string; archive?: PetMemoryArchive; sender?: { id: string; displayName?: string }; conversationId?: string; userText: string; assistantText: string; at?: number }) => Promise<PetModelMemoryState | undefined>;
     updateCore?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
     replaceActionCatalogChat?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
     consolidate?: (payload: { modelPath?: string; content: string; processedThroughCount: number }) => Promise<PetModelMemoryState | undefined>;

@@ -4,6 +4,20 @@ import { MemoryService } from '../service/MemoryService';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('LLM-backed memory consolidation', () => {
+  it('supplies recent turns even before core memory has been consolidated', async () => {
+    const turns = [{ date: '2026-10-23', time: '12:00', conversationCount: 1,
+      userText: '能说你喜欢我吗', assistantText: '有些不好意思' }];
+    vi.stubGlobal('window', { MemoryAPI: {
+      get: vi.fn(async () => ({ coreText: '# 核心记忆' })),
+      loadRecentTurns: vi.fn(async () => ({ turns })),
+    } });
+    const service = new MemoryService(() => ({ activeModelPath: 'model-a' }) as PetConfigSnapshot);
+    const runtime = await service.resolve('可是我想听嘛');
+    expect(runtime.historyMessages).toEqual([
+      { role: 'user', content: '能说你喜欢我吗' }, { role: 'assistant', content: '有些不好意思' },
+    ]);
+  });
+
   it('summarizes only a bounded new batch and persists it through the memory bridge', async () => {
     const saved = { coreText: '# 核心记忆\n', state: { conversationCount: 8, lastConsolidatedCount: 8 } };
     const consolidate = vi.fn().mockResolvedValue(saved);

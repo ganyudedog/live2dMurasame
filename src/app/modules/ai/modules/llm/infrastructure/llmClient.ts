@@ -84,6 +84,12 @@ export const requestStage2LLM = async (
             actionCapability: req.actionCapability,
           }),
       },
+      // Archives store display text. Restore the wire format so prior assistant
+      // turns demonstrate JSON Lines rather than teaching plain-text replies.
+      // Do not invent historical TTS translations or replay action selections.
+      ...(req.historyMessages ?? []).map((message) => message.role === 'assistant'
+        ? { ...message, content: JSON.stringify({ display_text: message.content }) }
+        : message),
       { role: 'user' as const, content: buildStage2UserPrompt({ userText: req.userText, memoryContext: req.memoryContext }) },
     ],
     ...reasoningOptions(req.reasoningEffort),

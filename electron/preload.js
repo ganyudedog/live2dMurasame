@@ -77,6 +77,7 @@ const ModelAPI = {
 };
 
 const MemoryAPI = {
+  loadRecentTurns: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:recent', payload),
   get: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:get', payload),
   recallEpisodes: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:episodes:recall', payload),
   appendConversation: (payload) => ipcRenderer.invoke('ddd:modelenv:memory:append', payload),

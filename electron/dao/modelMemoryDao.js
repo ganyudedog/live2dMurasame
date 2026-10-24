@@ -101,13 +101,31 @@ const ensureMemoryFiles = (modelPath) => {
   return paths;
 };
 
-const toEpisodeBlock = ({ userText, assistantText, at = Date.now(), conversationCount = 0 }) => {
+// External archives share episode parsing/ranking but never desktop core-memory cursors.
+const ensureEpisodeArchive = (modelPath, archive) => {
+  if (archive == null) return ensureMemoryFiles(modelPath);
+  const segment = (value) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(value)
+    && !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i.test(value);
+  if (!segment(archive.platform) || !segment(archive.id) || !['group', 'private'].includes(archive.scope)) {
+    throw new Error('Invalid memory archive identity');
+  }
+  const episodesDir = path.join(pathsFor(modelPath).episodesDir, archive.platform.toLowerCase(), archive.scope, archive.id);
+  fs.mkdirSync(episodesDir, { recursive: true });
+  return { episodesDir, statePath: path.join(episodesDir, 'state.json') };
+};
+
+const toEpisodeBlock = ({ userText, assistantText, sender, conversationId, at = Date.now(), conversationCount = 0 }) => {
   const date = safeDate(at);
   const time = new Date(at).toLocaleTimeString('zh-CN', {
     timeZone: APP_TIME_ZONE, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
   });
+  // Store only the stable sender ID; readable JSON avoids URI-encoded nicknames.
+  const metadata = JSON.stringify({
+    sender: typeof sender?.id === 'string' ? { id: sender.id } : undefined,
+    conversationId,
+  }).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e');
   const quote = (text) => String(text ?? '').trim().split(/\r?\n/).map((line) => `> ${line}`).join('\n');
-  return { date, block: `\n<!-- conversation-count:${conversationCount} -->\n### ${time}\n\n**用户**\n${quote(userText)}\n\n**角色**\n${quote(assistantText)}\n` };
+  return { date, block: `\n<!-- conversation-count:${conversationCount} -->\n### ${time}\n<!-- turn-meta:${metadata} -->\n\n**用户**\n${quote(userText)}\n\n**角色**\n${quote(assistantText)}\n` };
 };
 
 const deriveEpisodeAgeBand = (date, now = Date.now()) => {
@@ -209,6 +227,11 @@ const parseEpisodeBlocks = (content, date) => {
     ? markedBlocks
     : String(content ?? '').split(/(?=^###\s+.+?\s+·\s+(?:用户|角色)\s*$)/m).filter((block) => /^###\s+.+?\s+·\s+(?:用户|角色)\s*$/m.test(block));
   return rawBlocks.map((block) => {
+    let metadata = {};
+    try {
+      const raw = block.match(/^<!-- turn-meta:(.*?) -->$/m)?.[1] ?? '{}';
+      metadata = asObject(JSON.parse(raw));
+    } catch { /* Accept archives without metadata or with damaged metadata. */ }
     const count = Number(block.match(/<!-- conversation-count:(\d+) -->/)?.[1]);
     const time = block.match(/^###\s+(.+)$/m)?.[1]?.trim() ?? '';
     const userMatch = block.match(/\*\*用户\*\*\s*\n([\s\S]*?)(?=\n\s*\*\*角色\*\*|$)/);
@@ -222,6 +245,8 @@ const parseEpisodeBlocks = (content, date) => {
       conversationCount: Number.isInteger(count) ? count : 0,
       userText,
       assistantText,
+      sender: typeof metadata.sender?.id === 'string' ? { id: metadata.sender.id } : undefined,
+      conversationId: metadata.conversationId,
       rawText: block.trim(),
     };
   }).filter((block) => block.userText || block.assistantText);
@@ -291,36 +316,54 @@ const pendingEpisodes = (paths, state) => {
   };
 };
 
-export const loadModelMemoryDocuments = (modelPath) => {
-  const paths = ensureMemoryFiles(modelPath);
-  const state = { ...DEFAULT_STATE, ...migrateLegacyMemory(modelPath, paths) };
+export const loadModelMemoryDocuments = (modelPath, archive) => {
+  const paths = ensureEpisodeArchive(modelPath, archive);
+  const state = { ...DEFAULT_STATE, ...(archive == null ? migrateLegacyMemory(modelPath, paths) : readJson(paths.statePath)) };
   const deletedCount = pruneExpiredEpisodes(paths, Date.now(), state);
   if (deletedCount > 0) writeJson(paths.statePath, state);
   const pending = pendingEpisodes(paths, state);
   const episodeDates = listEpisodeDates(paths);
   return {
-    coreText: readText(paths.corePath),
+    coreText: archive == null ? readText(paths.corePath) : '',
     // 只返回日期索引；原始 episode 只能通过显式历史查询读取。
     episodes: [],
     episodeDates,
     episodeCount: episodeDates.length,
     state: { ...DEFAULT_STATE, ...state },
-    pendingEpisodeText: pending.text,
+    pendingEpisodeText: archive == null ? pending.text : '',
     pendingThroughCount: pending.throughCount,
     pendingSinceDate: pending.sinceDate,
-    actionCatalogChat: readText(paths.actionCatalogChatPath).slice(-MAX_ACTION_CHAT_BYTES),
+    actionCatalogChat: archive == null ? readText(paths.actionCatalogChatPath).slice(-MAX_ACTION_CHAT_BYTES) : '',
   };
 };
 
+// Recent context is chronological, independent of relevance and consolidation cursors.
+export const loadRecentModelMemoryTurns = (modelPath, { archive, limit = 10 } = {}) => {
+  const paths = ensureEpisodeArchive(modelPath, archive);
+  const state = { ...DEFAULT_STATE, ...readJson(paths.statePath) };
+  if (pruneExpiredEpisodes(paths, Date.now(), state) > 0) writeJson(paths.statePath, state);
+  const count = Number.isFinite(limit) ? Math.max(1, Math.min(10, Math.floor(limit))) : 10;
+  const turns = [];
+  for (const date of listEpisodeDates(paths).reverse()) {
+    const blocks = parseEpisodeBlocks(readText(path.join(paths.episodesDir, `${date}.md`)), date);
+    for (const { rawText: _rawText, ...block } of blocks.reverse()) {
+      if (block.userText && block.assistantText) turns.push(block);
+      if (turns.length === count) return { turns: turns.reverse() };
+    }
+  }
+  return { turns: turns.reverse() };
+};
+
 export const recallModelMemoryEpisodes = (modelPath, {
-  dates = [], query = '', speaker = 'both', approximate = false, maxChars = MAX_EPISODE_RECALL_CHARS,
+  archive, dates = [], query = '', speaker = 'both', approximate = false, maxChars = MAX_EPISODE_RECALL_CHARS,
 } = {}) => {
-  const paths = ensureMemoryFiles(modelPath);
-  const state = { ...DEFAULT_STATE, ...migrateLegacyMemory(modelPath, paths) };
+  const paths = ensureEpisodeArchive(modelPath, archive);
+  const state = { ...DEFAULT_STATE, ...(archive == null ? migrateLegacyMemory(modelPath, paths) : readJson(paths.statePath)) };
   const deletedCount = pruneExpiredEpisodes(paths, Date.now(), state);
   if (deletedCount > 0) writeJson(paths.statePath, state);
   const availableDates = new Set(listEpisodeDates(paths));
-  const requestedDates = [...new Set(Array.isArray(dates) ? dates : [])]
+  const candidates = archive != null && Array.isArray(dates) && !dates.length ? [...availableDates] : dates;
+  const requestedDates = [...new Set(Array.isArray(candidates) ? candidates : [])]
     .filter((date) => EPISODE_DATE.test(String(date)) && availableDates.has(date));
   const expired = Array.isArray(dates) && dates.length > 0 && requestedDates.length === 0;
   if (!requestedDates.length) return { status: expired ? 'expired' : 'empty', dates: [], approximate, matches: [], text: '' };
@@ -367,7 +410,7 @@ export const recallModelMemoryEpisodes = (modelPath, {
 };
 
 export const appendModelMemoryConversation = (modelPath, conversation) => {
-  const paths = ensureMemoryFiles(modelPath);
+  const paths = ensureEpisodeArchive(modelPath, conversation?.archive);
   const state = { ...DEFAULT_STATE, ...readJson(paths.statePath, DEFAULT_STATE) };
   pruneExpiredEpisodes(paths, Date.now(), state);
   state.conversationCount += 1;
@@ -378,7 +421,7 @@ export const appendModelMemoryConversation = (modelPath, conversation) => {
   if (Buffer.byteLength(content + block, 'utf8') > MAX_EPISODE_BYTES) throw new Error('当天记忆归档超过 512 KB，已停止追加');
   atomicWrite(episodePath, `${content}${block}`);
   writeJson(paths.statePath, state);
-  return loadModelMemoryDocuments(modelPath);
+  return loadModelMemoryDocuments(modelPath, conversation?.archive);
 };
 
 export const updateModelMemoryCore = (modelPath, content) => {

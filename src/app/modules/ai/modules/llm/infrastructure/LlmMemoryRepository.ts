@@ -1,9 +1,14 @@
 export class LlmMemoryRepository {
+  async loadRecentTurns(payload: { modelPath: string; archive?: PetMemoryArchive }): Promise<PetMemoryTurn[]> {
+    return (await window.MemoryAPI?.loadRecentTurns?.(payload))?.turns ?? [];
+  }
+
   async get(modelPath?: string): Promise<PetModelMemoryState | null> {
     return await window.MemoryAPI?.get?.({ modelPath }) ?? null;
   }
 
   recallEpisodes(payload: {
+    archive?: PetMemoryArchive;
     modelPath: string;
     dates: string[];
     query?: string;
@@ -14,7 +19,7 @@ export class LlmMemoryRepository {
     return window.MemoryAPI?.recallEpisodes?.(payload);
   }
 
-  appendConversation(payload: { modelPath: string; userText: string; assistantText: string; at?: number }) {
+  appendConversation(payload: { modelPath: string; archive?: PetMemoryArchive; sender?: { id: string; displayName?: string }; conversationId?: string; userText: string; assistantText: string; at?: number }) {
     return window.MemoryAPI?.appendConversation?.(payload);
   }
 

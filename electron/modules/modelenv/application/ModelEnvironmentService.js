@@ -87,6 +87,10 @@ export class ModelEnvironmentService {
     return modelPath ? this.memoryRepository.load(modelPath) : null;
   }
 
+  loadRecentMemoryTurns(modelPath, query) {
+    return modelPath ? this.memoryRepository.loadRecentTurns(modelPath, query) : { turns: [] };
+  }
+
   recallMemoryEpisodes(modelPath, query) {
     return modelPath ? this.memoryRepository.recallEpisodes(modelPath, query) : {
       status: 'empty', dates: [], matches: [], text: '', approximate: Boolean(query?.approximate),

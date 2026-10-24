@@ -28,6 +28,7 @@ export interface Stage2LLMRequest {
   model?: string;
   temperature?: number;
   memoryContext?: string;
+  historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   actionCapability?: ActionCapability;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto' | null;

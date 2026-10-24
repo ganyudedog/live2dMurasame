@@ -214,6 +214,7 @@ export class LlmService {
           model: resolved.model,
           temperature: resolved.temperature,
           memoryContext: memoryRuntime.contextText,
+          historyMessages: memoryRuntime.historyMessages,
           actionCapability,
           displayLang: languageProfile.displayLang,
           speakLang: languageProfile.speakLang,

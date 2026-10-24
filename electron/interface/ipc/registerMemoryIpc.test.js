@@ -45,6 +45,42 @@ afterEach(() => {
 const invoke = (channel, payload = {}) => runtime.handlers.get(channel)(null, payload);
 
 describe('model memory IPC persistence', () => {
+  it('returns the last ten complete turns across days, with identities and archive isolation', () => {
+    const archive = { platform: 'qq', scope: 'group', id: 'recent' };
+    for (let i = 0; i < 12; i++) {
+      invoke('ddd:modelenv:memory:append', { archive, conversationId: 'qq:group:recent',
+        sender: { id: String(i % 2), displayName: '群成员' }, userText: `问题${i}`, assistantText: `回复${i}`,
+        at: Date.now() - (12 - i) * 3 * 3600000 });
+    }
+    const recent = invoke('ddd:modelenv:memory:recent', { archive }).turns;
+    expect(recent.map((turn) => turn.userText)).toEqual(Array.from({ length: 10 }, (_, i) => `问题${i + 2}`));
+    expect(recent[0]).toMatchObject({ conversationId: 'qq:group:recent', sender: { id: '0' } });
+    expect(recent[0].sender).toEqual({ id: '0' });
+    const dir = path.join(getModelConfigDirFor(modelPath), 'memory', 'episodes', 'qq', 'group', 'recent');
+    const file = fs.readdirSync(dir).filter((name) => name.endsWith('.md')).sort().at(-1);
+    const filePath = path.join(dir, file);
+    const content = fs.readFileSync(filePath, 'utf8');
+    expect(content).toContain('turn-meta:{"sender":{"id":');
+    expect(content).not.toContain('群成员');
+    expect(invoke('ddd:modelenv:memory:recent').turns).toEqual([]);
+    expect(invoke('ddd:modelenv:memory:recent', { archive: { ...archive, scope: 'private' } }).turns).toEqual([]);
+    expect(invoke('ddd:modelenv:memory:get').state.conversationCount).toBe(0);
+  });
+
+  it('persists and ranks isolated platform/group archives without updating desktop memory', () => {
+    const archive = { platform: 'qq', scope: 'group', id: '12345' };
+    invoke('ddd:modelenv:memory:append', { archive, userText: '周末去杭州看西湖', assistantText: '记得带伞' });
+    const query = { archive, dates: [], query: '杭州' };
+    expect(invoke('ddd:modelenv:memory:episodes:recall', query).text).toContain('西湖');
+    for (const other of [{ ...archive, id: '67890' }, { ...archive, platform: 'other' }, { ...archive, scope: 'private' }]) {
+      expect(invoke('ddd:modelenv:memory:episodes:recall', { ...query, archive: other }).text).toBe('');
+    }
+    expect(invoke('ddd:modelenv:memory:get').state.conversationCount).toBe(0);
+    expect(broadcasts).toEqual([]);
+    const dir = path.join(getModelConfigDirFor(modelPath), 'memory', 'episodes', 'qq', 'group', '12345');
+    expect(fs.readdirSync(dir).some((name) => name.endsWith('.md'))).toBe(true);
+    expect(() => invoke('ddd:modelenv:memory:append', { archive: { ...archive, id: '../escape' } })).toThrow('Invalid memory archive');
+  });
   it('routes append, consolidation, core editing and action chat through ModelEnvironmentService to DAO files', () => {
     const initial = invoke('ddd:modelenv:memory:get');
     expect(initial.coreText).toContain('# 核心记忆');

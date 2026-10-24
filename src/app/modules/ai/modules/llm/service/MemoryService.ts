@@ -1,3 +1,5 @@
+import { buildRecentConversation, distinctRecallText } from '../domain/memory/recentConversation';
+import type { Stage2LLMRequest } from '../domain/types';
 import { isString } from '../domain/config';
 import { LlmMemoryRepository } from '../infrastructure/LlmMemoryRepository';
 import { buildMemoryContext, normalizePersona } from '../domain/memory/memoryContext';
@@ -6,6 +8,7 @@ import type { TraceScope } from '@app/shared/logging/LogService';
 
 export interface ResolvedMemoryRuntime {
   contextText: string;
+  historyMessages?: Stage2LLMRequest['historyMessages'];
   modelPath: string | null;
   memoryState: PetModelMemoryState | null;
   episodeRecall?: Awaited<ReturnType<LlmMemoryRepository['recallEpisodes']>>;
@@ -33,6 +36,7 @@ export class MemoryService {
       const snapshot = injectedSnapshot ?? this.getConfigSnapshot();
       const modelPath = snapshot?.activeModelPath ?? null;
       const memoryState = await this.repository.get(modelPath ?? undefined) ?? null;
+      const recent = buildRecentConversation(modelPath ? await this.repository.loadRecentTurns({ modelPath }) : []);
       const episodeQuery = resolveEpisodeQuery(userText);
       let episodeRecall: ResolvedMemoryRuntime['episodeRecall'];
       if (modelPath && episodeQuery.status === 'resolved') {
@@ -45,16 +49,18 @@ export class MemoryService {
           maxChars: 12000,
         });
       }
+      const recallText = distinctRecallText(episodeRecall, recent.turns);
       const contextText = buildMemoryContext(
         normalizePersona(snapshot?.modelConfig?.persona),
         memoryState,
-        episodeRecall?.text
-          ? `${episodeQuery.approximate ? '时间范围不确定；以下仅为保留期内的相关片段，不代表完整历史。\n' : ''}${episodeRecall.text}`
-          : episodeQuery.status !== 'none' ? '没有召回对应的历史片段；不要据此编造经历或断言用户从未说过。' : '',
+        recallText
+          ? `${episodeQuery.approximate ? '时间范围不确定；以下仅为保留期内的相关片段，不代表完整历史。\n' : ''}${recallText}`
+          : episodeQuery.status !== 'none' && !recent.turns.length ? '没有召回对应的历史片段；不要据此编造经历或断言用户从未说过。' : '',
         userText,
       );
       trace?.record('memory.context.loaded', {
         modelPath,
+        recentTurns: recent.turns.length, omittedTurns: recent.omittedTurns,
         coreChars: memoryState?.coreText?.length ?? 0,
         episodeCount: memoryState?.episodeCount ?? memoryState?.episodeDates?.length ?? 0,
         pendingChars: memoryState?.pendingEpisodeText?.length ?? 0,
@@ -68,7 +74,7 @@ export class MemoryService {
           matchCount: episodeRecall?.matches?.length ?? 0,
         },
       });
-      return { contextText, modelPath, memoryState, episodeRecall };
+      return { contextText, modelPath, memoryState, episodeRecall, historyMessages: recent.historyMessages };
     } catch (error) {
       trace?.record('memory.context.failed', { err: String(error) });
       return { contextText: '', modelPath: null, memoryState: null };

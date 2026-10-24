@@ -62,7 +62,16 @@ export interface ConversationChannelOptions {
   readonly speakLang?: SpeakLanguage | null;
 }
 
+/** Logical archive identity, never a filesystem path. Omit to disable archival. */
+export interface ConversationMemoryArchive {
+  readonly platform: string;
+  readonly scope: 'group' | 'private';
+  readonly id: string;
+}
+
 export interface ConversationRequest {
+  readonly sender?: { readonly id: string; readonly displayName?: string };
+  readonly memoryArchive?: ConversationMemoryArchive;
   readonly text: string;
   readonly requestId?: string;
   readonly conversationId?: string;

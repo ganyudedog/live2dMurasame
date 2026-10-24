@@ -5,7 +5,7 @@ import { TOKENS } from '../serviceTokens';
 import type { UiRenderContext } from './types';
 
 export const PluginPanelHost = observer(({ slot, tabId }: { slot?: string; tabId?: string }) => {
-  const runtime = useService(TOKENS.plugin.runtime);
+  const runtime = useService(TOKENS.plugin);
   const revision = runtime.revision;
   void revision;
   const page = tabId ? runtime.getControlPanelPage(tabId) : null;

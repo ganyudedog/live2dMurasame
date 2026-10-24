@@ -14,12 +14,14 @@ const setup = () => {
   const offStart = vi.fn();
   const offFinal = vi.fn();
   const asr = {
+    start: vi.fn(),
+    dispose: vi.fn().mockResolvedValue(undefined),
     onSpeechStart: vi.fn((listener: () => void) => { speechStart = listener; return offStart; }),
     onFinal: vi.fn((listener: typeof final) => { final = listener; return offFinal; }),
   };
-  const llm = { ask: vi.fn<LlmService['ask']>() };
+  const llm = { ask: vi.fn<LlmService['ask']>(), dispose: vi.fn() };
   const consumers = new Map<string, { submit: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; wait: ReturnType<typeof vi.fn>; summary: ReturnType<typeof vi.fn> }>();
-  const tts = { cancelActive: vi.fn(), createDispatcher: vi.fn((id: string) => {
+  const tts = { start: vi.fn(), dispose: vi.fn(), cancelActive: vi.fn(), createDispatcher: vi.fn((id: string) => {
     const consumer = { submit: vi.fn(), stop: vi.fn(), wait: vi.fn().mockResolvedValue(undefined), summary: vi.fn() };
     consumers.set(id, consumer);
     return consumer;
@@ -46,13 +48,13 @@ describe('voice interruption orchestration', () => {
       expect(consumers.get('chat')?.submit).toHaveBeenCalledOnce();
       expect(actions).not.toHaveBeenCalled();
       options.onSentenceStreaming?.({ sentenceIndex: 0, speakText: 'voice', displayText: 'text',
-        modelVersion: 5, actionIntent: { actionId: [['cheek', 'turn-head'], 'blink'] } });
+        actionIntent: { actionId: [['cheek', 'turn-head'], 'blink'] } });
       return { ok: true };
     });
     await service.processChatRequest(request('chat'));
     expect(service.lastError).toBeNull();
     expect(actions).toHaveBeenCalledWith({ conversationId: 'chat', requestId: 'chat_s0',
-      modelVersion: 5, hasSpeech: true, intent: { actionId: [['cheek', 'turn-head'], 'blink'] } });
+      hasSpeech: true, intent: { actionId: [['cheek', 'turn-head'], 'blink'] } });
     expect(consumers.get('chat')?.submit).toHaveBeenCalledOnce();
     expect(dialogue).toHaveBeenCalledWith({ type: 'completed', conversationId: 'chat' });
     speechStart();

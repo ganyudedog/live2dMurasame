@@ -5,14 +5,14 @@ import { ControlPanelService } from './service/ControlPanelService';
 export const serviceModule: ServiceModule = {
   id: 'controlPanel.root',
   windows: ['control-panel'],
-  eager: [TOKENS.controlPanel.runtime],
+  eager: [TOKENS.controlPanel],
   register(container) {
-    container.registerSingleton(TOKENS.controlPanel.runtime, (scope) => new ControlPanelService(
+    container.registerSingleton(TOKENS.controlPanel, (scope) => new ControlPanelService(
       scope.resolve(TOKENS.shared.config),
       scope.resolve(TOKENS.shared.stateBus),
       scope.resolve(TOKENS.shared.log),
-      scope.resolve(TOKENS.ai.tts.runtime),
-      scope.resolve(TOKENS.ai.llm),
+      scope.resolve(TOKENS.ai).tts,
+      scope.resolve(TOKENS.ai).llm,
     ));
   },
 };

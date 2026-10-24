@@ -5,7 +5,7 @@ import { TOKENS } from '@app/core/serviceTokens';
 import { subtitleFontSize } from '../../../../../shared/subtitleSettings.js';
 
 export const SubtitleWindow = observer(() => {
-  const service = useService(TOKENS.subtitle.runtime);
+  const service = useService(TOKENS.subtitle);
   const { state } = service;
   const [hovered, setHovered] = useState(false);
   const fontSize = subtitleFontSize(state.bounds.width, state.bounds.height);

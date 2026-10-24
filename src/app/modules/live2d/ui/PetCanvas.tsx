@@ -34,10 +34,10 @@ const toFiniteNumber = (raw: unknown, fallback: number): number => {
 const PetCanvas: React.FC = observer(() => {
   // 来自主进程的配置快照
   const configService = useService(TOKENS.shared.config);
-  const live2dService = useService(TOKENS.live2d.runtime);
+  const live2dService = useService(TOKENS.live2d);
   const electronService = useService(TOKENS.shared.electron);
-  useService(TOKENS.ai.runtime);
-  const composer = useService(TOKENS.live2d.floatingComposer);
+  useService(TOKENS.ai);
+  const composer = live2dService.floatingComposer;
   const composerVisible = composer.visible;
   const windowApi = electronService.bridge.windowApi;
   // Local sizes come from the shared numeric layout; desktop position is native metadata.

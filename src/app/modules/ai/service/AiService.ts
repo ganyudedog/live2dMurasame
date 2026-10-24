@@ -16,9 +16,6 @@ export class AiService {
   lastError: string | null = null;
   private readonly stateBus: StateBusService;
   private readonly log: LogService;
-  private readonly llm: LlmService;
-  private readonly tts: TtsService;
-  private readonly asr: AsrService;
   private reactions: IReactionDisposer[] = [];
   private disposed = false;
   private extensionRegister: AiRegister | null = null;
@@ -31,6 +28,10 @@ export class AiService {
   private lastConversationId: string | null = null;
   private activeDisplayText = '';
   private readonly asrSubscriptions: Array<() => void> = [];
+
+  readonly llm: LlmService;
+  readonly tts: TtsService;
+  readonly asr: AsrService;
 
   constructor(
     stateBus: StateBusService,
@@ -58,6 +59,8 @@ export class AiService {
   get ttsWarmed(): boolean { return this.tts.warmed; }
 
   start(): void {
+    this.tts.start();
+    this.asr.start();
     this.reactions.push(
       reaction(
         () => this.stateBus.chatRequest,
@@ -196,14 +199,13 @@ export class AiService {
           submitSpeech(sentence.sentenceIndex, sentence.speakText, sentence.displayText);
           if (sentence.actionIntent) this.emitAction({
             conversationId: request.id, requestId: `${request.id}_s${sentence.sentenceIndex}`,
-            modelVersion: sentence.modelVersion ?? 0, hasSpeech: Boolean(sentence.speakText), intent: sentence.actionIntent,
+            hasSpeech: Boolean(sentence.speakText), intent: sentence.actionIntent,
           });
           trace.record('sentence.received', {
             requestId: request.id,
             sentenceIndex: sentence.sentenceIndex,
             speakLength: sentence.speakText.length,
             actionId: sentence.actionIntent?.actionId,
-            modelVersion: sentence.modelVersion,
           });
         },
       });
@@ -221,7 +223,7 @@ export class AiService {
       if (!displayedSentences.size) prepareDisplay(0, finalDisplay);
       if (!submittedSpeech.size && result.reply?.speak_text) submitSpeech(0, result.reply.speak_text, finalDisplay);
       if (!completeSentences && result.reply?.action_intent) this.emitAction({
-        conversationId: request.id, requestId: `${request.id}_s0`, modelVersion: result.modelVersion ?? 0,
+        conversationId: request.id, requestId: `${request.id}_s0`,
         hasSpeech: Boolean(result.reply.speak_text), intent: result.reply.action_intent,
       });
       this.activeDisplayText = finalDisplay;
@@ -314,6 +316,7 @@ export class AiService {
   }
 
   async dispose(): Promise<void> {
+    if (this.disposed) return;
     this.disposed = true;
     this.reactions.splice(0).forEach((dispose) => dispose());
     this.asrSubscriptions.splice(0).forEach((dispose) => dispose());
@@ -321,6 +324,9 @@ export class AiService {
     this.responseListeners.clear();
     this.dialogueListeners.clear();
     this.actionListeners.clear();
+    this.tts.dispose();
+    this.llm.dispose();
+    await this.asr.dispose();
     const context = this.log.contextRegistry.register('AiService', {
       relation: 'lifecycle',
       params: {},

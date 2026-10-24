@@ -71,7 +71,7 @@ export const mountApplication = async (): Promise<void> => {
     </StrictMode>,
   );
 
-  const live2d = windowKind === 'pet' ? application.container.resolve(TOKENS.live2d.runtime) : null;
+  const live2d = windowKind === 'pet' ? application.container.resolve(TOKENS.live2d) : null;
   const stopMeasurement = live2d ? bindBubbleMeasurementRoot(live2d) : null;
 
   window.addEventListener('pagehide', () => {

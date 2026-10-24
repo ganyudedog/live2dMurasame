@@ -42,7 +42,7 @@ export const bootstrapRenderer = async (
   for (const token of eagerTokens) container.resolve(token);
   await container.startServices();
 
-  const pluginRuntime = container.resolve(TOKENS.plugin.runtime);
+  const pluginRuntime = container.resolve(TOKENS.plugin);
   const electron = container.resolve(TOKENS.shared.electron);
   const desktopNotificationsApi: DesktopNotificationsHostApi = {
     showNotification: async (title, body) => {
@@ -70,7 +70,7 @@ export const bootstrapRenderer = async (
   pluginRuntime.registerHostApi('aiModels', 'ai.models', aiModelsApi);
 
   if (windowKind === 'pet') {
-    const live2d = container.resolve(TOKENS.live2d.runtime);
+    const live2d = container.resolve(TOKENS.live2d);
     const config = container.resolve(TOKENS.shared.config);
     const pluginAi = new PluginConversationHost(createDefaultConversationExecutor(config, logger));
     const live2dHostApi: Live2dHostApi = {
@@ -85,7 +85,7 @@ export const bootstrapRenderer = async (
     live2d.registerExtensions(pluginRuntime.live2dRegister);
   }
   if (windowKind === 'control-panel') {
-    const controlPanel = container.resolve(TOKENS.controlPanel.runtime);
+    const controlPanel = container.resolve(TOKENS.controlPanel);
     const controlPanelHostApi: ControlPanelHostApi = {
       getActiveTab: () => controlPanel.activeTab,
       openTab: (tabId) => controlPanel.setActiveTab(tabId as Parameters<typeof controlPanel.setActiveTab>[0]),
@@ -105,12 +105,12 @@ export const bootstrapRenderer = async (
   // Cross-service subscriptions belong to the composition root, not the React tree.
   const bindings: Array<() => void> = [];
   if (windowKind === 'pet') {
-    const live2d = container.resolve(TOKENS.live2d.runtime);
+    const live2d = container.resolve(TOKENS.live2d);
     const electron = container.resolve(TOKENS.shared.electron);
     const config = container.resolve(TOKENS.shared.config);
     bindings.push(
-      bindAiBubble(container.resolve(TOKENS.ai.runtime), container.resolve(TOKENS.ai.tts.runtime), live2d),
-      bindAiActions(container.resolve(TOKENS.ai.runtime), container.resolve(TOKENS.ai.tts.runtime), live2d),
+      bindAiBubble(container.resolve(TOKENS.ai), container.resolve(TOKENS.ai).tts, live2d),
+      bindAiActions(container.resolve(TOKENS.ai), container.resolve(TOKENS.ai).tts, live2d),
       reaction(() => electron.drag.active, (active) => live2d.setWindowDragging(active), { fireImmediately: true }),
       reaction(() => config.modelConfig?.bubble,
         (settings) => live2d.configureBubble(settings ?? {}),
@@ -120,7 +120,7 @@ export const bootstrapRenderer = async (
         (view) => live2d.configureInteraction(view),
         { fireImmediately: true }),
       reaction(() => config.globalModelConfig?.showDragHandleOnHover !== false,
-        (enabled) => container.resolve(TOKENS.live2d.floatingComposer).configure(enabled), { fireImmediately: true }),
+        (enabled) => live2d.floatingComposer.configure(enabled), { fireImmediately: true }),
     );
   }
 

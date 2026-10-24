@@ -7,7 +7,6 @@ export type AiDialogueEvent =
 export interface AiActionEvent {
   conversationId: string;
   requestId: string;
-  modelVersion: number;
   hasSpeech: boolean;
   intent: ActionIntentInput;
 }

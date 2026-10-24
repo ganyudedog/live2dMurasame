@@ -20,7 +20,9 @@ const OUTPUT_CONTRACT = [
   '',
   '{ "speak_text": "一句 TTS 文本", "display_text": "对应的显示文本" }',
   '',
+  '每行必须同时包含非空字符串 speak_text 和 display_text；不得只输出 display_text，也不得用 null 或空字符串代替 speak_text。',
   'speak_text 必须在前、display_text 在后，以便语音先开始合成。两者表达相同意思和语气，分别使用配置指定的语言。',
+  '历史 assistant 消息是归档的显示文本，保存时省略了语音和动作字段；它们只用于理解上下文，不是本轮输出格式示例。不得因为历史只有 display_text 而省略本轮 speak_text。',
   '首段优先简短且有实际内容，让用户尽早听到回应；后续按内容自然展开，较长内容在语义完整处拆段。',
   '每段适合自然朗读，不机械卡字数，不在半句话处截断，也不要为了首段短而单独输出没有信息的语气词。',
   '',
@@ -34,7 +36,7 @@ const OUTPUT_CONTRACT = [
   '{"speak_text":"これでひと息つけそう？","display_text":"这下能松口气了吧？"}',
   '',
   '每行对象之间不要添加逗号，不要输出代码围栏、场景标题或解释。',
-  'action_intent 可选，需要时放在语义对应的同一行 JSON 内，顺序为 speak_text、display_text、action_intent。不要另起一行只输出动作，不必每次添加。',
+  'action_intent 可选，需要时放在语义对应的同一行 JSON 内，顺序为 speak_text、display_text、action_intent。不要另起一行只输出动作，不必每次添加。历史未保存动作字段不代表本轮禁止使用动作。',
 ].join('\n');
 
 const CONVERSATION_STYLE = [
@@ -55,25 +57,26 @@ const mapDisplayLangName = (lang?: 'zh' | 'en' | 'ja' | 'ko'): string => {
   return '中文';
 };
 
-const mapSpeakLangName = (lang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto'): string => {
-  if (lang === 'all_zh') return '中文';
-  if (lang === 'all_en') return '英语';
-  if (lang === 'all_ja') return '日语';
-  if (lang === 'all_ko') return '韩语';
-  if (lang === 'all_yue') return '粤语';
+const mapSpeakLangName = (lang?: string | null): string => {
+  if (lang === 'all_zh' || lang === 'zh') return '中文';
+  if (lang === 'all_en' || lang === 'en') return '英语';
+  if (lang === 'all_ja' || lang === 'ja') return '日语';
+  if (lang === 'all_ko' || lang === 'ko') return '韩语';
+  if (lang === 'all_yue' || lang === 'yue') return '粤语';
+  if (lang === 'auto') return '自动选择的语音语言';
   return lang && lang.trim() ? lang : '日语';
 };
 
-export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'ja' | 'ko'; speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto'; actionCapability?: ActionCapability }): string => {
+export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'ja' | 'ko'; speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto'; actionCapability?: Pick<ActionCapability, 'actions'> }): string => {
   const displayLangName = mapDisplayLangName(input?.displayLang);
   const speakLangName = mapSpeakLangName(input?.speakLang);
   return [
     '你是 Live2D 桌宠的角色对话助手。',
     '你的输出必须是严格的 JSON Lines，不要包裹在 markdown 代码块（```）中，不要添加额外的注释或说明文字。',
-    CONVERSATION_STYLE,
-    '如果提供了角色设定和记忆上下文，你必须优先遵守其中的人设、关系、禁忌、世界观与记忆。',
     '输出格式（JSON Lines）：',
     OUTPUT_CONTRACT,
+    CONVERSATION_STYLE,
+    '如果提供了角色设定和记忆上下文，你必须优先遵守其中的人设、关系、禁忌、世界观与记忆；输出格式与字段语言仍遵守本轮协议。',
     // 固定规则完整放在前部；语言及动作目录在后部，减少编辑动作时失效的缓存前缀。
     `display_text 必须使用${displayLangName}。`,
     `speak_text 是给 TTS 语音合成用的，**必须**使用${speakLangName}（即使用户输入是其他语言）。如果 speak_text 用了错误的语言，TTS 合成会失败。`,

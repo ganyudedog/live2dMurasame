@@ -43,7 +43,6 @@ export class TtsService {
 
   private readonly feedback: TtsPlaybackFeedbackService;
   private readonly log: LogService;
-  private readonly liveKit: LiveKitPort;
   private activeTrace: TraceScope | null = null;
 
   private activeAbortController: AbortController | null = null;
@@ -56,6 +55,8 @@ export class TtsService {
 
   // 当前是否已调用 dispose，dispose 后实例不应再接受新的 speak 请求，且会中止所有未完成的请求。 
   private disposed = false;
+
+  readonly liveKit: LiveKitPort;
 
   constructor(options: TtsServiceOptions) {
     this.log = options.log;
@@ -119,6 +120,7 @@ export class TtsService {
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
     this.stopWarmupReaction?.();
     this.stopWarmupReaction = null;
@@ -130,6 +132,7 @@ export class TtsService {
     this.player.dispose();
     this.playbackListeners.clear();
     this.audioLevelListeners.clear();
+    this.liveKit.dispose();
   }
 
   // 根据当前配置进行预热，预热过程会检查必要的配置项并调用后端接口，记录日志以供分析预热失败的原因和时长。

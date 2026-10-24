@@ -23,6 +23,7 @@ describe('AI action composition binding', () => {
       onAudioLevel: (listener: typeof audio) => { audio = listener; return disposers[3]; },
     };
     const actions = new Live2dActionService();
+    actions.attach(null);
     const scheduler = actions.sentenceActionScheduler;
     const begin = vi.spyOn(scheduler, 'begin');
     const receive = vi.spyOn(scheduler, 'receive');
@@ -34,9 +35,9 @@ describe('AI action composition binding', () => {
       tts as unknown as TtsService, { actions } as Live2dService);
     dialogue({ type: 'started', conversationId: 'turn' });
     expect(begin).toHaveBeenCalledWith('turn');
-    action({ conversationId: 'turn', requestId: 's0', modelVersion: 0, hasSpeech: true,
+    action({ conversationId: 'turn', requestId: 's0', hasSpeech: true,
       intent: { actionId: 'cheek' } });
-    expect(receive).toHaveBeenCalledOnce();
+    expect(receive).toHaveBeenCalledWith(expect.objectContaining({ modelVersion: 1 }));
     expect(dispatch).not.toHaveBeenCalled();
     playback({ queueGroupId: 'turn', requestId: 's0', state: 'started', transport: 'livekit' });
     expect(observePlayback).toHaveBeenCalledWith('turn', 's0', 'started', undefined);
@@ -47,6 +48,8 @@ describe('AI action composition binding', () => {
     expect(clear).toHaveBeenLastCalledWith('model-detached');
     audio(0.5);
     expect(setLevel).toHaveBeenLastCalledWith(null);
+    action({ conversationId: 'turn', requestId: 's1', hasSpeech: false, intent: { actionId: 'cheek' } });
+    expect(dispatch).toHaveBeenCalledOnce();
     off();
     expect(clear).toHaveBeenLastCalledWith('binding-disposed');
     expect(actions.sentenceActionScheduler).toBe(scheduler);

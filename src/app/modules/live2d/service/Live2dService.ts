@@ -10,6 +10,7 @@ import { BubblePresentation } from '../modules/bubble/domain/BubblePresentation'
 import { BubbleDialogueService } from '../modules/bubble/service/BubbleDialogueService';
 import { createBubblePositionEngine } from '../modules/bubble/runtime/createBubblePositionEngine';
 import { InteractionService } from '../modules/interaction/service/InteractionService';
+import { FloatingComposerService } from '../modules/interaction/service/FloatingComposerService';
 import {
   BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH,
   BUBBLE_LAYOUT_SIDE_MIN_WIDTH,
@@ -36,6 +37,7 @@ export class Live2dService {
   readonly bubble = new BubblePresentation();
   readonly dialogue = new BubbleDialogueService();
   readonly interaction: InteractionService;
+  readonly floatingComposer: FloatingComposerService;
   private bubbleSettings: { side?: 'auto' | 'left' | 'right'; sideWidth?: number; headRatio?: number | null } = {};
   private configuredBubbleSideWidth = BUBBLE_LAYOUT_SIDE_DEFAULT_WIDTH;
   private readonly bubbleEngine: ReturnType<typeof createBubblePositionEngine>;
@@ -72,6 +74,7 @@ export class Live2dService {
   constructor(stateBus: StateBusService, log: LogService, windowApi?: PetWindowAPI, modelApi?: PetModelAPI) {
     this.stateBus = stateBus;
     this.log = log;
+    this.floatingComposer = new FloatingComposerService(stateBus);
     this.actions = new Live2dActionService(log);
     this.windowApi = windowApi;
     this.modelApi = modelApi;

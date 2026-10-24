@@ -7,6 +7,7 @@ import type {
 } from './LiveKitGateway';
 
 export interface LiveKitPort {
+  dispose(): void;
   subscribeAudioLevel?: typeof subscribeLiveKitAudioLevel;
   getCachedSession: typeof getCachedLiveKitSession;
   ensureSession: typeof ensureLiveKitSession;

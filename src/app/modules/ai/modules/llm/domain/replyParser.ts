@@ -8,7 +8,6 @@ export interface ParsedSentence {
   speakText: string;
   displayText: string;
   actionIntent?: ActionIntentInput;
-  modelVersion?: number;
   /** 该句在当前回复中的连续编号（0-based）。 */
   sentenceIndex: number;
 }

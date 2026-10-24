@@ -26,7 +26,6 @@ interface Stage2AskOptions {
 
 interface LlmServiceOptions {
   log?: LogService;
-  getActionModelVersion?: () => number;
   defaultConfig?: Stage2LLMConfig;
   getConfigSnapshot: () => PetConfigSnapshot | null | undefined;
 }
@@ -46,7 +45,6 @@ interface Stage2LanguageProfile {
 // 发送对话请求，获取模型回复，并根据当前的人设、核心记忆和按需召回的历史片段构建上下文，同时输出逐句动作目标和持久化记忆。
 export class LlmService {
   readonly actionCatalog: ActionCatalogService;
-  private readonly getActionModelVersion?: LlmServiceOptions['getActionModelVersion'];
   private config: Stage2LLMConfig;
   private readonly getConfigSnapshot: LlmServiceOptions['getConfigSnapshot'];
   private readonly memory: MemoryService;
@@ -56,7 +54,6 @@ export class LlmService {
     this.log = options.log;
     this.actionCatalog = new ActionCatalogService((system, user, signal, requestOptions) =>
       this.requestStructured(system, user, signal, requestOptions));
-    this.getActionModelVersion = options.getActionModelVersion;
     this.getConfigSnapshot = options.getConfigSnapshot;
     this.config = options.defaultConfig ?? {};
     this.memory = new MemoryService(this.getConfigSnapshot,
@@ -156,34 +153,43 @@ export class LlmService {
     }
 
     // 已保存动作表以 Electron 下发的配置快照为准，不依赖渲染器挂载或后置事件绑定。
-    // 只投影语义目录给日常对话；轨迹留给执行器，运行时版本仅用于丢弃切模后的旧回复。
+    // 只投影语义目录给日常对话；用快照中的模型身份丢弃切模后的旧回复。
     const snapshot = this.getConfigSnapshot();
-    const actionCapability: ActionCapability = {
-      modelVersion: this.getActionModelVersion?.() ?? 0,
+    const modelKey = snapshot?.modelKey ?? null;
+    const modelPath = snapshot?.activeModelPath ?? null;
+    const assertCurrentModel = () => {
+      options.signal?.throwIfAborted();
+      const current = this.getConfigSnapshot();
+      if ((current?.modelKey ?? null) !== modelKey || (current?.activeModelPath ?? null) !== modelPath) {
+        throw new Error('模型已切换，已丢弃旧回复');
+      }
+    };
+    const actionCapability: Pick<ActionCapability, 'actions'> = {
       actions: (snapshot?.modelConfig?.actions ?? []).map(({ id, label, category, description }) => ({
         id, label, category, ...(description === undefined ? {} : { description }),
       })),
     };
     options.trace.record('action.capabilitySnapshot', {
-      source: 'model-config-snapshot', modelPath: snapshot?.activeModelPath,
-      modelVersion: actionCapability.modelVersion, actionCount: actionCapability.actions.length,
+      source: 'model-config-snapshot', modelPath, modelKey,
+      actionCount: actionCapability.actions.length,
       actions: actionCapability.actions,
     });
     try {
-      options.signal?.throwIfAborted();
+      assertCurrentModel();
       const resolved = this.resolveConfig(options);
-      options.signal?.throwIfAborted();
+      assertCurrentModel();
       const memoryRuntime = await this.memory.resolve(cleanText, options.trace, snapshot);
-      options.signal?.throwIfAborted();
+      assertCurrentModel();
       const languageProfile = this.resolveLanguageProfile(snapshot);
       const start = performance.now();
       let firstDeltaLatencyMs = -1;
       let streamedRawText = '';
       const parser = new SentenceStreamParser((diagnostic) => options.trace.record('action.stream', {
-        ...diagnostic, modelVersion: actionCapability.modelVersion,
+        ...diagnostic, modelKey, modelPath,
       }));
       const publishSentences = (rawText: string) => {
         if (options.signal?.aborted) return;
+        assertCurrentModel();
         // 网络返回的最终文本会 trim；与已消费流相同则不重复提交。
         if (rawText.trim() === streamedRawText.trim()) return;
         if (!rawText.startsWith(streamedRawText)) throw new Error('LLM 流式输出不是追加文本');
@@ -191,12 +197,13 @@ export class LlmService {
         streamedRawText = rawText;
         for (const event of events) {
           if (options.signal?.aborted) return;
+          assertCurrentModel();
           if (event.type === 'speech-ready') {
             options.onSentenceSpeechReady?.({ sentenceIndex: event.sentenceIndex, speakText: event.speakText });
           } else if (event.type === 'display-ready') {
             options.onSentenceDisplayReady?.({ sentenceIndex: event.sentenceIndex, displayText: event.displayText });
           } else {
-            options.onSentenceStreaming?.({ ...event.sentence, modelVersion: actionCapability.modelVersion });
+            options.onSentenceStreaming?.(event.sentence);
           }
         }
       };
@@ -222,9 +229,14 @@ export class LlmService {
           ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
           stream: true,
           signal: options.signal,
-          onReasoningSummary: options.onReasoningSummary,
+          onReasoningSummary: (event) => {
+            if (options.signal?.aborted) return;
+            assertCurrentModel();
+            options.onReasoningSummary?.(event);
+          },
           onStreamDelta: ({ deltaText, aggregateText }) => {
             if (options.signal?.aborted) return;
+            assertCurrentModel();
             if (firstDeltaLatencyMs < 0 && String(deltaText).trim()) {
               firstDeltaLatencyMs = Math.round(performance.now() - start);
               options.trace.record('ask.stream.firstDelta', {
@@ -237,7 +249,7 @@ export class LlmService {
         },
       );
 
-      options.signal?.throwIfAborted();
+      assertCurrentModel();
 
       options.trace.record('ask.usage', { ...(llmResult.usage ?? { cacheStatus: 'unreported' }) });
       publishSentences(llmResult.rawText);
@@ -258,10 +270,9 @@ export class LlmService {
       const speakText = normalizeReplyText(reply.speak_text);
       reply.display_text = displayText;
       reply.speak_text = speakText;
-
-
-
+      assertCurrentModel();
       await this.memory.persistConversation(memoryRuntime, cleanText, displayText, options.trace);
+      assertCurrentModel();
       // 整理在回复已经交付后后台运行，不增加当前 TTS/动作链路的首包延迟。
       void this.memory.consolidateIfNeeded(memoryRuntime, options.trace, options.signal);
 
@@ -292,7 +303,6 @@ export class LlmService {
             ?? memoryRuntime.memoryState?.episodeDates?.length
             ?? 0,
         },
-        modelVersion: actionCapability.modelVersion,
         rawText: llmResult.rawText,
       };
     } catch (e) {

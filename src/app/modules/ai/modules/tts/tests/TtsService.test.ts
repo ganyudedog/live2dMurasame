@@ -26,6 +26,7 @@ const setup = () => {
   const log = { debugModeEnabled: false, contextRegistry: { register: vi.fn(() => context) } } as unknown as LogService;
   const unsubscribe = vi.fn();
   const liveKit = {
+    dispose: vi.fn(),
     setPlaybackMuted: vi.fn(),
     ensureSession: vi.fn().mockResolvedValue({ sessionId: 'session' }),
     subscribeEvents: vi.fn((_url: string, callback: LiveKitV3EventHandler) => { handler = callback; return unsubscribe; }),

@@ -68,7 +68,7 @@ describe('LLM and RAG orchestration', () => {
     expect(await service.ask('hello', { trace: { record: vi.fn() } as unknown as TraceScope })).toMatchObject({ ok: true });
     expect(requestStage2LLM).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'next-key', model: 'next-model', baseURL: 'http://next' }),
       expect.objectContaining({ displayLang: 'en', speakLang: 'all_en', actionCapability: {
-        modelVersion: 0, actions: [{ id: 'shy', label: '害羞', category: 'emotion' }],
+        actions: [{ id: 'shy', label: '害羞', category: 'emotion' }],
       } }));
     expect(remote).not.toHaveBeenCalled();
     service.dispose();
@@ -122,18 +122,17 @@ describe('LLM and RAG orchestration', () => {
     service.dispose();
   });
 
-  const setup = (getActionModelVersion?: () => number) => {
+  const setup = () => {
     const memory = { get: vi.fn().mockResolvedValue(null), appendConversation: vi.fn().mockResolvedValue(undefined) };
     vi.stubGlobal('window', { MemoryAPI: memory });
     const trace = { record: vi.fn(), traceId: 'trace' };
-    const snapshot = { activeModelPath: 'pet', modelConfig: { actions: [], tts: { textLang: 'all_ja' } },
+    let snapshot = { activeModelPath: 'pet', modelKey: 'pet-key', modelConfig: { actions: [], tts: { textLang: 'all_ja' } },
       globalModelConfig: { displayLang: 'zh' } } as unknown as PetConfigSnapshot;
     const service = new LlmService({
-      getActionModelVersion,
       defaultConfig: { apiKey: 'key', model: 'model', baseURL: 'http://localhost' },
       getConfigSnapshot: () => snapshot,
     });
-    return { service, trace, memory, snapshot };
+    return { service, trace, memory, snapshot, setSnapshot: (next: PetConfigSnapshot) => { snapshot = next; } };
   };
 
   it('records actual usage on dialogue and structured-request traces', async () => {
@@ -213,31 +212,65 @@ describe('LLM and RAG orchestration', () => {
     service.dispose();
   });
 
-  it('fixes saved action metadata and runtime version to the request snapshot', async () => {
-    let version = 7;
-    const { service, trace, snapshot } = setup(() => version);
+  it('fixes saved action metadata to the request snapshot and accepts updates for the same model', async () => {
+    const { service, trace, snapshot, setSnapshot } = setup();
     const saved = { ...shyAction, id: 'cheek', label: '脸红' };
     snapshot.modelConfig!.actions = [saved];
     const sentence = vi.fn();
     vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
-      expect(request.actionCapability?.modelVersion).toBe(7);
+      expect(request.actionCapability).not.toHaveProperty('modelVersion');
       expect(request.actionCapability?.actions[0].id).toBe('cheek');
       expect(request.actionCapability?.actions[0]).not.toHaveProperty('tracks');
-      version = 8;
       saved.label = '已修改';
-      snapshot.modelConfig!.actions = [];
+      setSnapshot({ ...snapshot, modelConfig: { ...snapshot.modelConfig, actions: [] } });
       expect(request.actionCapability?.actions[0].label).toBe('脸红');
       const rawText = '{"speak_text":"voice","action_intent":{"action_id":"cheek"}}';
       request.onStreamDelta?.({ deltaText: rawText, aggregateText: rawText });
       return { rawText, usedModel: 'model' };
     });
     expect(await service.ask('question', { trace: trace as unknown as TraceScope, onSentenceStreaming: sentence }))
-      .toMatchObject({ ok: true, modelVersion: 7 });
-    expect(sentence).toHaveBeenCalledWith(expect.objectContaining({ modelVersion: 7 }));
-    expect(trace.record).toHaveBeenCalledWith('action.capabilitySnapshot', expect.objectContaining({ modelVersion: 7 }));
+      .toMatchObject({ ok: true });
+    expect(sentence).toHaveBeenCalledWith(expect.objectContaining({ actionIntent: { actionId: 'cheek' } }));
+    expect(trace.record).toHaveBeenCalledWith('action.capabilitySnapshot', expect.objectContaining({ modelKey: 'pet-key', modelPath: 'pet' }));
     expect(trace.record).toHaveBeenCalledWith('action.stream', {
-      state: 'parsed', sentenceIndex: 0, actionId: 'cheek', modelVersion: 7,
+      state: 'parsed', sentenceIndex: 0, actionId: 'cheek', modelKey: 'pet-key', modelPath: 'pet',
     });
+    service.dispose();
+  });
+
+  it.each(['modelKey', 'activeModelPath'] as const)('discards old stream output when the Electron snapshot changes %s', async (field) => {
+    const { service, trace, memory, snapshot } = setup();
+    const speech = vi.fn();
+    const display = vi.fn();
+    const sentence = vi.fn();
+    vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
+      snapshot[field] = 'next-model';
+      const rawText = '{"speak_text":"old voice","display_text":"old text","action_intent":{"action_id":"shy"}}';
+      request.onStreamDelta?.({ deltaText: rawText, aggregateText: rawText });
+      return { rawText, usedModel: 'model' };
+    });
+    expect(await service.ask('question', { trace: trace as unknown as TraceScope,
+      onSentenceSpeechReady: speech, onSentenceDisplayReady: display,
+      onSentenceStreaming: sentence }))
+      .toMatchObject({ ok: false, error: '模型已切换，已丢弃旧回复' });
+    for (const listener of [speech, display, sentence]) expect(listener).not.toHaveBeenCalled();
+    expect(memory.appendConversation).not.toHaveBeenCalled();
+    service.dispose();
+  });
+
+  it.each(['memory', 'response', 'persistence'] as const)('checks model identity again after awaiting %s', async (stage) => {
+    const { service, trace, memory, snapshot } = setup();
+    const switchModel = () => { snapshot.modelKey = 'next-key'; };
+    if (stage === 'memory') memory.get.mockImplementationOnce(async () => { switchModel(); return null; });
+    if (stage === 'persistence') memory.appendConversation.mockImplementationOnce(async () => { switchModel(); });
+    vi.mocked(requestStage2LLM).mockImplementation(async () => {
+      if (stage === 'response') switchModel();
+      return { rawText: '{"display_text":"old text"}', usedModel: 'model' };
+    });
+    expect(await service.ask('question', { trace: trace as unknown as TraceScope }))
+      .toMatchObject({ ok: false, error: '模型已切换，已丢弃旧回复' });
+    expect(requestStage2LLM).toHaveBeenCalledTimes(stage === 'memory' ? 0 : 1);
+    expect(memory.appendConversation).toHaveBeenCalledTimes(stage === 'persistence' ? 1 : 0);
     service.dispose();
   });
 

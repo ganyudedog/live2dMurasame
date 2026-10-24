@@ -20,7 +20,7 @@ import { bindActionCatalog } from '../../src/app/core/bindings/bindActionCatalog
 import { headAction } from '../../src/test/fixtures/actionCatalog';
 import { ServiceContainer } from '../../src/app/core/di/container';
 import { TOKENS } from '../../src/app/core/serviceTokens';
-import { serviceModules } from '../../src/app/modules/ai/module';
+import { serviceModule } from '../../src/app/modules/ai/module';
 const network = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('openai', () => ({ default: class {
     chat = { completions: { create: network.create } };
@@ -122,17 +122,12 @@ describe('action catalog complete data path', () => {
             const container = new ServiceContainer();
             container.registerValue(TOKENS.shared.config, config);
             container.registerValue(TOKENS.shared.log, new LogService({ windowKind, configSnapshot: null, startedAt: 0 }));
+            container.registerValue(TOKENS.shared.stateBus, {});
+            container.registerValue(TOKENS.shared.electron, { bridge: {} });
             container.registerValue(TOKENS.core.bootstrapContext, { windowKind });
-            if (windowKind === 'pet') {
-                // 未挂载 core 的执行器目录为空，不能用它抹掉已持久化动作目录。
-                const actions = new Live2dActionService();
-                actions.attach(null);
-                container.registerValue(TOKENS.live2d.runtime, { actions });
-                disposers.push(() => actions.dispose());
-                expect(actions.getCapability().actions).toEqual([]);
-            }
-            serviceModules.find(({ id }) => id === 'pet.ai.llm').register(container);
-            const llm = container.resolve(TOKENS.ai.llm);
+            // 两种窗口都不注册 Live2dService，动作目录仅由 Electron 快照提供。
+            serviceModule.register(container);
+            const llm = container.resolve(TOKENS.ai).llm;
             // 模型由控制面板按前端选择下发，等价于 ControlPanelService.pushChatModel。
             llm.setConfig({ model: 'test-model' });
             disposers.push(() => llm.dispose());
@@ -141,7 +136,7 @@ describe('action catalog complete data path', () => {
         const trace = { record: vi.fn() };
         const ask = async (llm) => {
             const result = await llm.ask('打个招呼', { trace });
-            expect(result).toMatchObject({ ok: true, modelVersion: windowKind === 'pet' ? 1 : 0 });
+            expect(result).toMatchObject({ ok: true });
             return network.create.mock.lastCall[0].messages[0].content;
         };
         const llm = createLlm(environment.openRenderer());

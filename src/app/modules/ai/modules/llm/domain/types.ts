@@ -29,7 +29,7 @@ export interface Stage2LLMRequest {
   temperature?: number;
   memoryContext?: string;
   historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  actionCapability?: ActionCapability;
+  actionCapability?: Pick<ActionCapability, 'actions'>;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto' | null;
   speechEnabled?: boolean;
@@ -67,7 +67,6 @@ export interface Stage2AskResult {
     contextText: string;
     episodeCount: number;
   };
-  modelVersion?: number;
   error?: string;
   rawText?: string;
 }

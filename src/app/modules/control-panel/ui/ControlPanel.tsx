@@ -15,8 +15,8 @@ import PersonaSettingsPage from './pages/PersonaSettingsPage';
 import { PluginPanelHost } from '@app/core/plugin/PluginPanelHost';
 
 const ControlPanel: React.FC = observer(() => {
-  const service = useService(TOKENS.controlPanel.runtime);
-  const pluginRuntime = useService(TOKENS.plugin.runtime);
+  const service = useService(TOKENS.controlPanel);
+  const pluginRuntime = useService(TOKENS.plugin);
   void pluginRuntime.revision;
   const pluginPages = pluginRuntime.getControlPanelPages().map(({ tabId, contribution }) => ({
     tabId, title: contribution.title,

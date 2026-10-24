@@ -6,20 +6,26 @@ const network = vi.hoisted(() => ({ create: vi.fn(), responses: vi.fn() }));
 vi.mock('openai', () => ({ default: class { chat = { completions: { create: network.create } }; responses = { create: network.responses }; } }));
 afterEach(() => vi.resetAllMocks());
 const config = { apiKey: 'test-key', model: 'test-model', baseURL: 'https://api.openai.com/v1' };
-const actions: ActionCapability = { modelVersion: 1, actions: [
+const actions: Pick<ActionCapability, 'actions'> = { actions: [
   { id: 'shy', label: '脸红', category: 'emotion' },
   { id: 'head', label: '转头', category: 'head', description: '倾听时使用' },
 ] };
 const response = { choices: [{ message: { content: '{"display_text":"hello"}' } }] };
 
 describe('provider prompt cache and streaming usage', () => {
-  it('sends chronological history before the current question exactly once', async () => {
+  it('puts required output rules before archived history and the current question', async () => {
     network.create.mockResolvedValue(response);
     const historyMessages = [{ role: 'user' as const, content: '能说喜欢我吗' },
       { role: 'assistant' as const, content: '有些不好意思' }];
     await requestStage2LLM(config, { userText: '可是我想听嘛', historyMessages });
     const messages = network.create.mock.lastCall![0].messages;
     expect(messages).toHaveLength(4);
+    expect(messages[0].role).toBe('system');
+    const systemPrompt = messages[0].content;
+    expect(systemPrompt).toContain('每行必须同时包含非空字符串 speak_text 和 display_text');
+    expect(systemPrompt).toContain('不得因为历史只有 display_text 而省略本轮 speak_text');
+    expect(systemPrompt).toContain('历史未保存动作字段不代表本轮禁止使用动作');
+    expect(systemPrompt.indexOf('每行必须同时包含')).toBeLessThan(systemPrompt.indexOf('日常场景：'));
     expect(messages[1]).toEqual(historyMessages[0]);
     expect(messages[2]).toEqual({ role: 'assistant', content: JSON.stringify({ display_text: '有些不好意思' }) });
     expect(messages[3]).toMatchObject({ role: 'user', content: expect.stringContaining('可是我想听嘛') });
@@ -54,11 +60,11 @@ describe('provider prompt cache and streaming usage', () => {
     expect(network.create).toHaveBeenCalledTimes(3);
   });
 
-  it('keeps the full system prefix stable across user inputs, action order and runtime versions', async () => {
+  it('keeps the full system prefix stable across user inputs and action order', async () => {
     network.create.mockResolvedValue(response);
     await requestStage2LLM(config, { userText: 'hello', actionCapability: actions });
     await requestStage2LLM(config, { userText: 'different', memoryContext: 'new memory',
-      actionCapability: { modelVersion: 9, actions: [...actions.actions].reverse() } });
+      actionCapability: { actions: [...actions.actions].reverse() } });
     const first = network.create.mock.calls[0][0];
     const second = network.create.mock.calls[1][0];
     expect(first.prompt_cache_key).toBe(second.prompt_cache_key);
@@ -66,7 +72,7 @@ describe('provider prompt cache and streaming usage', () => {
     expect(first.messages[1]).not.toEqual(second.messages[1]);
     const changed = actions.actions.map((action) => action.id === 'head'
       ? { ...action, label: '侧头倾听', description: '修正后的描述' } : action);
-    await requestStage2LLM(config, { userText: 'hello', actionCapability: { modelVersion: 9, actions: changed } });
+    await requestStage2LLM(config, { userText: 'hello', actionCapability: { actions: changed } });
     const third = network.create.mock.lastCall![0];
     expect(third.messages[0].content).toContain('侧头倾听（head），修正后的描述');
     const catalogStart = first.messages[0].content.indexOf('动作标签 @action:');

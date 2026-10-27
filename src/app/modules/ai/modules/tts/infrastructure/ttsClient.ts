@@ -18,7 +18,6 @@ import { detectTtsTransportMode } from '@app/modules/ai/modules/tts/infrastructu
 
 type V3RuntimeState = {
   sessionId: string;
-  expiresAt: number;
   configVersion: string;
   modelReady: boolean;
 };
@@ -76,9 +75,7 @@ const ensureSession = async (
   trace?: TraceScope,
 ): Promise<string> => {
   const cached = stateByBaseUrl.get(baseUrl);
-  if (cached && cached.expiresAt > Date.now() + 5000) {
-    return cached.sessionId;
-  }
+  // Session identity and expiry belong exclusively to the gateway.
 
   const session = await dependencies.liveKit.ensureSession(
     baseUrl,
@@ -97,9 +94,8 @@ const ensureSession = async (
   const expiresInMs = Math.max(30, session.livekit.expiresIn) * 1000;
   const nextState: V3RuntimeState = {
     sessionId: session.sessionId,
-    expiresAt: Date.now() + expiresInMs,
-    configVersion: cached?.configVersion ?? '',
-    modelReady: cached?.modelReady ?? false,
+    configVersion: cached?.sessionId === session.sessionId ? cached.configVersion : '',
+    modelReady: cached?.sessionId === session.sessionId ? cached.modelReady : false,
   };
   stateByBaseUrl.set(baseUrl, nextState);
 
@@ -326,7 +322,6 @@ const ensureModelReady = async (
 
   stateByBaseUrl.set(baseUrl, {
     sessionId,
-    expiresAt: cached?.expiresAt ?? Date.now() + 3600_000,
     configVersion,
     modelReady,
   });
@@ -427,6 +422,7 @@ export const requestTtsSynthesis = async (dependencies: TtsClientDependencies, {
   queueGroupId,
   sentenceIndex,
   onSubmitted,
+  onSessionResolved,
   traceId,
   speakText,
   displayText,
@@ -462,6 +458,7 @@ export const requestTtsSynthesis = async (dependencies: TtsClientDependencies, {
   await ensureRealtimeConnected(dependencies, baseUrl, 'tts.speak', signal, trace);
 
   const sessionId = await ensureSession(dependencies, baseUrl, signal, trace);
+  onSessionResolved?.(sessionId);
   await ensureModelReady(dependencies, baseUrl, sessionId, requestId, config, signal, trace);
   signal?.throwIfAborted();
 

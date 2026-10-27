@@ -18,6 +18,8 @@ export class AiService {
   private readonly log: LogService;
   private reactions: IReactionDisposer[] = [];
   private disposed = false;
+  private started = false;
+  private readonly ownsConversationRuntime: boolean;
   private extensionRegister: AiRegister | null = null;
   private responseListeners = new Set<(response: TextAiResponse) => void>();
   private dialogueListeners = new Set<(event: AiDialogueEvent) => void>();
@@ -39,7 +41,9 @@ export class AiService {
     llm: LlmService,
     tts: TtsService,
     asr: AsrService,
+    ownsConversationRuntime = true,
   ) {
+    this.ownsConversationRuntime = ownsConversationRuntime;
     this.stateBus = stateBus;
     this.log = log;
     this.llm = llm;
@@ -59,6 +63,11 @@ export class AiService {
   get ttsWarmed(): boolean { return this.tts.warmed; }
 
   start(): void {
+    if (this.disposed || this.started) return;
+    this.started = true;
+    // The panel keeps its local LLM for configuration/action authoring only.
+    // Shared chat requests, microphone capture and playback have one owner.
+    if (!this.ownsConversationRuntime) return;
     this.tts.start();
     this.asr.start();
     this.reactions.push(
@@ -119,7 +128,7 @@ export class AiService {
   }
 
   async processChatRequest(request: ChatRequest): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposed || !this.ownsConversationRuntime || request.id === this.lastConversationId) return;
     if (this.processing) {
       this.cancel('superseded-by-new-request');
     }
@@ -156,6 +165,7 @@ export class AiService {
     this.stopChatSpeech = consumer.stop;
     this.emitDialogue({ type: 'started', conversationId: request.id });
     let completeSentences = 0;
+    let sentencesWithoutSpeech = 0;
     const submittedSpeech = new Set<number>();
     const displayedSentences = new Set<number>();
     const submitSpeech = (sentenceIndex: number, speakText: string, displayText = '') => {
@@ -163,10 +173,20 @@ export class AiService {
       submittedSpeech.add(sentenceIndex);
       consumer.submit(speakText, displayText, sentenceIndex);
     };
-    const prepareDisplay = (sentenceIndex: number, text: string) => {
-      if (!isCurrent() || !text || displayedSentences.has(sentenceIndex)) return;
+    const prepareDisplay = (sentenceIndex: number, text: string, hasSpeech?: boolean) => {
+      if (!isCurrent() || !text) return;
+      if (displayedSentences.has(sentenceIndex)) {
+        // The display field may arrive before the complete sentence. Emit a
+        // second metadata update when completion proves that no speech exists,
+        // so the bubble can switch to reading pace instead of waiting forever.
+        if (hasSpeech === false) {
+          this.emitDialogue({ type: 'sentence', conversationId: request.id,
+            requestId: `${request.id}_s${sentenceIndex}`, text, hasSpeech: false });
+        }
+        return;
+      }
       displayedSentences.add(sentenceIndex);
-      this.emitDialogue({ type: 'sentence', conversationId: request.id, requestId: `${request.id}_s${sentenceIndex}`, text });
+      this.emitDialogue({ type: 'sentence', conversationId: request.id, requestId: `${request.id}_s${sentenceIndex}`, text, hasSpeech });
     };
 
     try {
@@ -183,6 +203,13 @@ export class AiService {
         onSentenceStreaming: (sentence) => {
           if (!isCurrent()) return;
           completeSentences++;
+          if (!sentence.speakText.trim()) {
+            sentencesWithoutSpeech++;
+            trace.record('sentence.speech.missing', {
+              sentenceIndex: sentence.sentenceIndex, reason: 'missing-speak-text',
+              displayLength: sentence.displayText.length, fallback: 'reading',
+            });
+          }
           accumulatedDisplay = accumulatedDisplay
             ? `${accumulatedDisplay}\n${sentence.displayText}`
             : sentence.displayText;
@@ -195,7 +222,7 @@ export class AiService {
             updatedAt: Date.now(),
           });
           this.emitTextResponse({ requestId: request.id, text: accumulatedDisplay, status: 'streaming' });
-          prepareDisplay(sentence.sentenceIndex, sentence.displayText);
+          prepareDisplay(sentence.sentenceIndex, sentence.displayText, Boolean(sentence.speakText));
           submitSpeech(sentence.sentenceIndex, sentence.speakText, sentence.displayText);
           if (sentence.actionIntent) this.emitAction({
             conversationId: request.id, requestId: `${request.id}_s${sentence.sentenceIndex}`,
@@ -220,7 +247,7 @@ export class AiService {
       }
 
       const finalDisplay = accumulatedDisplay || result.reply?.display_text?.trim() || '';
-      if (!displayedSentences.size) prepareDisplay(0, finalDisplay);
+      if (!displayedSentences.size) prepareDisplay(0, finalDisplay, Boolean(result.reply?.speak_text));
       if (!submittedSpeech.size && result.reply?.speak_text) submitSpeech(0, result.reply.speak_text, finalDisplay);
       if (!completeSentences && result.reply?.action_intent) this.emitAction({
         conversationId: request.id, requestId: `${request.id}_s0`,
@@ -236,12 +263,16 @@ export class AiService {
         updatedAt: Date.now(),
       });
       this.emitTextResponse({ requestId: request.id, text: finalDisplay, status: 'done' });
-      await consumer.wait();
+      // Seal text input; the presentation coordinator still waits for speech
+      // or reading completion before releasing text and actions.
       if (isCurrent()) this.emitDialogue({ type: 'completed', conversationId: request.id });
+      await consumer.wait();
       trace.end({
         requestId: request.id,
         responseLength: finalDisplay.length,
-        tts: consumer.summary(),
+        tts: { ...consumer.summary(), sentencesWithoutSpeech,
+          ...(submittedSpeech.size ? {} : { notSubmittedReason: 'missing-speak-text' }),
+        },
       });
     } catch (error) {
       if (!isCurrent()) {

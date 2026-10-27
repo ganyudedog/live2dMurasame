@@ -847,11 +847,12 @@ export const ensureLiveKitRoomConnected = async (
   },
 ): Promise<RoomCache> => {
   const key = normalizeBaseUrl(baseUrl);
-  const existing = roomByBaseUrl.get(key);
+  let existing = roomByBaseUrl.get(key);
   const desiredTopic = options?.eventTopic?.trim() || DEFAULT_EVENT_TOPIC;
 
   if (existing) {
-    const sameSession = existing.eventTopic === desiredTopic;
+    const session = getCachedLiveKitSession(key);
+    const sameSession = existing.eventTopic === desiredTopic && session?.livekit.token === existing.token;
     const connected = existing.room.state === ConnectionState.Connected;
     if (sameSession && connected) return existing;
   }
@@ -863,6 +864,8 @@ export const ensureLiveKitRoomConnected = async (
     if (options?.signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError');
 
     const session = await ensureLiveKitSession(key, options?.sessionPayload, options?.signal);
+    // Subscriptions may have created a lazy cache while session creation awaited.
+    existing = roomByBaseUrl.get(key);
     const wsUrl = session.livekit.wsUrl;
     const token = session.livekit.token;
 

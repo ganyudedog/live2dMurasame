@@ -4,14 +4,14 @@ import { Live2dActionService } from '@app/modules/live2d/modules/actions/service
 import type { AiService } from '@app/modules/ai/service/AiService';
 import type { AiActionEvent, AiDialogueEvent } from '@app/modules/ai/types';
 import type { TtsService } from '@app/modules/ai/modules/tts/service/TtsService';
-import type { TtsPlaybackEvent } from '@app/modules/ai/modules/tts/domain/types';
+import type { DialoguePresentationEvent } from '@app/modules/live2d/modules/bubble/service/BubbleDialogueService';
 import type { Live2dService } from '@app/modules/live2d/service/Live2dService';
 
 describe('AI action composition binding', () => {
   it('connects events, rejects old-model audio and releases every subscription', () => {
     let dialogue!: (event: AiDialogueEvent) => void;
     let action!: (event: AiActionEvent) => void;
-    let playback!: (event: TtsPlaybackEvent) => void;
+    let playback!: (event: DialoguePresentationEvent) => void;
     let audio!: (level: number | null) => void;
     const disposers = Array.from({ length: 4 }, () => vi.fn());
     const ai = {
@@ -19,7 +19,6 @@ describe('AI action composition binding', () => {
       onAction: (listener: typeof action) => { action = listener; return disposers[1]; },
     };
     const tts = {
-      onPlayback: (listener: typeof playback) => { playback = listener; return disposers[2]; },
       onAudioLevel: (listener: typeof audio) => { audio = listener; return disposers[3]; },
     };
     const actions = new Live2dActionService();
@@ -32,15 +31,16 @@ describe('AI action composition binding', () => {
     const dispatch = vi.spyOn(actions, 'dispatch').mockReturnValue({ ok: true, state: 'started' });
     const setLevel = vi.spyOn(actions, 'setAudioLevel');
     const off = bindAiActions(ai as unknown as AiService,
-      tts as unknown as TtsService, { actions } as Live2dService);
+      tts as unknown as TtsService, { actions, dialogue: { onPresentation: (listener: typeof playback) => { playback = listener; return disposers[2]; } } } as unknown as Live2dService);
     dialogue({ type: 'started', conversationId: 'turn' });
     expect(begin).toHaveBeenCalledWith('turn');
     action({ conversationId: 'turn', requestId: 's0', hasSpeech: true,
       intent: { actionId: 'cheek' } });
     expect(receive).toHaveBeenCalledWith(expect.objectContaining({ modelVersion: 1 }));
     expect(dispatch).not.toHaveBeenCalled();
-    playback({ queueGroupId: 'turn', requestId: 's0', state: 'started', transport: 'livekit' });
-    expect(observePlayback).toHaveBeenCalledWith('turn', 's0', 'started', undefined);
+    dialogue({ type: 'completed', conversationId: 'turn' });
+    playback({ conversationId: 'turn', requestId: 's0', state: 'started' });
+    expect(observePlayback).toHaveBeenCalledWith('turn', 's0', 'started');
     expect(dispatch).toHaveBeenCalledOnce();
     audio(0.4);
     expect(setLevel).toHaveBeenLastCalledWith(0.4);

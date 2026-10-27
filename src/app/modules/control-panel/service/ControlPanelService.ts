@@ -1,4 +1,4 @@
-import { toChatConfig, buildPersonaConfig, trimText, shouldPreheatTts, createId, createMessage } from '../domain/configuration';
+import { toChatConfig, buildPersonaConfig, createId, createMessage } from '../domain/configuration';
 import { actionBound, computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import { DEFAULT_GLOBAL_UI_SETTINGS, DEFAULT_MODEL_CONFIG } from '../domain/defaults';
 import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '../modules/chat/infrastructure/chatSessionCache';
@@ -14,7 +14,6 @@ import type {
   ModelEntry,
 } from '../domain/types';
 import type { ChatConfig, ChatRequest, ChatResponse } from '@app/shared/state-bus/sharedStateTypes';
-import type { TtsService } from '@app/modules/ai/modules/tts/service/TtsService';
 import { normalizeAsrConfig } from '@app/modules/ai/modules/asr/domain/config';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
@@ -37,25 +36,21 @@ export class ControlPanelService {
   aiSettingsPending = false;
   /** 动作表生成的模型与思考强度；与对话一样只存前端缓存。 */
   actionSelection: { model: string; effort: PetReasoningEffort | '' };
-  ttsPreheatState: 'idle' | 'pending' | 'ok' | 'failed' = 'idle';
-  ttsPreheatMessage = '尚未触发自动预热';
 
   readonly config: ConfigService;
   readonly stateBus: StateBusService;
   readonly interaction: InteractionSettingsService;
   readonly actionSettings: ActionSettingsService;
   private readonly log: LogService;
-  private readonly tts: TtsService;
   private readonly llm: LlmService;
   private reactions: IReactionDisposer[] = [];
   private aiPersistTimer: number | null = null;
   private extensionRegister: ControlPanelRegister | null = null;
 
-  constructor(config: ConfigService, stateBus: StateBusService, log: LogService, tts: TtsService, llm: LlmService) {
+  constructor(config: ConfigService, stateBus: StateBusService, log: LogService, llm: LlmService) {
     this.config = config;
     this.stateBus = stateBus;
     this.log = log;
-    this.tts = tts;
     this.llm = llm;
     this.actionSettings = new ActionSettingsService(llm.actionCatalog, config,
       () => ({ model: this.actionModel, effort: this.actionReasoningEffort }));
@@ -77,8 +72,6 @@ export class ControlPanelService {
       aiSettings: observableRef,
       aiSettingsPending: observable,
       actionSelection: observableRef,
-      ttsPreheatState: observable,
-      ttsPreheatMessage: observable,
       globalSettings: computed,
       modelConfig: computed,
       asrConfig: computed,
@@ -365,7 +358,6 @@ export class ControlPanelService {
   }
 
   async persistTtsConfig(next: ModelConfig['tts']): Promise<void> {
-    const shouldPreheat = shouldPreheatTts(this.modelConfig.tts, next);
     const handled = await this.config.updateTtsConfig({
       modelPath: this.currentModelPath ?? undefined,
       patch: next,
@@ -373,7 +365,6 @@ export class ControlPanelService {
     if (!handled) {
       await this.persistModelConfig({ ...this.modelConfig, tts: next });
     }
-    if (shouldPreheat) await this.preheatTts(next);
   }
 
   async pickTtsPath(kind: 'gpt' | 'sovits' | 'ref'): Promise<string | null> {
@@ -544,52 +535,6 @@ export class ControlPanelService {
       this.logTrace('aiSettings', 'persist').end({ persisted: true });
     } catch (error) {
       this.captureError('aiSettings.persist.failed', error);
-    }
-  }
-
-  private async preheatTts(config: ModelConfig['tts']): Promise<void> {
-    const requestId = `tts_preheat_${Date.now().toString(36)}`;
-    runInAction(() => {
-      this.ttsPreheatState = 'pending';
-      this.ttsPreheatMessage = '配置已保存，正在预热';
-    });
-    const context = this.log.contextRegistry.register('ControlPanelService', {
-      relation: 'tts.preheat',
-      params: {
-        requestId,
-        textLang: config.textLang,
-        refAudioPath: trimText(config.refAudioPath),
-        hasRefAudioText: Boolean(trimText(config.refAudioText)),
-      },
-      behavior: '保存 TTS 配置后预热 LiveKit 和后端 TTS 模型',
-    });
-    const trace = context.beginTrace('settings.preheat', {
-      requestId,
-      textLang: config.textLang,
-      refAudioPath: trimText(config.refAudioPath),
-      hasRefAudioText: Boolean(trimText(config.refAudioText)),
-    });
-
-    try {
-      const result = await this.tts.preheat(config, requestId);
-      runInAction(() => {
-        this.ttsPreheatState = 'ok';
-        this.ttsPreheatMessage = `预热完成：${result.state}`;
-      });
-      trace.end({
-        requestId: result.requestId,
-        state: result.state,
-        warmed: result.warmed,
-      });
-    } catch (error) {
-      const message = String(error instanceof Error ? error.message : error);
-      runInAction(() => {
-        this.ttsPreheatState = 'failed';
-        this.ttsPreheatMessage = `预热失败：${message}`;
-      });
-      trace.fail('TTS 配置预热失败', { requestId, err: message }, error);
-    } finally {
-      context.dispose();
     }
   }
 

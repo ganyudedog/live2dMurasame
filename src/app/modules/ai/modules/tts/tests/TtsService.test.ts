@@ -1,3 +1,4 @@
+import { observe, runInAction } from 'mobx';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TtsService } from '../service/TtsService';
 import { createSentenceDispatcher } from '../application/sentenceDispatcher';
@@ -72,6 +73,27 @@ describe('TTS lifecycle and offline recording', () => {
     runtime.dispose();
   });
 
+  it('matches playback against the session actually used to publish the request', async () => {
+    const { runtime, liveKit } = setup();
+    const playback = vi.fn();
+    const off = observe(runtime, 'playbackEvent', ({ newValue }) => { if (newValue) playback(newValue); });
+    vi.mocked(requestTtsSynthesis).mockImplementation(async (_dependencies, request) => {
+      request.onSessionResolved?.('renewed');
+      const handler = liveKit.subscribeEvents.mock.calls.at(-1)![1];
+      handler({ type: 'tts.started', request_id: 'request', session_id: 'session' }, {});
+      expect(playback).not.toHaveBeenCalled();
+      runInAction(() => {
+        handler({ type: 'tts.started', request_id: 'request', session_id: 'renewed' }, {});
+        handler({ type: 'tts.finished', request_id: 'request', session_id: 'renewed' }, {});
+      });
+      return realtimeResponse();
+    });
+    await runtime.speakFromQwenReply({ requestId: 'request', queueGroupId: 'turn', speakText: 'hello' });
+    expect(playback.mock.calls.map(([event]) => event.state)).toEqual(['started', 'finished']);
+    off();
+    runtime.dispose();
+  });
+
   it('provides warmup and preheat through the TTS service boundary', async () => {
     const { runtime } = setup();
     const config = normalizeTtsConfig({ enabled: true, baseUrl: 'http://localhost:9881' });
@@ -87,7 +109,7 @@ describe('TTS lifecycle and offline recording', () => {
   it('publishes request-scoped playback events once and supports unbinding', async () => {
     const { runtime, emit } = setup();
     const listener = vi.fn();
-    const off = runtime.onPlayback(listener);
+    const off = observe(runtime, 'playbackEvent', ({ newValue }) => { if (newValue) listener(newValue); });
     vi.mocked(requestTtsSynthesis).mockImplementation(async () => {
       emit('tts.started', {});
       emit('tts.started', {});

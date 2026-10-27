@@ -46,8 +46,6 @@ export default function AiSettingsPage({
   onMemoryChange,
   modelConfig,
   asrConfig,
-  preheatState,
-  preheatMessage,
   onTtsConfigChange,
   onPickPath,
   onAsrConfigChange,
@@ -65,8 +63,6 @@ export default function AiSettingsPage({
   onMemoryChange: (patch: { memoryModel?: string; memoryReasoningEffort?: PetReasoningEffort | '' }) => void;
   modelConfig: ModelConfig;
   asrConfig: AsrConfig;
-  preheatState: 'idle' | 'pending' | 'ok' | 'failed';
-  preheatMessage: string;
   onTtsConfigChange: (next: ModelConfig['tts']) => Promise<void>;
   onPickPath: (kind: 'gpt' | 'sovits' | 'ref') => Promise<string | null>;
   onAsrConfigChange: (next: AsrConfig) => Promise<void>;
@@ -284,8 +280,6 @@ export default function AiSettingsPage({
       {tab === 'tts' && (
         <TTSSettingsPage
           modelConfig={modelConfig}
-          preheatState={preheatState}
-          preheatMessage={preheatMessage}
           onTtsConfigChange={onTtsConfigChange}
           onPickPath={onPickPath}
         />

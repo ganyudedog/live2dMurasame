@@ -14,6 +14,8 @@ export interface DialogueMeasurement extends DialogueMeasurementRequest {
 export interface DialogueSentence {
   requestId: string;
   text: string;
+  /** Explicit model line breaks begin a new visual page. */
+  pageBreakBefore?: boolean;
 }
 
 export type DialoguePlaybackState = 'started' | 'finished' | 'cancelled' | 'error' | 'skipped';

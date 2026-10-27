@@ -39,7 +39,7 @@ export class SentenceActionSchedulerService {
 
   receive(event: {
     conversationId: string; requestId: string; modelVersion: number;
-    hasSpeech: boolean; intent: ActionIntentInput;
+    hasSpeech: boolean; intent: ActionIntentInput; deferUntilPresentation?: boolean;
   }): void {
     const currentModelVersion = this.actions.getCapability().modelVersion;
     const data = { conversationId: event.conversationId, requestId: event.requestId,
@@ -50,7 +50,7 @@ export class SentenceActionSchedulerService {
       return;
     }
     const sentence = this.sentences.get(event.requestId) ?? {
-      state: event.hasSpeech ? 'waiting' : 'text', playbackEvents: [],
+      state: event.hasSpeech || event.deferUntilPresentation ? 'waiting' : 'text', playbackEvents: [],
     };
     if (sentence.intent) {
       sentence.diagnostic?.record('schedule.duplicate', data);

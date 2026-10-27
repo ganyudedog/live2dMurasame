@@ -15,8 +15,7 @@ import type {
 } from './plugin';
 import { PluginConversationHost } from './plugin/PluginConversationHost';
 import { createDefaultConversationExecutor } from './plugin/createDefaultConversationExecutor';
-import { bindAiBubble } from './bindings/bindAiBubble';
-import { bindAiActions } from './bindings/bindAiActions';
+import { bindAiPresentation } from './bindings/bindAiPresentation';
 
 export interface RendererApplication {
   readonly container: ServiceContainer;
@@ -109,8 +108,7 @@ export const bootstrapRenderer = async (
     const electron = container.resolve(TOKENS.shared.electron);
     const config = container.resolve(TOKENS.shared.config);
     bindings.push(
-      bindAiBubble(container.resolve(TOKENS.ai), container.resolve(TOKENS.ai).tts, live2d),
-      bindAiActions(container.resolve(TOKENS.ai), container.resolve(TOKENS.ai).tts, live2d),
+      bindAiPresentation(container.resolve(TOKENS.ai), live2d, container.resolve(TOKENS.ai).tts),
       reaction(() => electron.drag.active, (active) => live2d.setWindowDragging(active), { fireImmediately: true }),
       reaction(() => config.modelConfig?.bubble,
         (settings) => live2d.configureBubble(settings ?? {}),

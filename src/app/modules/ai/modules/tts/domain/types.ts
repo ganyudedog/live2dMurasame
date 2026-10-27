@@ -29,6 +29,7 @@ export interface TtsSynthesisRequest {
   queueGroupId?: string;
   sentenceIndex?: number;
   onSubmitted?: () => void;
+  onSessionResolved?: (sessionId: string) => void;
   /** Stable renderer-side id propagated through the LiveKit TTS event payload. */
   traceId?: string;
   speakText: string;

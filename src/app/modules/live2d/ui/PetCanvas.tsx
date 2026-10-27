@@ -548,7 +548,8 @@ const PetCanvas: React.FC = observer(() => {
               text={bubbleText}
               displayText={dialogueActive ? live2dService.dialogue.displayedText : undefined}
               autoAdvance={!dialogueActive}
-              scrollable={dialogueActive && (live2dService.dialogue.measurement?.lineCount ?? 0) > 4}
+              scrollable={false}
+              maxLines={dialogueActive ? (live2dService.dialogue.measurement?.lineCount ?? 4) : 4}
               side={bubbleAlignment === 'left' ? 'start' : 'end'}
               tail={{ y: bubbleTailY ?? 14 }}
               maxWidth={activeBubbleMeasurement?.maxWidth}

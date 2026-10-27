@@ -9,7 +9,7 @@ const measurePending = async (service: BubbleDialogueService) => {
   for (let index = 0; service.measurementRequest && index < 20; index++) {
     const request = service.measurementRequest;
     const layout = layoutBubbleText(request.text, request.maxWidth, resolveBubbleTypography(request.scale),
-      (text) => Array.from(text).length * 16);
+      (text) => Array.from(text).length * 16, Number.POSITIVE_INFINITY);
     service.submitMeasurement({ ...request, width: layout.width, height: layout.bodyHeight, lineCount: layout.lineCount });
     await flush();
   }
@@ -42,9 +42,23 @@ describe('speech-driven bubble pages', () => {
     expect(service.measurement?.height).toBe(resolveBubbleTypography(1).verticalInset * 2 + 2 * resolveBubbleTypography(1).lineHeight);
   });
 
+  it('maps playback received before multiline text and keeps that mapping after resize', async () => {
+    service.onPlayback('chat_s0', 'started');
+    service.prepare({ requestId: 'chat_s0', text: 'first\nsecond' });
+    await measurePending(service);
+    expect(service.text).toBe('first');
+    service.configure(240, 1);
+    await measurePending(service);
+    service.onPlayback('chat_s0', 'finished');
+    service.complete();
+    expect(service.text).toBe('second');
+    await vi.advanceTimersByTimeAsync(8800);
+    expect(service.text).toBeNull();
+  });
+
   it('moves the entire next sentence to a new page when the candidate exceeds four lines', async () => {
-    const first = 'a\nb\nc';
-    const second = 'd\ne';
+    const first = 'a'.repeat(35);
+    const second = 'b'.repeat(20);
     service.prepare({ requestId: 'chat_s0', text: first });
     service.prepare({ requestId: 'chat_s1', text: second });
     await measurePending(service);
@@ -79,14 +93,16 @@ describe('speech-driven bubble pages', () => {
     expect(service.displayedText).toBe('first\nsecond');
   });
 
-  it('keeps an oversized sentence intact in a four-line viewport and isolates the next sentence', async () => {
-    service.prepare({ requestId: 'chat_s0', text: 'a\nb\nc\nd\ne\nf' });
+  it('expands an oversized first sentence and isolates the next sentence', async () => {
+    const oversized = 'a'.repeat(60);
+    service.prepare({ requestId: 'chat_s0', text: oversized });
     service.prepare({ requestId: 'chat_s1', text: 'next' });
     await measurePending(service);
     service.onPlayback('chat_s0', 'started');
-    expect(service.measurement?.lineCount).toBe(6);
-    expect(service.measurement?.height).toBe(4 * resolveBubbleTypography(1).lineHeight + 2 * resolveBubbleTypography(1).verticalInset);
-    expect(service.text).toBe('a\nb\nc\nd\ne\nf');
+    expect(service.measurement?.lineCount).toBeGreaterThan(4);
+    expect(service.measurement?.height).toBe(service.measurement!.lineCount * resolveBubbleTypography(1).lineHeight
+      + 2 * resolveBubbleTypography(1).verticalInset);
+    expect(service.text).toBe(oversized);
     service.onPlayback('chat_s1', 'started');
     expect(service.text).toBe('next');
   });
@@ -128,7 +144,7 @@ describe('speech-driven bubble pages', () => {
     await vi.advanceTimersByTimeAsync(8000);
     expect(service.text).toBe('repeat');
     service.onPlayback('chat_s0', 'finished');
-    await vi.advanceTimersByTimeAsync(7000);
+    await vi.advanceTimersByTimeAsync(9000);
     expect(service.text).toBeNull();
     service.begin('new');
     service.prepare({ requestId: 'new_s0', text: 'repeat' });
@@ -150,6 +166,26 @@ describe('speech-driven bubble pages', () => {
     expect(service.activeRequestId).toBe('chat_s1');
     await vi.advanceTimersByTimeAsync(1800);
     expect(service.displayedText).toBe('first\nsecond');
+  });
+
+  it('presents a sentence without a playback subscription', async () => {
+    service.setPlaybackRequired(false);
+    service.prepare({ requestId: 'chat_s0', text: 'text only' });
+    service.complete();
+    await measurePending(service);
+    expect(service.activeRequestId).toBe('chat_s0');
+    expect(service.text).toBe('text only');
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(service.conversationId).toBeNull();
+  });
+
+  it('turns explicit line breaks into forced next-page segments', async () => {
+    service.prepare({ requestId: 'chat_s0', text: 'first\nsecond' });
+    await measurePending(service);
+    service.onPlayback('chat_s0', 'started');
+    expect(service.text).toBe('first');
+    service.onPlayback('chat_s0#1', 'started');
+    expect(service.text).toBe('second');
   });
 
   it('recovers terminal-only events and presents text when speech fails before starting', async () => {

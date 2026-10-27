@@ -1,6 +1,6 @@
 import { TtsPlaybackFeedbackService, type PlaybackFeedbackReporter } from './TtsPlaybackFeedbackService';
 import { saveTtsAudioArtifacts } from '../infrastructure/audioArtifactWriter';
-import { makeObservable, observable, reaction, runInAction, type IReactionDisposer } from 'mobx';
+import { makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import { createSentenceDispatcher } from '../application/sentenceDispatcher';
 import { cancelTtsSynthesis, requestTtsSynthesis, warmupTtsModel, preheatTtsConfig } from '../infrastructure/ttsClient';
@@ -30,6 +30,7 @@ export interface TtsServiceOptions {
 // 前端 TTS 运行时，负责处理来自前端的 TTS 请求，管理请求状态和播放，调用后端 API，并处理取消和错误等情况。
 export class TtsService {
   warmed = false;
+  warmupFailed = false;
   private readonly config?: ConfigService;
   private readonly autoWarmup: boolean;
   private readonly notifyError?: (message: string) => void;
@@ -51,7 +52,7 @@ export class TtsService {
   private readonly requests = new Map<string, { controller: AbortController; groupId?: string; config: TtsRuntimeConfig }>();
   private submissionTail: Promise<void> = Promise.resolve();
   private httpPlaybackTail: Promise<void> = Promise.resolve();
-  private readonly playbackListeners = new Set<(event: TtsPlaybackEvent) => void>();
+  playbackEvent: TtsPlaybackEvent | null = null;
 
   // 当前是否已调用 dispose，dispose 后实例不应再接受新的 speak 请求，且会中止所有未完成的请求。 
   private disposed = false;
@@ -66,7 +67,7 @@ export class TtsService {
     this.config = options.config;
     this.autoWarmup = options.autoWarmup ?? false;
     this.notifyError = options.notifyError;
-    makeObservable(this, { warmed: observable });
+    makeObservable(this, { warmed: observable, warmupFailed: observable, playbackEvent: observableRef });
   }
 
   start(): void {
@@ -91,11 +92,6 @@ export class TtsService {
       this.audioLevelListeners.delete(listener);
       if (!this.audioLevelListeners.size) this.stopAudioObservation();
     };
-  }
-
-  onPlayback(listener: (event: TtsPlaybackEvent) => void): () => void {
-    this.playbackListeners.add(listener);
-    return () => this.playbackListeners.delete(listener);
   }
 
   async warmup(config: TtsRuntimeConfig, reason = 'manual'): Promise<void> {
@@ -130,7 +126,7 @@ export class TtsService {
     this.feedback.stop();
     this.feedback.dispose();
     this.player.dispose();
-    this.playbackListeners.clear();
+    runInAction(() => { this.playbackEvent = null; });
     this.audioLevelListeners.clear();
     this.liveKit.dispose();
   }
@@ -362,7 +358,7 @@ export class TtsService {
 
       offEvents = this.liveKit.subscribeEvents(ttsConfig.baseUrl, (event) => {
         if (controller.signal.aborted) return;
-        if (event.request_id !== requestId || event.session_id !== session.sessionId) return;
+        if (event.request_id !== requestId || (event.session_id && event.session_id !== sessionId)) return;
         if (event.type !== 'tts.started' && event.type !== 'tts.queued' && event.type !== 'tts.finished'
           && event.type !== 'tts.canceled' && event.type !== 'tts.error' && event.type !== 'tts.chunk_meta') return;
         const payload = event.payload && typeof event.payload === 'object'
@@ -371,7 +367,7 @@ export class TtsService {
         if (event.type === 'tts.started') {
           notifyPlayback('started', 'livekit');
           beginPlaybackObservation();
-          this.feedback.start(ttsConfig.baseUrl, session.sessionId, requestId, onFeedbackFailure, onFeedbackSnapshot, controller.signal);
+          this.feedback.start(ttsConfig.baseUrl, sessionId!, requestId, onFeedbackFailure, onFeedbackSnapshot, controller.signal);
         }
         if (event.type === 'tts.queued' && typeof payload.queue_depth === 'number') queueDepth = payload.queue_depth;
         if (event.type === 'tts.chunk_meta') firstPcmMs ??= Math.round(performance.now() - startedAt);
@@ -387,13 +383,14 @@ export class TtsService {
       // Establish receiver counters before publishing this utterance.
       if (!input.queueGroupId) {
         beginPlaybackObservation();
-        this.feedback.start(ttsConfig.baseUrl, session.sessionId, requestId, onFeedbackFailure, onFeedbackSnapshot, controller.signal);
+        this.feedback.start(ttsConfig.baseUrl, sessionId!, requestId, onFeedbackFailure, onFeedbackSnapshot, controller.signal);
       }
       if (controller.signal.aborted) throw new DOMException('The operation was aborted', 'AbortError');
       const response = await requestTtsSynthesis({ log: this.log, liveKit: this.liveKit }, {
         requestId,
         queueGroupId: input.queueGroupId,
         sentenceIndex: input.sentenceIndex,
+        onSessionResolved: (resolvedSessionId) => { sessionId = resolvedSessionId; },
         onSubmitted: () => {
           submittedMs = Math.round(performance.now() - startedAt);
           releaseSubmission();
@@ -526,11 +523,13 @@ export class TtsService {
     if (this.warmupTimer !== null) window.clearTimeout(this.warmupTimer);
     const tts = this.config?.modelConfig?.tts;
     if (!tts?.enabled || !tts.baseUrl || !tts.gptWeightsPath || !tts.sovitsWeightsPath) return;
+    runInAction(() => { this.warmupFailed = false; });
     this.warmupTimer = window.setTimeout(() => {
       this.warmupTimer = null;
       void this.warmupFromCurrentConfig('ai-service-config-change').then((result) => {
         runInAction(() => {
           this.warmed = result.ok;
+          this.warmupFailed = !result.ok && !result.skipped;
         });
         if (!result.ok && !result.skipped) {
           const context = this.log.contextRegistry.register('TtsService', {
@@ -583,8 +582,6 @@ export class TtsService {
   }
 
   private emitPlayback(event: TtsPlaybackEvent): void {
-    this.playbackListeners.forEach((listener) => {
-      listener(event);
-    });
+    runInAction(() => { this.playbackEvent = event; });
   }
 }

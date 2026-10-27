@@ -16,6 +16,7 @@ export const serviceModule: ServiceModule = {
       const config = scope.resolve(TOKENS.shared.config);
       const log = scope.resolve(TOKENS.shared.log);
       const stateBus = scope.resolve(TOKENS.shared.stateBus);
+      const ownsConversationRuntime = scope.resolve(TOKENS.core.bootstrapContext).windowKind === 'pet';
       return new AiService(
         stateBus,
         log,
@@ -27,12 +28,14 @@ export const serviceModule: ServiceModule = {
           log,
           liveKit: new LiveKitService(log),
           config,
-          autoWarmup: scope.resolve(TOKENS.core.bootstrapContext).windowKind === 'pet',
+          autoWarmup: ownsConversationRuntime,
           notifyError: notifyTtsError,
         }),
         new AsrService(
           scope.resolve(TOKENS.shared.electron), stateBus, log,
-      ))
+        ),
+        ownsConversationRuntime,
+      )
     })
   }
 };

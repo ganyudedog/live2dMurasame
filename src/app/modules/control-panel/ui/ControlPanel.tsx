@@ -140,8 +140,6 @@ const ControlPanel: React.FC = observer(() => {
           onGlobalConfigChange={(patch) => service.config.updateGlobalConfig(patch)}
           modelConfig={service.modelConfig}
           asrConfig={service.asrConfig}
-          preheatState={service.ttsPreheatState}
-          preheatMessage={service.ttsPreheatMessage}
           onTtsConfigChange={(next) => service.persistTtsConfig(next)}
           onPickPath={(kind) => service.pickTtsPath(kind).catch((error) => {
             reportError(error);

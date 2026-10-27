@@ -28,11 +28,6 @@ export const buildPersonaConfig = (persisted: unknown, defaults: ModelConfig['pe
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 export const trimText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
-export const shouldPreheatTts = (prev: ModelConfig['tts'], next: ModelConfig['tts']): boolean => (
-  prev.textLang !== next.textLang
-  || trimText(prev.refAudioPath) !== trimText(next.refAudioPath)
-  || trimText(prev.refAudioText) !== trimText(next.refAudioText)
-);
 export const createId = (): string => `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 export const createMessage = (
   role: ChatMessage['role'],

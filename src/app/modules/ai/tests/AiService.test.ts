@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { observable, runInAction } from 'mobx';
 import { AiService } from '../service/AiService';
 import type { LlmService } from '../modules/llm/service/LlmService';
 import type { TtsService } from '../modules/tts/service/TtsService';
@@ -8,7 +9,7 @@ import type { ChatRequest } from '@app/shared/state-bus/sharedStateTypes';
 import type { LogService } from '@app/shared/logging/LogService';
 
 const request = (id: string): ChatRequest => ({ id, text: id, source: 'asr', status: 'pending', createdAt: 1 });
-const setup = () => {
+const setup = (ownsConversationRuntime = true) => {
   let speechStart!: () => void;
   let final!: (request: ChatRequest) => void;
   const offStart = vi.fn();
@@ -26,16 +27,82 @@ const setup = () => {
     consumers.set(id, consumer);
     return consumer;
   }) };
-  const stateBus = { chatConfig: {}, publishChatRequest: vi.fn(), publishChatResponse: vi.fn() };
+  const stateBus = observable({ chatConfig: {}, chatRequest: null as ChatRequest | null,
+    publishChatRequest: vi.fn(), publishChatResponse: vi.fn() },
+    { publishChatRequest: false, publishChatResponse: false });
   const trace = { end: vi.fn(), fail: vi.fn(), record: vi.fn() };
   const log = { contextRegistry: { register: () => ({ beginTrace: () => trace, dispose: vi.fn() }) } };
   const service = new AiService(stateBus as unknown as StateBusService, log as unknown as LogService,
-    llm as unknown as LlmService, tts as unknown as TtsService, asr as unknown as AsrService);
+    llm as unknown as LlmService, tts as unknown as TtsService, asr as unknown as AsrService, ownsConversationRuntime);
   service.start();
-  return { service, llm, tts, stateBus, consumers, offStart, offFinal, speechStart: () => speechStart(), final: (r: ChatRequest) => final(r) };
+  return { service, llm, tts, asr, trace, stateBus, consumers, offStart, offFinal, speechStart: () => speechStart(), final: (r: ChatRequest) => final(r) };
 };
 
 describe('voice interruption orchestration', () => {
+  it('executes a broadcast request only in the pet, retaining the panel LLM for action authoring', async () => {
+    const pet = setup(true);
+    const panel = setup(false);
+    const dialogue = vi.fn();
+    pet.service.onDialogue(dialogue);
+    pet.llm.ask.mockImplementation(async (_text, options) => {
+      options.onSentenceSpeechReady?.({ sentenceIndex: 0, speakText: 'voice' });
+      options.onSentenceDisplayReady?.({ sentenceIndex: 0, displayText: 'one authoritative answer' });
+      options.onSentenceStreaming?.({ sentenceIndex: 0, speakText: 'voice', displayText: 'one authoritative answer' });
+      return { ok: true };
+    });
+    const broadcast = { ...request('shared-chat'), source: 'text' as const };
+    // Different renderer snapshots receive the same pending patch before either
+    // renderer's processing patch can round-trip through the worker.
+    runInAction(() => {
+      pet.stateBus.chatRequest = { ...broadcast };
+      panel.stateBus.chatRequest = { ...broadcast };
+    });
+    await vi.waitFor(() => expect(pet.service.processing).toBe(false));
+    expect(pet.llm.ask).toHaveBeenCalledOnce();
+    expect(panel.llm.ask).not.toHaveBeenCalled();
+    expect(panel.tts.start).not.toHaveBeenCalled();
+    expect(panel.asr.start).not.toHaveBeenCalled();
+    expect(panel.tts.createDispatcher).not.toHaveBeenCalled();
+    expect(panel.stateBus.publishChatResponse).not.toHaveBeenCalled();
+    expect(pet.consumers.get('shared-chat')?.submit).toHaveBeenCalledOnce();
+    expect(dialogue).toHaveBeenCalledWith(expect.objectContaining({ type: 'sentence', text: 'one authoritative answer' }));
+    expect(pet.stateBus.publishChatResponse).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: 'done', displayText: 'one authoritative answer',
+    }));
+    await panel.service.processChatRequest(broadcast);
+    expect(panel.llm.ask).not.toHaveBeenCalled();
+    expect(panel.service.llm).toBe(panel.llm);
+    // Starting the module again or receiving the pending snapshot twice cannot resubmit speech.
+    pet.service.start();
+    runInAction(() => { pet.stateBus.chatRequest = { ...broadcast }; });
+    expect(pet.llm.ask).toHaveBeenCalledOnce();
+    expect(pet.tts.start).toHaveBeenCalledOnce();
+    await panel.service.dispose();
+    expect(pet.tts.dispose).not.toHaveBeenCalled();
+    await pet.service.dispose();
+  });
+
+  it('identifies missing speech as text fallback without disposing TTS and speaks on the next turn', async () => {
+    const { service, llm, consumers, tts, trace } = setup();
+    llm.ask.mockImplementationOnce(async (_text, options) => {
+      options.onSentenceStreaming?.({ sentenceIndex: 0, speakText: '', displayText: 'text-only story' });
+      return { ok: true, reply: { display_text: 'text-only story', speak_text: '' } };
+    });
+    await service.processChatRequest(request('story'));
+    expect(consumers.get('story')?.submit).not.toHaveBeenCalled();
+    expect(trace.end).toHaveBeenCalledWith(expect.objectContaining({ tts: expect.objectContaining({
+      sentencesWithoutSpeech: 1, notSubmittedReason: 'missing-speak-text',
+    }) }));
+    expect(tts.dispose).not.toHaveBeenCalled();
+    llm.ask.mockImplementationOnce(async (_text, options) => {
+      options.onSentenceStreaming?.({ sentenceIndex: 0, speakText: 'voice', displayText: 'next answer' });
+      return { ok: true };
+    });
+    await service.processChatRequest(request('next'));
+    expect(consumers.get('next')?.submit).toHaveBeenCalledWith('voice', 'next answer', 0);
+    await service.dispose();
+  });
+
   it('keeps early speech independent of action listeners and cancels a lingering completed pose', async () => {
     const { service, llm, consumers, speechStart } = setup();
     const actions = vi.fn();

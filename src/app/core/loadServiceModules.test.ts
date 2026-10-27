@@ -71,7 +71,7 @@ describe('renderer module composition', () => {
       expect(() => container.resolve(TOKENS.live2d)).toThrow('not registered');
     }
     await container.startServices();
-    starts.forEach((start) => expect(start).toHaveBeenCalledOnce());
+    starts.forEach((start) => expect(start).toHaveBeenCalledTimes(windowKind === 'pet' ? 1 : 0));
     await container.dispose();
     disposers.forEach((dispose) => expect(dispose).toHaveBeenCalledOnce());
   });

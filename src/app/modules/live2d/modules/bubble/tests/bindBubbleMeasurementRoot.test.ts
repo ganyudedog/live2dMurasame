@@ -51,7 +51,7 @@ describe('shared temporary bubble measurement root', () => {
     service.dialogue.begin('chat');
     service.dialogue.prepare({ requestId: 'chat_s0', text: 'dialogue' });
     await flush();
-    expect(latest().request).toMatchObject({ text: 'dialogue', scrollable: true });
+    expect(latest().request).toMatchObject({ text: 'dialogue', scrollable: false, maxLines: Number.POSITIVE_INFINITY });
     expect(roots[0].unmount).toHaveBeenCalledOnce();
     oldMotion.onMeasured(dimensions);
     await flush();

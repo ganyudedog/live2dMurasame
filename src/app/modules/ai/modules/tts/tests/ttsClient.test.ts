@@ -65,6 +65,25 @@ describe('TTS client terminal errors and logging', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('uses the gateway session after renewal instead of a second client session cache', async () => {
+    const { dependencies, config, liveKit } = setup('http://127.0.0.1:19885', 'tts.finished', {});
+    await requestTtsSynthesis(dependencies, { config, requestId: 'request', speakText: 'hello' });
+    liveKit.ensureSession.mockResolvedValue({ sessionId: 'renewed', livekit: { expiresIn: 600 } });
+    liveKit.publishEvent.mockImplementation(async (_url, envelope) => {
+      const callback = liveKit.subscribeEvents.mock.calls.at(-1)![1];
+      callback({ type: 'tts.finished', session_id: envelope.session_id, request_id: envelope.request_id }, {});
+    });
+    const onSessionResolved = vi.fn();
+    const response = await requestTtsSynthesis(dependencies, {
+      config, requestId: 'request', speakText: 'hello', onSessionResolved,
+    });
+    expect(onSessionResolved).toHaveBeenCalledWith('renewed');
+    expect(liveKit.publishEvent).toHaveBeenLastCalledWith(config.baseUrl,
+      expect.objectContaining({ session_id: 'renewed' }), expect.anything());
+    expect(response.headers.get('X-Tts-Realtime-State')).toBe('tts.finished');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('logs cancellation while waiting for TTS as cancellation and cleans up the terminal listener', async () => {
     const { dependencies, config, trace, liveKit, context, unsubscribe } = setup('http://127.0.0.1:19883', 'tts.started', {});
     const fetch = vi.fn();

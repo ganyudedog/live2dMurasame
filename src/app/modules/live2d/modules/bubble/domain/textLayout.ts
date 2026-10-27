@@ -7,6 +7,7 @@ export const layoutBubbleText = (
   maxWidth: number,
   typography: BubbleTypography,
   measureText: (text: string) => number,
+  maxLines = BUBBLE_MAX_LINES,
 ) => {
   const { horizontalInset, verticalInset, lineHeight, tailLength } = typography;
   const contentWidth = Math.max(typography.fontSize, maxWidth - horizontalInset * 2);
@@ -22,12 +23,13 @@ export const layoutBubbleText = (
     }
     lines.push(current);
   }
+  const pageLimit = Number.isFinite(maxLines) && maxLines > 0 ? Math.floor(maxLines) : lines.length || 1;
   const pages: string[][] = [];
-  for (let index = 0; index < lines.length; index += BUBBLE_MAX_LINES) {
-    pages.push(lines.slice(index, index + BUBBLE_MAX_LINES));
+  for (let index = 0; index < lines.length; index += pageLimit) {
+    pages.push(lines.slice(index, index + pageLimit));
   }
   const bodyWidth = maxWidth;
-  const bodyHeight = Math.min(lines.length, BUBBLE_MAX_LINES) * lineHeight + verticalInset * 2;
+  const bodyHeight = Math.min(lines.length, pageLimit) * lineHeight + verticalInset * 2;
   return { pages, lines, lineCount: lines.length, bodyWidth, bodyHeight, width: bodyWidth + tailLength, typography };
 };
 

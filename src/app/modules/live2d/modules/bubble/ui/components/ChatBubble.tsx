@@ -11,6 +11,7 @@ type ChatBubbleProps = {
   autoAdvance?: boolean;
   displayText?: string;
   scrollable?: boolean;
+  maxLines?: number;
   className?: string;
   style?: React.CSSProperties;
 };
@@ -67,14 +68,14 @@ const speechPath = (
 };
 
 export const ChatBubble: React.FC<ChatBubbleProps> = ({ text, side, tail, maxWidth, scale = 1, autoAdvance = true,
-  displayText, scrollable = false, className, style }) => {
+  displayText, scrollable = false, maxLines, className, style }) => {
   const layout = useMemo(() => {
     const typography = resolveBubbleTypography(scale);
-    return layoutBubbleText(text, resolveMaxWidth(maxWidth), typography, createTextMeasurer(typography.fontSize));
-  }, [maxWidth, scale, text]);
+    return layoutBubbleText(text, resolveMaxWidth(maxWidth), typography, createTextMeasurer(typography.fontSize), maxLines);
+  }, [maxLines, maxWidth, scale, text]);
   const displayedLayout = useMemo(() => displayText === undefined ? layout
-    : layoutBubbleText(displayText, resolveMaxWidth(maxWidth), layout.typography, createTextMeasurer(layout.typography.fontSize)),
-  [displayText, layout, maxWidth]);
+    : layoutBubbleText(displayText, resolveMaxWidth(maxWidth), layout.typography, createTextMeasurer(layout.typography.fontSize), maxLines),
+  [displayText, layout, maxLines, maxWidth]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followScrollRef = useRef(true);
   useEffect(() => {

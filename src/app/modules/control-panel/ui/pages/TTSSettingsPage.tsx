@@ -90,14 +90,10 @@ const isSameTtsDraft = (left: TtsUiDraft, right: TtsUiDraft) => {
 
 export default function TTSSettingsPage({
   modelConfig,
-  preheatState,
-  preheatMessage,
   onTtsConfigChange,
   onPickPath,
 }: {
   modelConfig: ModelConfig;
-  preheatState: 'idle' | 'pending' | 'ok' | 'failed';
-  preheatMessage: string;
   onTtsConfigChange: (next: TtsUiDraft) => Promise<void>;
   onPickPath: (kind: 'gpt' | 'sovits' | 'ref') => Promise<string | null>;
 }) {
@@ -520,13 +516,6 @@ export default function TTSSettingsPage({
           </label>
         </div>
 
-        <div className="text-xs text-base-content/70">
-          自动预热状态：
-          <span className="ml-1">
-            {preheatState === 'pending' ? '进行中' : (preheatState === 'ok' ? '成功' : (preheatState === 'failed' ? '失败' : '未触发'))}
-          </span>
-          <span className="ml-2 opacity-80">{preheatMessage}</span>
-        </div>
       </section>
     </div>
   );

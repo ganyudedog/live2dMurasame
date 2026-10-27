@@ -19,7 +19,7 @@ export const bindBubbleMeasurementRoot = (live2d: Live2dService): (() => void) =
     const dialogue = live2d.dialogue.measurementRequest;
     if (dialogue) return { kind: 'dialogue' as const, id: dialogue.id,
       text: dialogue.text, maxWidth: dialogue.maxWidth, scale: dialogue.scale,
-      scrollable: true };
+      scrollable: false, maxLines: Number.POSITIVE_INFINITY };
     const text = live2d.playingMotionText;
     const id = live2d.bubbleMeasurementRequestId;
     if (!text || live2d.bubbleMeasurement?.requestId === id) return null;

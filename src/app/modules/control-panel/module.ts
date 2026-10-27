@@ -11,7 +11,6 @@ export const serviceModule: ServiceModule = {
       scope.resolve(TOKENS.shared.config),
       scope.resolve(TOKENS.shared.stateBus),
       scope.resolve(TOKENS.shared.log),
-      scope.resolve(TOKENS.ai).tts,
       scope.resolve(TOKENS.ai).llm,
     ));
   },

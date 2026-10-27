@@ -6,6 +6,7 @@ export interface BubbleLayoutRequest {
   maxWidth: number;
   scale: number;
   scrollable?: boolean;
+  maxLines?: number;
 }
 
 export interface BubbleLayoutMeasurement {
@@ -65,6 +66,6 @@ export const BubbleMeasurementRoot = ({ request, onMeasured }: {
     visibility: 'hidden', pointerEvents: 'none', contain: 'layout style paint' }}>
     <ChatBubble text={request.text} maxWidth={request.maxWidth} scale={request.scale}
       side="start" tail={{ y: 14 }} autoAdvance={false}
-      scrollable={request.scrollable} />
+      scrollable={request.scrollable} maxLines={request.maxLines} />
   </div>;
 };

@@ -20,10 +20,15 @@ export const hostPermissions = {
   desktopWindow: 'desktop.window',
 } as const satisfies Record<keyof PluginHostApiMap, PluginPermission>;
 
-/** How a host method's return value joins the plugin's cleanup list. */
+/** Explicit public methods and their resource ownership policy. */
+export type HostMethodEffect = 'none' | 'disposable' | 'channel';
+type HostMethodPolicies = {
+  [Host in keyof PluginHostApiMap]: { [Method in keyof PluginHostApiMap[Host]]: HostMethodEffect };
+};
 export const hostMethodEffects = {
-  subscribe: 'disposable',
-  openChannel: 'channel',
-} as const;
-
-export type HostMethodEffect = (typeof hostMethodEffects)[keyof typeof hostMethodEffects];
+  ai: { openChannel: 'channel', getModels: 'none', subscribe: 'disposable' },
+  live2d: { getAvailableMotions: 'none', playMotion: 'none', interruptMotion: 'none', getModelState: 'none' },
+  controlPanel: { getActiveTab: 'none', openTab: 'none' },
+  desktopNotifications: { showNotification: 'none' },
+  desktopWindow: { getWindowGeometry: 'none' },
+} as const satisfies HostMethodPolicies;

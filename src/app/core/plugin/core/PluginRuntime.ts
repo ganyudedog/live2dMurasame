@@ -252,14 +252,24 @@ export class PluginRuntime {
     const capabilities = host as Record<string, unknown>;
     for (const [id, value] of Object.entries(capabilities)) {
       if (!value || typeof value !== 'object') continue;
-      capabilities[id] = new Proxy(value, {
-        get: (target, property, receiver) => {
-          const member = Reflect.get(target, property, receiver) as unknown;
-          if (typeof member !== 'function' || typeof property !== 'string') return member;
-          return (...args: unknown[]) => {
+      const policies = hostMethodEffects[id as keyof PluginHostApiMap];
+      const methods = new Map<string, (...args: unknown[]) => unknown>();
+      // The proxy target contains no host instance or host prototype.
+      capabilities[id] = new Proxy(Object.create(null) as object, {
+        set: () => false,
+        defineProperty: () => false,
+        deleteProperty: () => false,
+        setPrototypeOf: () => false,
+        get: (_target, property) => {
+          if (typeof property !== 'string' || !Object.hasOwn(policies, property)) return undefined;
+          const cached = methods.get(property);
+          if (cached) return cached;
+          const invoke = (...args: unknown[]) => {
             if (!canUse()) throw new Error(`Plugin host capability is no longer active: ${id}`);
-            const result = Reflect.apply(member, target, args) as unknown;
-            const effect = hostMethodEffects[property as keyof typeof hostMethodEffects];
+            const member: unknown = Reflect.get(value, property, value);
+            if (typeof member !== 'function') throw new Error(`Host method unavailable: ${id}.${property}`);
+            const result = Reflect.apply(member, value, args) as unknown;
+            const effect = policies[property as keyof typeof policies];
             if (effect === 'disposable' && typeof result === 'function') cleanups.push(result as Disposable);
             else if (effect === 'channel' && result && typeof result === 'object') {
               const channel = result as { dispose?: unknown };
@@ -267,6 +277,8 @@ export class PluginRuntime {
             }
             return result;
           };
+          methods.set(property, invoke);
+          return invoke;
         },
       });
     }

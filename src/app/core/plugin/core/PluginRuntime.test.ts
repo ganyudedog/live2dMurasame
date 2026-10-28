@@ -1,7 +1,51 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { AiHostApi, ConversationChannel } from '../types';
 import { PluginRuntime } from './PluginRuntime';
 
 describe('PluginRuntime', () => {
+  it('exposes only contracted host methods and revokes saved methods on stop', async () => {
+    const unsubscribe = vi.fn();
+    const channelDispose = vi.fn();
+    class Host {
+      internal = 'hidden';
+      dispose = vi.fn();
+      getModels() { return [{ id: this.internal, efforts: [] }]; }
+      subscribe() { return unsubscribe; }
+      openChannel() { return { dispose: channelDispose } as unknown as ConversationChannel; }
+    }
+    const host = new Host();
+    let api!: AiHostApi;
+    const runtime = new PluginRuntime({ hosts: { ai: host } });
+    runtime.registerPlugin({
+      manifest: { id: 'boundary', name: 'Boundary', version: '1.0.0', apiVersion: '1.0.0', permissions: ['ai'] },
+      activate: (context) => { api = context.host.ai!; },
+    });
+    await runtime.activatePlugin('boundary');
+    const getModels = api.getModels;
+    expect(getModels()).toEqual([{ id: 'hidden', efforts: [] }]);
+    expect(api.getModels).toBe(getModels);
+    for (const key of ['dispose', 'internal', 'constructor', '__proto__']) {
+      expect(Reflect.get(api, key)).toBeUndefined();
+      expect(Object.getOwnPropertyDescriptor(api, key)).toBeUndefined();
+      expect(key in api).toBe(false);
+    }
+    expect(Object.getPrototypeOf(api)).toBeNull();
+    expect(Reflect.ownKeys(api)).not.toContain('internal');
+    expect(Reflect.set(api, 'internal', 'changed')).toBe(false);
+    expect(Reflect.defineProperty(api, 'dispose', { value: () => undefined })).toBe(false);
+    expect(Reflect.deleteProperty(api, 'getModels')).toBe(false);
+    expect(Reflect.setPrototypeOf(api, host)).toBe(false);
+    api.subscribe(() => undefined);
+    api.openChannel({ source: 'test', conversationId: 'test', interaction: { mode: 'queue' } });
+    await runtime.stopPlugin('boundary');
+    expect(getModels).toThrow('no longer active');
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(channelDispose).toHaveBeenCalledOnce();
+    expect(host.dispose).not.toHaveBeenCalled();
+    expect(host.internal).toBe('hidden');
+    await runtime.dispose();
+  });
+
   it('owns contributions and removes them when a plugin stops', async () => {
     const runtime = new PluginRuntime();
     runtime.registerPlugin({

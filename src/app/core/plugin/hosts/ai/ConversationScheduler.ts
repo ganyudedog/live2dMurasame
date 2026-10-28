@@ -1,12 +1,11 @@
 import type {
-  AiConversationHostApi,
   ConversationChannel,
   ConversationChannelOptions,
   ConversationRequest,
   ConversationRequestResult,
   ConversationResponse,
   Disposable,
-} from '.';
+} from '../../types';
 
 export interface PluginConversationExecutionContext {
   readonly channelId: string;
@@ -30,15 +29,15 @@ type PoolJob = {
   onError: (error: unknown) => void;
   onComplete: () => void;
 };
-interface ConversationScheduler {
+interface ConversationPool {
   enqueue(job: PoolJob): 'running' | 'queued' | 'disposed';
   cancelQueued(key: string): boolean;
   isDisposed(): boolean;
 }
 const makeId = (prefix: string): string => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-/** Generic plugin conversation host with per-channel policy and a shared execution pool. */
-export class PluginConversationHost implements AiConversationHostApi, ConversationScheduler {
+/** Per-channel policy and a shared execution pool. AiHost is the public API. */
+export class ConversationScheduler implements ConversationPool {
   private readonly channels = new Set<PluginConversationChannel>();
   private readonly execute: PluginConversationExecutor;
   private readonly maxConcurrent: number;
@@ -121,13 +120,13 @@ class PluginConversationChannel implements ConversationChannel {
   private disposed = false;
   private closing = false;
   private readonly execute: PluginConversationExecutor;
-  private readonly scheduler: ConversationScheduler;
+  private readonly scheduler: ConversationPool;
   private readonly onDisposed: () => void;
 
   constructor(
     options: ConversationChannelOptions,
     execute: PluginConversationExecutor,
-    scheduler: ConversationScheduler,
+    scheduler: ConversationPool,
     onDisposed: () => void,
   ) {
     this.execute = execute;

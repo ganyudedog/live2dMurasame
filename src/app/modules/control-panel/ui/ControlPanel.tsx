@@ -12,7 +12,7 @@ import ModelSelectPage from './pages/ModelSelectPage';
 import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
 import PersonaSettingsPage from './pages/PersonaSettingsPage';
-import { PluginPanelHost } from '@app/core/plugin/PluginPanelHost';
+import { PluginPanelHost } from '@app/core/plugin/hosts/control-panel/PluginPanelHost';
 
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);

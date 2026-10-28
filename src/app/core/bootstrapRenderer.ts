@@ -5,17 +5,8 @@ import type { WindowKind } from './di/module';
 import { registerServiceModules } from './loadServiceModules';
 import { TOKENS } from './serviceTokens';
 import { reaction } from 'mobx';
-import type {
-  AiConversationHostApi,
-  AiModelCatalogHostApi,
-  ControlPanelHostApi,
-  DesktopNotificationsHostApi,
-  DesktopWindowHostApi,
-  Live2dHostApi,
-} from './plugin';
-import { PluginConversationHost } from './plugin/PluginConversationHost';
-import { createDefaultConversationExecutor } from './plugin/createDefaultConversationExecutor';
 import { bindAiPresentation } from './bindings/bindAiPresentation';
+import { parsePluginDefinition } from './plugin/core/manifest';
 
 export interface RendererApplication {
   readonly container: ServiceContainer;
@@ -42,59 +33,9 @@ export const bootstrapRenderer = async (
   await container.startServices();
 
   const pluginRuntime = container.resolve(TOKENS.plugin);
-  const electron = container.resolve(TOKENS.shared.electron);
-  const desktopNotificationsApi: DesktopNotificationsHostApi = {
-    showNotification: async (title, body) => {
-      // Notifications remain a host concern; the renderer only receives the
-      // capability exposed by the bridge, never ipcRenderer itself.
-      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        new Notification(title, { body });
-      }
-    },
-  };
-  const desktopWindowApi: DesktopWindowHostApi = {
-    getWindowGeometry: async () => (await electron.bridge.windowApi?.getWindowGeometry?.()) ?? null,
-  };
-  pluginRuntime.registerHostApi('desktopNotifications', 'desktop.notifications', desktopNotificationsApi);
-  pluginRuntime.registerHostApi('desktopWindow', 'desktop.window', desktopWindowApi);
-
-  const config = container.resolve(TOKENS.shared.config);
-  const getLlmModels = () => (Array.isArray(config.globalModelConfig?.llmModels)
-    ? config.globalModelConfig.llmModels
-    : []);
-  const aiModelsApi: AiModelCatalogHostApi = {
-    getModels: () => getLlmModels().map(({ id, efforts }) => ({ id, efforts })),
-    subscribe: (listener) => reaction(() => JSON.stringify(getLlmModels()), () => listener()),
-  };
-  pluginRuntime.registerHostApi('aiModels', 'ai.models', aiModelsApi);
-
-  if (windowKind === 'pet') {
-    const live2d = container.resolve(TOKENS.live2d);
-    const config = container.resolve(TOKENS.shared.config);
-    const pluginAi = new PluginConversationHost(createDefaultConversationExecutor(config, logger));
-    const live2dHostApi: Live2dHostApi = {
-      getAvailableMotions: () => live2d.getAvailableMotionsSnapshot(),
-      playMotion: (group) => live2d.playMotion(group),
-      interruptMotion: (group) => live2d.interruptMotion(group),
-      getModelState: () => ({ loaded: Boolean(live2d.model), status: live2d.modelLoadStatus }),
-    };
-    const aiConversationHostApi: AiConversationHostApi = pluginAi;
-    pluginRuntime.registerHostApi('live2d', 'live2d.runtime', live2dHostApi);
-    pluginRuntime.registerHostApi('aiConversations', 'ai.conversations', aiConversationHostApi);
-    live2d.registerExtensions(pluginRuntime.live2dRegister);
-  }
-  if (windowKind === 'control-panel') {
-    const controlPanel = container.resolve(TOKENS.controlPanel);
-    const controlPanelHostApi: ControlPanelHostApi = {
-      getActiveTab: () => controlPanel.activeTab,
-      openTab: (tabId) => controlPanel.setActiveTab(tabId as Parameters<typeof controlPanel.setActiveTab>[0]),
-    };
-    pluginRuntime.registerHostApi('controlPanel', 'control-panel.navigation', controlPanelHostApi);
-    controlPanel.registerExtensions(pluginRuntime.controlPanelRegister);
-  }
   externalPlugins.forEach((plugin) => {
     try {
-      pluginRuntime.registerExternalPlugin(plugin);
+      pluginRuntime.registerPlugin(parsePluginDefinition(plugin));
     } catch (error) {
       logger.error('plugin.runtime', 'external-registration.failed', { error: String(error) });
     }

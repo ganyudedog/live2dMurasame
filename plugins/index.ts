@@ -1,7 +1,7 @@
 /**
  * Optional business plugins live beside the application source. Vite expands
- * this directory at build time, so removing a plugin does not require a core
- * source change or leave a stale import behind.
+ * this directory at build time. The default export is typed as unknown because
+ * the glob cannot see each module's type; bootstrap parses it into a plugin definition.
  */
 const discovered = import.meta.glob(['./*/index.ts', '!./api/**'], {
   eager: true,

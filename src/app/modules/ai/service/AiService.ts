@@ -6,8 +6,8 @@ import { toErrorMessage } from '@app/shared/utils/errors';
 import type { ChatRequest } from '@app/shared/state-bus/sharedStateTypes';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
-import type { AiRegister } from '@app/core/plugin/registers';
-import type { Disposable, TextAiInput, TextAiResponse, TextAiResult } from '@app/core/plugin/types';
+import type { Disposable } from '@app/core/plugin';
+import type { TextAiInput, TextAiResponse, TextAiResult } from '../textChannel';
 import type { AiDialogueEvent, AiActionEvent } from '../types';
 
 export class AiService {
@@ -20,7 +20,6 @@ export class AiService {
   private disposed = false;
   private started = false;
   private readonly ownsConversationRuntime: boolean;
-  private extensionRegister: AiRegister | null = null;
   private responseListeners = new Set<(response: TextAiResponse) => void>();
   private dialogueListeners = new Set<(event: AiDialogueEvent) => void>();
   private actionListeners = new Set<(event: AiActionEvent) => void>();
@@ -90,14 +89,6 @@ export class AiService {
     });
     context.beginTrace('start').end({ started: true });
     context.dispose();
-  }
-
-  registerExtensions(register: AiRegister): void {
-    this.extensionRegister = register;
-  }
-
-  getExtensionRegister(): AiRegister | null {
-    return this.extensionRegister;
   }
 
   submitText(input: TextAiInput): TextAiResult {

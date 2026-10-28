@@ -18,8 +18,6 @@ import { normalizeAsrConfig } from '@app/modules/ai/modules/asr/domain/config';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
-import type { ControlPanelRegister } from '@app/core/plugin/registers';
-import type { UiContribution } from '@app/core/plugin/types';
 import type { LlmService } from '@app/modules/ai/modules/llm/service/LlmService';
 import { ActionSettingsService } from '../modules/action-settings/service/ActionSettingsService';
 
@@ -45,7 +43,6 @@ export class ControlPanelService {
   private readonly llm: LlmService;
   private reactions: IReactionDisposer[] = [];
   private aiPersistTimer: number | null = null;
-  private extensionRegister: ControlPanelRegister | null = null;
 
   constructor(config: ConfigService, stateBus: StateBusService, log: LogService, llm: LlmService) {
     this.config = config;
@@ -174,18 +171,6 @@ export class ControlPanelService {
         ...(persisted.tts as Partial<ModelConfig['tts']>),
       },
     };
-  }
-
-  registerExtensions(register: ControlPanelRegister): void {
-    this.extensionRegister = register;
-  }
-
-  getExtensionRegister(): ControlPanelRegister | null {
-    return this.extensionRegister;
-  }
-
-  getPluginUiContributions(slot: string): readonly { ownerId: string; contribution: UiContribution }[] {
-    return this.extensionRegister?.listOwned(slot) ?? [];
   }
 
   get asrConfig(): AsrConfig {

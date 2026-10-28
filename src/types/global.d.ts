@@ -44,8 +44,9 @@ declare global {
     endpointPresetVersion?: 1;
     profile?: 'conversation' | 'agent';
     vadModelPath?: string;
-    vadThreshold?: number;
-    vadMinSpeechDuration?: number;
+    /** 远程模式下 null 表示不覆盖服务自己的人声检测。 */
+    vadThreshold?: number | null;
+    vadMinSpeechDuration?: number | null;
     mode?: 'local' | 'remote';
     engine?: string;
     modelDir?: string;

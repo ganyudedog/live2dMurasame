@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
-import { requestStage2LLM } from '../../modules/ai/modules/llm/infrastructure/llmClient';
-import { createDefaultConversationExecutor } from './createDefaultConversationExecutor';
+import { requestStage2LLM } from '@app/modules/ai/modules/llm/infrastructure/llmClient';
+import { createDefaultConversationExecutor } from './createConversationExecutor';
 
-vi.mock('../../modules/ai/modules/llm/infrastructure/llmClient', () => ({
+vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
   requestStage2LLM: vi.fn(async () => ({ rawText: '{"display_text":"你好"}' })),
 }));
 

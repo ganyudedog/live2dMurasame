@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ConversationChannelOptions } from '.';
-import { PluginConversationHost } from './PluginConversationHost';
+import type { ConversationChannelOptions } from '../../types';
+import { ConversationScheduler } from './ConversationScheduler';
 
 const options = (mode: 'queue' | 'interrupt' | 'concurrent' = 'queue'): ConversationChannelOptions => {
   const interaction = mode === 'queue'
@@ -11,10 +11,10 @@ const options = (mode: 'queue' | 'interrupt' | 'concurrent' = 'queue'): Conversa
   return { source: 'test', conversationId: 'conversation', interaction };
 };
 
-describe('PluginConversationHost', () => {
+describe('ConversationScheduler', () => {
   it('keeps a bounded FIFO queue per channel', async () => {
     const pending = new Map<string, () => void>();
-    const host = new PluginConversationHost(async (_options, request, context) => new Promise<void>((resolve) => {
+    const host = new ConversationScheduler(async (_options, request, context) => new Promise<void>((resolve) => {
       pending.set(request.requestId!, () => { context.emit({ text: request.text, status: 'done' }); resolve(); });
     }));
     const channel = host.openChannel(options());
@@ -34,7 +34,7 @@ describe('PluginConversationHost', () => {
 
   it('cancels the previous interaction in interrupt mode', async () => {
     const aborted: string[] = [];
-    const host = new PluginConversationHost(async (_options, request, context) => {
+    const host = new ConversationScheduler(async (_options, request, context) => {
       await new Promise<void>((resolve) => context.signal.addEventListener('abort', () => { aborted.push(request.requestId!); resolve(); }, { once: true }));
     });
     const channel = host.openChannel(options('interrupt'));
@@ -47,7 +47,7 @@ describe('PluginConversationHost', () => {
 
   it('honors per-channel concurrent limits for independent channels', async () => {
     const starts: string[] = [];
-    const host = new PluginConversationHost(async (_options, request, context) => {
+    const host = new ConversationScheduler(async (_options, request, context) => {
       starts.push(request.requestId!);
       await new Promise<void>((resolve) => context.signal.addEventListener('abort', () => resolve(), { once: true }));
     });
@@ -67,7 +67,7 @@ describe('PluginConversationHost', () => {
   it('caps executions across channels with one host-level promise pool', async () => {
     const starts: string[] = [];
     const pending = new Map<string, () => void>();
-    const host = new PluginConversationHost(async (_options, request, context) => new Promise<void>((resolve) => {
+    const host = new ConversationScheduler(async (_options, request, context) => new Promise<void>((resolve) => {
       starts.push(request.requestId!);
       pending.set(request.requestId!, () => {
         context.emit({ text: request.text, status: 'done' });

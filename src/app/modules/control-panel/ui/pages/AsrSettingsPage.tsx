@@ -21,8 +21,13 @@ export default function AsrSettingsPage({
     void onChange(next);
   };
 
+  const remote = draft.mode === 'remote';
+  const optionalNumber = (value: string): number | null => value === '' || Number.isNaN(Number(value)) ? null : Number(value);
+
   return <>
-    <SettingsCard title="语音识别" description="通过适配器选择本地模型或预留的远程识别服务。">
+    <SettingsCard title="语音识别" description={remote
+      ? '连接已经配好人声检测和识别的服务。'
+      : '使用本机模型目录里的识别模型和 VAD 文件。'}>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <Field label="语音输入档次">
           <select className="select select-sm w-full" value={draft.profile}
@@ -35,42 +40,57 @@ export default function AsrSettingsPage({
           <select className="select select-sm w-full" value={draft.mode}
             onChange={(event) => update({ mode: event.target.value as AsrConfig['mode'] })}>
             <option value="local">本地</option>
-            <option value="remote">远程（扩展点）</option>
+            <option value="remote">远程</option>
           </select>
         </Field>
-        <Field label="识别引擎">
+        {remote ? null : <Field label="识别引擎">
           <input className="input input-sm w-full" value={draft.engine}
             onChange={(event) => update({ engine: event.target.value })} />
-        </Field>
+        </Field>}
       </div>
 
-      <Field label={draft.mode === 'local' ? '模型目录' : '远程服务地址'}
-        hint={draft.mode === 'local'
-          ? '目录内需包含 encoder.onnx、decoder.onnx、joiner.onnx、tokens.txt'
-          : '预留字段，当前未实现远程适配器'}>
+      <Field label={remote ? '远程服务地址' : '模型目录'}
+        hint={remote
+          ? '服务内已包含人声检测和识别。地址可以写 ws:// 或 http://。'
+          : '目录内需包含 encoder.onnx、decoder.onnx、joiner.onnx、tokens.txt'}>
         <input className="input input-sm w-full"
-          placeholder={draft.mode === 'local' ? 'models/sense-voice' : 'https://example.com/asr'}
-          value={draft.mode === 'local' ? draft.modelDir : draft.endpoint}
-          onChange={(event) => update(draft.mode === 'local'
-            ? { modelDir: event.target.value }
-            : { endpoint: event.target.value })} />
+          placeholder={remote ? 'ws://127.0.0.1:6006' : 'models/sense-voice'}
+          value={remote ? draft.endpoint : draft.modelDir}
+          onChange={(event) => update(remote
+            ? { endpoint: event.target.value }
+            : { modelDir: event.target.value })} />
       </Field>
     </SettingsCard>
 
-    <SettingsCard title="语音检测" description="Silero VAD 决定什么时候算「开始说话」和「说完了」。">
-      <Field label="Silero VAD 模型路径" hint="留空则使用程序内置的默认模型">
+    {remote ? <SettingsCard title="语音检测" description="留空则使用服务已经配好的人声检测。填写后会在连接时发给服务。">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <Field label="人声确认时长（秒）" hint="留空表示不覆盖服务">
+          <input type="number" min="0.15" max="0.3" step="0.01" className="input input-sm w-full tabular-nums"
+            value={draft.vadMinSpeechDuration ?? ''}
+            onChange={(event) => update({ vadMinSpeechDuration: optionalNumber(event.target.value) })} />
+        </Field>
+        <Field label="人声概率阈值" hint="留空表示不覆盖服务">
+          <input type="number" min="0.05" max="0.95" step="0.05" className="input input-sm w-full tabular-nums"
+            value={draft.vadThreshold ?? ''}
+            onChange={(event) => update({ vadThreshold: optionalNumber(event.target.value) })} />
+        </Field>
+      </div>
+    </SettingsCard> : null}
+
+    {remote ? null : <SettingsCard title="语音检测" description="Silero VAD 决定什么时候算「开始说话」和「说完了」。">
+      <Field label="Silero VAD 模型路径" hint="留空则使用模型目录中的 silero_vad.onnx">
         <input className="input input-sm w-full" placeholder="silero_vad.onnx" value={draft.vadModelPath}
           onChange={(event) => update({ vadModelPath: event.target.value })} />
       </Field>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <Field label="人声确认时长（秒）" hint="短于此长度的声音会被忽略">
           <input type="number" min="0.15" max="0.3" step="0.01" className="input input-sm w-full tabular-nums"
-            value={draft.vadMinSpeechDuration}
+            value={draft.vadMinSpeechDuration ?? 0.2}
             onChange={(event) => update({ vadMinSpeechDuration: Number(event.target.value) })} />
         </Field>
         <Field label="人声概率阈值" hint="越高越不容易被环境噪音触发">
           <input type="number" min="0.05" max="0.95" step="0.05" className="input input-sm w-full tabular-nums"
-            value={draft.vadThreshold}
+            value={draft.vadThreshold ?? 0.5}
             onChange={(event) => update({ vadThreshold: Number(event.target.value) })} />
         </Field>
         <Field label="采样率">
@@ -81,9 +101,9 @@ export default function AsrSettingsPage({
           </select>
         </Field>
       </div>
-    </SettingsCard>
+    </SettingsCard>}
 
-    <SettingsCard title="断句与性能" description="静音多久算一句话结束，以及识别占用的线程数。">
+    {remote ? null : <SettingsCard title="断句与性能" description="静音多久算一句话结束，以及识别占用的线程数。">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <Field label="有声句尾静音（秒）" hint="已经识别出文字后，停顿多久就提交">
           <input type="number" min="0.2" max="3" step="0.1" className="input input-sm w-full tabular-nums"
@@ -100,6 +120,6 @@ export default function AsrSettingsPage({
             onChange={(event) => update({ numThreads: Number(event.target.value) })} />
         </Field>
       </div>
-    </SettingsCard>
+    </SettingsCard>}
   </>;
 }

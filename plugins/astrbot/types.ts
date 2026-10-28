@@ -1,6 +1,5 @@
 export type {
-  AiConversationHostApi,
-  AiModelCatalogHostApi,
+  AiHostApi,
   ConversationChannel,
   ConversationChannelOptions,
   ConversationResponse,

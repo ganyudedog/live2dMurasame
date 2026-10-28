@@ -6,7 +6,7 @@ import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, type AstrBotBridgeSettings
 export const astrBotBridgePlugin: AstrBotPluginDefinition = {
   manifest: {
     id: 'live2d.astrbot-bridge', name: 'AstrBot QQ Bridge', version: '0.2.0', apiVersion: '1.0.0',
-    hosts: ['desktop'], permissions: ['ai.conversations', 'ai.models', 'control-panel.navigation', 'settings.storage'],
+    hosts: ['desktop'], permissions: ['ai', 'control-panel.navigation', 'settings.storage'],
     activationEvents: ['onRendererReady'],
   },
   activate: async (context) => {
@@ -15,7 +15,7 @@ export const astrBotBridgePlugin: AstrBotPluginDefinition = {
       return;
     }
     if (context.windowKind !== 'pet') return;
-    const ai = context.host.aiConversations;
+    const ai = context.host.ai;
     if (!ai) { context.logger.warn('activation.skipped', { reason: 'AI conversation host is unavailable' }); return; }
     const saved = await context.storage.get<AstrBotBridgeSettings>('settings', DEFAULT_ASTRBOT_SETTINGS);
     const settings = normalizeSettings(saved, DEFAULT_ASTRBOT_SETTINGS);

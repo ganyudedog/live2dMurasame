@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AiModelCatalogHostApi, AstrBotUiContext } from './types';
+import type { AiHostApi, AstrBotUiContext } from './types';
 import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, type AstrBotBridgeSettings } from './settings';
 
 const MODES: ReadonlyArray<{
@@ -30,8 +30,8 @@ const SPEAK_LANGS = [
   { value: 'auto', label: '自动' },
 ] as const;
 
-const getModelsHost = (context: AstrBotUiContext): AiModelCatalogHostApi | null => {
-  const value = context.hostApi.aiModels;
+const getModelsHost = (context: AstrBotUiContext): AiHostApi | null => {
+  const value = context.hostApi.ai;
   return value && typeof value.getModels === 'function' && typeof value.subscribe === 'function' ? value : null;
 };
 

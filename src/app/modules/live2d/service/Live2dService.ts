@@ -17,8 +17,6 @@ import {
   BUBBLE_SIDE_MAX_WIDTH,
   resolveBubbleContentMaxWidth,
 } from '../modules/bubble/domain/constants';
-import type { Live2dRegister } from '@app/core/plugin/registers';
-
 export type ModelLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 export type BubbleMeasurement = {
   requestId: number;
@@ -69,7 +67,6 @@ export class Live2dService {
   private removePreviewListener: (() => void) | null = null;
   private disposed = false;
   private nativeSourceTs = -Infinity;
-  private extensionRegister: Live2dRegister | null = null;
 
   constructor(stateBus: StateBusService, log: LogService, windowApi?: PetWindowAPI, modelApi?: PetModelAPI) {
     this.stateBus = stateBus;
@@ -207,14 +204,6 @@ export class Live2dService {
         maxWidth: dialogue.maxWidth, scale: dialogue.scale } : null;
     }
     return this.bubbleMeasurement?.requestId === this.bubbleMeasurementRequestId ? this.bubbleMeasurement : null;
-  }
-
-  registerExtensions(register: Live2dRegister): void {
-    this.extensionRegister = register;
-  }
-
-  getExtensionRegister(): Live2dRegister | null {
-    return this.extensionRegister;
   }
 
   getAvailableMotionsSnapshot(): readonly string[] {

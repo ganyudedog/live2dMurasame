@@ -47,7 +47,7 @@ describe('PluginRuntime', () => {
   });
 
   it('registers a dedicated page under an owner-scoped tab id and removes it on stop', async () => {
-    const runtime = new PluginRuntime(undefined, 'desktop', 'control-panel');
+    const runtime = new PluginRuntime({ windowKind: 'control-panel' });
     runtime.registerPlugin({
       manifest: { id: 'page.plugin', name: 'Page', version: '1.0.0', apiVersion: '1.0.0', permissions: ['control-panel.navigation'] },
       activate: ({ ui }) => {
@@ -57,7 +57,7 @@ describe('PluginRuntime', () => {
     await runtime.activatePlugin('page.plugin');
     const [page] = runtime.getControlPanelPages();
     expect(page.tabId).toBe('plugin:page.plugin/settings');
-    expect(runtime.getControlPanelPage(page.tabId)?.ownerId).toBe('page.plugin');
+    expect(page.ownerId).toBe('page.plugin');
     await runtime.stopPlugin('page.plugin');
     expect(runtime.getControlPanelPages()).toHaveLength(0);
   });
@@ -77,13 +77,20 @@ describe('PluginRuntime', () => {
   });
 
   it('activates once under concurrent calls and revokes host capabilities after stop', async () => {
-    const runtime = new PluginRuntime();
-    runtime.registerHostApi('aiModels', 'ai.models', { getModels: () => [{ id: 'model', efforts: [] }], subscribe: () => () => {} });
+    const runtime = new PluginRuntime({
+      hosts: {
+        ai: {
+          openChannel: () => { throw new Error('unused'); },
+          getModels: () => [{ id: 'model', efforts: [] }],
+          subscribe: () => () => {},
+        },
+      },
+    });
     let activations = 0;
     let models: (() => readonly { id: string; efforts: readonly string[] }[]) | undefined;
     runtime.registerPlugin({
-      manifest: { id: 'lifecycle.plugin', name: 'Lifecycle', version: '1.0.0', apiVersion: '1.0.0', permissions: ['ai.models'] },
-      activate: ({ host }) => { activations += 1; models = host.aiModels?.getModels; },
+      manifest: { id: 'lifecycle.plugin', name: 'Lifecycle', version: '1.0.0', apiVersion: '1.0.0', permissions: ['ai'] },
+      activate: ({ host }) => { activations += 1; models = host.ai?.getModels; },
     });
 
     await Promise.all([runtime.activatePlugin('lifecycle.plugin'), runtime.activatePlugin('lifecycle.plugin')]);

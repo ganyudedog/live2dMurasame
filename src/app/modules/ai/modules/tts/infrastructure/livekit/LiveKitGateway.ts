@@ -445,7 +445,6 @@ const readPlaybackSnapshot = async (cache: RoomCache): Promise<LiveKitPlaybackFe
   let totalSamplesDurationMs = -1;
   let receiverDiagnostics: Partial<LiveKitPlaybackFeedbackPayload> = {};
   let producedDeltaMs = 0;
-  let consumedDeltaMs = 0;
 
   const audioTrack = cache.attachedAudioTrack;
   if (audioTrack && typeof (audioTrack as RemoteTrack & { receiver?: RTCRtpReceiver }).receiver?.getStats === 'function') {
@@ -495,7 +494,7 @@ const readPlaybackSnapshot = async (cache: RoomCache): Promise<LiveKitPlaybackFe
   const playbackRate = Number.isFinite(audioEl.playbackRate)
     ? Math.max(0, audioEl.playbackRate)
     : 1;
-  consumedDeltaMs = !audioEl.paused && !audioEl.ended
+  const consumedDeltaMs = !audioEl.paused && !audioEl.ended
     ? Math.round(tickElapsedMs * playbackRate)
     : 0;
 

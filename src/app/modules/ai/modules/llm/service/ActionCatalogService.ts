@@ -270,7 +270,7 @@ export class ActionCatalogService {
               previousPlanRaw = raw;
               runtime.discardResponse();
               runtime.save();
-              if (attempt >= runtime.budget.maxNoProgress) throw new Error(`编排计划校验失败：${problem}`);
+              if (attempt >= runtime.budget.maxNoProgress) throw new Error(`编排计划校验失败：${problem}`, { cause: error });
             }
           }
           checkpoint();
@@ -566,7 +566,7 @@ export class ActionCatalogService {
         repairing = true;
         runtime?.discardResponse();
         runtime?.save();
-        if (attempt >= (runtime?.budget.maxNoProgress ?? DEFAULT_BUDGET.maxNoProgress)) throw new Error(`动作结构修订未取得进展：${problem}`);
+        if (attempt >= (runtime?.budget.maxNoProgress ?? DEFAULT_BUDGET.maxNoProgress)) throw new Error(`动作结构修订未取得进展：${problem}`, { cause: error });
         previous = raw.slice(0, 120000);
         progress?.({ stage: 'repairing', completed: attempt, total: runtime?.budget.maxNoProgress ?? DEFAULT_BUDGET.maxNoProgress, round: attempt + 1 });
       }

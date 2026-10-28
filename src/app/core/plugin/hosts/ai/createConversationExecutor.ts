@@ -1,12 +1,12 @@
-import { buildRecentConversation, distinctRecallText, speakerText } from '../../modules/ai/modules/llm/domain/memory/recentConversation';
-import type { PluginConversationExecutor } from './PluginConversationHost';
+import { buildRecentConversation, distinctRecallText, speakerText } from '@app/modules/ai/modules/llm/domain/memory/recentConversation';
+import type { PluginConversationExecutor } from './ConversationScheduler';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
-import { parseStage2Reply, SentenceStreamParser } from '../../modules/ai/modules/llm/domain/replyParser';
-import { requestStage2LLM } from '../../modules/ai/modules/llm/infrastructure/llmClient';
-import { buildMemoryContext, normalizePersona } from '../../modules/ai/modules/llm/domain/memory/memoryContext';
-import { LlmMemoryRepository } from '../../modules/ai/modules/llm/infrastructure/LlmMemoryRepository';
-import { resolveEpisodeQuery } from '../../modules/ai/modules/llm/domain/memory/episodeQuery';
+import { parseStage2Reply, SentenceStreamParser } from '@app/modules/ai/modules/llm/domain/replyParser';
+import { requestStage2LLM } from '@app/modules/ai/modules/llm/infrastructure/llmClient';
+import { buildMemoryContext, normalizePersona } from '@app/modules/ai/modules/llm/domain/memory/memoryContext';
+import { LlmMemoryRepository } from '@app/modules/ai/modules/llm/infrastructure/LlmMemoryRepository';
+import { resolveEpisodeQuery } from '@app/modules/ai/modules/llm/domain/memory/episodeQuery';
 
 /** Default host implementation. Plugins only see the public channel contract. */
 export const createDefaultConversationExecutor = (

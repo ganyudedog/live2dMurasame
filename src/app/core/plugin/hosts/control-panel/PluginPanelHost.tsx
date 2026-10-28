@@ -1,14 +1,14 @@
 import { observer } from 'mobx-react-lite';
 import { Component, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
-import { useService } from '../useService';
-import { TOKENS } from '../serviceTokens';
-import type { UiRenderContext } from './types';
+import { useService } from '../../../useService';
+import { TOKENS } from '../../../serviceTokens';
+import type { UiRenderContext } from '../../types';
 
 export const PluginPanelHost = observer(({ slot, tabId }: { slot?: string; tabId?: string }) => {
   const runtime = useService(TOKENS.plugin);
   const revision = runtime.revision;
   void revision;
-  const page = tabId ? runtime.getControlPanelPage(tabId) : null;
+  const page = tabId ? runtime.getControlPanelPages().find((item) => item.tabId === tabId) : null;
   const contributions = page
     ? [{ ownerId: page.ownerId, contribution: page.contribution }]
     : slot ? runtime.getUiContributions(slot) : [];

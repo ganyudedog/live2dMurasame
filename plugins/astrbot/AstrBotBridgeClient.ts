@@ -1,5 +1,5 @@
 import { normalizeAstrBotSender } from './protocol';
-import type { AiConversationHostApi, ConversationChannel, ConversationResponse, PluginLogger } from './types';
+import type { AiHostApi, ConversationChannel, ConversationResponse, PluginLogger } from './types';
 import type { AstrBotBridgeSettings } from './settings';
 import { normalizeInteractionSettings } from './settings';
 import type { AstrBotInbound, AstrBotOutbound } from './protocol';
@@ -7,7 +7,7 @@ import { isAstrBotQqMessage } from './protocol';
 
 export interface AstrBotBridgeClientOptions {
   readonly url: string; readonly token?: string; readonly clientId: string;
-  readonly ai: AiConversationHostApi; readonly logger: PluginLogger; readonly settings: AstrBotBridgeSettings;
+  readonly ai: AiHostApi; readonly logger: PluginLogger; readonly settings: AstrBotBridgeSettings;
 }
 
 /** Pet-window WebSocket adapter. It owns one channel whose policy is fixed by each successful handshake. */

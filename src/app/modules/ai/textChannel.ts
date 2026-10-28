@@ -1,11 +1,3 @@
-/**
- * Internal compatibility entrypoint. Plugin implementations import the public
- * contracts from core/plugin; application code can keep this stable path while
- * the runtime remains free to evolve.
- */
-export * from '.';
-
-/** Legacy internal contract retained for the existing desktop AI service. */
 export interface TextAiInput {
   readonly text: string;
   readonly conversationId?: string;

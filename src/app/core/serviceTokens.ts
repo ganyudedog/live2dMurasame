@@ -7,7 +7,7 @@ import type { ConfigService } from '../shared/config/ConfigService';
 import type { ElectronService } from '../shared/electron/ElectronService';
 import type { LogService } from '../shared/logging/LogService';
 import type { StateBusService } from '../shared/state-bus/StateBusService';
-import type { PluginRuntime } from './plugin/PluginRuntime';
+import type { PluginRuntime } from './plugin/core/PluginRuntime';
 import type { SubtitleService } from '../modules/subtitle/service/SubtitleService';
 
 export const TOKENS = {

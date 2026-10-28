@@ -266,7 +266,8 @@ const asrRuntime = applicationIpc.asrRuntime;
 const unsubscribeSettings = live2dEnvironmentService.onSettingsChanged(({ settings, patch }) => {
     subtitleService?.configure(settings.subtitle);
     holdToTalkService?.configure(settings.pushToTalk);
-    if (settings.pushToTalk?.enabled && settings.asr?.modelDir && !asrRuntime.getStatus().lastError) void asrRuntime.prepare();
+    const asrConfigured = settings.asr?.mode === 'remote' ? Boolean(settings.asr.endpoint?.trim()) : Boolean(settings.asr?.modelDir);
+    if (settings.pushToTalk?.enabled && asrConfigured && !asrRuntime.getStatus().lastError) void asrRuntime.prepare();
 });
 
 const hideControlPanel = () => {

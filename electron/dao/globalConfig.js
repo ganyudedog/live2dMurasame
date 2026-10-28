@@ -6,6 +6,12 @@ import {
   normalizeMemorySelection,
 } from '../../shared/llmModels.js';
 
+const optionalAsrRange = (value, min, max) => {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.min(max, Math.max(min, value));
+};
+
 export const DEFAULT_GLOBAL_MODEL_CONFIG = {
   scale: 1.0,
   ignoreMouse: false,
@@ -261,8 +267,8 @@ export const normalizeGlobalModelConfig = (settings = {}) => {
     endpointPresetVersion: 1,
     profile: asr.profile === 'agent' ? 'agent' : 'conversation',
     vadModelPath: typeof asr.vadModelPath === 'string' ? asr.vadModelPath.trim() : '',
-    vadThreshold: Number.isFinite(asr.vadThreshold) ? Math.min(0.95, Math.max(0.05, asr.vadThreshold)) : 0.5,
-    vadMinSpeechDuration: Number.isFinite(asr.vadMinSpeechDuration) ? Math.min(0.3, Math.max(0.15, asr.vadMinSpeechDuration)) : 0.2,
+    vadThreshold: optionalAsrRange(asr.vadThreshold, 0.05, 0.95),
+    vadMinSpeechDuration: optionalAsrRange(asr.vadMinSpeechDuration, 0.15, 0.3),
     mode: asr.mode === 'remote' ? 'remote' : 'local',
     engine: typeof asr.engine === 'string' && asr.engine.trim() ? asr.engine.trim() : DEFAULT_GLOBAL_MODEL_CONFIG.asr.engine,
     modelDir: typeof asr.modelDir === 'string' ? asr.modelDir.trim() : '',

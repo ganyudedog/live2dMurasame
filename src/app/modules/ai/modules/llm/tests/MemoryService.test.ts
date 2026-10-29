@@ -43,7 +43,7 @@ describe('LLM-backed memory consolidation', () => {
     expect(request).toHaveBeenCalledOnce();
     expect(consolidate).toHaveBeenCalledWith({
       modelPath: 'model-a',
-      content: '# 核心记忆\n\n## 稳定偏好\n- 喜欢日语语音',
+      content: '## 当前关系\n- 阶段：亲近。可以开玩笑，仍用「你」。还不会主动提起恋爱。\n\n# 核心记忆\n\n## 稳定偏好\n- 喜欢日语语音',
       processedThroughCount: 8,
     });
     expect(runtime.memoryState).toBe(saved);

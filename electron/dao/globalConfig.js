@@ -65,11 +65,12 @@ export const DEFAULT_MODEL_CONFIG = {
     sideWidth: 260,
   },
   persona: {
-    personal: '',
-    speakingStyle: '',
-    relation: '',
-    banned: '',
-    world: '',
+    name: '',
+    userAddress: '',
+    voice: '',
+    examples: '',
+    boundaries: '',
+    notes: '',
   },
   tts: {
     enabled: false,
@@ -102,18 +103,15 @@ const toSafeObject = (value) => {
 
 const normalizePersona = (input = {}) => {
   const source = toSafeObject(input);
-  const next = { ...DEFAULT_MODEL_CONFIG.persona };
-  next.personal = normalizeTextField(source.personal);
-  next.speakingStyle = normalizeTextField(source.speakingStyle);
-  next.relation = normalizeTextField(source.relation);
-  next.banned = normalizeTextField(source.banned);
-  next.world = normalizeTextField(source.world);
-
-  // 兼容旧字段：若历史配置里只有 mustFollow，则迁移到 banned。
-  if (!next.banned && typeof source.mustFollow === 'string') {
-    next.banned = source.mustFollow;
-  }
-  return next;
+  return {
+    ...DEFAULT_MODEL_CONFIG.persona,
+    name: normalizeTextField(source.name).trim(),
+    userAddress: normalizeTextField(source.userAddress).trim(),
+    voice: normalizeTextField(source.voice).trim(),
+    examples: normalizeTextField(source.examples).trim(),
+    boundaries: normalizeTextField(source.boundaries).trim(),
+    notes: normalizeTextField(source.notes).trim(),
+  };
 };
 
 const clampNumber = (value, fallback, min, max) => {

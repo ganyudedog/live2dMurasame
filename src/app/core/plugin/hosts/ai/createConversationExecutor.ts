@@ -4,7 +4,7 @@ import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
 import { parseStage2Reply, SentenceStreamParser } from '@app/modules/ai/modules/llm/domain/replyParser';
 import { requestStage2LLM } from '@app/modules/ai/modules/llm/infrastructure/llmClient';
-import { buildMemoryContext, normalizePersona } from '@app/modules/ai/modules/llm/domain/memory/memoryContext';
+import { buildPersonaPrompt, buildRelationshipPrompt, normalizePersona } from '@app/modules/ai/modules/llm/domain/memory/memoryContext';
 import { LlmMemoryRepository } from '@app/modules/ai/modules/llm/infrastructure/LlmMemoryRepository';
 import { resolveEpisodeQuery } from '@app/modules/ai/modules/llm/domain/memory/episodeQuery';
 
@@ -21,11 +21,12 @@ export const createDefaultConversationExecutor = (
   const scenePrompt = request.systemPrompt?.trim() || options.systemPrompt?.trim()
     || '请结合当前对话场景和用户消息自然作答。';
   // Read the active character for each request; plugin settings only describe the scene.
-  const persona = buildMemoryContext(normalizePersona(config.modelConfig?.persona), null);
+  const persona = buildPersonaPrompt(normalizePersona(config.modelConfig?.persona));
   let systemPrompt = [
-    persona ? '以下角色人设由宿主提供。保持角色身份、个性、说话风格与设定边界；场景说明用于调整当前交流方式，不替换角色人设。' : '',
     persona,
+    buildRelationshipPrompt(''),
     `[当前对话场景]\n${scenePrompt}`,
+    '场景说明只调整当前交流方式，不替换角色卡和当前关系。',
   ].filter(Boolean).join('\n\n');
   const speakLang = request.speakLang === undefined ? options.speakLang : request.speakLang;
   const speechEnabled = speakLang != null;

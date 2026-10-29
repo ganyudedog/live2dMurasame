@@ -41,7 +41,7 @@ describe('plugin conversation persona injection', () => {
   it('injects the current persona alongside scene instructions without desktop memory or actions', async () => {
     const config = {
       globalModelConfig: { apiKey: 'test' },
-      modelConfig: { persona: { personal: '温柔', speakingStyle: '简洁', relation: '朋友', banned: '不编造经历', world: '现代' } },
+      modelConfig: { persona: { name: '丛雨', voice: '温柔\n简洁', boundaries: '不编造经历', notes: '现代' } },
     };
     const log = { contextRegistry: { register: () => ({
       beginTrace: () => ({ end: vi.fn(), fail: vi.fn() }), dispose: vi.fn(),
@@ -51,19 +51,20 @@ describe('plugin conversation persona injection', () => {
     const context = { channelId: 'channel', requestId: 'request', conversationId: 'group', signal: new AbortController().signal, emit: vi.fn() };
     await execute(options, { text: '你好' }, context);
     const first = vi.mocked(requestStage2LLM).mock.lastCall![1];
-    expect(first.systemPrompt).toContain('[角色个性]\n温柔');
-    expect(first.systemPrompt).toContain('[说话风格]\n简洁');
-    expect(first.systemPrompt).toContain('[关系设定]\n朋友');
-    expect(first.systemPrompt).toContain('[禁忌]\n不编造经历');
-    expect(first.systemPrompt).toContain('[世界观]\n现代');
+    expect(first.systemPrompt).toContain('[名字]\n丛雨');
+    expect(first.systemPrompt).toContain('[性格与口吻]\n温柔\n简洁');
+    expect(first.systemPrompt).toContain('[边界]\n不编造经历');
+    expect(first.systemPrompt).toContain('[补充设定]\n现代');
+    expect(first.systemPrompt).toContain('[当前关系]');
+    expect(first.systemPrompt).toContain('阶段：亲近');
     expect(first.systemPrompt).toContain('[当前对话场景]\n群聊场景');
     expect(first.memoryContext).toBeUndefined();
     expect(first.actionCapability).toBeUndefined();
 
-    config.modelConfig.persona.personal = '活泼';
+    config.modelConfig.persona.voice = '活泼';
     await execute(options, { text: '你好', systemPrompt: '私聊场景' }, context);
     const next = vi.mocked(requestStage2LLM).mock.lastCall![1];
-    expect(next.systemPrompt).toContain('[角色个性]\n活泼');
+    expect(next.systemPrompt).toContain('[性格与口吻]\n活泼');
     expect(next.systemPrompt).not.toContain('温柔');
     expect(next.systemPrompt).toContain('[当前对话场景]\n私聊场景');
   });

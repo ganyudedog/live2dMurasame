@@ -1,4 +1,4 @@
-import { parseActionCatalog } from '../../../../../../../shared/actionCatalog.js';
+import { parseActionCatalog } from '../../../../../../../shared/live2d/actionCatalog.js';
 import { detectActionCapability, readModelParameters } from '../domain/capability';
 import { normalizeActionIntent } from '../domain/normalize';
 import { ActionExecutor } from '../infrastructure/ActionExecutor';

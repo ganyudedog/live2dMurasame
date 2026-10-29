@@ -1,4 +1,4 @@
-import { KNOWN_REASONING_EFFORTS, normalizeEfforts } from '../../../../../../../shared/llmModels.js';
+import { KNOWN_REASONING_EFFORTS, normalizeEfforts } from '../../../../../../../shared/ai/llmModels.js';
 
 /**
  * 思考深度探测。

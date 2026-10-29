@@ -22,6 +22,9 @@ import { configureConfigDao } from './dao/configDao.js';
 import { registerTtsDiagnosticsIpc } from './utils/ttsDiagnostics.js';
 import { createSubtitleModule } from './modules/subtitle/module.js';
 import { HoldToTalkService } from './modules/asr/service/HoldToTalkService.js';
+import { createCliModule } from './modules/cli/module.js';
+import { registerCliIpc } from './interface/ipc/registerCliIpc.js';
+import { startCommandServer } from './modules/cli/infrastructure/commandServer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -263,6 +266,14 @@ applicationIpc = registerDomainIpc({
     }),
 });
 const asrRuntime = applicationIpc.asrRuntime;
+const cliRuntime = createCliModule({
+    directory: path.join(app.getPath('userData'), 'cli'),
+    live2dEnvironmentService, modelEnvironmentService,
+    sendAll: applicationIpc.sendAll, publishSnapshot: applicationIpc.publishSnapshot,
+});
+const stopCliIpc = registerCliIpc({ ipcMain, runtime: cliRuntime });
+const commandServer = startCommandServer({ runtime: cliRuntime, directory: path.join(app.getPath('userData'), 'cli') })
+    .catch((error) => { backendLog.error('cli', 'server.start.failed', { message: String(error?.message ?? error) }); return null; });
 const unsubscribeSettings = live2dEnvironmentService.onSettingsChanged(({ settings, patch }) => {
     subtitleService?.configure(settings.subtitle);
     holdToTalkService?.configure(settings.pushToTalk);
@@ -371,7 +382,19 @@ const createMainWindow = () => {
     return mainWindow;
 };
 
-app.on('before-quit', () => {
+let cliShutdownComplete = false;
+let cliShutdownStarted = false;
+app.on('before-quit', (event) => {
+    if (!cliShutdownComplete) {
+        event.preventDefault();
+        if (!cliShutdownStarted) {
+            cliShutdownStarted = true;
+            stopCliIpc();
+            void Promise.allSettled([cliRuntime.dispose(), commandServer.then((server) => server?.close())])
+                .finally(() => { cliShutdownComplete = true; app.quit(); });
+        }
+        return;
+    }
     isQuitting = true;
     unsubscribeSettings();
     windowApplicationService?.dispose();

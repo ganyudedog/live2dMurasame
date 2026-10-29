@@ -1,4 +1,4 @@
-import type { ActionDefinition } from '../../../../../../../shared/actionCatalog.js';
+import type { ActionDefinition } from '../../../../../../../shared/live2d/actionCatalog.js';
 import type { ActionCatalogMessage } from './session';
 
 export interface ActionSettingsView {

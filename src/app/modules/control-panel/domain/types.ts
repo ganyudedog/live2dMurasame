@@ -86,5 +86,5 @@ export type ModelConfig = {
     topP: number;
     temperature: number;
   };
-  actions?: import('../../../../../shared/actionCatalog.js').ActionDefinition[];
+  actions?: import('../../../../../shared/live2d/actionCatalog.js').ActionDefinition[];
 };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createAsrAdapter } from './asrAdapter.js';
-import { normalizeAsrConfig } from '../../../../src/app/modules/ai/modules/asr/domain/config.ts';
-import { normalizeLive2denvConfig } from '../../../dao/globalConfig.js';
+import { normalizeAsrConfig } from '../../../../../src/app/modules/ai/modules/asr/domain/config.ts';
+import { normalizeLive2denvConfig } from '../../../../dao/globalConfig.js';
 
 const sockets = [];
 

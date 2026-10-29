@@ -4,10 +4,27 @@ import { requestStage2LLM, requestStructuredLLM } from '../infrastructure/llmCli
 import type { TraceScope } from '@app/shared/logging/LogService';
 import { shyAction } from '../../../../../../test/fixtures/actionCatalog';
 import { LogService } from '@app/shared/logging/LogService';
+import { runSkillLoop } from '../application/skillLoop';
+vi.mock('../application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 
 vi.mock('../infrastructure/llmClient', () => ({ requestStage2LLM: vi.fn(), requestStructuredLLM: vi.fn() }));
 
 describe('LLM and RAG orchestration', () => {
+  it('uses the shared skill loop before memory and keeps its result in the speech/display path', async () => {
+    const get = vi.fn(); const appendConversation = vi.fn();
+    vi.stubGlobal('window', { MemoryAPI: { get, appendConversation } });
+    const commands = { invoke: vi.fn(), claim: vi.fn(), finish: vi.fn(), tasks: vi.fn(), close: vi.fn() };
+    vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: true, context: 'task-123 queued' });
+    const snapshot = { globalModelConfig: { apiKey: 'key' }, modelConfig: { tts: { textLang: 'all_ja' }, actions: [] } } as unknown as PetConfigSnapshot;
+    const service = new LlmService({ getConfigSnapshot: () => snapshot, openCommands: async () => commands });
+    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"任务已接收","speak_text":"受け付けました"}', usedModel: 'model' });
+    const response = await service.ask('修复项目', { model: 'model', requestId: 'user-request', trace: { record: vi.fn() } as unknown as TraceScope });
+    expect(response.ok).toBe(true);
+    expect(runSkillLoop).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'user-request', text: '修复项目' }));
+    expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ memoryContext: expect.stringContaining('task-123 queued') }));
+    expect(get).not.toHaveBeenCalled(); expect(appendConversation).not.toHaveBeenCalled();
+    expect(commands.close).toHaveBeenCalledOnce();
+  });
   afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
   it('uses the persisted memory model and depth for background consolidation', async () => {

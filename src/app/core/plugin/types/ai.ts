@@ -1,4 +1,5 @@
 import type { Disposable } from './common';
+import type { TaskEvent } from '../../../../../shared/cli/contracts';
 
 export type InteractionPolicy =
   | { readonly mode: 'interrupt'; readonly maxConcurrent?: number; readonly maxQueued?: number }
@@ -66,6 +67,10 @@ export interface ConversationChannel {
   sendText(request: ConversationRequest): ConversationRequestResult;
   cancel(requestId?: string): void;
   onResponse(listener: (response: ConversationResponse) => void): Disposable;
+  /** Independent from chat completion. Disposing this subscription does not cancel tasks. */
+  onTask?(listener: (event: TaskEvent) => void): Disposable;
+  /** Restore task observation after a transport reconnect without creating a chat request. */
+  watchTasks?(scope: { conversationId: string; senderId: string }): void;
   dispose(): void;
 }
 

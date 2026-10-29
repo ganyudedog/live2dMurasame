@@ -1,3 +1,4 @@
+import type { CliBridgeApi } from '../../shared/cli/contracts';
 export {};
 
 declare global {
@@ -36,8 +37,8 @@ declare global {
     memoryReasoningEffort?: PetReasoningEffort | '';
     displayLang?: 'zh' | 'en' | 'ja' | 'ko';
     asr?: PetAsrConfig;
-    subtitle?: Partial<import('../../shared/subtitleSettings.js').SubtitleSettings>;
-    pushToTalk?: Partial<import('../../shared/subtitleSettings.js').PushToTalkSettings>;
+    subtitle?: Partial<import('../../shared/subtitle/subtitleSettings.js').SubtitleSettings>;
+    pushToTalk?: Partial<import('../../shared/subtitle/subtitleSettings.js').PushToTalkSettings>;
   }
 
   interface PetAsrConfig {
@@ -135,7 +136,7 @@ declare global {
     interaction?: PetInteractionBindings;
     persona?: PetPersonaConfig;
     tts?: PetTtsConfig;
-    actions?: import('../../shared/actionCatalog.js').ActionDefinition[];
+    actions?: import('../../shared/live2d/actionCatalog.js').ActionDefinition[];
     [key: string]: unknown;
   }
 
@@ -172,7 +173,7 @@ declare global {
     kind: 'position' | 'size' | 'bounds';
     payload?: {
       /** Shared numeric layout; desktop coordinates remain owned by Main. */
-      layout?: import('../../shared/live2dLayout.js').Live2dLayoutInput;
+      layout?: import('../../shared/live2d/live2dLayout.js').Live2dLayoutInput;
       /** Diagnostic only; does not participate in layout calculation. */
       layoutTrace?: boolean;
       x?: number;
@@ -378,8 +379,8 @@ declare global {
 
   interface PetModelAPI {
     getConfig?: (modelPath?: string) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; modelInteraction: PetModelInteractionView | null; configOverrides: Record<string, string> } | undefined>;
-    getActionSources?: (modelPath: string) => Promise<import('../../shared/actionCatalog.js').ActionSourceData>;
-    saveActionCatalog?: (payload: { modelPath: string; actions: import('../../shared/actionCatalog.js').ActionDefinition[] }) => ReturnType<NonNullable<PetModelAPI['updateConfig']>>;
+    getActionSources?: (modelPath: string) => Promise<import('../../shared/live2d/actionCatalog.js').ActionSourceData>;
+    saveActionCatalog?: (payload: { modelPath: string; actions: import('../../shared/live2d/actionCatalog.js').ActionDefinition[] }) => ReturnType<NonNullable<PetModelAPI['updateConfig']>>;
     previewAction?: (payload: { modelPath: string; actionId: string }) => Promise<{ accepted: boolean }>;
     onPreviewAction?: (callback: (payload: { modelPath: string; actionId: string }) => void) => (() => void);
     updateConfig?: (options: { modelPath?: string; patch?: Partial<PetModelConfig> }) => Promise<{ modelPath: string | null; modelKey?: string | null; activeModelFileUrl?: string | null; config: PetModelConfig | null; modelInteraction: PetModelInteractionView | null; configOverrides: Record<string, string> } | undefined>;
@@ -530,13 +531,13 @@ declare global {
 
   interface PetSubtitleState {
     version: number; text: string; phase: 'idle' | 'listening' | 'submitted' | 'preview';
-    settings: import('../../shared/subtitleSettings.js').SubtitleSettings;
-    bounds: import('../../shared/subtitleSettings.js').SubtitleBounds;
+    settings: import('../../shared/subtitle/subtitleSettings.js').SubtitleSettings;
+    bounds: import('../../shared/subtitle/subtitleSettings.js').SubtitleBounds;
     fading: boolean; adjusting: boolean;
   }
   interface PetSubtitleAPI {
     getState: () => Promise<PetSubtitleState>;
-    updateSettings: (patch: Partial<import('../../shared/subtitleSettings.js').SubtitleSettings>) => Promise<void>;
+    updateSettings: (patch: Partial<import('../../shared/subtitle/subtitleSettings.js').SubtitleSettings>) => Promise<void>;
     preview: (enabled: boolean) => Promise<void>;
     resetPosition: () => Promise<void>;
     resetAppearance: () => Promise<void>;
@@ -546,6 +547,7 @@ declare global {
   }
 
   interface Window {
+    CliAPI?: CliBridgeApi;
     WindowAPI?: PetWindowAPI;
     SnapshotAPI?: PetSnapshotAPI;
     Live2dEnvAPI?: PetLive2dEnvAPI;

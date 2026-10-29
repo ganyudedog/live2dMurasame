@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 const send = vi.hoisted(() => vi.fn());
 vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: { send } }] } }));
 import { createAsrRuntime } from './AsrRuntime.js';
-import { normalizeLive2denvConfig } from '../../../dao/globalConfig.js';
+import { normalizeLive2denvConfig } from '../../../../dao/globalConfig.js';
 
 const setup = () => {
   const worker = new EventEmitter();

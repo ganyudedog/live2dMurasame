@@ -1,5 +1,5 @@
-import type { ActionCategory } from '../../../../../../../shared/actionCatalog.js';
-export type { ActionCategory, ActionDefinition, ActionTrack, ActionKeyframe } from '../../../../../../../shared/actionCatalog.js';
+import type { ActionCategory } from '../../../../../../../shared/live2d/actionCatalog.js';
+export type { ActionCategory, ActionDefinition, ActionTrack, ActionKeyframe } from '../../../../../../../shared/live2d/actionCatalog.js';
 
 /** LLM 只选择动作 ID，不再直接填写 Live2D 参数。 */
 export type ActionSelection = string | Array<string | string[]>;

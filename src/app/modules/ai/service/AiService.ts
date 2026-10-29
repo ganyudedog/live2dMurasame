@@ -182,6 +182,7 @@ export class AiService {
 
     try {
       const result = await this.llm.ask(request.text.trim(), {
+        requestId: request.id,
         trace,
         signal: controller.signal,
         model: aiConfig.model,

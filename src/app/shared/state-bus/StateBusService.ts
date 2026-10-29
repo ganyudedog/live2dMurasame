@@ -1,4 +1,4 @@
-import { makeObservable, observable, observableRef, runInAction } from 'mobx';
+import { makeObservable, observable, observableRef, runInAction, reaction } from 'mobx';
 import type { BootstrapContext } from '@app/core/bootstrapContext';
 import { SharedStoreClient } from './sharedStoreClient';
 import type {
@@ -48,6 +48,7 @@ export class StateBusService {
   private readonly windowKind: BootstrapContext['windowKind'];
   private unsubscribeWorker: (() => void) | null = null;
   private unsubscribeAsr: (() => void) | null = null;
+  private unsubscribeConfig: (() => void) | null = null;
   private pendingComposerDraft: string | null = null;
 
   constructor(
@@ -84,6 +85,11 @@ export class StateBusService {
     if (this.windowKind === 'pet' && this.revision === 0) this.seedFromPersistedConfig();
     if (this.windowKind === 'pet') {
       this.unsubscribeAsr = this.bridge.asrApi?.onEvent?.((event) => this.applyAsrEvent(event)) ?? null;
+      // Backend configuration commands do not have the panel's live-preview callback.
+      // Only the pet projects persisted scale changes into the worker; never write them back to disk.
+      this.unsubscribeConfig = reaction(() => this.config.globalModelConfig?.scale, (scale) => {
+        if (typeof scale === 'number' && Number.isFinite(scale) && scale !== this.scale) this.publishScale(scale);
+      });
     }
     this.log.info('stateBus.service', 'started', {
       windowKind: this.windowKind,
@@ -252,6 +258,8 @@ export class StateBusService {
   dispose(): void {
     this.unsubscribeWorker?.();
     this.unsubscribeAsr?.();
+    this.unsubscribeConfig?.();
+    this.unsubscribeConfig = null;
     this.unsubscribeWorker = null;
     this.unsubscribeAsr = null;
     this.client.dispose();

@@ -6,6 +6,8 @@ import type {
   ConversationResponse,
   Disposable,
 } from '../../types';
+import type { TaskEvent } from '../../../../../../shared/cli/contracts';
+import type { ConversationTaskObserver } from './observeConversationTasks';
 
 export interface PluginConversationExecutionContext {
   readonly channelId: string;
@@ -45,14 +47,17 @@ export class ConversationScheduler implements ConversationPool {
   private readonly running = new Set<string>();
   private disposed = false;
 
-  constructor(execute: PluginConversationExecutor, maxConcurrent = 4) {
+  private readonly observeTasks?: ConversationTaskObserver;
+
+  constructor(execute: PluginConversationExecutor, maxConcurrent = 4, observeTasks?: ConversationTaskObserver) {
     this.execute = execute;
+    this.observeTasks = observeTasks;
     this.maxConcurrent = clamp(maxConcurrent, 1, 16);
   }
 
   openChannel(options: ConversationChannelOptions): ConversationChannel {
     if (this.disposed) throw new Error('Conversation host is disposed');
-    const channel = new PluginConversationChannel(options, this.execute, this, () => this.channels.delete(channel));
+    const channel = new PluginConversationChannel(options, this.execute, this, () => this.channels.delete(channel), this.observeTasks);
     this.channels.add(channel);
     return channel;
   }
@@ -107,6 +112,9 @@ class PluginConversationChannel implements ConversationChannel {
   readonly id = makeId('channel');
   readonly options: ConversationChannelOptions;
   private readonly listeners = new Set<(response: ConversationResponse) => void>();
+  private readonly taskListeners = new Set<(event: TaskEvent) => void>();
+  private readonly taskSubscriptions = new Map<string, () => void>();
+  private readonly observeTasks?: ConversationTaskObserver;
   private readonly jobs: Job[] = [];
   private readonly controllers = new Map<string, AbortController>();
   private readonly conversations = new Map<string, string>();
@@ -128,8 +136,10 @@ class PluginConversationChannel implements ConversationChannel {
     execute: PluginConversationExecutor,
     scheduler: ConversationPool,
     onDisposed: () => void,
+    observeTasks?: ConversationTaskObserver,
   ) {
     this.execute = execute;
+    this.observeTasks = observeTasks;
     this.scheduler = scheduler;
     this.onDisposed = onDisposed;
     this.options = normalizeOptions(options);
@@ -147,6 +157,7 @@ class PluginConversationChannel implements ConversationChannel {
     if (this.controllers.has(requestId)) return { requestId, accepted: false, reason: 'duplicate' };
 
     const conversationId = request.conversationId?.trim() || this.options.conversationId;
+    if (request.sender?.id) this.watchTasks({ conversationId, senderId: request.sender.id });
     const interactionKey = request.interactionKey?.trim() || conversationId;
     if (this.options.interaction.mode === 'interrupt') this.cancelInteraction(interactionKey);
 
@@ -166,6 +177,24 @@ class PluginConversationChannel implements ConversationChannel {
       accepted: true,
       ...(this.active.has(requestId) ? {} : { reason: 'queued' as const }),
     };
+  }
+
+  watchTasks(scope: { conversationId: string; senderId: string }): void {
+    if (this.disposed || this.closing) return;
+    const taskScope = JSON.stringify([scope.conversationId, scope.senderId]);
+    // Refresh the lease on new input: a previously denied source may have been granted locally.
+    this.taskSubscriptions.get(taskScope)?.();
+    this.taskSubscriptions.delete(taskScope);
+    if (this.observeTasks && !this.taskSubscriptions.has(taskScope)) {
+      // Bound resources per channel; an evicted scope can subscribe again on its next message.
+      if (this.taskSubscriptions.size >= 64) {
+        const oldest = this.taskSubscriptions.keys().next().value!;
+        this.taskSubscriptions.get(oldest)?.(); this.taskSubscriptions.delete(oldest);
+      }
+      this.taskSubscriptions.set(taskScope, this.observeTasks(this.options, { text: '', conversationId: scope.conversationId, sender: { id: scope.senderId } }, (event) => {
+        if (!this.disposed) for (const listener of this.taskListeners) { try { listener(event); } catch { /* Consumer isolation. */ } }
+      }));
+    }
   }
 
   cancel(requestId?: string): void {
@@ -189,6 +218,11 @@ class PluginConversationChannel implements ConversationChannel {
     return () => this.listeners.delete(listener);
   }
 
+  onTask(listener: (event: TaskEvent) => void): Disposable {
+    this.taskListeners.add(listener);
+    return () => this.taskListeners.delete(listener);
+  }
+
   dispose(): void {
     if (this.disposed || this.closing) return;
     this.closing = true;
@@ -196,6 +230,9 @@ class PluginConversationChannel implements ConversationChannel {
     this.disposed = true;
     this.jobs.splice(0);
     this.listeners.clear();
+    this.taskSubscriptions.forEach((stop) => stop());
+    this.taskSubscriptions.clear();
+    this.taskListeners.clear();
     this.onDisposed();
   }
 

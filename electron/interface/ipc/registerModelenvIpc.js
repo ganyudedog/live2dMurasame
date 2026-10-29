@@ -5,6 +5,7 @@ import { buildConfigOverrides } from '../../modules/live2denv/application/Config
 import { detectModelFilePath } from '../../utils/path.js';
 import { pathToFileURL } from 'node:url';
 import { createDependencyAwareRegistrar } from './composeIpcRegistrar.js';
+import { updateModelConfiguration } from '../../modules/modelenv/application/updateModelConfiguration.js';
 
 const safeFileUrl = (modelPath) => {
   const hit = detectModelFilePath(modelPath);
@@ -42,9 +43,8 @@ const registerModelenvIpcImpl = ({ live2dEnvironmentService, modelEnvironmentSer
   ipcMain.handle('ddd:modelenv:update', (_event, payload = {}) => {
     const target = currentPath(payload?.modelPath); if (!target) return modelResult(null, null);
     const patch = payload?.patch && typeof payload.patch === 'object' ? { ...payload.patch } : {};
-    const environment = modelEnvironmentService.updateConfiguration(target, patch);
-    const result = modelResult(target, environment.configuration); const snapshot = live2dEnvironmentService.snapshot();
-    sendAll('ddd:modelenv:changed', { ...result, snapshot }); if (target === snapshot.activeModelPath) publishSnapshot(snapshot); return result;
+    const updated = updateModelConfiguration({ modelEnvironmentService, live2dEnvironmentService, sendAll, publishSnapshot }, target, patch);
+    return modelResult(target, updated.config);
   });
   ipcMain.handle('ddd:modelenv:remove', (_event, modelPath) => { if (typeof modelPath !== 'string' || !modelPath.trim()) return false; removeModelConfig(modelPath); modelEnvironmentService.clear(modelPath); return true; });
   ipcMain.on('ddd:modelenv:motion:preview', (_event, payload = {}) => {

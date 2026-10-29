@@ -197,6 +197,20 @@ const PluginStorageAPI = {
   },
 };
 
+const CliAPI = {
+  open: (scope) => ipcRenderer.invoke('cli:open', scope),
+  invoke: (session, request) => ipcRenderer.invoke('cli:invoke', session, request),
+  tasks: (session) => ipcRenderer.invoke('cli:tasks', session),
+  close: (session) => ipcRenderer.invoke('cli:close', session),
+  claim: (session, requestId, text) => ipcRenderer.invoke('cli:claim', session, requestId, text),
+  finish: (session, requestId, result) => ipcRenderer.invoke('cli:finish', session, requestId, result),
+  onTask: (session, callback) => {
+    const listener = (_event, payload) => { if (payload.session === session) callback({ task: payload.task, sequence: payload.sequence }); };
+    ipcRenderer.on('cli:task', listener);
+    return () => ipcRenderer.removeListener('cli:task', listener);
+  },
+};
+
 ipcRenderer.on('ddd:live2denv:snapshot:changed', (_event, payload) => {
   snapshotStore.dispatchSnapshotUpdate(payload);
 });
@@ -222,3 +236,4 @@ contextBridge.exposeInMainWorld('SubtitleAPI', SubtitleAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);
 contextBridge.exposeInMainWorld('TtsDiagnosticsAPI', TtsDiagnosticsAPI);
 contextBridge.exposeInMainWorld('PluginStorageAPI', PluginStorageAPI);
+contextBridge.exposeInMainWorld('CliAPI', CliAPI);

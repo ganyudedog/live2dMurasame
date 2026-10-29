@@ -1,4 +1,4 @@
-import type { ActionSourceData, MotionParameterCurve } from '../../../../../../../../shared/actionCatalog.js';
+import type { ActionSourceData, MotionParameterCurve } from '../../../../../../../../shared/live2d/actionCatalog.js';
 
 export interface EvidenceWindow {
   id: string; group: string; index: number; startMs: number; endMs: number;

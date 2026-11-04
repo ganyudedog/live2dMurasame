@@ -242,8 +242,6 @@ export class LlmService {
           model: resolved.model,
           temperature: resolved.temperature,
           memoryContext: memoryRuntime?.contextText ?? toolContext,
-          personaPrompt: memoryRuntime?.personaPrompt,
-          relationshipStage: memoryRuntime?.relationshipStage,
           historyMessages: memoryRuntime?.historyMessages,
           actionCapability: toolsHandled ? undefined : actionCapability,
           displayLang: languageProfile.displayLang,

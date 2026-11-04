@@ -63,12 +63,11 @@ export type ModelConfig = {
   bubble: BubbleConfig;
   interaction?: PetInteractionBindings;
   persona: {
-    name: string;
-    userAddress: string;
-    voice: string;
-    examples: string;
-    boundaries: string;
-    notes: string;
+    personal: string;
+    speakingStyle: string;
+    relation: string;
+    banned: string;
+    world: string;
   };
   tts: {
     enabled: boolean;

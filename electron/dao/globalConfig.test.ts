@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { normalizeModelConfig, normalizeGlobalModelConfig } from './globalConfig.js';
 import { headAction } from '../../src/test/fixtures/actionCatalog';
 
+describe('persona card persistence contract', () => {
+  it('preserves all six card fields through normalization and reload', () => {
+    const persona = { name: '丛雨', userAddress: '主人', voice: '简洁', examples: '你好', boundaries: '不编造经历', notes: '现代' };
+    const config = normalizeModelConfig({ persona: Object.fromEntries(
+      Object.entries(persona).map(([key, value]) => [key, ` ${value} `]),
+    ) });
+    expect(config.persona).toEqual(persona);
+    expect(normalizeModelConfig(JSON.parse(JSON.stringify(config))).persona).toEqual(persona);
+  });
+
+  it('ignores obsolete dimensions and normalizes invalid values', () => {
+    expect(normalizeModelConfig({ persona: { personal: '旧个性', relation: '旧关系', name: 123 } }).persona)
+      .toEqual({ name: '', userAddress: '', voice: '', examples: '', boundaries: '', notes: '' });
+  });
+});
+
 describe('model action configuration persistence contract', () => {
   it('preserves parameter trajectories and removes obsolete aliases on disk load', () => {
     const config = normalizeModelConfig({ actions: [

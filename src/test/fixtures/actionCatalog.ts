@@ -1,4 +1,4 @@
-import type { ActionDefinition, ActionSourceData } from '../../../shared/actionCatalog.js';
+import type { ActionDefinition, ActionSourceData } from '../../../shared/live2d/actionCatalog.js';
 
 export const headAction: ActionDefinition = {
   id: 'head', label: '转头', category: 'head', durationMs: 900, enterMs: 200, returnMs: 250,

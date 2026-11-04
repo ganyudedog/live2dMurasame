@@ -5,6 +5,7 @@ import type { ElectronService } from '../electron/ElectronService';
 import type { LogService } from '../logging/LogService';
 import type { SharedState, WorkerOutboundMsg } from './sharedStateTypes';
 import { StateBusService } from './StateBusService';
+import { observable, runInAction } from 'mobx';
 
 const worker = vi.hoisted(() => ({
   initial: null as SharedState | null,
@@ -27,6 +28,18 @@ const create = (windowKind: 'pet' | 'control-panel') => new StateBusService(
 );
 
 describe('scale stream ownership', () => {
+  it('projects persisted backend scale commands once and stops observing on disposal', async () => {
+    const config = observable({ globalModelConfig: { scale: 0.5 } });
+    const service = new StateBusService(config as ConfigService, { bridge: {} } as ElectronService,
+      { info: vi.fn(), debug: vi.fn() } as unknown as LogService, { windowKind: 'pet' } as BootstrapContext);
+    await service.start(); worker.dispatch.mockClear();
+    runInAction(() => { config.globalModelConfig.scale = 0.8; });
+    expect(worker.dispatch).toHaveBeenCalledWith([{ path: 'global.scale', value: 0.8 }]);
+    expect(worker.dispatch).toHaveBeenCalledTimes(1);
+    service.dispose();
+    runInAction(() => { config.globalModelConfig.scale = 1; });
+    expect(worker.dispatch).toHaveBeenCalledTimes(1);
+  });
   it('does not seed persisted scale when the panel opens', async () => {
     const service = create('control-panel'); await service.start();
     expect(worker.dispatch).not.toHaveBeenCalled();

@@ -43,7 +43,6 @@ export const normalizeTtsConfig = (raw: unknown): TtsRuntimeConfig => {
     textSplitMode: normalizeTextSplitMode(source.textSplitMode),
     speedFactor: clampNumber(source.speedFactor, 1, 0, 2),
     fragmentInterval: clampNumber(source.fragmentInterval, 0.3, 0, 0.5),
-    useLastGeneratedAsRef: Boolean(source.useLastGeneratedAsRef),
     topK: clampInteger(source.topK, 20, 1, 100),
     topP: clampNumber(source.topP, 0.8, 0, 1),
     temperature: clampNumber(source.temperature, 0.5, 0, 1),

@@ -35,7 +35,6 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     textSplitMode: 'cut5',
     speedFactor: 1,
     fragmentInterval: 0.3,
-    useLastGeneratedAsRef: false,
     topK: 20,
     topP: 0.8,
     temperature: 0.5,

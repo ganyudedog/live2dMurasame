@@ -19,6 +19,9 @@ export class AstrBotBridgeClient {
   private socket: WebSocket | null = null;
   private channel: ConversationChannel | null = null;
   private stopChannel: (() => void) | null = null;
+  private stopTasks: (() => void) | null = null;
+  private readonly taskSequences = new Map<string, number>();
+  private readonly taskScopes = new Map<string, { conversationId: string; senderId: string }>();
   private reconnectTimer: number | null = null;
   private heartbeatTimer: number | null = null;
   private reconnectDelayMs = 1000;
@@ -46,6 +49,7 @@ export class AstrBotBridgeClient {
     else this.connect();
   }
   dispose(): void {
+    this.stopTasks?.(); this.stopTasks = null;
     this.disposed = true;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     if (this.heartbeatTimer !== null) window.clearInterval(this.heartbeatTimer);
@@ -62,7 +66,7 @@ export class AstrBotBridgeClient {
     this.socket = socket; this.handshakeAccepted = false;
     socket.onopen = () => {
       this.reconnectDelayMs = 1000;
-      this.send({ type: 'hello', version: 2, clientId: this.options.clientId, ...(this.token ? { token: this.token } : {}), capabilities: { streaming: true, ttsText: this.settings.speakLang !== '', agent: false }, interaction: normalizeInteractionSettings(this.settings) });
+      this.send({ type: 'hello', version: 2, clientId: this.options.clientId, ...(this.token ? { token: this.token } : {}), capabilities: { streaming: true, ttsText: this.settings.speakLang !== '', agent: true }, interaction: normalizeInteractionSettings(this.settings) });
       this.heartbeatTimer = window.setInterval(() => this.send({ type: 'ping', ts: Date.now() }), 15_000);
     };
     socket.onmessage = (event) => this.handleMessage(event.data);
@@ -70,6 +74,7 @@ export class AstrBotBridgeClient {
     socket.onclose = (event) => {
       if (this.socket !== socket) return;
       this.socket = null; this.handshakeAccepted = false;
+      this.stopTasks?.(); this.stopTasks = null;
       this.channel?.dispose(); this.channel = null; this.stopChannel?.(); this.stopChannel = null;
       this.pending.clear();
       if (this.heartbeatTimer !== null) window.clearInterval(this.heartbeatTimer);
@@ -79,6 +84,7 @@ export class AstrBotBridgeClient {
     };
   }
   private reconnect(reason: string): void {
+    this.stopTasks?.(); this.stopTasks = null;
     const socket = this.socket; this.socket = null;
     this.channel?.dispose(); this.channel = null; this.stopChannel?.(); this.stopChannel = null;
     this.pending.clear();
@@ -118,6 +124,16 @@ export class AstrBotBridgeClient {
         displayLang: this.settings.displayLang, speakLang: this.settings.speakLang || null,
       });
       this.stopChannel = this.channel.onResponse((response) => this.handleAiResponse(response));
+      this.stopTasks = this.channel.onTask?.(({ task, sequence }) => {
+        if ((this.taskSequences.get(task.id) ?? -1) >= sequence) return;
+        // Keep progress separate from ai.response; a chat may already be done.
+        if (this.socket?.readyState !== WebSocket.OPEN) return;
+        this.send({ type: 'agent.task', version: 2, requestId: task.requestId, conversationId: task.conversationId,
+          taskId: task.id, status: task.status, sequence, text: task.error ?? task.summary });
+        this.taskSequences.set(task.id, sequence);
+        if (this.taskSequences.size > 256) this.taskSequences.delete(this.taskSequences.keys().next().value!);
+      }) ?? null;
+      this.taskScopes.forEach((scope) => this.channel?.watchTasks?.(scope));
       return;
     }
     if (message.type === 'ai.cancel') {
@@ -128,6 +144,11 @@ export class AstrBotBridgeClient {
     if (this.pending.has(message.requestId)) { this.sendError(message.requestId, message.conversationId, 'Duplicate request id'); return; }
     this.pending.add(message.requestId);
     const sender = normalizeAstrBotSender(message.sender);
+    if (sender) {
+      const scope = { conversationId: message.conversationId, senderId: sender.id };
+      this.taskScopes.set(JSON.stringify(scope), scope);
+      if (this.taskScopes.size > 64) this.taskScopes.delete(this.taskScopes.keys().next().value!);
+    }
     this.options.logger.info('message.identity', {
       requestId: message.requestId, conversationId: message.conversationId,
       senderPresent: Boolean(sender), senderFields: Object.keys(message.sender ?? {}),

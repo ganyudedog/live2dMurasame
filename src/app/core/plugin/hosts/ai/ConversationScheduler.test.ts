@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ConversationChannelOptions } from '../../types';
 import { ConversationScheduler } from './ConversationScheduler';
 
@@ -12,6 +12,30 @@ const options = (mode: 'queue' | 'interrupt' | 'concurrent' = 'queue'): Conversa
 };
 
 describe('ConversationScheduler', () => {
+  it('keeps task observation independent from chat completion and disposes only subscriptions', async () => {
+    let deliver: ((event: import('../../../../../../shared/cli/contracts').TaskEvent) => void) | undefined;
+    const stop = vi.fn();
+    const execute = vi.fn(async (_options, _request, context) => { context.emit({ text: 'accepted', status: 'done' }); });
+    const observer = vi.fn((_options, _request, listener) => { deliver = listener; return stop; });
+    const host = new ConversationScheduler(execute, 4, observer);
+    const channel = host.openChannel(options());
+    const updates = vi.fn();
+    channel.onTask?.(updates);
+    channel.watchTasks?.({ conversationId: 'remote', senderId: 'user' });
+    expect(execute).not.toHaveBeenCalled();
+    channel.sendText({ text: 'start task', requestId: 'one', conversationId: 'remote', sender: { id: 'user' } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stop).toHaveBeenCalledTimes(1); // Renewed observation, not task cancellation.
+    channel.cancel();
+    deliver?.({ task: { id: 'task', status: 'succeeded' } as never, sequence: 2 });
+    expect(updates).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    channel.dispose();
+    expect(stop).toHaveBeenCalledTimes(2);
+    deliver?.({ task: { id: 'task', status: 'succeeded' } as never, sequence: 3 });
+    expect(updates).toHaveBeenCalledTimes(1);
+    host.dispose();
+  });
   it('keeps a bounded FIFO queue per channel', async () => {
     const pending = new Map<string, () => void>();
     const host = new ConversationScheduler(async (_options, request, context) => new Promise<void>((resolve) => {

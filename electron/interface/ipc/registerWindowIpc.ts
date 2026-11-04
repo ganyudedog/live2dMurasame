@@ -1,0 +1,23 @@
+import { BrowserWindow, ipcMain, screen, type IpcMainEvent } from 'electron';
+import type { WindowApplicationService } from '../../modules/window/WindowApplicationService.js';
+import { PET_WINDOW_BASE_CONTENT_HEIGHT, PET_WINDOW_BASE_CONTENT_WIDTH } from '../../../shared/live2d/live2dLayout.js';
+import { readContentBounds, readContentSize } from '../../modules/window/WindowsCenterResize.js';
+import { createDependencyAwareRegistrar } from './composeIpcRegistrar.js';
+
+const registerWindowIpcImpl = ({ windowApplicationService, getMainWindow }: {
+  windowApplicationService: WindowApplicationService;
+  getMainWindow: () => BrowserWindow | null;
+}) => {
+  ipcMain.handle('ddd:window:intent', (_event, intent: unknown = {}) => windowApplicationService.handleIntent(intent));
+  ipcMain.on('ddd:window:drag', (event: IpcMainEvent, payload: unknown = {}) => windowApplicationService.handleDrag(event, payload));
+  ipcMain.handle('ddd:window:mouse-passthrough', (event, passthrough) => { const target = BrowserWindow.fromWebContents(event.sender) ?? getMainWindow(); if (!target || target.isDestroyed()) return false; target.setIgnoreMouseEvents(Boolean(passthrough), { forward: true }); return Boolean(passthrough); });
+  ipcMain.handle('ddd:window:cursor', () => screen.getCursorScreenPoint());
+  ipcMain.handle('ddd:window:bounds', (event) => { const target = BrowserWindow.fromWebContents(event.sender) ?? getMainWindow(); return target && !target.isDestroyed() ? target.getBounds() : null; });
+  ipcMain.handle('ddd:window:geometry', (event) => { const target = BrowserWindow.fromWebContents(event.sender) ?? getMainWindow(); if (!target || target.isDestroyed()) return null; const bounds = target.getBounds(); const contentBounds = readContentBounds(target); const contentSize = readContentSize(target); const rawContentBounds = target.getContentBounds?.(); const display = screen.getDisplayMatching(bounds); return { bounds, contentBounds, contentSize, rawContentBounds, workArea: display.workArea, displayId: display.id, scaleFactor: display.scaleFactor, baseContentSize: { width: PET_WINDOW_BASE_CONTENT_WIDTH, height: PET_WINDOW_BASE_CONTENT_HEIGHT } }; });
+  ipcMain.on('ddd:window:devtools:sync', (_event) => { try { _event.returnValue = Boolean(getMainWindow()?.webContents?.isDevToolsOpened?.()); } catch { _event.returnValue = false; } });
+};
+
+export const registerWindowIpc = createDependencyAwareRegistrar([
+  'windowApplicationService',
+  'getMainWindow',
+], registerWindowIpcImpl);

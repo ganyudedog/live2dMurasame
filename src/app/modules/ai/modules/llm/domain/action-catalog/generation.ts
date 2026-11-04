@@ -1,4 +1,4 @@
-import type { ActionDefinition } from '../../../../../../../../shared/actionCatalog.js';
+import type { ActionDefinition } from '../../../../../../../../shared/live2d/actionCatalog.js';
 
 export const GENERATION_VERSION = 'composite-reactions-v1';
 export interface GenerationBudget {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateLive2dLayout } from '../../../../../../../shared/live2dLayout.js';
+import { calculateLive2dLayout } from '../../../../../../../shared/live2d/live2dLayout.js';
 import { placeInViewport } from '../domain/placeInViewport';
 
 describe('shared three-rectangle layout', () => {

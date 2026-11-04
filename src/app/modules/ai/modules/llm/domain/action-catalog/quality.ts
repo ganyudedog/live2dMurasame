@@ -1,4 +1,4 @@
-import { parseActionCatalog, type ActionDefinition, type ActionSourceData } from '../../../../../../../../shared/actionCatalog.js';
+import { parseActionCatalog, type ActionDefinition, type ActionSourceData } from '../../../../../../../../shared/live2d/actionCatalog.js';
 import type { GenerationConstraints, QualityIssue } from './generation';
 
 export function validateActions(value: unknown, sources: ActionSourceData): ActionDefinition[] {

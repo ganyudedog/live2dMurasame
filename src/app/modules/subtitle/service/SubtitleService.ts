@@ -1,5 +1,5 @@
 import { makeObservable, observable, observableRef, runInAction } from 'mobx';
-import { normalizeSubtitleSettings, subtitleFontSize } from '../../../../../shared/subtitleSettings.js';
+import { normalizeSubtitleSettings, subtitleFontSize } from '../../../../../shared/subtitle/subtitleSettings.js';
 import { lastTwoLines } from '../domain/lines';
 
 export class SubtitleService {

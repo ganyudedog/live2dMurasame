@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Application } from 'pixi.js';
 import type { Live2DModel } from '../../model/runtime/live2d/runtime';
 import type { LogService } from '@app/shared/logging/LogService';
-import { calculateLive2dLayout, type Live2dLayoutInput } from '../../../../../../../shared/live2dLayout.js';
+import { calculateLive2dLayout, type Live2dLayoutInput } from '../../../../../../../shared/live2d/live2dLayout.js';
 import { Live2dLayoutService } from '../service/Live2dLayoutService';
 
 vi.mock('pixi.js', () => ({

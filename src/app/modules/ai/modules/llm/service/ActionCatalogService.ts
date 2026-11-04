@@ -1,5 +1,5 @@
 import { sourceContexts, type SourceContext } from '../domain/action-catalog/sourceContext.js';
-import { type ActionDefinition, type ActionSourceData } from '../../../../../../../shared/actionCatalog.js';
+import { type ActionDefinition, type ActionSourceData } from '../../../../../../../shared/live2d/actionCatalog.js';
 import { ACTION_CATALOG_PROMPT, ACTION_RUNTIME_CONTRACT } from '../domain/action-catalog/contract.js';
 import { inspectActions, validateActions } from '../domain/action-catalog/quality.js';
 import { describeCandidates, parseReactionPlans } from '../domain/action-catalog/planning.js';

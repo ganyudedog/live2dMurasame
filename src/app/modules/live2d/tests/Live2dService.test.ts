@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import { Live2dService } from '../service/Live2dService';
-import { calculateLive2dLayout } from '../../../../../shared/live2dLayout.js';
+import { calculateLive2dLayout } from '../../../../../shared/live2d/live2dLayout.js';
 
 vi.mock('../modules/motion/service/MotionService', () => ({
   MotionService: class { attach() {} dispose() {} getGroups() { return []; } },

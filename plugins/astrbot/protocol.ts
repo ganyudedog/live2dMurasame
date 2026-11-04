@@ -22,6 +22,7 @@ export type AstrBotInbound = AstrBotQqMessage
   | { readonly type: 'hello.ack'; readonly version: number; readonly accepted?: boolean; readonly clientId?: string; readonly interaction?: AstrBotInteraction }
   | { readonly type: 'ping'; readonly timestamp?: number; readonly ts?: number };
 export type AstrBotOutbound = AstrBotHello | AstrBotAiResponse
+  | { readonly type: 'agent.task'; readonly version: 2; readonly requestId: string; readonly conversationId: string; readonly taskId: string; readonly status: string; readonly sequence: number; readonly text: string }
   | { readonly type: 'ping'; readonly ts?: number } | { readonly type: 'pong'; readonly timestamp?: number };
 
 const ID = /^[A-Za-z0-9:_./-]{1,160}$/;

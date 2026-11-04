@@ -1,4 +1,4 @@
-import { parseActionCatalog, type ActionDefinition, type ActionSourceData } from '../../../../shared/actionCatalog.js';
+import { parseActionCatalog, type ActionDefinition, type ActionSourceData } from '../../../../shared/live2d/actionCatalog.js';
 import { makeObservable, observable, observableRef, runInAction } from 'mobx';
 import type { BootstrapContext } from '@app/core/bootstrapContext';
 import type { ElectronService } from '../electron/ElectronService';

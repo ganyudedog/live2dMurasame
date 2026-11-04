@@ -3,7 +3,7 @@ import {
   BUBBLE_SIDE_MIN_WIDTH,
   BUBBLE_SIDE_MAX_WIDTH,
   BUBBLE_SIDE_DEFAULT_WIDTH,
-} from '../../../../../../../shared/live2dLayout.js';
+} from '../../../../../../../shared/live2d/live2dLayout.js';
 
 export const BUBBLE_GAP = 12; // 模型和气泡之间的距离
 export const BUBBLE_PADDING = 0; // 三矩形边界不额外添加气泡内缩

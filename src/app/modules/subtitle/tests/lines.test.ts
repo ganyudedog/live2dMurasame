@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { lastTwoLines } from '../domain/lines';
-import { fitSubtitleBounds, subtitleFontSize } from '../../../../../shared/subtitleSettings.js';
+import { fitSubtitleBounds, subtitleFontSize } from '../../../../../shared/subtitle/subtitleSettings.js';
 
 describe('desktop subtitle layout', () => {
   const measure = (value: string) => [...value].length;

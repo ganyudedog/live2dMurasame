@@ -2,7 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { useState, type CSSProperties } from 'react';
 import { useService } from '@app/core/useService';
 import { TOKENS } from '@app/core/serviceTokens';
-import { subtitleFontSize } from '../../../../../shared/subtitleSettings.js';
+import { subtitleFontSize } from '../../../../../shared/subtitle/subtitleSettings.js';
 
 export const SubtitleWindow = observer(() => {
   const service = useService(TOKENS.subtitle);

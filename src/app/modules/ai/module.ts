@@ -6,6 +6,7 @@ import { LlmService } from './modules/llm/service/LlmService';
 import { TtsService } from './modules/tts/service/TtsService';
 import { LiveKitService } from './modules/tts/service/LiveKitService';
 import { notifyTtsError } from './modules/tts/ui/notifications';
+import { openCommandSession } from '@app/shared/electron/commandSession';
 
 export const serviceModule: ServiceModule = {
   id: 'pet.ai',
@@ -23,6 +24,7 @@ export const serviceModule: ServiceModule = {
         new LlmService({
           log,
           getConfigSnapshot: () => config.getSnapshot(),
+          ...(ownsConversationRuntime ? { openCommands: () => openCommandSession({ source: 'local', conversationId: 'desktop' }) } : {}),
         }),
         new TtsService({
           log,

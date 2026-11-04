@@ -1,6 +1,6 @@
 import { makeAutoObservable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import type { ActionCatalogService } from '@app/modules/ai/modules/llm/service/ActionCatalogService.js';
-import { parseActionCatalog, type ActionSourceData } from '../../../../../../../shared/actionCatalog.js';
+import { parseActionCatalog, type ActionSourceData } from '../../../../../../../shared/live2d/actionCatalog.js';
 import type { ActionSettingsView } from '../domain/view';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { ActionDefinition } from '@app/modules/live2d/modules/actions/domain/types';

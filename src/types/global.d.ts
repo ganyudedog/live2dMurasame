@@ -74,11 +74,12 @@ declare global {
   }
 
   interface PetPersonaConfig {
-    personal?: string;
-    speakingStyle?: string;
-    relation?: string;
-    banned?: string;
-    world?: string;
+    name?: string;
+    userAddress?: string;
+    voice?: string;
+    examples?: string;
+    boundaries?: string;
+    notes?: string;
     [key: string]: unknown;
   }
 

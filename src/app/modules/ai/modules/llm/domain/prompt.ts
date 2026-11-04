@@ -1,4 +1,5 @@
 import type { ActionCapability } from '../../../../live2d/modules/actions/domain/types';
+import { buildRelationshipPrompt, DEFAULT_RELATIONSHIP_LINE } from './memory/memoryContext';
 
 export interface BuildPromptInput {
   userText: string;
@@ -67,7 +68,13 @@ const mapSpeakLangName = (lang?: string | null): string => {
   return lang && lang.trim() ? lang : '日语';
 };
 
-export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'ja' | 'ko'; speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto'; actionCapability?: Pick<ActionCapability, 'actions'> }): string => {
+export const buildStage2SystemPrompt = (input?: {
+  displayLang?: 'zh' | 'en' | 'ja' | 'ko';
+  speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
+  actionCapability?: Pick<ActionCapability, 'actions'>;
+  personaPrompt?: string;
+  relationshipStage?: string;
+}): string => {
   const displayLangName = mapDisplayLangName(input?.displayLang);
   const speakLangName = mapSpeakLangName(input?.speakLang);
   return [
@@ -76,7 +83,9 @@ export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'j
     '输出格式（JSON Lines）：',
     OUTPUT_CONTRACT,
     CONVERSATION_STYLE,
-    '如果提供了角色设定和记忆上下文，你必须优先遵守其中的人设、关系、禁忌、世界观与记忆；输出格式与字段语言仍遵守本轮协议。',
+    input?.personaPrompt?.trim() ?? '',
+    buildRelationshipPrompt(input?.relationshipStage?.trim() || DEFAULT_RELATIONSHIP_LINE),
+    '角色卡和当前关系优先于上面的默认陪伴口吻。输出格式与字段语言仍遵守本轮协议。相关记忆只在用得上时引用，不要编造记忆里没有的经历。',
     // 固定规则完整放在前部；语言及动作目录在后部，减少编辑动作时失效的缓存前缀。
     `display_text 必须使用${displayLangName}。`,
     `speak_text 是给 TTS 语音合成用的，**必须**使用${speakLangName}（即使用户输入是其他语言）。如果 speak_text 用了错误的语言，TTS 合成会失败。`,
@@ -93,7 +102,7 @@ export const buildStage2SystemPrompt = (input?: { displayLang?: 'zh' | 'en' | 'j
 export const buildStage2UserPrompt = (input: BuildPromptInput): string => {
   const parts = [];
   if (input.memoryContext) {
-    parts.push('以下是当前角色设定与记忆，只在相关时使用，不要编造其中没有的信息：');
+    parts.push('以下是相关记忆，只在相关时使用，不要编造其中没有的信息：');
     parts.push(input.memoryContext);
   }
   parts.push(`用户输入：${input.userText}`);

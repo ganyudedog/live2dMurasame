@@ -17,11 +17,12 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     sideWidth: 260,
   },
   persona: {
-    personal: '',
-    speakingStyle: '',
-    relation: '',
-    banned: '',
-    world: '',
+    name: '',
+    userAddress: '',
+    voice: '',
+    examples: '',
+    boundaries: '',
+    notes: '',
   },
   tts: {
     enabled: false,

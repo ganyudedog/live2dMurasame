@@ -28,6 +28,8 @@ export interface Stage2LLMRequest {
   model?: string;
   temperature?: number;
   memoryContext?: string;
+  personaPrompt?: string;
+  relationshipStage?: string;
   historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   actionCapability?: Pick<ActionCapability, 'actions'>;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';

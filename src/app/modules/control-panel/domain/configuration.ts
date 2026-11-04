@@ -1,4 +1,5 @@
 import type { ChatConfig } from '@app/shared/state-bus/sharedStateTypes';
+import { normalizePersona } from '@app/modules/ai/modules/llm/domain/memory/memoryContext';
 import type { ChatMessage, ModelConfig } from './types';
 
 /** 模型与思考深度来自前端缓存（llmSelectionCache），其余来自后端全局配置。 */
@@ -16,17 +17,10 @@ export const toChatConfig = (
 });
 
 export const buildPersonaConfig = (persisted: unknown, defaults: ModelConfig['persona']): ModelConfig['persona'] => {
-  const source = isRecord(persisted) ? persisted : {};
-  return {
-    ...defaults,
-    ...source,
-    banned: typeof source.banned === 'string'
-      ? source.banned
-      : typeof source.mustFollow === 'string' ? source.mustFollow : defaults.banned,
-  } as ModelConfig['persona'];
+  const persona = normalizePersona(persisted);
+  return { ...defaults, ...persona };
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 export const trimText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 export const createId = (): string => `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 export const createMessage = (

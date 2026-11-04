@@ -2,12 +2,14 @@ import { buildRecentConversation, distinctRecallText } from '../domain/memory/re
 import type { Stage2LLMRequest } from '../domain/types';
 import { isString } from '../domain/config';
 import { LlmMemoryRepository } from '../infrastructure/LlmMemoryRepository';
-import { buildMemoryContext, normalizePersona } from '../domain/memory/memoryContext';
+import { buildMemoryContext, buildPersonaPrompt, currentRelationshipLine, ensureRelationshipSection, normalizePersona } from '../domain/memory/memoryContext';
 import { resolveEpisodeQuery } from '../domain/memory/episodeQuery';
 import type { TraceScope } from '@app/shared/logging/LogService';
 
 export interface ResolvedMemoryRuntime {
   contextText: string;
+  personaPrompt?: string;
+  relationshipStage?: string;
   historyMessages?: Stage2LLMRequest['historyMessages'];
   modelPath: string | null;
   memoryState: PetModelMemoryState | null;
@@ -51,7 +53,6 @@ export class MemoryService {
       }
       const recallText = distinctRecallText(episodeRecall, recent.turns);
       const contextText = buildMemoryContext(
-        normalizePersona(snapshot?.modelConfig?.persona),
         memoryState,
         recallText
           ? `${episodeQuery.approximate ? '时间范围不确定；以下仅为保留期内的相关片段，不代表完整历史。\n' : ''}${recallText}`
@@ -74,10 +75,18 @@ export class MemoryService {
           matchCount: episodeRecall?.matches?.length ?? 0,
         },
       });
-      return { contextText, modelPath, memoryState, episodeRecall, historyMessages: recent.historyMessages };
+      return {
+        contextText,
+        personaPrompt: buildPersonaPrompt(normalizePersona(snapshot?.modelConfig?.persona)),
+        relationshipStage: currentRelationshipLine(memoryState?.coreText ?? ''),
+        modelPath,
+        memoryState,
+        episodeRecall,
+        historyMessages: recent.historyMessages,
+      };
     } catch (error) {
       trace?.record('memory.context.failed', { err: String(error) });
-      return { contextText: '', modelPath: null, memoryState: null };
+      return { contextText: '', personaPrompt: '', relationshipStage: currentRelationshipLine(''), modelPath: null, memoryState: null };
     }
   }
 
@@ -129,6 +138,10 @@ export class MemoryService {
         '只根据输入整理可长期复用的用户事实、稳定偏好、关系变化和未完成事项；不要记录一次性寒暄、模型自述或未经确认的推断。',
         '跨多天重复提及或用户明确要求记住的内容权重更高；一次性细节随时间淡出，旧的短期话题在没有后续时可以删除。',
         '按 core / stable / event 三种重要性组织核心记忆，合并同义内容；一次性闲聊不要写入核心记忆。',
+        '核心记忆必须保留一节「## 当前关系」，其下只有一条以「阶段：」开头的列表项。允许的阶段只有 疏远、认识、亲近、信赖、亲密，且亲密程度逐级递增。',
+        '没有这一节时写成「阶段：亲近。可以开玩笑，仍用「你」。还不会主动提起恋爱。」',
+        '只有待整理对话里用户明确说过称呼、关系或界限时，才替换这一条。一次夸奖、争执或角色自己的话不能改阶段，也不要按天数变冷。',
+        '换成当前阶段的依据写成普通稳定记忆，不要写进「当前关系」这一节。这一节不要加过期时间。',
         '核心记忆条目可以用 HTML 注释保存 id、kind、importance、confidence、mentions、expires 元数据。生日、称呼和明确要求记住的内容优先保留；临时事件应在过期后删除。',
         '输出严格 JSON 对象 {"coreText":"...","processedThroughCount":数字}，coreText 使用简洁中文 Markdown。',
         'coreText 必须不超过 30KB UTF-8 和 2000 行，按主题合并重复内容；没有可靠信息时保留原内容。',
@@ -143,9 +156,10 @@ export class MemoryService {
       if (!parsed || parsed.processedThroughCount !== pendingThroughCount || !parsed.coreText.trim()) {
         throw new Error('记忆整理结果未通过游标或内容校验');
       }
+      const content = ensureRelationshipSection(parsed.coreText);
       const saved = await this.repository.consolidate({
         modelPath,
-        content: parsed.coreText,
+        content,
         processedThroughCount: parsed.processedThroughCount,
       });
       if (saved) runtime.memoryState = saved;

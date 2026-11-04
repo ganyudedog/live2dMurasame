@@ -68,11 +68,12 @@ export interface BubbleConfig {
 }
 
 export interface PersonaConfig {
-  personal: string;
-  speakingStyle: string;
-  relation: string;
-  banned: string;
-  world: string;
+  name: string;
+  userAddress: string;
+  voice: string;
+  examples: string;
+  boundaries: string;
+  notes: string;
 }
 
 export type TextSplitMode = 'cut0' | 'cut1' | 'cut2' | 'cut3' | 'cut4' | 'cut5';
@@ -183,11 +184,12 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
     sideWidth: 260,
   },
   persona: {
-    personal: '',
-    speakingStyle: '',
-    relation: '',
-    banned: '',
-    world: '',
+    name: '',
+    userAddress: '',
+    voice: '',
+    examples: '',
+    boundaries: '',
+    notes: '',
   },
   tts: {
     enabled: false,
@@ -213,14 +215,14 @@ const normalizeTextField = (value: unknown): string => (typeof value === 'string
 
 const normalizePersona = (input: unknown): PersonaConfig => {
   const source = isRecord(input) ? input : {};
-  const next: PersonaConfig = { ...DEFAULT_MODEL_CONFIG.persona };
-  next.personal = normalizeTextField(source.personal);
-  next.speakingStyle = normalizeTextField(source.speakingStyle);
-  next.relation = normalizeTextField(source.relation);
-  next.banned = normalizeTextField(source.banned);
-  next.world = normalizeTextField(source.world);
-  if (!next.banned && typeof source.mustFollow === 'string') next.banned = source.mustFollow;
-  return next;
+  return {
+    name: normalizeTextField(source.name).trim(),
+    userAddress: normalizeTextField(source.userAddress).trim(),
+    voice: normalizeTextField(source.voice).trim(),
+    examples: normalizeTextField(source.examples).trim(),
+    boundaries: normalizeTextField(source.boundaries).trim(),
+    notes: normalizeTextField(source.notes).trim(),
+  };
 };
 
 const clampNumber = (value: unknown, fallback: number, min: number, max: number): number => {

@@ -82,6 +82,8 @@ export const requestStage2LLM = async (
             displayLang: req.displayLang,
             speakLang: req.speakLang ?? undefined,
             actionCapability: req.actionCapability,
+            personaPrompt: req.personaPrompt,
+            relationshipStage: req.relationshipStage,
           }),
       },
       // Archives store display text. Restore the wire format so prior assistant

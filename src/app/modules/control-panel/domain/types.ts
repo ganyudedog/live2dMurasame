@@ -81,7 +81,6 @@ export type ModelConfig = {
     textSplitMode: 'cut0' | 'cut1' | 'cut2' | 'cut3' | 'cut4' | 'cut5';
     speedFactor: number;
     fragmentInterval: number;
-    useLastGeneratedAsRef: boolean;
     topK: number;
     topP: number;
     temperature: number;

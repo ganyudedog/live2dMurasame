@@ -6,10 +6,12 @@
   "scripts": {
     "live2d": "node scripts/live2d-cli.mjs",
     "build:cli:exe": "node scripts/build-cli-exe.mjs",
+    "electron:compile": "tsc -p tsconfig.electron.json",
+    "electron:typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.electron.tests.json --pretty false",
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "vitest run",
-    "electron:dev": "set VITE_DEV_SERVER_URL=http://localhost:5180&& electron ./electron/main.js",
+    "test": "pnpm electron:compile && vitest run",
+    "electron:dev": "pnpm electron:compile && set VITE_DEV_SERVER_URL=http://localhost:5180&& electron ./dist-electron/main.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

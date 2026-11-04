@@ -10,7 +10,6 @@ export interface TtsRuntimeConfig {
   textSplitMode: string;
   speedFactor: number;
   fragmentInterval: number;
-  useLastGeneratedAsRef: boolean;
   topK: number;
   topP: number;
   temperature: number;

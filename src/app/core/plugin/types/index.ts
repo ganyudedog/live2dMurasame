@@ -1,4 +1,5 @@
 export type { Disposable, RuntimeLog } from './common';
+export type { TaskEvent, AgentTask } from '../../../../../shared/cli/contracts';
 export type { PluginHostKind, PluginManifest, PluginPermission, PluginWindowKind } from './manifest';
 export { pluginPermissions } from './manifest';
 export type {

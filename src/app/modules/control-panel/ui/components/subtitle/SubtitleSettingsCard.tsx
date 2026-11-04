@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import { Field, SettingsCard, SwitchRow } from '../common/SettingsSection.js';
-import { normalizeSubtitleSettings, normalizePushToTalk, type SubtitleSettings as Settings, type PushToTalkSettings } from '../../../../../../../shared/subtitleSettings.js';
+import { normalizeSubtitleSettings, normalizePushToTalk, type SubtitleSettings as Settings, type PushToTalkSettings } from '../../../../../../../shared/subtitle/subtitleSettings.js';
 
 const SWATCH = 'color-swatch shrink-0';
 

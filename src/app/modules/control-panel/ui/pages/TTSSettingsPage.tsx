@@ -81,7 +81,6 @@ const isSameTtsDraft = (left: TtsUiDraft, right: TtsUiDraft) => {
     && left.textSplitMode === right.textSplitMode
     && left.speedFactor === right.speedFactor
     && left.fragmentInterval === right.fragmentInterval
-    && left.useLastGeneratedAsRef === right.useLastGeneratedAsRef
     && left.topK === right.topK
     && left.topP === right.topP
     && left.temperature === right.temperature
@@ -287,17 +286,6 @@ export default function TTSSettingsPage({
 
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="label cursor-pointer justify-start gap-2">
-            <input
-              type="checkbox"
-              className="checkbox checkbox-sm"
-              checked={draft.useLastGeneratedAsRef}
-              onChange={(e) => ttsDraft.commit({ ...draft, useLastGeneratedAsRef: e.target.checked })}
-            />
-            <span className="text-xs text-base-content/55">复用上次生成音频作为参考</span>
-          </label>
-        </div>
       </section>
 
       <section className="rounded-box border border-base-300 bg-base-100 p-3 space-y-3">

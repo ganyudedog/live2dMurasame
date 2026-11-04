@@ -6,6 +6,7 @@ import { Field, SettingsCard } from '../components/common/SettingsSection';
 import { ModelRegistryCard } from '../components/ai/ModelRegistryCard';
 import { keepFetchedModels } from '../components/ai/keepFetchedModels';
 import { MemoryModelCard } from '../components/ai/MemoryModelCard';
+import { AgentCard } from '../components/ai/AgentCard';
 import { probeModelEfforts } from '@app/modules/ai/modules/llm/infrastructure/effortProbe';
 import { listRemoteModels, type RemoteModel } from '@app/modules/ai/modules/llm/infrastructure/modelCatalog';
 import type { ModelConfig, AsrConfig } from '../../domain/types';
@@ -217,6 +218,7 @@ export default function AiSettingsPage({
       </section>
 
       {tab === 'text' && <>
+        <AgentCard settings />
         <SettingsCard title="接口" description="OpenAI 兼容接口；模型清单、对话与记忆整理都走同一套凭据。">
           <Field label="Base URL" hint="自建或代理地址；留空则使用服务默认地址">
             <input className="input input-sm w-full" value={apiBaseUrl} placeholder="https://api.example.com/v1"

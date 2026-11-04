@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { calculateLive2dLayout } from '../../../../../../../shared/live2dLayout.js';
+import { calculateLive2dLayout } from '../../../../../../../shared/live2d/live2dLayout.js';
 import { createBubblePositionEngine } from '../runtime/createBubblePositionEngine';
 
 function harness(scale: number, x: number, side: 'left' | 'right' | 'auto' = 'auto') {

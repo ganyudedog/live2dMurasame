@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { GENERATION_VERSION, type GenerationCheckpoint } from '@app/modules/ai/modules/llm/domain/action-catalog/generation';
-import { parseActionCatalog } from '../../../../../../../shared/actionCatalog.js';
+import { parseActionCatalog } from '../../../../../../../shared/live2d/actionCatalog.js';
 import { parseReactionPlans } from '@app/modules/ai/modules/llm/domain/action-catalog/planning';
 
 

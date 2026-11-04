@@ -109,7 +109,7 @@ export class PluginRuntime {
         }
         else cleanups.push(disposable);
       } },
-      host: this.createHostSnapshot(permissions, cleanups, () => record.state === 'activating' || record.state === 'active'),
+      host: this.createHostSnapshot(permissions, cleanups, () => record.state === 'activating' || record.state === 'active', pluginId),
       storage: permissions.includes('settings.storage') ? storage : deniedStorage,
       logger: this.pluginLogger(pluginId),
       ui: { register: (contribution) => {
@@ -193,7 +193,7 @@ export class PluginRuntime {
       pluginId,
       hostApi: this.createHostSnapshot(permissions, this.cleanups.get(pluginId) ?? [], () => (
         record.state === 'activating' || record.state === 'active'
-      )),
+      ), pluginId),
       storage: permissions.includes('settings.storage') ? this.getStorage(pluginId) : deniedStorage,
       logger: this.pluginLogger(pluginId),
     };
@@ -247,6 +247,7 @@ export class PluginRuntime {
     permissions: readonly string[],
     cleanups: Disposable[],
     canUse: () => boolean,
+    pluginId: string,
   ): Partial<PluginHostApiMap> {
     const host = this.registry.hostApis.snapshot(permissions) as Partial<PluginHostApiMap>;
     const capabilities = host as Record<string, unknown>;
@@ -268,7 +269,9 @@ export class PluginRuntime {
             if (!canUse()) throw new Error(`Plugin host capability is no longer active: ${id}`);
             const member: unknown = Reflect.get(value, property, value);
             if (typeof member !== 'function') throw new Error(`Host method unavailable: ${id}.${property}`);
-            const result = Reflect.apply(member, value, args) as unknown;
+            const scopedArgs = id === 'ai' && property === 'openChannel'
+              ? [{ ...(args[0] as object), source: `plugin:${pluginId}` }] : args;
+            const result = Reflect.apply(member, value, scopedArgs) as unknown;
             const effect = policies[property as keyof typeof policies];
             if (effect === 'disposable' && typeof result === 'function') cleanups.push(result as Disposable);
             else if (effect === 'channel' && result && typeof result === 'object') {

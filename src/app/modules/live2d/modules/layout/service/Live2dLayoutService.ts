@@ -2,7 +2,7 @@ import { resolveVisualCenter } from '../infrastructure/visualCenter';
 import { Graphics, UPDATE_PRIORITY, type Application } from 'pixi.js';
 import type { Live2DModel } from '../../model/runtime/live2d/runtime';
 import type { ContextRegistration, LogService, TraceScope } from '@app/shared/logging/LogService';
-import { calculateLive2dLayout, PET_WINDOW_BASE_CONTENT_HEIGHT, type ThreeRectLayout } from '../../../../../../../shared/live2dLayout.js';
+import { calculateLive2dLayout, PET_WINDOW_BASE_CONTENT_HEIGHT, type ThreeRectLayout } from '../../../../../../../shared/live2d/live2dLayout.js';
 import { placeInViewport } from '../domain/placeInViewport';
 
 export type LayoutSnapshot = {

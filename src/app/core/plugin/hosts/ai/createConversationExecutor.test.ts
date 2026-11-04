@@ -3,12 +3,30 @@ import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
 import { requestStage2LLM } from '@app/modules/ai/modules/llm/infrastructure/llmClient';
 import { createDefaultConversationExecutor } from './createConversationExecutor';
+import { runSkillLoop } from '@app/modules/ai/modules/llm/application/skillLoop';
+vi.mock('@app/modules/ai/modules/llm/application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 
 vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
   requestStage2LLM: vi.fn(async () => ({ rawText: '{"display_text":"你好"}' })),
 }));
 
 describe('plugin conversation persona injection', () => {
+  it('routes a generic remote channel through the shared loop without archiving task logs', async () => {
+    const appendConversation = vi.fn(); const loadRecentTurns = vi.fn();
+    const open = vi.fn(async () => 'session'); const close = vi.fn();
+    vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns }, CliAPI: { open, close } });
+    vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: true, context: 'accepted task-remote' });
+    const config = { activeModelPath: '/model', globalModelConfig: { apiKey: 'key' } } as unknown as ConfigService;
+    const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ record: vi.fn(), end: vi.fn(), fail: vi.fn() }), dispose: vi.fn() }) } } as unknown as LogService;
+    const execute = createDefaultConversationExecutor(config, log);
+    await execute({ source: 'plugin:another-platform', conversationId: 'private', interaction: { mode: 'queue' }, model: 'model' },
+      { text: '开发任务', sender: { id: 'user' }, memoryArchive: { platform: 'other', scope: 'private', id: 'user' } },
+      { requestId: 'request-remote', channelId: 'channel', conversationId: 'private', signal: new AbortController().signal, emit: vi.fn() });
+    expect(open).toHaveBeenCalledWith({ source: 'plugin:another-platform', conversationId: 'private', senderId: 'user' });
+    expect(runSkillLoop).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'request-remote' }));
+    expect(loadRecentTurns).not.toHaveBeenCalled(); expect(appendConversation).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith('session');
+  });
   afterEach(() => vi.unstubAllGlobals());
   it('recalls the selected archive and saves only successful, non-cancelled replies', async () => {
     const appendConversation = vi.fn(async () => ({ state: {} }));

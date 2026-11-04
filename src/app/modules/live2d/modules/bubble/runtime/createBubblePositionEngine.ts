@@ -1,6 +1,6 @@
 import { debug } from '@app/shared/logging/compat';
 import { clamp } from '@app/shared/utils/math';
-import type { ThreeRectLayout } from '../../../../../../../shared/live2dLayout.js';
+import type { ThreeRectLayout } from '../../../../../../../shared/live2d/live2dLayout.js';
 import type { BubbleMeasurement } from '../../../service/Live2dService';
 import type { BubblePresentationSink } from '../domain/BubblePresentation';
 import {

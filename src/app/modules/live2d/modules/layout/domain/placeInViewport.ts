@@ -1,4 +1,4 @@
-import type { ThreeRectLayout } from '../../../../../../../shared/live2dLayout.js';
+import type { ThreeRectLayout } from '../../../../../../../shared/live2d/live2dLayout.js';
 
 /** Bottom alignment and stable horizontal anchor, expressed without DOM access.
  * Desired window size and the currently drawable viewport have separate roles.

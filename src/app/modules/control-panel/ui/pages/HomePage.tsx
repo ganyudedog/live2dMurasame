@@ -1,4 +1,5 @@
 import ChatPanel from '../components/common/ChatPanel';
+import { AgentCard } from '../components/ai/AgentCard';
 import { useScaleControl } from '../hooks/useScaleControl';
 import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';
 import type { ChatMessage, ModelEntry } from '../../domain/types';
@@ -102,6 +103,7 @@ export default function HomePage({
         </button>
       </div>
 
+      <AgentCard />
       <ChatPanel
         fill
         showHeader={false}

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { normalizeEfforts } from '../../../../../../../shared/llmModels.js';
+import { normalizeEfforts } from '../../../../../../../shared/ai/llmModels.js';
 
 export interface RemoteModel {
   id: string;

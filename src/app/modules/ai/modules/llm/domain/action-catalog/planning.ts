@@ -1,4 +1,4 @@
-import { ACTION_ID_PATTERN, type ActionDefinition } from '../../../../../../../../shared/actionCatalog.js';
+import { ACTION_ID_PATTERN, type ActionDefinition } from '../../../../../../../../shared/live2d/actionCatalog.js';
 import type { ReactionPlan } from './generation';
 
 /** 用稳定候选下标消除不同分析批次同名ID的歧义，计划阶段不重复发送关键帧。 */

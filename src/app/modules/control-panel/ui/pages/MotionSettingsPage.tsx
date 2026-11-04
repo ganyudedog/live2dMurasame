@@ -4,7 +4,7 @@ import Modal from '../components/common/Modal.js';
 import type { ActionSettingsView, ActionSettingsCallbacks } from '../../modules/action-settings/domain/view';
 import { actionMention, activeMention } from '../../modules/action-settings/domain/session';
 import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';
-import type { ActionCategory } from '../../../../../../shared/actionCatalog.js';
+import type { ActionCategory } from '../../../../../../shared/live2d/actionCatalog.js';
 
 const CATEGORY_META: Record<ActionCategory, { label: string; badge: string; stamp: string; dot: string }> = {
   head: { label: '头部', badge: 'badge-primary', stamp: 'bg-primary/15 text-primary', dot: 'bg-primary' },

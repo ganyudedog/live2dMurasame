@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DragEventHandler, KeyboardEvent, ReactNode, Ref, TextareaHTMLAttributes } from 'react';
-import type { ActionCategory } from '../../../../../../../shared/actionCatalog.js';
+import type { ActionCategory } from '../../../../../../../shared/live2d/actionCatalog.js';
 
 interface ChatMessageView {
   id: string;

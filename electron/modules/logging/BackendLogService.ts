@@ -1,5 +1,4 @@
-const levels = ['debug', 'info', 'warn', 'error'] as const;
-type LogLevel = (typeof levels)[number];
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);

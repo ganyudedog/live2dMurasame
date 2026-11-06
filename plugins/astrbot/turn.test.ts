@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest';
+import { normalizeDirectory } from './directory';
+import { composeQqTurn } from './turn';
+
+const directory = normalizeDirectory({
+  ownerUserId: '2904725137',
+  users: {
+    '2904725137': {
+      nickname: '冰霓',
+      defaultAddress: '小霓',
+      sceneAddresses: { 'group:30003': '阿霓' },
+      relationship: '信赖',
+    },
+    '2655314552': { nickname: '南柯一梦', defaultAddress: '', relationship: '' },
+  },
+});
+
+describe('QQ turn composition', () => {
+  it('keeps the mention target id and address distinct from the sender', () => {
+    const turn = composeQqTurn({
+      scenePrompt: '群聊场景',
+      directory,
+      sceneKey: 'group:30003',
+      text: '他是谁',
+      sender: { id: '2655314552', displayName: '南柯一梦' },
+      mentions: [{ id: '2904725137', name: '冰霓' }],
+      quote: { speaker: { id: '10086', displayName: '前人' }, text: '原话', available: true },
+    });
+    expect(turn.text).toContain('他是谁');
+    expect(turn.text).toContain('id=2904725137');
+    expect(turn.text).toContain('名字=冰霓');
+    expect(turn.text).toContain('称呼=阿霓');
+    expect(turn.text).toContain('10086');
+    expect(turn.text).toContain('原话');
+    expect(turn.text).toContain('不是当前发言人');
+    expect(turn.systemPrompt).toContain('群聊场景');
+    expect(turn.systemPrompt).toContain('阶段：认识');
+    expect(turn.systemPrompt).toContain('[对当前发言人的称呼]\n南柯一梦');
+    expect(turn.systemPrompt).not.toContain('2904725137');
+    expect(turn.systemPrompt).not.toContain('阿霓');
+    expect(turn.systemPrompt).not.toContain('原话');
+    expect(turn.systemPrompt).not.toContain('阶段：信赖');
+    expect(turn.systemPrompt).not.toContain('阶段：亲近');
+  });
+
+  it('uses the owner QQ relationship configured in the plugin', () => {
+    const turn = composeQqTurn({
+      scenePrompt: '群聊场景',
+      directory,
+      sceneKey: 'group:30003',
+      text: '我在',
+      sender: { id: '2904725137', displayName: '聊天昵称' },
+    });
+    expect(turn.systemPrompt).toContain('阶段：信赖');
+    expect(turn.systemPrompt).toContain('[对当前发言人的称呼]\n阿霓');
+    expect(turn.systemPrompt).toContain('不会读取桌面角色关系');
+    expect(turn.systemPrompt).not.toContain('阶段：亲近');
+    expect(turn.systemPrompt).not.toContain('主人');
+    expect(turn.text).toBe('我在');
+  });
+
+  it('leaves an unresolved quote out of the text and out of the instructions', () => {
+    const turn = composeQqTurn({
+      scenePrompt: '群聊场景',
+      directory,
+      sceneKey: 'group:30003',
+      text: '再看',
+      sender: { id: '2655314552' },
+      quote: { text: '秘密原文', available: false },
+    });
+    expect(turn.text).toContain('未能取得');
+    expect(turn.text).not.toContain('秘密原文');
+    expect(turn.systemPrompt).not.toContain('秘密原文');
+    expect(turn.systemPrompt).not.toContain('[引用的先前发言]');
+  });
+});

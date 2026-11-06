@@ -1,16 +1,23 @@
-import { normalizeAstrBotSender } from './protocol';
-import type { AiHostApi, ConversationChannel, ConversationResponse, PluginLogger } from './types';
-import type { AstrBotBridgeSettings } from './settings';
-import { normalizeInteractionSettings } from './settings';
-import type { AstrBotInbound, AstrBotOutbound } from './protocol';
-import { isAstrBotQqMessage } from './protocol';
+import { normalizeDirectory, sceneKeyFor, EMPTY_DIRECTORY } from './directory';
+import { ConversationLanes, MessageDedup, dedupKey } from './inbound';
+import { ASTRBOT_PROTOCOL_VERSION, isAstrBotQqMessage, normalizeAstrBotMentions, normalizeAstrBotSender, toConversationQuote } from './protocol';
+import { composeQqTurn } from './turn';
+import type { BridgeRuntimeStatus } from './status';
+import { normalizeInteractionSettings, normalizeWakeWords, type AstrBotBridgeSettings } from './settings';
+import {
+  createDiagnosticId, sanitizeLogDetail,
+  type AiHostApi, type ConversationChannel, type ConversationErrorCode, type ConversationResponse, type PluginLogger, type PluginStorage,
+} from './types';
+import type { AstrBotInbound, AstrBotOutbound, AstrBotQqMessage } from './protocol';
 
 export interface AstrBotBridgeClientOptions {
   readonly url: string; readonly token?: string; readonly clientId: string;
   readonly ai: AiHostApi; readonly logger: PluginLogger; readonly settings: AstrBotBridgeSettings;
+  readonly storage: PluginStorage;
+  readonly onStatus?: (status: BridgeRuntimeStatus) => void;
 }
 
-/** Pet-window WebSocket adapter. It owns one channel whose policy is fixed by each successful handshake. */
+/** Pet-window WebSocket adapter. User-directory edits do not reconnect this socket. */
 export class AstrBotBridgeClient {
   private readonly options: AstrBotBridgeClientOptions;
   private settings: AstrBotBridgeSettings;
@@ -22,15 +29,28 @@ export class AstrBotBridgeClient {
   private stopTasks: (() => void) | null = null;
   private readonly taskSequences = new Map<string, number>();
   private readonly taskScopes = new Map<string, { conversationId: string; senderId: string }>();
-  private reconnectTimer: number | null = null;
-  private heartbeatTimer: number | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectDelayMs = 1000;
   private handshakeAccepted = false;
   private disposed = false;
-  private readonly pending = new Set<string>();
+  /** Bumped on disconnect, reconnect, and dispose. In-flight work captures the value it started with. */
+  private generation = 0;
+  private readonly admissions = new Map<string, Admission>();
+  private readonly dedup = new MessageDedup(256);
+  private readonly lanes = new ConversationLanes();
+  private status: BridgeRuntimeStatus;
 
-  constructor(options: AstrBotBridgeClientOptions) { this.options = options; this.settings = options.settings; this.bridgeUrl = options.url; this.token = options.token ?? ''; }
+  constructor(options: AstrBotBridgeClientOptions) {
+    this.options = options;
+    this.settings = options.settings;
+    this.bridgeUrl = options.url;
+    this.token = options.token ?? '';
+    this.status = { connection: 'idle', protocol: ASTRBOT_PROTOCOL_VERSION, expectedProtocol: ASTRBOT_PROTOCOL_VERSION, updatedAt: Date.now() };
+  }
+
   start(): void { if (!this.disposed) this.connect(); }
+
   updateSettings(settings: AstrBotBridgeSettings): void {
     if (JSON.stringify(settings) === JSON.stringify(this.settings)) return;
     const reconnectRequired = settings.bridgeUrl !== this.settings.bridgeUrl
@@ -42,67 +62,91 @@ export class AstrBotBridgeClient {
       || settings.reasoningEffort !== this.settings.reasoningEffort
       || settings.displayLang !== this.settings.displayLang
       || settings.speakLang !== this.settings.speakLang;
+    const wakeChanged = JSON.stringify(settings.wakeWords) !== JSON.stringify(this.settings.wakeWords);
     this.settings = settings;
     this.bridgeUrl = settings.bridgeUrl;
     this.token = settings.token;
-    if (this.socket && reconnectRequired) this.reconnect('settings changed');
-    else this.connect();
+    if (reconnectRequired) {
+      if (this.socket) this.reconnect('settings changed');
+      else this.connect();
+      return;
+    }
+    if (wakeChanged) this.send({ type: 'config.update', version: ASTRBOT_PROTOCOL_VERSION, wakeWords: settings.wakeWords });
+    if (!this.socket) this.connect();
   }
+
   dispose(): void {
     this.stopTasks?.(); this.stopTasks = null;
     this.disposed = true;
-    if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
-    if (this.heartbeatTimer !== null) window.clearInterval(this.heartbeatTimer);
+    this.releaseAll();
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer);
     this.channel?.dispose(); this.channel = null; this.stopChannel?.(); this.stopChannel = null;
-    this.pending.clear();
     const socket = this.socket; this.socket = null;
     if (socket) { socket.onopen = null; socket.onmessage = null; socket.onerror = null; socket.onclose = null; socket.close(1000, 'plugin disposed'); }
   }
+
   private connect(): void {
     if (this.disposed || this.socket) return;
     let socket: WebSocket;
     try { socket = new WebSocket(this.bridgeUrl); }
-    catch (error) { this.options.logger.error('websocket.create.failed', { error: toErrorMessage(error), url: this.bridgeUrl }); this.scheduleReconnect(); return; }
+    catch (error) {
+      this.options.logger.error('websocket.create.failed', { error: sanitizeLogDetail(error) });
+      this.publish({ connection: 'closed' });
+      this.scheduleReconnect();
+      return;
+    }
     this.socket = socket; this.handshakeAccepted = false;
+    this.publish({ connection: 'connecting' });
     socket.onopen = () => {
       this.reconnectDelayMs = 1000;
-      this.send({ type: 'hello', version: 2, clientId: this.options.clientId, ...(this.token ? { token: this.token } : {}), capabilities: { streaming: true, ttsText: this.settings.speakLang !== '', agent: true }, interaction: normalizeInteractionSettings(this.settings) });
-      this.heartbeatTimer = window.setInterval(() => this.send({ type: 'ping', ts: Date.now() }), 15_000);
+      this.send({
+        type: 'hello', version: ASTRBOT_PROTOCOL_VERSION, clientId: this.options.clientId,
+        ...(this.token ? { token: this.token } : {}),
+        capabilities: { streaming: true, ttsText: this.settings.speakLang !== '', agent: true },
+        interaction: normalizeInteractionSettings(this.settings),
+        wakeWords: this.settings.wakeWords,
+      });
+      this.heartbeatTimer = setInterval(() => this.send({ type: 'ping', ts: Date.now() }), 15_000);
     };
     socket.onmessage = (event) => this.handleMessage(event.data);
-    socket.onerror = () => this.options.logger.warn('websocket.error', { url: this.options.url });
+    socket.onerror = () => this.options.logger.warn('websocket.error', { url: this.bridgeUrl });
     socket.onclose = (event) => {
       if (this.socket !== socket) return;
       this.socket = null; this.handshakeAccepted = false;
+      this.releaseAll();
       this.stopTasks?.(); this.stopTasks = null;
       this.channel?.dispose(); this.channel = null; this.stopChannel?.(); this.stopChannel = null;
-      this.pending.clear();
-      if (this.heartbeatTimer !== null) window.clearInterval(this.heartbeatTimer);
+      if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+      this.publish({ connection: 'closed' });
       this.options.logger.warn('websocket.closed', { code: event.code, reason: event.reason });
       this.scheduleReconnect();
     };
   }
+
   private reconnect(reason: string): void {
     this.stopTasks?.(); this.stopTasks = null;
+    this.releaseAll();
     const socket = this.socket; this.socket = null;
     this.channel?.dispose(); this.channel = null; this.stopChannel?.(); this.stopChannel = null;
-    this.pending.clear();
-    if (this.heartbeatTimer !== null) window.clearInterval(this.heartbeatTimer);
+    if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
     if (socket) { socket.onclose = null; socket.close(1000, reason); }
     this.connect();
   }
+
   private scheduleReconnect(): void {
     if (this.disposed || this.reconnectTimer !== null) return;
     const delay = this.reconnectDelayMs; this.reconnectDelayMs = Math.min(delay * 2, 15_000);
-    this.reconnectTimer = window.setTimeout(() => { this.reconnectTimer = null; this.connect(); }, delay);
+    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect(); }, delay);
   }
+
   private handleMessage(raw: unknown): void {
     if (typeof raw !== 'string') return;
     let message: AstrBotInbound;
     try { message = JSON.parse(raw) as AstrBotInbound; }
-    catch (error) { this.options.logger.warn('message.invalid-json', { error: toErrorMessage(error) }); return; }
+    catch (error) { this.options.logger.warn('message.invalid-json', { error: sanitizeLogDetail(error) }); return; }
     if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
       this.options.logger.warn('message.invalid-shape');
       return;
@@ -111,25 +155,44 @@ export class AstrBotBridgeClient {
     if (message.type === 'hello.ack') {
       const requested = normalizeInteractionSettings(this.settings);
       const selected = message.interaction;
-      if (message.version !== 2 || message.accepted !== true || this.handshakeAccepted
-        || !selected || selected.mode !== requested.mode || selected.maxConcurrent !== requested.maxConcurrent || selected.maxQueued !== requested.maxQueued) {
-        this.options.logger.error('handshake.rejected', { version: message.version });
-        this.socket?.close(1008, 'unsupported bridge protocol');
+      const wakeWords = normalizeWakeWords(message.wakeWords ?? []);
+      const mismatch = message.version !== ASTRBOT_PROTOCOL_VERSION || message.accepted !== true || this.handshakeAccepted
+        || !selected || selected.mode !== requested.mode || selected.maxConcurrent !== requested.maxConcurrent || selected.maxQueued !== requested.maxQueued
+        || JSON.stringify(wakeWords) !== JSON.stringify(this.settings.wakeWords);
+      if (mismatch) {
+        this.options.logger.error('protocol.mismatch', { expected: ASTRBOT_PROTOCOL_VERSION, received: message.version, frame: 'hello.ack' });
+        this.publish({ connection: 'protocol_mismatch' });
+        this.socket?.close(1008, 'protocol mismatch');
         return;
       }
       this.handshakeAccepted = true;
-      this.channel = this.options.ai.openChannel({
-        source: 'astrbot', conversationId: 'astrbot', interaction: normalizeInteractionSettings(this.settings),
+      this.publish({ connection: 'ready' });
+      const generation = this.generation;
+      const channel = this.options.ai.openChannel({
+        source: 'astrbot', conversationId: 'astrbot', interaction: requested,
         model: this.settings.model, reasoningEffort: this.settings.reasoningEffort || undefined,
         displayLang: this.settings.displayLang, speakLang: this.settings.speakLang || null,
       });
-      this.stopChannel = this.channel.onResponse((response) => this.handleAiResponse(response));
-      this.stopTasks = this.channel.onTask?.(({ task, sequence }) => {
+      this.channel = channel;
+      this.stopChannel = channel.onResponse((response) => {
+        if (this.generation !== generation || this.channel !== channel) return;
+        this.handleAiResponse(response);
+      });
+      this.stopTasks = channel.onTask?.(({ task, sequence }) => {
+        if (this.generation !== generation || this.channel !== channel) return;
         if ((this.taskSequences.get(task.id) ?? -1) >= sequence) return;
-        // Keep progress separate from ai.response; a chat may already be done.
         if (this.socket?.readyState !== WebSocket.OPEN) return;
-        this.send({ type: 'agent.task', version: 2, requestId: task.requestId, conversationId: task.conversationId,
-          taskId: task.id, status: task.status, sequence, text: task.error ?? task.summary });
+        const failed = task.status === 'failed' || Boolean(task.error?.trim());
+        const diagnosticId = failed ? createDiagnosticId() : '';
+        if (failed) {
+          this.options.logger.warn('agent.task.failed', { taskId: task.id, requestId: task.requestId, diagnosticId, detail: sanitizeLogDetail(task.error || task.status) });
+          this.noteFailure(task.requestId, 'task_failed', diagnosticId);
+        }
+        this.send({
+          type: 'agent.task', version: ASTRBOT_PROTOCOL_VERSION, requestId: task.requestId, conversationId: task.conversationId,
+          taskId: task.id, status: task.status, sequence, text: failed ? '' : task.summary.trim().slice(0, 240),
+          ...(failed ? { error: { code: 'task_failed' as const, diagnosticId } } : {}),
+        });
         this.taskSequences.set(task.id, sequence);
         if (this.taskSequences.size > 256) this.taskSequences.delete(this.taskSequences.keys().next().value!);
       }) ?? null;
@@ -137,59 +200,241 @@ export class AstrBotBridgeClient {
       return;
     }
     if (message.type === 'ai.cancel') {
-      if (message.version === 2 && this.pending.has(message.requestId)) this.channel?.cancel(message.requestId);
+      if (message.version === ASTRBOT_PROTOCOL_VERSION) this.cancelAdmission(message.requestId);
+      else this.options.logger.error('protocol.mismatch', { expected: ASTRBOT_PROTOCOL_VERSION, received: message.version, frame: 'ai.cancel' });
+      return;
+    }
+    if (message.type === 'qq.message' && message.version !== ASTRBOT_PROTOCOL_VERSION) {
+      this.options.logger.error('protocol.mismatch', { expected: ASTRBOT_PROTOCOL_VERSION, received: message.version, frame: 'qq.message' });
+      this.publish({ connection: 'protocol_mismatch' });
       return;
     }
     if (!this.handshakeAccepted || !isAstrBotQqMessage(message)) return;
-    if (this.pending.has(message.requestId)) { this.sendError(message.requestId, message.conversationId, 'Duplicate request id'); return; }
-    this.pending.add(message.requestId);
-    const sender = normalizeAstrBotSender(message.sender);
-    if (sender) {
-      const scope = { conversationId: message.conversationId, senderId: sender.id };
-      this.taskScopes.set(JSON.stringify(scope), scope);
-      if (this.taskScopes.size > 64) this.taskScopes.delete(this.taskScopes.keys().next().value!);
+    void this.acceptMessage(message);
+  }
+
+  private acceptMessage(message: AstrBotQqMessage): void {
+    const channel = this.channel;
+    if (!channel || !this.handshakeAccepted || this.disposed) {
+      this.sendPublicError(message.requestId, message.conversationId, 'unavailable');
+      return;
     }
-    this.options.logger.info('message.identity', {
-      requestId: message.requestId, conversationId: message.conversationId,
-      senderPresent: Boolean(sender), senderFields: Object.keys(message.sender ?? {}),
-      idType: typeof message.sender?.id, userIdType: typeof message.sender?.user_id,
+    if (this.admissions.has(message.requestId)) {
+      this.sendPublicError(message.requestId, message.conversationId, 'duplicate_request');
+      return;
+    }
+    if (this.admissions.size >= this.admissionBudget()) {
+      this.sendPublicError(message.requestId, message.conversationId, 'queue_full');
+      return;
+    }
+    const key = dedupKey(message.accountId ?? '', message.conversationId, message.messageId ?? '');
+    if (!this.dedup.accept(key)) {
+      this.sendPublicError(message.requestId, message.conversationId, 'duplicate_request');
+      return;
+    }
+    const admission: Admission = {
+      id: message.requestId,
+      conversationId: message.conversationId,
+      generation: this.generation,
+      channel,
+      cancelled: false,
+      submitted: false,
+      settled: false,
+      release: null,
+    };
+    this.admissions.set(admission.id, admission);
+    const serial = this.settings.interactionMode !== 'interrupt';
+    void this.lanes.run(message.conversationId, serial, () => this.executeAdmission(admission, message)).catch((error: unknown) => {
+      this.options.logger.error('message.accept.failed', { error: sanitizeLogDetail(error) });
+      if (this.isCurrent(admission)) this.sendPublicError(message.requestId, message.conversationId, 'generation_failed');
+      this.settle(admission);
     });
-    if (!sender) this.options.logger.warn('message.sender.missing', {
-      requestId: message.requestId, reason: 'Bridge payload has no supported sender id',
-    });
-    const result = this.channel?.sendText({
-      text: message.text, requestId: message.requestId, conversationId: message.conversationId,
-      interactionKey: message.interactionKey,
-      sender,
-      memoryArchive: {
-        platform: 'qq',
-        scope: message.memoryArchive.startsWith('episode/user/') ? 'private' : 'group',
-        id: message.memoryArchive.split('/').at(-1)!,
-      },
-      systemPrompt: this.settings.systemPrompt,
-      displayLang: message.displayLang ?? this.settings.displayLang,
-      speakLang: message.speakLang === undefined ? (this.settings.speakLang || null) : message.speakLang,
-    });
-    if (!result?.accepted) {
-      this.pending.delete(message.requestId);
-      this.sendError(message.requestId, message.conversationId, `AI request rejected: ${result?.reason ?? 'unavailable'}`);
+  }
+
+  private async executeAdmission(admission: Admission, message: AstrBotQqMessage): Promise<void> {
+    try {
+      if (!this.isCurrent(admission)) return;
+      let directory = EMPTY_DIRECTORY;
+      try { directory = normalizeDirectory(await this.options.storage.get('directory', EMPTY_DIRECTORY)); }
+      catch (error) { this.options.logger.error('directory.load.failed', { error: sanitizeLogDetail(error) }); }
+      if (!this.isCurrent(admission)) return;
+      const channel = admission.channel;
+      const sender = normalizeAstrBotSender(message.sender);
+      const sceneKey = sceneKeyFor(message.source, message.memoryArchive);
+      const mentions = normalizeAstrBotMentions(message.mentions, message.accountId);
+      const turn = composeQqTurn({
+        scenePrompt: this.settings.systemPrompt,
+        directory,
+        sceneKey,
+        text: message.text,
+        sender,
+        mentions,
+        quote: toConversationQuote(message),
+      });
+      if (sender) {
+        const scope = { conversationId: message.conversationId, senderId: sender.id };
+        this.taskScopes.set(JSON.stringify(scope), scope);
+        if (this.taskScopes.size > 64) this.taskScopes.delete(this.taskScopes.keys().next().value!);
+        channel.watchTasks?.(scope);
+      } else {
+        this.options.logger.warn('message.sender.missing', { requestId: message.requestId });
+      }
+      if (!this.isCurrent(admission)) return;
+      admission.submitted = true;
+      const done = this.waitTerminal(admission);
+      let result: ReturnType<ConversationChannel['sendText']>;
+      try {
+        result = channel.sendText({
+          text: turn.text,
+          systemPrompt: turn.systemPrompt,
+          requestId: message.requestId,
+          conversationId: message.conversationId,
+          interactionKey: message.interactionKey,
+          sender,
+          memoryArchive: {
+            platform: 'qq',
+            scope: message.memoryArchive.startsWith('episode/user/') ? 'private' : 'group',
+            id: message.memoryArchive.split('/').at(-1)!,
+          },
+          displayLang: message.displayLang ?? this.settings.displayLang,
+          speakLang: message.speakLang === undefined ? (this.settings.speakLang || null) : message.speakLang,
+        });
+      } catch (error) {
+        this.options.logger.error('message.submit.failed', { error: sanitizeLogDetail(error) });
+        if (this.isCurrent(admission)) this.sendPublicError(message.requestId, message.conversationId, 'generation_failed');
+        return;
+      }
+      if (admission.settled || !this.isCurrent(admission)) return;
+      if (!result?.accepted) {
+        this.sendPublicError(message.requestId, message.conversationId, rejectionCode(result?.reason));
+        return;
+      }
+      this.publish({ lastRequestId: message.requestId });
+      await done;
+    } catch (error) {
+      this.options.logger.error('message.submit.failed', { error: sanitizeLogDetail(error) });
+      if (this.isCurrent(admission)) this.sendPublicError(message.requestId, message.conversationId, 'generation_failed');
+    } finally {
+      this.settle(admission);
     }
   }
+
   private handleAiResponse(response: ConversationResponse): void {
-    if (!this.pending.has(response.requestId)) return;
-    this.send({ type: 'ai.response', version: 2, requestId: response.requestId, conversationId: response.conversationId,
-      status: response.status, text: response.text, ...(response.speakText ? { speakText: response.speakText } : {}),
-      ...(response.error ? { error: response.error } : {}) });
-    if (response.status === 'done' || response.status === 'error' || response.status === 'cancelled') this.pending.delete(response.requestId);
+    const admission = this.admissions.get(response.requestId);
+    if (!admission || !this.owns(admission) || !admission.submitted) return;
+    if (response.status === 'streaming') return;
+    if (response.status === 'error') {
+      const diagnosticId = response.diagnosticId && /^diag_[a-z0-9]{8,32}$/.test(response.diagnosticId) ? response.diagnosticId : createDiagnosticId();
+      const code = response.error ?? 'generation_failed';
+      this.noteFailure(response.requestId, code, diagnosticId);
+      this.send({ type: 'ai.response', version: ASTRBOT_PROTOCOL_VERSION, requestId: response.requestId, conversationId: response.conversationId, status: 'error', text: '', error: { code, diagnosticId } });
+      this.settle(admission);
+      return;
+    }
+    if (response.status === 'cancelled') {
+      this.send({ type: 'ai.response', version: ASTRBOT_PROTOCOL_VERSION, requestId: response.requestId, conversationId: response.conversationId, status: 'cancelled', text: '' });
+      this.settle(admission);
+      return;
+    }
+    this.send({
+      type: 'ai.response', version: ASTRBOT_PROTOCOL_VERSION, requestId: response.requestId, conversationId: response.conversationId,
+      status: 'done', text: response.text, ...(response.speakText ? { speakText: response.speakText } : {}),
+    });
+    this.settle(admission);
   }
-  private sendError(requestId: string, conversationId: string, error: string): void {
-    this.send({ type: 'ai.response', version: 2, requestId, conversationId, status: 'error', text: '', error });
+
+  private cancelAdmission(requestId: string): void {
+    const admission = this.admissions.get(requestId);
+    if (!admission || !this.owns(admission)) return;
+    admission.cancelled = true;
+    if (admission.submitted) {
+      admission.channel.cancel(requestId);
+      return;
+    }
+    this.send({
+      type: 'ai.response', version: ASTRBOT_PROTOCOL_VERSION, requestId: admission.id, conversationId: admission.conversationId,
+      status: 'cancelled', text: '',
+    });
+    this.settle(admission);
   }
+
+  private sendPublicError(requestId: string, conversationId: string, code: ConversationErrorCode): void {
+    const diagnosticId = createDiagnosticId();
+    this.noteFailure(requestId, code, diagnosticId);
+    this.send({ type: 'ai.response', version: ASTRBOT_PROTOCOL_VERSION, requestId, conversationId, status: 'error', text: '', error: { code, diagnosticId } });
+  }
+
+  private waitTerminal(admission: Admission): Promise<void> {
+    return new Promise((resolve) => { admission.release = resolve; });
+  }
+
+  /** Drops this admission only. A newer request with the same id keeps its own resolver. */
+  private settle(admission: Admission): void {
+    if (admission.settled) return;
+    admission.settled = true;
+    if (this.admissions.get(admission.id) === admission) this.admissions.delete(admission.id);
+    const release = admission.release;
+    admission.release = null;
+    release?.();
+  }
+
+  private releaseAll(): void {
+    this.generation += 1;
+    const stale = [...this.admissions.values()];
+    this.admissions.clear();
+    for (const admission of stale) this.settle(admission);
+  }
+
+  private admissionBudget(): number {
+    const interaction = normalizeInteractionSettings(this.settings);
+    return interaction.maxConcurrent + interaction.maxQueued;
+  }
+
+  private owns(admission: Admission): boolean {
+    return !admission.settled
+      && !this.disposed
+      && admission.generation === this.generation
+      && this.admissions.get(admission.id) === admission;
+  }
+
+  private isCurrent(admission: Admission): boolean {
+    return this.owns(admission)
+      && !admission.cancelled
+      && this.handshakeAccepted
+      && this.channel === admission.channel;
+  }
+
+  private publish(patch: Partial<BridgeRuntimeStatus>): void {
+    this.status = { ...this.status, ...patch, protocol: ASTRBOT_PROTOCOL_VERSION, expectedProtocol: ASTRBOT_PROTOCOL_VERSION, updatedAt: Date.now() };
+    try { this.options.onStatus?.(this.status); }
+    catch (error) { this.options.logger.error('status.publish.failed', { error: sanitizeLogDetail(error) }); }
+  }
+
+  private noteFailure(requestId: string, code: string, diagnosticId: string): void {
+    this.publish({ lastRequestId: requestId, lastError: { code, diagnosticId, requestId, at: Date.now() } });
+  }
+
   private send(payload: AstrBotOutbound): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
     try { this.socket.send(JSON.stringify(payload)); }
-    catch (error) { this.options.logger.error('message.send.failed', { type: payload.type, error: toErrorMessage(error) }); }
+    catch (error) { this.options.logger.error('message.send.failed', { type: payload.type, error: sanitizeLogDetail(error) }); }
   }
 }
 
-const toErrorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+interface Admission {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly generation: number;
+  readonly channel: ConversationChannel;
+  cancelled: boolean;
+  submitted: boolean;
+  settled: boolean;
+  release: (() => void) | null;
+}
+
+const rejectionCode = (reason: string | undefined): ConversationErrorCode => {
+  if (reason === 'duplicate') return 'duplicate_request';
+  if (reason === 'queue-full') return 'queue_full';
+  if (reason === 'invalid') return 'request_rejected';
+  return 'unavailable';
+};

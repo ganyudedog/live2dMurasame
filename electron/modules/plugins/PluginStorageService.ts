@@ -33,7 +33,9 @@ export class PluginStorageService {
     this.#validateKey(key);
     let serialized: string | undefined;
     try { serialized = JSON.stringify(value); }
-    catch (error: unknown) { throw new TypeError(`Plugin storage value must be JSON serializable: ${errorMessage(error)}`); }
+    catch (error: unknown) {
+      throw new TypeError(`Plugin storage value must be JSON serializable: ${errorMessage(error)}`, { cause: error });
+    }
     if (serialized === undefined) throw new TypeError('Plugin storage value must be JSON serializable');
     const values = this.#read(pluginId);
     values[key] = JSON.parse(serialized) as unknown;

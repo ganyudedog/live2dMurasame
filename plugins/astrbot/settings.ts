@@ -10,12 +10,15 @@ export interface AstrBotBridgeSettings {
   readonly displayLang: 'zh' | 'en' | 'ja' | 'ko';
   /** Enables generation of the speak_text field; audio transport remains a separate capability. */
   readonly speakLang: '' | 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
+  /** Explicit prefixes. Empty means only an @ of this bot starts a reply. */
+  readonly wakeWords: readonly string[];
 }
 
 export const DEFAULT_ASTRBOT_SETTINGS: AstrBotBridgeSettings = {
   bridgeUrl: 'ws://127.0.0.1:6198/ws', token: '', model: '', reasoningEffort: '',
   systemPrompt: '你是 QQ 群聊助手。结合收到的消息和对话上下文，自然、简洁地回复。',
   interactionMode: 'queue', maxConcurrent: 1, maxQueued: 16, displayLang: 'zh', speakLang: '',
+  wakeWords: [],
 };
 
 export const normalizeInteractionSettings = (settings: AstrBotBridgeSettings) => {
@@ -40,7 +43,28 @@ export const normalizeSettings = (value: unknown, defaults = DEFAULT_ASTRBOT_SET
     maxQueued: clamp(Number(raw.maxQueued ?? defaults.maxQueued), 0, 100),
     displayLang: displayLangs.includes(raw.displayLang as typeof displayLangs[number]) ? raw.displayLang as typeof displayLangs[number] : defaults.displayLang,
     speakLang: speakLangs.includes(raw.speakLang as typeof speakLangs[number]) ? raw.speakLang as typeof speakLangs[number] : defaults.speakLang,
+    wakeWords: normalizeWakeWords(raw.wakeWords ?? defaults.wakeWords),
   };
 };
+
+const WAKE_LIMIT = 32;
+
+/** ASCII words dedupe case-insensitively. CJK words keep their exact spelling. */
+export const normalizeWakeWords = (value: unknown): string[] => {
+  const source = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/\r?\n/) : [];
+  const seen = new Set<string>();
+  const words: string[] = [];
+  for (const item of source) {
+    const word = typeof item === 'string' ? item.trim() : '';
+    if (!word || word.length > WAKE_LIMIT || words.length >= WAKE_LIMIT) continue;
+    const key = containsCjk(word) ? word : word.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    words.push(word);
+  }
+  return words;
+};
+
+const containsCjk = (value: string): boolean => /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(value);
 
 const clamp = (value: number, min: number, max: number): number => Number.isFinite(value) ? Math.max(min, Math.min(max, Math.floor(value))) : min;

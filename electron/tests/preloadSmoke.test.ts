@@ -11,6 +11,20 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const smokeScript = path.join(repoRoot, 'electron', 'tests', 'preloadSmoke.mjs');
 const preload = path.join(repoRoot, 'dist-electron', 'preload.mjs');
 
+/** 递归删除临时 userData；Windows 上 electron 退出后句柄可能还没释放，失败重试几次。 */
+const removeUserData = (directory: string): unknown => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true });
+      return null;
+    } catch (error) {
+      if (attempt === 4) return error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+    }
+  }
+  return null;
+};
+
 describe('compiled preload', () => {
   it('exposes CliAPI and snapshot APIs from a hidden window', async () => {
     expect(fs.existsSync(preload), 'run pnpm electron:compile before this smoke test').toBe(true);
@@ -29,6 +43,7 @@ describe('compiled preload', () => {
       PATHEXT: process.env.PATHEXT,
       LIVE2D_PRELOAD_SMOKE_USER_DATA: userData,
     };
+    const cleanup: { error: unknown } = { error: null };
     try {
       const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
         const child = spawn(electronPath, [smokeScript, '--disable-gpu'], {
@@ -73,15 +88,9 @@ describe('compiled preload', () => {
         onLive2denvConfigUpdated: 'function',
       });
     } finally {
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        try {
-          fs.rmSync(userData, { recursive: true, force: true });
-          break;
-        } catch (error) {
-          if (attempt === 4) throw error;
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
-        }
-      }
+      // 清理失败不在 finally 里抛，避免盖掉断言本来的失败原因。
+      cleanup.error = removeUserData(userData);
     }
+    if (cleanup.error) throw cleanup.error;
   }, 60000);
 });

@@ -8,6 +8,7 @@ import type {
 } from '../../types';
 import type { TaskEvent } from '../../../../../../shared/cli/contracts';
 import type { ConversationTaskObserver } from './observeConversationTasks';
+import { classifyConversationError, toPublicError } from '../../publicError';
 
 export interface PluginConversationExecutionContext {
   readonly channelId: string;
@@ -49,7 +50,11 @@ export class ConversationScheduler implements ConversationPool {
 
   private readonly observeTasks?: ConversationTaskObserver;
 
-  constructor(execute: PluginConversationExecutor, maxConcurrent = 4, observeTasks?: ConversationTaskObserver) {
+  constructor(
+    execute: PluginConversationExecutor,
+    maxConcurrent = 4,
+    observeTasks?: ConversationTaskObserver,
+  ) {
     this.execute = execute;
     this.observeTasks = observeTasks;
     this.maxConcurrent = clamp(maxConcurrent, 1, 16);
@@ -57,7 +62,9 @@ export class ConversationScheduler implements ConversationPool {
 
   openChannel(options: ConversationChannelOptions): ConversationChannel {
     if (this.disposed) throw new Error('Conversation host is disposed');
-    const channel = new PluginConversationChannel(options, this.execute, this, () => this.channels.delete(channel), this.observeTasks);
+    const channel = new PluginConversationChannel(
+      options, this.execute, this, () => this.channels.delete(channel), this.observeTasks,
+    );
     this.channels.add(channel);
     return channel;
   }
@@ -166,11 +173,16 @@ class PluginConversationChannel implements ConversationChannel {
     this.conversations.set(requestId, conversationId);
     this.interactionKeys.set(requestId, interactionKey);
     const queuedCount = this.jobs.length + this.scheduled.size - this.active.size;
-    if (this.scheduled.size >= this.maxConcurrent && queuedCount >= this.maxQueued) {
+    const waitingForSlot = this.scheduled.size >= this.maxConcurrent;
+    if (waitingForSlot && queuedCount >= this.maxQueued) {
       this.removeRequest(requestId);
       return { requestId, accepted: false, reason: 'queue-full' };
     }
-    this.jobs.push({ id: requestId, controller, run: () => this.run(requestId, { ...request, requestId, text }, controller) });
+    this.jobs.push({
+      id: requestId,
+      controller,
+      run: () => this.run(requestId, { ...request, requestId, text }, controller),
+    });
     this.pump();
     return {
       requestId,
@@ -237,7 +249,7 @@ class PluginConversationChannel implements ConversationChannel {
   }
 
   private pump(): void {
-    while (!this.disposed && this.active.size < this.maxConcurrent && this.jobs.length) {
+    while (!this.disposed && this.scheduled.size < this.maxConcurrent && this.jobs.length) {
       const job = this.jobs.shift();
       if (!job) return;
       this.scheduled.add(job.id);
@@ -247,18 +259,10 @@ class PluginConversationChannel implements ConversationChannel {
         run: async () => {
           await job.run();
           if (!this.terminal.has(job.id) && !job.controller.signal.aborted) {
-            this.emit(job.id, {
-              text: '',
-              status: 'error',
-              error: 'Conversation executor ended without a terminal response',
-            }, job.controller);
+            this.emit(job.id, publicFailure('executor ended without a terminal response'), job.controller);
           }
         },
-        onError: (error) => this.emit(job.id, {
-          text: '',
-          status: 'error',
-          error: error instanceof Error ? error.message : String(error),
-        }, job.controller),
+        onError: (error) => this.emit(job.id, publicFailure(error), job.controller),
         onComplete: () => {
           this.active.delete(job.id);
           this.scheduled.delete(job.id);
@@ -269,12 +273,16 @@ class PluginConversationChannel implements ConversationChannel {
       if (status === 'disposed') {
         this.scheduled.delete(job.id);
         this.removeRequest(job.id);
-        this.emit(job.id, { text: '', status: 'error', error: 'Conversation host is disposed' }, job.controller);
+        this.emit(job.id, publicFailure('Conversation host is disposed'), job.controller);
       }
     }
   }
 
-  private async run(requestId: string, request: ConversationRequest, controller: AbortController): Promise<void> {
+  private async run(
+    requestId: string,
+    request: ConversationRequest,
+    controller: AbortController,
+  ): Promise<void> {
     if (controller.signal.aborted) return;
     const conversationId = this.conversations.get(requestId) ?? this.options.conversationId;
     await this.execute(this.options, request, {
@@ -334,7 +342,7 @@ const normalizeOptions = (options: ConversationChannelOptions): ConversationChan
     : mode === 'interrupt'
       ? { mode: 'interrupt' as const, maxConcurrent, maxQueued }
       : { mode: 'concurrent' as const, maxConcurrent, maxQueued };
-  return {
+    return {
     ...options,
     source: options.source.trim() || 'plugin',
     conversationId: options.conversationId.trim() || 'conversation',
@@ -344,3 +352,8 @@ const normalizeOptions = (options: ConversationChannelOptions): ConversationChan
 
 const clamp = (value: number, min: number, max: number): number => Number.isFinite(value)
   ? Math.max(min, Math.min(max, Math.floor(value))) : min;
+
+const publicFailure = (error: unknown) => {
+  const mapped = toPublicError(classifyConversationError(error));
+  return { text: '', status: 'error' as const, error: mapped.code, diagnosticId: mapped.diagnosticId };
+};

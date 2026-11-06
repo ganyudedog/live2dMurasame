@@ -1,3 +1,4 @@
+import { sanitizeLogDetail } from './types';
 import type { AstrBotPluginDefinition } from './types';
 import { AstrBotBridgeClient } from './AstrBotBridgeClient';
 import { AstrBotSettingsCard } from './AstrBotSettingsCard';
@@ -5,7 +6,7 @@ import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, type AstrBotBridgeSettings
 
 export const astrBotBridgePlugin: AstrBotPluginDefinition = {
   manifest: {
-    id: 'live2d.astrbot-bridge', name: 'AstrBot QQ Bridge', version: '0.2.0', apiVersion: '1.0.0',
+    id: 'live2d.astrbot-bridge', name: 'AstrBot QQ Bridge', version: '0.3.0', apiVersion: '1.0.0',
     hosts: ['desktop'], permissions: ['ai', 'control-panel.navigation', 'settings.storage'],
     activationEvents: ['onRendererReady'],
   },
@@ -19,13 +20,19 @@ export const astrBotBridgePlugin: AstrBotPluginDefinition = {
     if (!ai) { context.logger.warn('activation.skipped', { reason: 'AI conversation host is unavailable' }); return; }
     const saved = await context.storage.get<AstrBotBridgeSettings>('settings', DEFAULT_ASTRBOT_SETTINGS);
     const settings = normalizeSettings(saved, DEFAULT_ASTRBOT_SETTINGS);
-    const client = new AstrBotBridgeClient({ url: settings.bridgeUrl, token: settings.token, clientId: `live2d-${crypto.randomUUID()}`, ai, logger: context.logger, settings });
+    const client = new AstrBotBridgeClient({
+      url: settings.bridgeUrl, token: settings.token, clientId: `live2d-${crypto.randomUUID()}`, ai, logger: context.logger, settings,
+      storage: context.storage,
+      onStatus: (status) => {
+        void context.storage.set('status', status).catch((error: unknown) => context.logger.error('status.persist.failed', { error: sanitizeLogDetail(error) }));
+      },
+    });
     context.subscriptions.add(() => client.dispose());
     context.subscriptions.add(context.storage.subscribe((key) => {
       if (key !== 'settings') return;
       void context.storage.get<AstrBotBridgeSettings>('settings', DEFAULT_ASTRBOT_SETTINGS)
         .then((next) => client.updateSettings(normalizeSettings(next, DEFAULT_ASTRBOT_SETTINGS)))
-        .catch((error: unknown) => context.logger.error('settings.reload.failed', { error: String(error) }));
+        .catch((error: unknown) => context.logger.error('settings.reload.failed', { error: sanitizeLogDetail(error) }));
     }));
     client.start();
     context.logger.info('activated', { url: settings.bridgeUrl });

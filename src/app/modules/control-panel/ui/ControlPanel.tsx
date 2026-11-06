@@ -175,6 +175,7 @@ const ControlPanel: React.FC = observer(() => {
       {activeTab === 'ai-persona' && (
         <PersonaSettingsPage
           modelConfig={service.modelConfig}
+          modelPath={service.currentModelPath}
           onModelConfigChange={(next) => service.persistModelConfig(next).catch(reportError)}
         />
       )}

@@ -2,7 +2,7 @@ import type { AiHostApi, ConversationChannel, ConversationChannelOptions } from 
 import { ConversationScheduler, type PluginConversationExecutor } from './ConversationScheduler';
 import type { ConversationTaskObserver } from './observeConversationTasks';
 
-/** Single AI capability: conversations and the model catalog. */
+/** Conversations and the model catalog. */
 export class AiHost implements AiHostApi {
   private readonly conversations: ConversationScheduler;
   private readonly readModels: AiHostApi['getModels'];

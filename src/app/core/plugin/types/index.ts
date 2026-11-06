@@ -1,3 +1,11 @@
+export type { ConversationErrorCode } from '../publicError';
+export {
+  classifyConversationError,
+  conversationErrorCodes,
+  createDiagnosticId,
+  sanitizeLogDetail,
+  toPublicError,
+} from '../publicError';
 export type { Disposable, RuntimeLog } from './common';
 export type { TaskEvent, AgentTask } from '../../../../../shared/cli/contracts';
 export type { PluginHostKind, PluginManifest, PluginPermission, PluginWindowKind } from './manifest';

@@ -17,7 +17,7 @@ const asText = (value: unknown): string => typeof value === 'string' ? value.tri
 const RELATION_HEADING = /^##\s*当前关系\s*$/;
 const NEXT_HEADING = /^##\s+\S/;
 export const RELATIONSHIP_STAGES = ['认识', '亲近', '信赖', '亲密', '疏远'] as const;
-export const DEFAULT_RELATIONSHIP_LINE = '阶段：亲近。可以开玩笑，仍用「你」。还不会主动提起恋爱。';
+export const DEFAULT_RELATIONSHIP_LINE = '阶段：亲近。可以开玩笑。还不会主动提起恋爱。';
 
 export const normalizePersona = (value: unknown): Persona => {
   const input = asRecord(value);

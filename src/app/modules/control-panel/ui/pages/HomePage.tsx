@@ -1,6 +1,7 @@
 import ChatPanel from '../components/common/ChatPanel';
 import { AgentCard } from '../components/ai/AgentCard';
 import { useScaleControl } from '../hooks/useScaleControl';
+import { useModelRelationship } from '../hooks/useModelRelationship';
 import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';
 import type { ChatMessage, ModelEntry } from '../../domain/types';
 
@@ -62,6 +63,7 @@ export default function HomePage({
   onChatModelChange: (modelId: string) => void;
 }) {
   const scaleControl = useScaleControl({ scale, onPreview: onScalePreview, onPersist: onScalePersist });
+  const relationship = useModelRelationship(model.path || null);
   // 思考深度只在当前模型确实有档位时出现；空集不是“默认值”，而是接口不接受该参数。
   const efforts = findModelEfforts(llmModels, chatModel);
 
@@ -92,6 +94,11 @@ export default function HomePage({
         />
         <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-base-content/45">
           {scaleControl.label}
+        </span>
+        {/* 关系只读：由对话整理写入记忆，这里只显示当前阶段，不提供修改入口。 */}
+        <span className="shrink-0 rounded-full border border-base-300 px-2.5 py-1 text-[11px] text-base-content/45"
+          title={relationship.view?.line ?? '还没有读取到关系记录'}>
+          关系 <span className="text-base-content/80">{relationship.view?.stage || '未记录'}</span>
         </span>
         <button
           type="button"

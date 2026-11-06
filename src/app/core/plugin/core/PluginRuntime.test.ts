@@ -29,6 +29,9 @@ describe('PluginRuntime', () => {
       expect(Object.getOwnPropertyDescriptor(api, key)).toBeUndefined();
       expect(key in api).toBe(false);
     }
+    expect('getActiveCharacter' in api).toBe(false);
+    expect('readRelationship' in api).toBe(false);
+    expect('subscribeCharacter' in api).toBe(false);
     expect(Object.getPrototypeOf(api)).toBeNull();
     expect(Reflect.ownKeys(api)).not.toContain('internal');
     expect(Reflect.set(api, 'internal', 'changed')).toBe(false);

@@ -1,4 +1,5 @@
 import type { Disposable } from './common';
+import type { ConversationErrorCode } from '../publicError';
 import type { TaskEvent } from '../../../../../shared/cli/contracts';
 
 export type InteractionPolicy =
@@ -15,7 +16,7 @@ export interface ConversationChannelOptions {
   readonly interaction: InteractionPolicy;
   readonly model?: string;
   readonly reasoningEffort?: string;
-  /** Scene instructions supplied by the plugin; the host injects the active character persona. */
+  /** Plugin instructions for this channel. The host adds the character's own persona and the output protocol. */
   readonly systemPrompt?: string;
   readonly displayLang?: DisplayLanguage;
   /** Omit for a text-only response. Supplying a language enables speech text generation. */
@@ -37,6 +38,7 @@ export interface ConversationRequest {
   readonly conversationId?: string;
   /** Requests with the same key supersede each other in interrupt mode. */
   readonly interactionKey?: string;
+  /** Relationship, address, and scene instructions. The host does not add a desktop relationship. */
   readonly systemPrompt?: string;
   readonly displayLang?: DisplayLanguage;
   readonly speakLang?: SpeakLanguage | null;
@@ -52,7 +54,9 @@ export interface ConversationResponse {
   readonly text: string;
   readonly speakText?: string;
   readonly status: ConversationResponseStatus;
-  readonly error?: string | null;
+  /** Stable code. Upstream bodies stay in sanitized local logs. */
+  readonly error?: ConversationErrorCode;
+  readonly diagnosticId?: string;
 }
 
 export interface ConversationRequestResult {

@@ -26,7 +26,11 @@ type HostMethodPolicies = {
   [Host in keyof PluginHostApiMap]: { [Method in keyof PluginHostApiMap[Host]]: HostMethodEffect };
 };
 export const hostMethodEffects = {
-  ai: { openChannel: 'channel', getModels: 'none', subscribe: 'disposable' },
+  ai: {
+    openChannel: 'channel',
+    getModels: 'none',
+    subscribe: 'disposable',
+  },
   live2d: { getAvailableMotions: 'none', playMotion: 'none', interruptMotion: 'none', getModelState: 'none' },
   controlPanel: { getActiveTab: 'none', openTab: 'none' },
   desktopNotifications: { showNotification: 'none' },

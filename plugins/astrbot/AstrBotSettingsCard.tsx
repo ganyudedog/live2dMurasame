@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AiHostApi, AstrBotUiContext } from './types';
-import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, type AstrBotBridgeSettings } from './settings';
+import { AstrBotPeopleSection } from './AstrBotPeopleSection';
+import { AstrBotStatusLine } from './AstrBotStatusLine';
+import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, normalizeWakeWords, type AstrBotBridgeSettings } from './settings';
 
 const MODES: ReadonlyArray<{
   value: AstrBotBridgeSettings['interactionMode'];
   label: string;
   description: string;
 }> = [
-  { value: 'queue', label: '排队', description: '一次只处理一条消息，其余排队等待' },
-  { value: 'concurrent', label: '并发', description: '同时处理多条，超过并发数后排队' },
-  { value: 'interrupt', label: '打断', description: '新消息打断正在生成的那条回复' },
+  { value: 'queue', label: '排队', description: '所有会话共用一条队列，同一会话也不会并行' },
+  { value: 'concurrent', label: '并发', description: '不同会话可以同时生成，同一会话仍按顺序处理' },
+  { value: 'interrupt', label: '打断', description: '同一会话的新消息打断正在生成的回复，其他会话不受影响' },
 ];
 
 const DISPLAY_LANGS = [
@@ -32,7 +34,10 @@ const SPEAK_LANGS = [
 
 const getModelsHost = (context: AstrBotUiContext): AiHostApi | null => {
   const value = context.hostApi.ai;
-  return value && typeof value.getModels === 'function' && typeof value.subscribe === 'function' ? value : null;
+  return value
+    && typeof value.getModels === 'function'
+    && typeof value.subscribe === 'function'
+    ? value : null;
 };
 
 const toMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -64,6 +69,7 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
     token: DEFAULT_ASTRBOT_SETTINGS.token,
   });
   const [promptDraft, setPromptDraft] = useState(DEFAULT_ASTRBOT_SETTINGS.systemPrompt);
+  const [wakeDraft, setWakeDraft] = useState('');
   // 数字项也走草稿：每敲一个字符就落盘会让桌面端反复重连。
   const [numberDraft, setNumberDraft] = useState({
     maxConcurrent: DEFAULT_ASTRBOT_SETTINGS.maxConcurrent,
@@ -93,6 +99,7 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
         setSettings(next);
         setConnectionDraft({ bridgeUrl: next.bridgeUrl, token: next.token });
         setPromptDraft(next.systemPrompt);
+        setWakeDraft(next.wakeWords.join('\n'));
         setNumberDraft({ maxConcurrent: next.maxConcurrent, maxQueued: next.maxQueued });
         setLoaded(true);
       })
@@ -132,6 +139,7 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
   const shownEffort = efforts.includes(settings.reasoningEffort) ? settings.reasoningEffort : (efforts[0] ?? '');
   const mode = MODES.find((item) => item.value === settings.interactionMode) ?? MODES[0];
   const promptDirty = promptDraft !== settings.systemPrompt;
+  const wakeDirty = wakeDraft !== settings.wakeWords.join('\n');
 
   /** 每次改动立即落盘；值没变就不写，避免无意义的重连与日志。 */
   const update = (patch: Partial<AstrBotBridgeSettings>) => {
@@ -169,12 +177,13 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
   return <div className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-[11px] leading-snug text-base-content/40">
-        角色人设由应用自动注入，这里只配置桥接通道与场景说明。
+        角色本人的名字、口吻、示例、边界和补充设定由应用注入。QQ 称呼和关系在下方单独配置，不会自动同步桌面角色。
       </p>
       {saveError
         ? <span role="alert" className="text-[11px] text-error">保存失败：{saveError}</span>
         : saved ? <span role="status" className="text-[11px] text-base-content/45">已保存</span> : null}
     </div>
+    <AstrBotStatusLine storage={context.storage} />
 
     {/* 前两行各三列，第三行两列；都在这里直接输入，不再用只读摘要重复一遍。 */}
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -268,6 +277,17 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
       </Field>
     </div>
 
+    <Field label="唤醒词" hint="一行一个。只有 @ 本机器人，或文本以这里的词开头，才会回复。只引用、@全体成员、@其他人，以及没有这些条件的私聊，都不会触发。保存后同步到已连接的桥，不会重连。ASCII 词区分边界且不区分大小写；中文词按开头匹配。">
+      <textarea className="textarea h-20 w-full resize-y text-xs leading-relaxed" value={wakeDraft}
+        aria-label="唤醒词" placeholder={'例如：\n丛雨\n/ai'}
+        onChange={(event) => setWakeDraft(event.target.value)}
+        onBlur={() => {
+          const wakeWords = normalizeWakeWords(wakeDraft);
+          setWakeDraft(wakeWords.join('\n'));
+          if (wakeDirty) update({ wakeWords });
+        }} />
+    </Field>
+
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-base-content/50">场景说明</span>
@@ -288,5 +308,6 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
         onChange={(event) => setPromptDraft(event.target.value)}
         onBlur={() => update({ systemPrompt: promptDraft })} />
     </div>
+    <AstrBotPeopleSection storage={context.storage} logger={context.logger} />
   </div>;
 }

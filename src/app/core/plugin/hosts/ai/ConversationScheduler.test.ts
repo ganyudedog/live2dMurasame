@@ -117,4 +117,123 @@ describe('ConversationScheduler', () => {
     second.dispose();
     host.dispose();
   });
+
+  it('shares one concurrency limit across conversations', async () => {
+    const started: string[] = [];
+    const host = new ConversationScheduler(async (_options, request, context) => {
+      started.push(request.requestId!);
+      await new Promise<void>((resolve) => context.signal.addEventListener('abort', () => resolve(), { once: true }));
+    });
+    const channel = host.openChannel({
+      source: 'test',
+      conversationId: 'fallback',
+      interaction: { mode: 'concurrent', maxConcurrent: 2, maxQueued: 1 },
+    });
+    expect(channel.sendText({ requestId: 'a1', text: 'a', conversationId: 'group-a' }).accepted).toBe(true);
+    expect(channel.sendText({ requestId: 'a2', text: 'a', conversationId: 'group-a' }).accepted).toBe(true);
+    expect(channel.sendText({ requestId: 'a3', text: 'a', conversationId: 'group-a' }).reason).toBe('queued');
+    expect(channel.sendText({ requestId: 'b1', text: 'b', conversationId: 'group-b' }).reason).toBe('queue-full');
+    expect(started.sort()).toEqual(['a1', 'a2']);
+    channel.dispose();
+    host.dispose();
+  });
+
+  it('does not reserve extra host slots for a channel whose worker is still waiting', async () => {
+    const started: string[] = [];
+    const pending = new Map<string, () => void>();
+    const host = new ConversationScheduler(async (_options, request, context) => {
+      started.push(request.requestId!);
+      await new Promise<void>((resolve) => {
+        pending.set(request.requestId!, () => { context.emit({ text: request.text, status: 'done' }); resolve(); });
+        context.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+    }, 1);
+    const hold = host.openChannel({ ...options('concurrent'), interaction: { mode: 'concurrent', maxConcurrent: 1, maxQueued: 0 } });
+    const one = host.openChannel({ ...options('concurrent'), interaction: { mode: 'concurrent', maxConcurrent: 1, maxQueued: 2 } });
+    const two = host.openChannel({ ...options('concurrent'), interaction: { mode: 'concurrent', maxConcurrent: 1, maxQueued: 2 } });
+    hold.sendText({ requestId: 'hold', text: 'hold' });
+    expect(one.sendText({ requestId: 'a', text: 'a' }).reason).toBe('queued');
+    expect(one.sendText({ requestId: 'b', text: 'b' }).reason).toBe('queued');
+    expect(two.sendText({ requestId: 'c', text: 'c' }).reason).toBe('queued');
+    expect(started).toEqual(['hold']);
+
+    pending.get('hold')?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toEqual(['hold', 'a']);
+    pending.get('a')?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toEqual(['hold', 'a', 'c']);
+    pending.get('c')?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toEqual(['hold', 'a', 'c', 'b']);
+    hold.dispose();
+    one.dispose();
+    two.dispose();
+    host.dispose();
+  });
+
+  it('cancels one queued request without aborting another conversation or channel', async () => {
+    const started: string[] = [];
+    const aborted: string[] = [];
+    const pending = new Map<string, () => void>();
+    const host = new ConversationScheduler(async (_options, request, context) => {
+      started.push(request.requestId!);
+      await new Promise<void>((resolve) => {
+        pending.set(request.requestId!, () => { context.emit({ text: request.text, status: 'done' }); resolve(); });
+        context.signal.addEventListener('abort', () => { aborted.push(request.requestId!); resolve(); }, { once: true });
+      });
+    });
+    const channel = host.openChannel({
+      source: 'test',
+      conversationId: 'fallback',
+      interaction: { mode: 'concurrent', maxConcurrent: 1, maxQueued: 4 },
+    });
+    const cancelled: string[] = [];
+    channel.onResponse((response) => { if (response.status === 'cancelled') cancelled.push(response.requestId); });
+    channel.sendText({ requestId: 'a1', text: 'a', conversationId: 'group-a' });
+    channel.sendText({ requestId: 'a2', text: 'a', conversationId: 'group-a' });
+    channel.sendText({ requestId: 'b1', text: 'b', conversationId: 'group-b' });
+    expect(started).toEqual(['a1']);
+    channel.cancel('a2');
+    expect(cancelled).toEqual(['a2']);
+    expect(aborted).toEqual([]);
+    expect(started).not.toContain('a2');
+    channel.cancel('a1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(aborted).toEqual(['a1']);
+    expect(started).toContain('b1');
+    expect(aborted).not.toContain('b1');
+    channel.dispose();
+    host.dispose();
+
+    const saturated = new ConversationScheduler(async (_options, request, context) => {
+      started.push(request.requestId!);
+      await new Promise<void>((resolve) => {
+        pending.set(request.requestId!, () => { context.emit({ text: request.text, status: 'done' }); resolve(); });
+        context.signal.addEventListener('abort', () => { aborted.push(request.requestId!); resolve(); }, { once: true });
+      });
+    }, 1);
+    const hold = saturated.openChannel({ ...options('concurrent'), interaction: { mode: 'concurrent', maxConcurrent: 1, maxQueued: 0 } });
+    const one = saturated.openChannel({ ...options('concurrent'), interaction: { mode: 'concurrent', maxConcurrent: 1, maxQueued: 1 } });
+    const two = saturated.openChannel({ ...options('concurrent'), interaction: { mode: 'concurrent', maxConcurrent: 1, maxQueued: 1 } });
+    const dropped: string[] = [];
+    one.onResponse((response) => { if (response.status === 'cancelled') dropped.push(response.requestId); });
+    const kept: string[] = [];
+    two.onResponse((response) => { if (response.status === 'cancelled') kept.push(response.requestId); });
+    hold.sendText({ requestId: 'hold', text: 'hold' });
+    expect(one.sendText({ requestId: 'a', text: 'a' }).reason).toBe('queued');
+    expect(two.sendText({ requestId: 'c', text: 'c' }).reason).toBe('queued');
+    one.cancel('a');
+    expect(dropped).toEqual(['a']);
+    expect(kept).toEqual([]);
+    pending.get('hold')?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toContain('c');
+    expect(started).not.toContain('a');
+    expect(aborted).not.toContain('c');
+    hold.dispose();
+    one.dispose();
+    two.dispose();
+    saturated.dispose();
+  });
 });

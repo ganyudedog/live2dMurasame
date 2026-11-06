@@ -13,6 +13,11 @@ import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
 import PersonaSettingsPage from './pages/PersonaSettingsPage';
 import { PluginPanelHost } from '@app/core/plugin/hosts/control-panel/PluginPanelHost';
+import { ChevronRight, Puzzle } from 'lucide-react';
+import { Page } from './components/common/Page';
+import { Button } from './components/common/Button';
+import { StatusDot } from './components/common/Badge';
+import { EmptyState, Notice } from './components/common/Feedback';
 
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);
@@ -47,6 +52,7 @@ const ControlPanel: React.FC = observer(() => {
       activeTab={activeTab}
       onTabChange={service.setActiveTab}
       pluginPages={pluginPages}
+      currentModelName={service.currentModelPath ? service.selectedModel.name : undefined}
       theme={theme}
       onToggleTheme={toggle}
     >
@@ -150,27 +156,45 @@ const ControlPanel: React.FC = observer(() => {
       )}
 
       {activeTab === 'plugins' && (
-        <div className="space-y-4">
-          <h1 className="text-xl font-semibold">插件</h1>
-          <p className="text-sm text-base-content/60">已发现的插件默认加载，可进入各插件页面配置。</p>
-          {pluginRuntime.plugins.size === 0 && <p className="text-sm">暂无插件。</p>}
-          {[...pluginRuntime.plugins.values()].map(({ manifest, state, error }) => (
-            <section key={manifest.id} className="rounded-box border border-base-300 bg-base-100 p-4">
-              <h2 className="font-semibold">{manifest.name}</h2>
-              <p className="text-xs text-base-content/60">{manifest.id} · {manifest.version}</p>
-              <p className="text-sm">{state === 'active' ? '已加载' : state === 'failed' ? '加载失败' : '尚未就绪'}</p>
-              {error && <p className="text-sm text-error">{error}</p>}
-              {pluginRuntime.getControlPanelPages().filter((page) => page.ownerId === manifest.id).map((page) => (
-                <button key={page.tabId} className="btn btn-sm mt-2" onClick={() => service.setActiveTab(page.tabId)}>
-                  {page.contribution.title}
-                </button>
-              ))}
-            </section>
-          ))}
+        <Page title="插件" description="已发现的插件默认加载，可进入各插件页面配置。">
+          {pluginRuntime.plugins.size === 0 && <EmptyState icon={<Puzzle />} title="暂无插件" />}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {[...pluginRuntime.plugins.values()].map(({ manifest, state, error }) => (
+              <section key={manifest.id} className="flex flex-col gap-3 rounded-xl bg-card p-4 shadow-card">
+                <div className="flex items-start gap-3">
+                  <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                    <Puzzle className="size-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-[13px] font-semibold">{manifest.name}</h2>
+                    <p className="truncate font-mono text-[11px] text-muted-foreground">{manifest.id} · {manifest.version}</p>
+                  </div>
+                  <StatusDot tone={state === 'active' ? 'success' : state === 'failed' ? 'danger' : 'warning'}>
+                    {state === 'active' ? '已加载' : state === 'failed' ? '加载失败' : '尚未就绪'}
+                  </StatusDot>
+                </div>
+                {error && <Notice tone="danger">{error}</Notice>}
+                {pluginRuntime.getControlPanelPages().some((page) => page.ownerId === manifest.id) && (
+                  <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+                    {pluginRuntime.getControlPanelPages().filter((page) => page.ownerId === manifest.id).map((page) => (
+                      <Button key={page.tabId} onClick={() => service.setActiveTab(page.tabId)}>
+                        {page.contribution.title}
+                        <ChevronRight />
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
           <PluginPanelHost slot="control-panel" />
-        </div>
+        </Page>
       )}
-      {pluginPages.some(({ tabId }) => tabId === activeTab) && <PluginPanelHost tabId={activeTab} />}
+      {pluginPages.some(({ tabId }) => tabId === activeTab) && (
+        <Page title={pluginPages.find(({ tabId }) => tabId === activeTab)?.title ?? '插件'}>
+          <PluginPanelHost tabId={activeTab} />
+        </Page>
+      )}
 
       {activeTab === 'ai-persona' && (
         <PersonaSettingsPage

@@ -5,15 +5,28 @@ import type { ActionSettingsView, ActionSettingsCallbacks } from '../../modules/
 import { actionMention, activeMention } from '../../modules/action-settings/domain/session';
 import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';
 import type { ActionCategory } from '../../../../../../shared/live2d/actionCatalog.js';
+import {
+  AtSign, Check, Clock, Eraser, ListChecks, LoaderCircle, Pencil, PersonStanding, Play, Square, WandSparkles, X,
+} from 'lucide-react';
+import { Page } from '../components/common/Page';
+import { Button } from '../components/common/Button';
+import { Badge } from '../components/common/Badge';
+import { Input, Textarea } from '../components/common/FormControls';
+import { EmptyState, Notice } from '../components/common/Feedback';
+import { cn } from '../components/common/cn';
 
 const CATEGORY_META: Record<ActionCategory, { label: string; badge: string; stamp: string; dot: string }> = {
-  head: { label: '头部', badge: 'badge-primary', stamp: 'bg-primary/15 text-primary', dot: 'bg-primary' },
-  gaze: { label: '视线', badge: 'badge-info', stamp: 'bg-info/15 text-info', dot: 'bg-info' },
-  blink: { label: '眨眼', badge: 'badge-success', stamp: 'bg-success/15 text-success', dot: 'bg-success' },
-  emotion: { label: '情绪', badge: 'badge-warning', stamp: 'bg-warning/15 text-warning', dot: 'bg-warning' },
-  body: { label: '身体', badge: 'badge-secondary', stamp: 'bg-secondary/15 text-secondary', dot: 'bg-secondary' },
-  other: { label: '其他', badge: 'badge-ghost', stamp: 'bg-base-content/10 text-base-content/70', dot: 'bg-base-content/40' },
+  head: { label: '头部', badge: 'bg-primary/12 text-primary', stamp: 'bg-primary/12 text-primary', dot: 'bg-primary' },
+  gaze: { label: '视线', badge: 'bg-info/12 text-info', stamp: 'bg-info/12 text-info', dot: 'bg-info' },
+  blink: { label: '眨眼', badge: 'bg-success/12 text-success', stamp: 'bg-success/12 text-success', dot: 'bg-success' },
+  emotion: { label: '情绪', badge: 'bg-warning/15 text-warning', stamp: 'bg-warning/15 text-warning', dot: 'bg-warning' },
+  body: { label: '身体', badge: 'bg-accent/12 text-accent', stamp: 'bg-accent/12 text-accent', dot: 'bg-accent' },
+  other: { label: '其他', badge: 'bg-muted text-muted-foreground', stamp: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground/50' },
 };
+
+const DETAILS = 'group/details mt-2 text-xs';
+const SUMMARY = `flex cursor-pointer list-none items-center gap-1 opacity-80 transition-opacity hover:opacity-100
+  before:inline-block before:content-['▸'] before:text-[10px] before:transition-transform group-open/details:before:rotate-90`;
 
 const MIC_STATE_LABEL: Record<PetMicState, string> = {
   off: '语音输入',
@@ -118,18 +131,14 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
     setEditing({ id: action.id, label: action.label, description: action.description ?? '' });
   };
 
-  return <div className="flex h-full min-h-0 flex-col gap-3 p-5">
-    <header className="flex shrink-0 items-start justify-between gap-3">
-      <div className="min-w-0">
-        <h1 className="text-lg font-semibold">动作设置</h1>
-        <p className="mt-0.5 text-xs text-base-content/50">生成动作表后，在对话中微调或增加动作</p>
-      </div>
-      {view.canCancel
-        ? <button type="button" className="btn btn-outline btn-error btn-sm shrink-0" onClick={onCancel}>取消生成 / 调整</button>
-        : <button type="button" className="btn btn-primary btn-sm shrink-0" disabled={view.busy}
-          onClick={() => void onGenerate()}>{view.busy ? '正在提交…' : '重新生成动作表'}</button>}
-    </header>
-    {view.taskNotice && <p role="status" className="shrink-0 text-xs text-base-content/60">{view.taskNotice}</p>}
+  return <Page fill title="动作设置" description="生成动作表后，在对话中微调或增加动作。"
+    actions={view.canCancel
+      ? <Button variant="outline" size="md" className="text-danger" onClick={onCancel}><Square />取消生成 / 调整</Button>
+      : <Button variant="primary" size="md" disabled={view.busy} onClick={() => void onGenerate()}>
+        {view.busy ? <LoaderCircle className="animate-spin" /> : <WandSparkles />}
+        {view.busy ? '正在提交…' : '重新生成动作表'}
+      </Button>}>
+    {view.taskNotice && <Notice tone={view.busy ? 'busy' : 'info'} className="shrink-0">{view.taskNotice}</Notice>}
 
     <ChatPanel fill showHeader={false} title="动作表"
       messages={view.messages} draft={view.draft} busy={view.busy} error={view.error}
@@ -161,27 +170,29 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
         onChange: voice.onToggle,
       }}
       toolbar={<div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-        <button type="button" className="btn btn-outline btn-xs" disabled={view.busy}
-          onClick={() => setListOpen(true)}>动作表查看</button>
-        <button type="button" className="btn btn-outline btn-error btn-xs ml-auto"
-          disabled={view.busy || !view.messages.length} onClick={onClearChat}>清空对话</button>
+        <Button variant="soft" size="xs" disabled={view.busy} onClick={() => setListOpen(true)}>
+          <ListChecks />动作表查看
+          <span className="rounded bg-foreground/8 px-1 text-[10px] tabular-nums">{view.actions.length}</span>
+        </Button>
+        <Button variant="danger" size="xs" className="ml-auto"
+          disabled={view.busy || !view.messages.length} onClick={onClearChat}><Eraser />清空对话</Button>
       </div>}
       suggestions={mention && !view.busy && (
         <div id="action-mention-options" role="listbox" aria-label="选择动作"
-          className="absolute bottom-full z-10 mb-1 max-h-48 w-full overflow-y-auto rounded-box border border-base-content/20 bg-base-100 shadow-xl">
+          className="ui-scroll absolute bottom-full z-10 mb-1.5 max-h-48 w-full overflow-y-auto rounded-xl bg-card p-1 shadow-pop">
           {suggestions.length ? suggestions.map((action, index) => {
             const meta = CATEGORY_META[action.category] ?? CATEGORY_META.other;
             return <button key={action.id} id={`action-option-${action.id}`} type="button" role="option"
               aria-selected={index === selectedChoice}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors
-                ${index === selectedChoice ? 'bg-base-content/10' : ''}`}
+              className={cn('flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors',
+                index === selectedChoice ? 'bg-muted' : 'hover:bg-muted/60')}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => insertText(actionMention(action), true)}>
-              <span className={`size-2 shrink-0 rounded-full ${meta.dot}`} aria-hidden="true" />
+              <span className={cn('size-2 shrink-0 rounded-full', meta.dot)} aria-hidden="true" />
               <span className="truncate">{action.label}</span>
-              <span className="ml-auto shrink-0 text-[11px] text-base-content/40">{meta.label}</span>
+              <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{meta.label}</span>
             </button>;
-          }) : <div className="px-3 py-2 text-xs text-base-content/50">没有匹配动作</div>}
+          }) : <div className="px-3 py-2 text-xs text-muted-foreground">没有匹配动作</div>}
         </div>
       )}
       inputProps={{
@@ -209,9 +220,9 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
       renderMessageError={() => '调整未完成，原动作表已保留。'}
       renderMessageDetails={(message) => <>
         {message.task && (
-          <details className="mt-2 text-xs" open={message.status === 'sending'}>
-            <summary className="cursor-pointer">任务状态 · {message.task.currentVersionId}（最佳 {message.task.bestVersionId}）</summary>
-            <div className="mt-2 space-y-1 rounded-box bg-base-200/60 p-2">
+          <details className={DETAILS} open={message.status === 'sending'}>
+            <summary className={SUMMARY}>任务状态 · {message.task.currentVersionId}（最佳 {message.task.bestVersionId}）</summary>
+            <div className="mt-2 space-y-1 rounded-lg bg-card/70 p-2.5 leading-relaxed">
               <div>任务计划：{message.task.plan.join(' → ')}</div>
               <div>版本：第 {message.task.revision} 版 · 本次调用 {message.task.runCalls}/{message.task.budget.maxCalls} 次（累计 {message.task.calls} 次）· 连续无进展 {message.task.noProgressCount}/{message.task.budget.maxNoProgress} 次</div>
               <div>待处理问题：{message.task.issues.length ? '' : '无'}</div>
@@ -223,22 +234,22 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
             </div>
           </details>
         )}
-        {message.reasoningSummary && <details className="mt-2 text-xs">
-          <summary className="cursor-pointer">查看本步模型摘要</summary>
-          <div className="mt-2 whitespace-pre-wrap">{message.reasoningSummary}</div>
+        {message.reasoningSummary && <details className={DETAILS}>
+          <summary className={SUMMARY}>查看本步模型摘要</summary>
+          <div className="mt-2 whitespace-pre-wrap rounded-lg bg-card/70 p-2.5 leading-relaxed">{message.reasoningSummary}</div>
         </details>}
         {!!message.reviewNotes?.length && (
-          <details className="mt-2 text-xs">
-            <summary className="cursor-pointer">查看 {message.reviewNotes.length} 条表现建议（未做视觉验收）</summary>
-            <div className="mt-2 space-y-3">
+          <details className={DETAILS}>
+            <summary className={SUMMARY}>查看 {message.reviewNotes.length} 条表现建议（未做视觉验收）</summary>
+            <div className="mt-2 space-y-2">
               {message.reviewNotes.map((note, index) => (
-                <div key={`${note.actionId}:${index}`}>
-                  <button type="button" className="btn btn-xs btn-ghost"
+                <div key={`${note.actionId}:${index}`} className="space-y-1 rounded-lg bg-card/70 p-2.5">
+                  <Button variant="soft" size="xs"
                     disabled={view.busy || !view.actions.some((action) => action.id === note.actionId)}
                     onClick={() => insertText(`${actionMention({ id: note.actionId, label: labelOf(note.actionId) })} 请结合预览反馈评估这条建议：${note.message}`)}>
-                    {labelOf(note.actionId)} · 引用到微调
-                  </button>
-                  <div className="whitespace-pre-wrap wrap-break-word">{note.message}</div>
+                    <AtSign />{labelOf(note.actionId)} · 引用到微调
+                  </Button>
+                  <div className="whitespace-pre-wrap wrap-break-word leading-relaxed">{note.message}</div>
                 </div>
               ))}
             </div>
@@ -249,9 +260,9 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
     <Modal open={listOpen} title="动作表" onClose={() => setListOpen(false)}
       description={`${view.actions.length} 个动作 · 点击卡片即可在模型中播放`}>
       {!view.actions.length
-        ? <div className="rounded-box border border-dashed border-base-300 px-4 py-8 text-center text-xs text-base-content/50">
-          暂无动作，可以重新生成，或在对话里说“新增一个动作”。
-        </div>
+        ? <EmptyState icon={<PersonStanding />} title="暂无动作">
+          可以重新生成，或在对话里说“新增一个动作”。
+        </EmptyState>
         : <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
           {view.actions.map((action) => {
             const meta = CATEGORY_META[action.category] ?? CATEGORY_META.other;
@@ -261,10 +272,10 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
               ref={(node) => { if (isEditing) cardRef.current = node; }}
               onClick={() => play(action.id)}
               title={isEditing ? undefined : '点击播放'}
-              className={`flex flex-col gap-2 rounded-box border border-base-300 bg-base-100 p-4 transition-colors
-                ${isEditing ? '' : 'cursor-pointer hover:bg-base-200/60'}
-                ${view.selectedId === action.id ? 'ring-2 ring-primary' : ''}
-                ${view.busy ? 'pointer-events-none opacity-60' : ''}`}>
+              className={cn('group flex flex-col gap-2.5 rounded-xl border border-border bg-card p-4 transition-all',
+                !isEditing && 'cursor-pointer hover:border-primary/40 hover:shadow-pop',
+                view.selectedId === action.id && 'border-primary/60 ring-2 ring-primary/25',
+                view.busy && 'pointer-events-none opacity-60')}>
               {isEditing && editing
                 ? <form className="flex flex-col gap-2" onClick={(event) => event.stopPropagation()}
                   onSubmit={async (event) => {
@@ -276,58 +287,65 @@ const MotionSettingsPage = ({ view, voice, onGenerate, onCancel, onSelect, onDra
                   }}>
                   {/* 名称在原来的位置就地变成输入框，不换行、不下降。 */}
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
                       <span aria-hidden="true"
-                        className={`inline-flex size-7 shrink-0 items-center justify-center rounded-field text-xs font-medium ${meta.stamp}`}>
+                        className={cn('inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold', meta.stamp)}>
                         {meta.label.slice(0, 1)}
                       </span>
-                      <input className="input input-xs w-full font-medium" required aria-label="动作名称"
+                      <Input size="xs" className="h-7 font-medium" required aria-label="动作名称"
                         placeholder="动作名称" value={editing.label}
                         onChange={(event) => setEditing({ ...editing, label: event.target.value })} />
                     </div>
-                    <span className={`badge badge-sm shrink-0 ${meta.badge}`}>{meta.label}</span>
+                    <Badge className={meta.badge}>{meta.label}</Badge>
                   </div>
                   <fieldset disabled={view.busy} className="flex flex-col gap-2">
-                    <textarea className="textarea min-h-20 max-h-40 w-full resize-none overflow-y-auto
-                      field-sizing-content text-xs leading-relaxed" aria-label="动作描述"
+                    <Textarea className="min-h-20 max-h-40 resize-none overflow-y-auto field-sizing-content"
+                      aria-label="动作描述"
                       placeholder="描述实际动作及适用情绪，帮助模型正确选择" value={editing.description}
                       onChange={(event) => setEditing({ ...editing, description: event.target.value })} />
-                    <div className="flex justify-end gap-2">
-                      <button type="button" className="btn btn-ghost btn-xs" onClick={() => setEditing(null)}>取消</button>
-                      <button type="submit" className="btn btn-primary btn-xs" disabled={!editing.label.trim()}>保存</button>
+                    <div className="flex justify-end gap-1.5">
+                      <Button variant="ghost" size="xs" onClick={() => setEditing(null)}>取消</Button>
+                      <Button type="submit" variant="primary" size="xs" disabled={!editing.label.trim()}><Check />保存</Button>
                     </div>
                   </fieldset>
                 </form>
                 : <>
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-2.5">
                       <span aria-hidden="true"
-                        className={`inline-flex size-7 shrink-0 items-center justify-center rounded-field text-xs font-medium ${meta.stamp}`}>
+                        className={cn('inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold', meta.stamp)}>
                         {meta.label.slice(0, 1)}
                       </span>
-                      <div className="truncate text-sm font-medium">{action.label}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-[13px] font-semibold">{action.label}</div>
+                        <div className={cn('flex items-center gap-1 text-[11px] tabular-nums',
+                          playing ? 'text-primary' : 'text-muted-foreground')}>
+                          {playing ? <><LoaderCircle aria-hidden="true" className="size-3 animate-spin" />播放中…</>
+                            : <><Clock aria-hidden="true" className="size-3" />{(action.durationMs / 1000).toFixed(2)}s</>}
+                        </div>
+                      </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
-                      <span className={`badge badge-sm ${meta.badge}`}>{meta.label}</span>
-                      <button type="button" className="btn btn-ghost btn-xs"
+                      <Badge className={meta.badge}>{meta.label}</Badge>
+                      <Button variant="ghost" size="icon-xs" className="hover:text-danger"
                         aria-label={`删除 ${action.label}`} title="删除"
-                        onClick={(event) => { event.stopPropagation(); void onDelete(action.id); }}>✕</button>
+                        onClick={(event) => { event.stopPropagation(); void onDelete(action.id); }}><X /></Button>
                     </div>
                   </div>
-                  <p className="line-clamp-2 min-h-8 text-xs text-base-content/60">{action.description || '暂无描述'}</p>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`text-[11px] tabular-nums ${playing ? 'text-primary' : 'text-base-content/45'}`}>
-                      {playing ? '播放中…' : `${(action.durationMs / 1000).toFixed(2)}s`}
+                  <p className="line-clamp-2 min-h-8 text-xs leading-relaxed text-muted-foreground">{action.description || '暂无描述'}</p>
+                  <div className="flex items-center justify-between gap-2 border-t border-border pt-2.5">
+                    <span className="flex items-center gap-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                      <Play aria-hidden="true" className="size-3" />点击播放
                     </span>
-                    <button type="button" className="btn btn-outline btn-xs"
-                      onClick={(event) => { event.stopPropagation(); startEditing(action); }}>编辑</button>
+                    <Button variant="ghost" size="xs"
+                      onClick={(event) => { event.stopPropagation(); startEditing(action); }}><Pencil />编辑</Button>
                   </div>
                 </>}
             </div>;
           })}
         </div>}
     </Modal>
-  </div>;
+  </Page>;
 };
 
 export default MotionSettingsPage;

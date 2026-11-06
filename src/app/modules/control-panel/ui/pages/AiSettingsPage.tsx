@@ -1,4 +1,8 @@
 import { useState } from 'react';
+import { AudioLines, Eye, EyeOff, Languages, Link, MessageSquare, Mic } from 'lucide-react';
+import { Page } from '../components/common/Page';
+import { SegmentedTabs } from '../components/common/SegmentedTabs';
+import { Input, Select } from '../components/common/FormControls';
 import TTSSettingsPage from './TTSSettingsPage';
 import AsrSettingsPage from './AsrSettingsPage';
 import { SubtitleSettings } from '../components/subtitle/SubtitleSettingsCard';
@@ -12,22 +16,12 @@ import { listRemoteModels, type RemoteModel } from '@app/modules/ai/modules/llm/
 import type { ModelConfig, AsrConfig } from '../../domain/types';
 
 const CAPABILITIES = [
-  { key: 'text', label: '文字 AI' },
-  { key: 'asr', label: '语音识别' },
-  { key: 'tts', label: '语音合成' },
+  { key: 'text', label: '文字 AI', icon: <MessageSquare /> },
+  { key: 'asr', label: '语音识别', icon: <Mic /> },
+  { key: 'tts', label: '语音合成', icon: <AudioLines /> },
 ] as const;
 
 type Capability = typeof CAPABILITIES[number]['key'];
-
-/** 密码框右侧的眼睛，样式与原生控件一致：无边框、只有图标。 */
-function EyeIcon({ off = false }: { off?: boolean }) {
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}
-    strokeLinecap="round" strokeLinejoin="round" className="size-4" aria-hidden="true">
-    <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" />
-    <circle cx="12" cy="12" r="2.6" />
-    {off && <path d="M4 4l16 16" />}
-  </svg>;
-}
 
 interface InterfacePatch {
   apiBaseUrl: string;
@@ -190,54 +184,32 @@ export default function AiSettingsPage({
   };
 
   return (
-    <div className="space-y-4 p-4">
-      <div>
-        <h1 className="text-lg font-semibold">AI 设置</h1>
-        <p className="mt-1 text-xs text-base-content/60">
-          文字对话、语音识别和语音合成各自独立配置，修改后立即生效。
-        </p>
-      </div>
-
-      <section className="rounded-box border border-base-300 bg-base-100">
-        <div className="flex items-center justify-between gap-3 border-b border-base-300 px-3 py-2.5">
-          <span className="text-sm font-medium">模型能力</span>
-        </div>
-        <div role="tablist" className="flex items-stretch gap-1 p-1.5">
-          {CAPABILITIES.map((item) => {
-            const active = tab === item.key;
-            return <button key={item.key} type="button" role="tab" aria-selected={active}
-              onClick={() => setTab(item.key)}
-              className={`flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-field px-3 py-2 text-left
-                transition-all duration-150 active:scale-95
-                ${active ? 'bg-primary/10 text-primary' : 'text-base-content/60 hover:bg-base-content/5 hover:text-base-content/80'}`}>
-              <span className="truncate text-sm font-medium">{item.label}</span>
-              <span className="w-full truncate text-[11px] opacity-70">{status[item.key]}</span>
-            </button>;
-          })}
-        </div>
-      </section>
+    <Page title="AI 设置" description="文字对话、语音识别和语音合成各自独立配置，修改后立即生效。">
+      <SegmentedTabs label="模型能力" value={tab} onChange={setTab}
+        items={CAPABILITIES.map((item) => ({ ...item, caption: status[item.key] }))} />
 
       {tab === 'text' && <>
-        <AgentCard settings />
-        <SettingsCard title="接口" description="OpenAI 兼容接口；模型清单、对话与记忆整理都走同一套凭据。">
-          <Field label="Base URL" hint="自建或代理地址；留空则使用服务默认地址">
-            <input className="input input-sm w-full" value={apiBaseUrl} placeholder="https://api.example.com/v1"
-              onChange={(event) => onChange({ apiBaseUrl: event.target.value, apiKey, displayLang })} />
-          </Field>
-          <Field label="API Key" hint="免鉴权的本地接口可以留空">
-            <div className="relative">
-              <input className="input input-sm w-full pr-9" type={revealKey ? 'text' : 'password'}
-                value={apiKey} placeholder="sk-..." autoComplete="off" spellCheck={false}
-                onChange={(event) => onChange({ apiBaseUrl, apiKey: event.target.value, displayLang })} />
-              <button type="button" title={revealKey ? '隐藏' : '显示'}
-                aria-label={revealKey ? '隐藏 API Key' : '显示 API Key'}
-                onClick={() => setRevealKey((value) => !value)}
-                className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-field
-                  text-base-content/40 transition-colors hover:text-base-content/80">
-                <EyeIcon off={revealKey} />
-              </button>
-            </div>
-          </Field>
+        <SettingsCard title="接口" icon={<Link />} description="OpenAI 兼容接口；模型清单、对话与记忆整理都走同一套凭据。">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field label="Base URL" hint="自建或代理地址；留空则使用服务默认地址">
+              <Input className="font-mono" value={apiBaseUrl} placeholder="https://api.example.com/v1"
+                onChange={(event) => onChange({ apiBaseUrl: event.target.value, apiKey, displayLang })} />
+            </Field>
+            <Field label="API Key" hint="免鉴权的本地接口可以留空">
+              <div className="relative">
+                <Input className="pr-9 font-mono" type={revealKey ? 'text' : 'password'}
+                  value={apiKey} placeholder="sk-..." autoComplete="off" spellCheck={false}
+                  onChange={(event) => onChange({ apiBaseUrl, apiKey: event.target.value, displayLang })} />
+                <button type="button" title={revealKey ? '隐藏' : '显示'}
+                  aria-label={revealKey ? '隐藏 API Key' : '显示 API Key'}
+                  onClick={() => setRevealKey((value) => !value)}
+                  className="absolute inset-y-0 right-0 flex w-9 cursor-pointer items-center justify-center rounded-r-lg
+                    text-muted-foreground/70 transition-colors hover:text-foreground">
+                  {revealKey ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}
+                </button>
+              </div>
+            </Field>
+          </div>
         </SettingsCard>
 
         <ModelRegistryCard
@@ -261,17 +233,19 @@ export default function AiSettingsPage({
           onChange={onMemoryChange}
         />
 
-        <SettingsCard title="生成与显示" description="思考深度由每个模型自己检测，只能从它支持的档位里选。">
-          <Field label="展示语言">
-            <select className="select select-sm w-full" value={displayLang}
+        <SettingsCard title="生成与显示" icon={<Languages />} description="思考深度由每个模型自己检测，只能从它支持的档位里选。">
+          <Field label="展示语言" className="md:max-w-xs">
+            <Select value={displayLang}
               onChange={(event) => onChange({ apiBaseUrl, apiKey, displayLang: event.target.value as 'zh' | 'en' | 'ja' | 'ko' })}>
               <option value="zh">中文</option>
               <option value="en">English</option>
               <option value="ja">日本語</option>
               <option value="ko">한국어</option>
-            </select>
+            </Select>
           </Field>
         </SettingsCard>
+
+        <AgentCard settings />
       </>}
 
       {tab === 'asr' && <>
@@ -286,6 +260,6 @@ export default function AiSettingsPage({
           onPickPath={onPickPath}
         />
       )}
-    </div>
+    </Page>
   );
 }

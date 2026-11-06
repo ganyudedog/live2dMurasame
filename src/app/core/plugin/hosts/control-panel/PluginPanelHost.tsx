@@ -22,8 +22,9 @@ export const PluginPanelHost = observer(({ slot, tabId }: { slot?: string; tabId
           </PluginErrorBoundary>
         );
         return (
-          <section key={`${ownerId}/${contribution.id}`} className="rounded-box border border-base-300 bg-base-100 p-4">
-            <h2 className="mb-3 text-lg font-semibold">{contribution.title}</h2>
+          <section key={`${ownerId}/${contribution.id}`} className="rounded-xl bg-card p-4 shadow-card">
+            {/* 独立页面的标题已经在页头里，卡片内不再重复。 */}
+            {!page && <h2 className="mb-3 text-[13px] font-semibold">{contribution.title}</h2>}
             {content}
           </section>
         );
@@ -46,8 +47,8 @@ class PluginErrorBoundary extends Component<{ title: string; children: ReactNode
   render(): ReactNode {
     if (this.state.error) {
       return (
-        <div className="alert alert-error">
-          <span>{this.props.title} 加载失败：{this.state.error.message}</span>
+        <div role="alert" className="rounded-lg bg-danger/10 px-3 py-2.5 text-xs text-danger">
+          {this.props.title} 加载失败：{this.state.error.message}
         </div>
       );
     }

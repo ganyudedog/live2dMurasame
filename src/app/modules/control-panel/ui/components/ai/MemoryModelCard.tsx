@@ -1,4 +1,7 @@
+import { Brain } from 'lucide-react';
 import { Field, SettingsCard } from '../common/SettingsSection';
+import { Select } from '../common/FormControls';
+import { Notice } from '../common/Feedback';
 import { effortOptionList } from './effortOptions';
 
 /**
@@ -20,20 +23,21 @@ export function MemoryModelCard({
   const efforts = selected?.efforts ?? [];
   return <SettingsCard
     title="记忆整理"
+    icon={<Brain />}
     description="对话结束后由后台调用，归纳长期记忆。只有这一步需要固定模型，所以保存在后端配置里。"
   >
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <Field label="记忆整理模型">
-        <select className="select select-sm w-full" value={memoryModel}
+        <Select className="font-mono" value={memoryModel}
           onChange={(event) => onChange({ memoryModel: event.target.value })}>
           <option value="">不整理（不调用模型）</option>
           {models.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}
-        </select>
+        </Select>
       </Field>
       <Field label="思考深度" hint={selected
         ? (efforts.length ? '只列出该模型检测到的档位；默认取第一档' : '该模型不接受思考深度，请求里不会带这个参数')
         : '先选择记忆整理模型'}>
-        <select className="select select-sm w-full" value={efforts.length ? (memoryEffort || efforts[0]) : ''}
+        <Select className="font-mono" value={efforts.length ? (memoryEffort || efforts[0]) : ''}
           disabled={!efforts.length}
           onChange={(event) => onChange({ memoryReasoningEffort: event.target.value as PetReasoningEffort })}>
           {efforts.length
@@ -41,11 +45,11 @@ export function MemoryModelCard({
               <option key={option.value} value={option.value}>{option.label}</option>
             ))
             : <option value="">—</option>}
-        </select>
+        </Select>
       </Field>
     </div>
     {!memoryModel && (
-      <p className="text-[11px] text-error">未选择记忆整理模型，后台不会长期记忆。</p>
+      <Notice tone="warning">未选择记忆整理模型，后台不会长期记忆。</Notice>
     )}
   </SettingsCard>;
 }

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FileMusic, FolderOpen, Server, SlidersHorizontal } from 'lucide-react';
 import type { ModelConfig } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
+import { Field, SettingsCard } from '../components/common/SettingsSection';
+import { Input, Select, Textarea } from '../components/common/FormControls';
+import { Button } from '../components/common/Button';
+import { Switch } from '../components/common/Switch';
 
 type TtsUiDraft = ModelConfig['tts'];
 
@@ -23,6 +28,14 @@ const DEFAULT_SLIDER_STEPS: SliderStepState = {
   topP: 0.01,
   temperature: 0.01,
 };
+
+const SLIDER_FIELDS: ReadonlyArray<{ key: SliderKey; label: string }> = [
+  { key: 'speedFactor', label: '语言速度' },
+  { key: 'fragmentInterval', label: '片段间隔' },
+  { key: 'topK', label: 'topK' },
+  { key: 'topP', label: 'topP' },
+  { key: 'temperature', label: 'temperature' },
+];
 
 const buildSliderState = (draft: TtsUiDraft): SliderState => ({
   speedFactor: draft.speedFactor,
@@ -86,6 +99,20 @@ const isSameTtsDraft = (left: TtsUiDraft, right: TtsUiDraft) => {
     && left.temperature === right.temperature
   );
 };
+
+/** 路径输入 + 右侧选择文件按钮，两者拼成一个整体控件。 */
+function PathInput({ value, placeholder, onChange, onPick }: {
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+  onPick: () => void;
+}) {
+  return <div className="flex min-w-0">
+    <Input className="rounded-r-none font-mono" value={value} placeholder={placeholder}
+      onChange={(event) => onChange(event.target.value)} />
+    <Button className="h-8 rounded-l-none border-l-0" onClick={onPick}><FolderOpen />选择文件</Button>
+  </div>;
+}
 
 export default function TTSSettingsPage({
   modelConfig,
@@ -204,307 +231,107 @@ export default function TTSSettingsPage({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-box border border-base-300 bg-base-100 p-3 space-y-3">
-        <header className="flex items-center justify-between gap-2">
-          <div className="text-sm font-medium">合成服务</div>
-          <label className="flex cursor-pointer items-center gap-2">
-            <span className="text-xs text-base-content/55">启用 TTS</span>
-            <input
-              type="checkbox"
-              className="toggle toggle-sm"
-              checked={draft.enabled}
-              onChange={(e) => ttsDraft.commit({ ...draft, enabled: e.target.checked })}
-            />
-          </label>
-        </header>
+      <SettingsCard title="合成服务" icon={<Server />}
+        actions={<label className="flex cursor-pointer items-center gap-2">
+          <span className="text-xs text-muted-foreground">启用 TTS</span>
+          <Switch checked={draft.enabled} aria-label="启用 TTS"
+            onCheckedChange={(enabled) => ttsDraft.commit({ ...draft, enabled })} />
+        </label>}>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field label="Provider">
+            <Input value="gpt-sovits" disabled />
+          </Field>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-base-content/55">Provider</span>
-            </div>
-            <input type="text" className="input input-sm w-full" value="gpt-sovits" disabled />
-          </label>
+          <Field label="服务地址">
+            <Input className="font-mono" value={draft.baseUrl} placeholder="http://127.0.0.1:9880"
+              onChange={(e) => ttsDraft.commit({ ...draft, baseUrl: e.target.value })} />
+          </Field>
 
-          <label className="flex flex-col gap-1">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-base-content/55">服务地址</span>
-            </div>
-            <input
-              type="text"
-              className="input input-sm w-full"
-              value={draft.baseUrl}
-              placeholder="http://127.0.0.1:9880"
-              onChange={(e) => ttsDraft.commit({ ...draft, baseUrl: e.target.value })}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-base-content/55">文本语言</span>
-            </div>
-            <select
-              className="select select-sm w-full"
-              value={draft.textLang}
-              onChange={(e) => ttsDraft.commit({ ...draft, textLang: e.target.value as TtsUiDraft['textLang'] })}
-            >
+          <Field label="文本语言">
+            <Select value={draft.textLang}
+              onChange={(e) => ttsDraft.commit({ ...draft, textLang: e.target.value as TtsUiDraft['textLang'] })}>
               {LANG_OPTIONS.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
-            </select>
-          </label>
+            </Select>
+          </Field>
 
-          <label className="flex flex-col gap-1">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-base-content/55">参考语言</span>
-            </div>
-            <select
-              className="select select-sm w-full"
-              value={draft.promptLang}
-              onChange={(e) => ttsDraft.commit({ ...draft, promptLang: e.target.value as TtsUiDraft['promptLang'] })}
-            >
+          <Field label="参考语言">
+            <Select value={draft.promptLang}
+              onChange={(e) => ttsDraft.commit({ ...draft, promptLang: e.target.value as TtsUiDraft['promptLang'] })}>
               {LANG_OPTIONS.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
-            </select>
-          </label>
+            </Select>
+          </Field>
 
-          <label className="flex flex-col gap-1">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-base-content/55">文本切分</span>
-            </div>
-            <select
-              className="select select-sm w-full"
-              value={draft.textSplitMode}
-              onChange={(e) => ttsDraft.commit({ ...draft, textSplitMode: e.target.value as TtsUiDraft['textSplitMode'] })}
-            >
+          <Field label="文本切分">
+            <Select value={draft.textSplitMode}
+              onChange={(e) => ttsDraft.commit({ ...draft, textSplitMode: e.target.value as TtsUiDraft['textSplitMode'] })}>
               {SPLIT_OPTIONS.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
-            </select>
-          </label>
-
+            </Select>
+          </Field>
         </div>
+      </SettingsCard>
 
-      </section>
-
-      <section className="rounded-box border border-base-300 bg-base-100 p-3 space-y-3">
-        <header className="text-sm font-medium">数值参数</header>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="text-xs text-base-content/55 truncate">语言速度</span>
-              <div className="w-full">
-                <input
-                  type="number"
-                  className="input input-xs w-full text-right tabular-nums"
-                  min={SLIDER_LIMITS.speedFactor.min}
-                  max={SLIDER_LIMITS.speedFactor.max}
-                  step={DEFAULT_SLIDER_STEPS.speedFactor}
-                  value={sliderState.speedFactor}
-                  onChange={(e) => updateSliderValue('speedFactor', e.target.value, sliderState.speedFactor)}
-                  onBlur={() => flushSliderPatch(true)}
-                />
-              </div>
-            </div>
-            <input
-              type="range"
-              className="range range-sm w-full mt-1"
-              min={SLIDER_LIMITS.speedFactor.min}
-              max={SLIDER_LIMITS.speedFactor.max}
-              step={DEFAULT_SLIDER_STEPS.speedFactor}
-              value={sliderState.speedFactor}
-              onChange={(e) => updateSliderValue('speedFactor', e.target.value, sliderState.speedFactor)}
-              onPointerUp={() => flushSliderPatch(true)}
-              onBlur={() => flushSliderPatch(true)}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="text-xs text-base-content/55 truncate">片段间隔</span>
-              <div className="w-full">
-                <input
-                  type="number"
-                  className="input input-xs w-full text-right tabular-nums"
-                  min={SLIDER_LIMITS.fragmentInterval.min}
-                  max={SLIDER_LIMITS.fragmentInterval.max}
-                  step={DEFAULT_SLIDER_STEPS.fragmentInterval}
-                  value={sliderState.fragmentInterval}
-                  onChange={(e) => updateSliderValue('fragmentInterval', e.target.value, sliderState.fragmentInterval)}
-                  onBlur={() => flushSliderPatch(true)}
-                />
-              </div>
-            </div>
-            <input
-              type="range"
-              className="range range-sm w-full mt-1"
-              min={SLIDER_LIMITS.fragmentInterval.min}
-              max={SLIDER_LIMITS.fragmentInterval.max}
-              step={DEFAULT_SLIDER_STEPS.fragmentInterval}
-              value={sliderState.fragmentInterval}
-              onChange={(e) => updateSliderValue('fragmentInterval', e.target.value, sliderState.fragmentInterval)}
-              onPointerUp={() => flushSliderPatch(true)}
-              onBlur={() => flushSliderPatch(true)}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="text-xs text-base-content/55 truncate">topK</span>
-              <div className="w-full">
-                <input
-                  type="number"
-                  className="input input-xs w-full text-right tabular-nums"
-                  min={SLIDER_LIMITS.topK.min}
-                  max={SLIDER_LIMITS.topK.max}
-                  step={DEFAULT_SLIDER_STEPS.topK}
-                  value={Math.round(sliderState.topK)}
-                  onChange={(e) => updateSliderValue('topK', e.target.value, sliderState.topK)}
-                  onBlur={() => flushSliderPatch(true)}
-                />
-              </div>
-            </div>
-            <input
-              type="range"
-              className="range range-sm w-full mt-1"
-              min={SLIDER_LIMITS.topK.min}
-              max={SLIDER_LIMITS.topK.max}
-              step={DEFAULT_SLIDER_STEPS.topK}
-              value={sliderState.topK}
-              onChange={(e) => updateSliderValue('topK', e.target.value, sliderState.topK)}
-              onPointerUp={() => flushSliderPatch(true)}
-              onBlur={() => flushSliderPatch(true)}
-            />
-
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="text-xs text-base-content/55 truncate">topP</span>
-              <div className="w-full">
-                <input
-                  type="number"
-                  className="input input-xs w-full text-right tabular-nums"
-                  min={SLIDER_LIMITS.topP.min}
-                  max={SLIDER_LIMITS.topP.max}
-                  step={DEFAULT_SLIDER_STEPS.topP}
-                  value={sliderState.topP}
-                  onChange={(e) => updateSliderValue('topP', e.target.value, sliderState.topP)}
-                  onBlur={() => flushSliderPatch(true)}
-                />
-              </div>
-            </div>
-            <input
-              type="range"
-              className="range range-sm w-full mt-1"
-              min={SLIDER_LIMITS.topP.min}
-              max={SLIDER_LIMITS.topP.max}
-              step={DEFAULT_SLIDER_STEPS.topP}
-              value={sliderState.topP}
-              onChange={(e) => updateSliderValue('topP', e.target.value, sliderState.topP)}
-              onPointerUp={() => flushSliderPatch(true)}
-              onBlur={() => flushSliderPatch(true)}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <div className="w-full grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-2 pb-1">
-              <span className="text-xs text-base-content/55 truncate">temperature</span>
-              <div className="w-full">
-                <input
-                  type="number"
-                  className="input input-xs w-full text-right tabular-nums"
-                  min={SLIDER_LIMITS.temperature.min}
-                  max={SLIDER_LIMITS.temperature.max}
-                  step={DEFAULT_SLIDER_STEPS.temperature}
-                  value={sliderState.temperature}
-                  onChange={(e) => updateSliderValue('temperature', e.target.value, sliderState.temperature)}
-                  onBlur={() => flushSliderPatch(true)}
-                />
-              </div>
-            </div>
-            <input
-              type="range"
-              className="range range-sm w-full mt-1"
-              min={SLIDER_LIMITS.temperature.min}
-              max={SLIDER_LIMITS.temperature.max}
-              step={DEFAULT_SLIDER_STEPS.temperature}
-              value={sliderState.temperature}
-              onChange={(e) => updateSliderValue('temperature', e.target.value, sliderState.temperature)}
-              onPointerUp={() => flushSliderPatch(true)}
-              onBlur={() => flushSliderPatch(true)}
-            />
-          </label>
+      <SettingsCard title="数值参数" icon={<SlidersHorizontal />}>
+        <div className="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2">
+          {SLIDER_FIELDS.map(({ key, label }) => {
+            const limits = SLIDER_LIMITS[key];
+            const value = sliderState[key];
+            return <label key={key} className="flex flex-col gap-2">
+              <span className="flex items-center justify-between gap-2">
+                <span className="truncate text-xs font-medium text-foreground/80">{label}</span>
+                <Input type="number" size="xs" className="w-20 text-right font-mono"
+                  min={limits.min} max={limits.max} step={DEFAULT_SLIDER_STEPS[key]}
+                  value={limits.integer ? Math.round(value) : value}
+                  onChange={(e) => updateSliderValue(key, e.target.value, value)}
+                  onBlur={() => flushSliderPatch(true)} />
+              </span>
+              <input type="range" className="ui-range w-full"
+                min={limits.min} max={limits.max} step={DEFAULT_SLIDER_STEPS[key]}
+                value={value}
+                onChange={(e) => updateSliderValue(key, e.target.value, value)}
+                onPointerUp={() => flushSliderPatch(true)}
+                onBlur={() => flushSliderPatch(true)} />
+              <span className="flex justify-between font-mono text-[10px] text-muted-foreground/70">
+                <span>{limits.min}</span>
+                <span>{limits.max}</span>
+              </span>
+            </label>;
+          })}
         </div>
-      </section>
+      </SettingsCard>
 
-      <section className="rounded-box border border-base-300 bg-base-100 p-3 space-y-3">
-        <header className="text-sm font-medium">路径与参考音频</header>
+      <SettingsCard title="路径与参考音频" icon={<FileMusic />}>
+        <Field label="GPT 权重路径">
+          <PathInput value={draft.gptWeightsPath} placeholder="GPT_weights_v2Pro/xxx.ckpt"
+            onChange={(value) => ttsDraft.commit({ ...draft, gptWeightsPath: value })}
+            onPick={() => pickPath('gpt')} />
+        </Field>
 
-        <div className="space-y-3">
-          <label className="flex flex-col gap-1">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-base-content/55">GPT 权重路径</span>
-            </div>
-            <div className="join w-full">
-              <input
-                type="text"
-                className="input input-sm join-item w-full"
-                value={draft.gptWeightsPath}
-                placeholder="GPT_weights_v2Pro/xxx.ckpt"
-                onChange={(e) => ttsDraft.commit({ ...draft, gptWeightsPath: e.target.value })}
-              />
-              <button type="button" className="btn btn-sm join-item" onClick={() => pickPath('gpt')}>选择文件</button>
-            </div>
-          </label>
+        <Field label="SoVITS 权重路径">
+          <PathInput value={draft.sovitsWeightsPath} placeholder="SoVITS_weights_v2Pro/xxx.pth"
+            onChange={(value) => ttsDraft.commit({ ...draft, sovitsWeightsPath: value })}
+            onPick={() => pickPath('sovits')} />
+        </Field>
 
-          <label className="flex flex-col gap-1">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-base-content/55">SoVITS 权重路径</span>
-            </div>
-            <div className="join w-full">
-              <input
-                type="text"
-                className="input input-sm join-item w-full"
-                value={draft.sovitsWeightsPath}
-                placeholder="SoVITS_weights_v2Pro/xxx.pth"
-                onChange={(e) => ttsDraft.commit({ ...draft, sovitsWeightsPath: e.target.value })}
-              />
-              <button type="button" className="btn btn-sm join-item" onClick={() => pickPath('sovits')}>选择文件</button>
-            </div>
-          </label>
+        <Field label="参考音频路径">
+          <PathInput value={draft.refAudioPath} placeholder="assets/ref.wav"
+            onChange={(value) => ttsDraft.commit({ ...draft, refAudioPath: value })}
+            onPick={() => pickPath('ref')} />
+        </Field>
 
-          <label className="flex flex-col gap-1">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-base-content/55">参考音频路径</span>
-            </div>
-            <div className="join w-full">
-              <input
-                type="text"
-                className="input input-sm join-item w-full"
-                value={draft.refAudioPath}
-                placeholder="assets/ref.wav"
-                onChange={(e) => ttsDraft.commit({ ...draft, refAudioPath: e.target.value })}
-              />
-              <button type="button" className="btn btn-sm join-item" onClick={() => pickPath('ref')}>选择文件</button>
-            </div>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-base-content/55">参考音频文本</span>
-            {/* 宽度固定、不可拖拽拉伸；高度随内容在 min/max 之间自适应，超出后内部滚动 */}
-            <textarea
-              className="textarea textarea-sm min-h-20 max-h-40 w-full resize-none overflow-y-auto field-sizing-content"
-              value={draft.refAudioText}
-              placeholder="输入参考音频对应文本"
-              onChange={(e) => ttsDraft.commit({ ...draft, refAudioText: e.target.value })}
-            />
-          </label>
-        </div>
-
-      </section>
+        <Field label="参考音频文本">
+          {/* 宽度固定、不可拖拽拉伸；高度随内容在 min/max 之间自适应，超出后内部滚动 */}
+          <Textarea className="min-h-20 max-h-40 resize-none overflow-y-auto field-sizing-content"
+            value={draft.refAudioText}
+            placeholder="输入参考音频对应文本"
+            onChange={(e) => ttsDraft.commit({ ...draft, refAudioText: e.target.value })} />
+        </Field>
+      </SettingsCard>
     </div>
   );
 }

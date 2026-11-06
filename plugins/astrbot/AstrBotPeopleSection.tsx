@@ -4,6 +4,7 @@ import {
   type BridgeDirectory, type RelationshipStageName,
 } from './directory';
 import { sanitizeLogDetail, type PluginLogger, type PluginStorage } from './types';
+import { BUTTON, GHOST_BUTTON, GHOST_BUTTON_XS, HINT, INPUT, LABEL, SELECT } from './styles';
 
 export function AstrBotPeopleSection({ storage, logger }: { storage: PluginStorage; logger: PluginLogger }) {
   const [directory, setDirectory] = useState<BridgeDirectory>(EMPTY_DIRECTORY);
@@ -33,7 +34,7 @@ export function AstrBotPeopleSection({ storage, logger }: { storage: PluginStora
     void storage.set('directory', normalized).catch((error: unknown) => logger.error('directory.save.failed', { error: sanitizeLogDetail(error) }));
   };
 
-  if (!loaded) return <p className="text-[11px] text-base-content/40">正在读取 QQ 用户…</p>;
+  if (!loaded) return <p className={HINT}>正在读取 QQ 用户…</p>;
   return <PeopleEditor
     directory={directory}
     query={query}
@@ -93,16 +94,16 @@ function OwnerQQField({ ownerUserId, onOwner }: { ownerUserId: string; onOwner: 
     setInvalid(false);
     if (next !== ownerUserId) onOwner(next);
   };
-  return <label className="flex max-w-sm flex-col gap-1 text-[11px] text-base-content/50">
+  return <label className={`flex max-w-sm flex-col gap-1.5 ${LABEL}`}>
     主人 QQ
     <span className="flex items-center gap-2">
-      <input className="input input-sm w-full font-mono text-xs" value={draft}
+      <input className={`${INPUT} w-full font-mono`} value={draft}
         inputMode="numeric" aria-label="主人 QQ" placeholder="留空表示不绑定" aria-invalid={invalid}
         onChange={(event) => { setDraft(event.target.value); setInvalid(false); }}
         onKeyDown={(event) => { if (event.key === 'Enter') save(); }} />
-      <button type="button" className="btn btn-sm" aria-label="保存主人 QQ" onClick={save}>保存</button>
+      <button type="button" className={BUTTON} aria-label="保存主人 QQ" onClick={save}>保存</button>
     </span>
-    {invalid ? <span role="alert" className="text-warning">QQ 号为 5 到 20 位数字且不能以 0 开头，这次没有保存。</span> : null}
+    {invalid ? <span role="alert" className="text-[11px] font-normal text-warning">QQ 号为 5 到 20 位数字且不能以 0 开头，这次没有保存。</span> : null}
   </label>;
 }
 
@@ -144,50 +145,52 @@ export function PeopleEditor({
   const selected = directory.users[selectedId];
   const legacy = selected?.legacyRelationships ? Object.keys(selected.legacyRelationships) : [];
   const relationshipUnset = legacy.length > 0 && !selected?.relationship;
-  return <section className="flex flex-col gap-3 border-t border-base-300 pt-3">
+  return <section className="flex flex-col gap-4 border-t border-border pt-4">
     <div>
-      <h3 className="text-sm font-medium">QQ 用户</h3>
-      <p className="mt-1 text-[11px] leading-snug text-base-content/40">
+      <h3 className="text-[13px] font-semibold">QQ 用户</h3>
+      <p className={`mt-1 ${HINT}`}>
         主人 QQ 只能在这里绑定，不会从聊天记录推断。每个人的 QQ 关系（包括主人）和称呼都在本插件里单独配置，不会自动同步桌面角色的关系。没有单独设置关系时按认识。称呼顺序：这个场景的称呼、个人默认称呼、昵称。
       </p>
     </div>
     <OwnerQQField key={directory.ownerUserId} ownerUserId={directory.ownerUserId} onOwner={onOwner} />
     <div className="flex flex-wrap items-end gap-2">
-      <label className="flex min-w-40 flex-1 flex-col gap-1 text-[11px] text-base-content/50">
+      <label className={`flex min-w-40 flex-1 flex-col gap-1.5 ${LABEL}`}>
         搜索
-        <input className="input input-sm w-full text-xs" value={query} aria-label="搜索 QQ 用户" placeholder="QQ 号或昵称"
+        <input className={`${INPUT} w-full font-normal`} value={query} aria-label="搜索 QQ 用户" placeholder="QQ 号或昵称"
           onChange={(event) => onQuery(event.target.value)} />
       </label>
-      <label className="flex w-40 flex-col gap-1 text-[11px] text-base-content/50">
+      <label className={`flex w-40 flex-col gap-1.5 ${LABEL}`}>
         添加 QQ
-        <input className="input input-sm w-full font-mono text-xs" value={draftId} inputMode="numeric" aria-label="添加 QQ"
+        <input className={`${INPUT} w-full font-mono font-normal`} value={draftId} inputMode="numeric" aria-label="添加 QQ"
           onChange={(event) => onDraftId(event.target.value.trim())}
           onKeyDown={(event) => { if (event.key === 'Enter') onAdd(); }} />
       </label>
-      <button type="button" className="btn btn-sm" onClick={onAdd}>添加</button>
+      <button type="button" className={BUTTON} onClick={onAdd}>添加</button>
     </div>
-    <div className="flex flex-col gap-1">
-      {users.length === 0 ? <p className="text-[11px] text-base-content/40">还没有手动添加的用户。</p> : users.map((user) => (
-        <button key={user.userId} type="button" className={`btn btn-sm justify-start ${user.userId === selectedId ? 'btn-active' : 'btn-ghost'}`}
+    <div className="flex flex-col gap-0.5 rounded-lg border border-border p-1">
+      {users.length === 0 ? <p className={`px-2 py-3 text-center ${HINT}`}>还没有手动添加的用户。</p> : users.map((user) => (
+        <button key={user.userId} type="button"
+          className={`flex h-8 cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-xs transition-colors ${user.userId === selectedId
+            ? 'bg-primary/10 font-medium text-primary' : 'text-foreground/80 hover:bg-muted'}`}
           onClick={() => onSelect(user.userId)}>
           {user.userId}{user.nickname ? ` · ${user.nickname}` : ''}{user.userId === directory.ownerUserId ? ' · 主人' : ''}
         </button>
       ))}
     </div>
-    {selected ? <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <label className="flex flex-col gap-1 text-[11px] text-base-content/50">
+    {selected ? <div className="grid grid-cols-1 gap-4 rounded-lg bg-muted/50 p-3 sm:grid-cols-2">
+      <label className={`flex flex-col gap-1.5 ${LABEL}`}>
         昵称
-        <input className="input input-sm w-full text-xs" value={selected.nickname} aria-label="昵称"
+        <input className={`${INPUT} w-full font-normal`} value={selected.nickname} aria-label="昵称"
           onChange={(event) => onNickname(selected.userId, event.target.value)} />
       </label>
-      <label className="flex flex-col gap-1 text-[11px] text-base-content/50">
+      <label className={`flex flex-col gap-1.5 ${LABEL}`}>
         默认称呼
-        <input className="input input-sm w-full text-xs" value={selected.defaultAddress} aria-label="默认称呼"
+        <input className={`${INPUT} w-full font-normal`} value={selected.defaultAddress} aria-label="默认称呼"
           onChange={(event) => onDefaultAddress(selected.userId, event.target.value)} />
       </label>
-      <label className="flex flex-col gap-1 text-[11px] text-base-content/50">
+      <label className={`flex flex-col gap-1.5 ${LABEL}`}>
         QQ 关系
-        <select className="select select-sm w-full" aria-label="关系阶段"
+        <select className={`${SELECT} w-full font-normal`} aria-label="关系阶段"
           value={relationshipUnset ? '' : (selected.relationship || '认识')}
           onChange={(event) => {
             const stage = event.target.value;
@@ -197,29 +200,29 @@ export function PeopleEditor({
           {relationshipUnset ? <option value="">未选择</option> : null}
           {RELATIONSHIP_STAGE_NAMES.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
         </select>
-        <span>在本插件单独配置，不会跟随桌面角色。</span>
-        {legacy.length > 0 ? <span role="status">旧的按角色关系阶段不一致，已保留但不会自动选用，也不会同步桌面。</span> : null}
+        <span className={`font-normal ${HINT}`}>在本插件单独配置，不会跟随桌面角色。</span>
+        {legacy.length > 0 ? <span role="status" className="text-[11px] font-normal text-warning">旧的按角色关系阶段不一致，已保留但不会自动选用，也不会同步桌面。</span> : null}
       </label>
       <div className="flex flex-col gap-2 sm:col-span-2">
-        <span className="text-[11px] text-base-content/50">场景称呼</span>
+        <span className={LABEL}>场景称呼</span>
         {Object.entries(selected.sceneAddresses).map(([key, address]) => (
-          <div key={key} className="flex items-center gap-2 text-xs">
-            <span className="font-mono">{key}</span>
+          <div key={key} className="flex items-center gap-2 rounded-md bg-card px-2.5 py-1.5 text-xs shadow-card">
+            <span className="font-mono text-muted-foreground">{key}</span>
             <span>{address}</span>
-            <button type="button" className="btn btn-ghost btn-xs" onClick={() => onRemoveScene(selected.userId, key)}>删除</button>
+            <button type="button" className={`ml-auto ${GHOST_BUTTON_XS} hover:text-danger`} onClick={() => onRemoveScene(selected.userId, key)}>删除</button>
           </div>
         ))}
         <div className="flex flex-wrap items-center gap-2">
-          <select className="select select-sm" aria-label="场景类型" value={sceneKind} onChange={(event) => onSceneKind(event.target.value as 'private' | 'group')}>
+          <select className={SELECT} aria-label="场景类型" value={sceneKind} onChange={(event) => onSceneKind(event.target.value as 'private' | 'group')}>
             <option value="group">群</option>
             <option value="private">私聊</option>
           </select>
-          {sceneKind === 'group' ? <input className="input input-sm w-32 font-mono text-xs" aria-label="群号" value={sceneId} onChange={(event) => onSceneId(event.target.value)} /> : null}
-          <input className="input input-sm w-40 text-xs" aria-label="场景称呼" value={sceneAddress} onChange={(event) => onSceneAddress(event.target.value)} />
-          <button type="button" className="btn btn-sm" onClick={() => onAddScene(selected.userId)}>添加场景</button>
+          {sceneKind === 'group' ? <input className={`${INPUT} w-32 font-mono`} aria-label="群号" placeholder="群号" value={sceneId} onChange={(event) => onSceneId(event.target.value)} /> : null}
+          <input className={`${INPUT} w-40`} aria-label="场景称呼" placeholder="场景称呼" value={sceneAddress} onChange={(event) => onSceneAddress(event.target.value)} />
+          <button type="button" className={BUTTON} onClick={() => onAddScene(selected.userId)}>添加场景</button>
         </div>
       </div>
-      <button type="button" className="btn btn-ghost btn-sm justify-self-start" onClick={() => onDelete(selected.userId)}>删除这个用户</button>
+      <button type="button" className={`${GHOST_BUTTON} justify-self-start text-danger hover:text-danger`} onClick={() => onDelete(selected.userId)}>删除这个用户</button>
     </div> : null}
   </section>;
 }

@@ -1,5 +1,8 @@
 import type { GlobalUiSettings } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
+import { Monitor, MousePointer2 } from 'lucide-react';
+import { Page } from '../components/common/Page';
+import { SettingsCard, SwitchRow } from '../components/common/SettingsSection';
 
 export default function ModelParamsPage({
   globalSettings,
@@ -30,73 +33,25 @@ export default function ModelParamsPage({
   });
 
   return (
-    <div className="p-4 space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">参数设置</h1>
-        <p className="text-xs text-base-content/60">模型的全局行为参数</p>
-      </div>
-
-      <section className="rounded-box border border-base-300 bg-base-100 p-4 space-y-4">
-        <header>
-          <div className="text-sm font-medium">显示与交互</div>
-        </header>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className="label cursor-pointer justify-between border border-base-300 rounded-box px-3 py-2">
-            <span className="label-text text-sm">忽略鼠标</span>
-            <input
-              type="checkbox"
-              className="toggle toggle-sm"
-              checked={ignoreMouse.draft}
-              onChange={(e) => ignoreMouse.commit(e.target.checked)}
-            />
-          </label>
-
-          <label className="label cursor-pointer justify-between border border-base-300 rounded-box px-3 py-2">
-            <span className="label-text text-sm">悬浮显示输入框</span>
-            <input
-              type="checkbox"
-              className="toggle toggle-sm"
-              checked={showDragHandleOnHover.draft}
-              onChange={(e) => showDragHandleOnHover.commit(e.target.checked)}
-            />
-          </label>
-
-          <label className="label cursor-pointer justify-between border border-base-300 rounded-box px-3 py-2">
-            <span className="label-text text-sm">开机自启动</span>
-            <input
-              type="checkbox"
-              className="toggle toggle-sm"
-              checked={autoLaunch.draft}
-              onChange={(e) => autoLaunch.commit(e.target.checked)}
-            />
-          </label>
-
-          <label className="label cursor-pointer justify-between border border-base-300 rounded-box px-3 py-2">
-            <span className="label-text text-sm">强制跟随</span>
-            <input
-              type="checkbox"
-              className="toggle toggle-sm"
-              checked={forcedFollow.draft}
-              onChange={(e) => forcedFollow.commit(e.target.checked)}
-            />
-          </label>
-
-          <label className="label cursor-pointer justify-between border border-base-300 rounded-box px-3 py-2">
-            <span className="label-text text-sm">调试模式</span>
-            <input
-              type="checkbox"
-              className="toggle toggle-sm"
-              checked={debugModeEnabled.draft}
-              onChange={(e) => debugModeEnabled.commit(e.target.checked)}
-            />
-          </label>
+    <Page title="参数设置" description="桌面角色的全局行为参数，修改后立即生效。">
+      <SettingsCard title="显示与交互" icon={<MousePointer2 />} description="这些设置会影响模型在桌面上的显示与交互行为。">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <SwitchRow label="忽略鼠标" hint="模型不再响应鼠标，点击会穿透到下面的窗口"
+            checked={ignoreMouse.draft} onChange={ignoreMouse.commit} />
+          <SwitchRow label="悬浮显示输入框" hint="鼠标停在模型上时显示输入框"
+            checked={showDragHandleOnHover.draft} onChange={showDragHandleOnHover.commit} />
+          <SwitchRow label="强制跟随" checked={forcedFollow.draft} onChange={forcedFollow.commit} />
         </div>
+      </SettingsCard>
 
-        <div className="text-xs text-base-content/60">
-          说明：这些设置会影响模型的显示与交互行为。
+      <SettingsCard title="系统" icon={<Monitor />}>
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          <SwitchRow label="开机自启动" hint="登录系统后自动启动桌面角色"
+            checked={autoLaunch.draft} onChange={autoLaunch.commit} />
+          <SwitchRow label="调试模式" hint="在模型上叠加布局与点击区域的调试遮罩"
+            checked={debugModeEnabled.draft} onChange={debugModeEnabled.commit} />
         </div>
-      </section>
-    </div>
+      </SettingsCard>
+    </Page>
   );
 }

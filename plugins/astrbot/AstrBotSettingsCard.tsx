@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { AiHostApi, AstrBotUiContext } from './types';
 import { AstrBotPeopleSection } from './AstrBotPeopleSection';
 import { AstrBotStatusLine } from './AstrBotStatusLine';
+import { GHOST_BUTTON_XS, HINT, INPUT, LABEL, SELECT, TEXTAREA } from './styles';
 import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, normalizeWakeWords, type AstrBotBridgeSettings } from './settings';
 
 const MODES: ReadonlyArray<{
@@ -49,10 +50,10 @@ function Field({ label, hint, tone = 'muted', children }: {
   tone?: 'muted' | 'warn';
   children: ReactNode;
 }) {
-  return <div className="flex min-w-0 flex-col gap-1">
-    <span className="text-[11px] text-base-content/50">{label}</span>
+  return <div className="flex min-w-0 flex-col gap-1.5">
+    <span className={LABEL}>{label}</span>
     {children}
-    {hint ? <span className={`text-[11px] leading-snug ${tone === 'warn' ? 'text-warning' : 'text-base-content/40'}`}>{hint}</span> : null}
+    {hint ? <span className={tone === 'warn' ? 'text-[11px] leading-snug text-warning' : HINT}>{hint}</span> : null}
   </div>;
 }
 
@@ -171,24 +172,24 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
     update({ maxConcurrent: numberDraft.maxConcurrent, maxQueued: numberDraft.maxQueued });
   };
 
-  if (!modelsHost) return <p className="text-sm text-error">模型目录服务不可用，无法读取可用模型。</p>;
-  if (!loaded) return <p className="text-sm text-base-content/60">正在读取插件配置…</p>;
+  if (!modelsHost) return <p className="text-sm text-danger">模型目录服务不可用，无法读取可用模型。</p>;
+  if (!loaded) return <p className="text-sm text-muted-foreground">正在读取插件配置…</p>;
 
-  return <div className="flex flex-col gap-3">
+  return <div className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="text-[11px] leading-snug text-base-content/40">
+      <p className={HINT}>
         角色本人的名字、口吻、示例、边界和补充设定由应用注入。QQ 称呼和关系在下方单独配置，不会自动同步桌面角色。
       </p>
       {saveError
-        ? <span role="alert" className="text-[11px] text-error">保存失败：{saveError}</span>
-        : saved ? <span role="status" className="text-[11px] text-base-content/45">已保存</span> : null}
+        ? <span role="alert" className="text-[11px] text-danger">保存失败：{saveError}</span>
+        : saved ? <span role="status" className="text-[11px] text-success">已保存</span> : null}
     </div>
     <AstrBotStatusLine storage={context.storage} />
 
     {/* 前两行各三列，第三行两列；都在这里直接输入，不再用只读摘要重复一遍。 */}
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <Field label="桥接地址">
-        <input className="input input-sm w-full font-mono text-xs" value={connectionDraft.bridgeUrl}
+        <input className={`${INPUT} w-full font-mono`} value={connectionDraft.bridgeUrl}
           spellCheck={false} placeholder="ws://127.0.0.1:6198/ws"
           onChange={(event) => setConnectionDraft((current) => ({ ...current, bridgeUrl: event.target.value }))}
           onBlur={commitConnection}
@@ -197,7 +198,7 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
 
       <Field label="访问令牌">
         <div className="relative">
-          <input className="input input-sm w-full pr-9 font-mono text-xs" value={connectionDraft.token}
+          <input className={`${INPUT} w-full pr-9 font-mono`} value={connectionDraft.token}
             type={revealToken ? 'text' : 'password'} autoComplete="off" spellCheck={false} placeholder="可留空"
             onChange={(event) => setConnectionDraft((current) => ({ ...current, token: event.target.value }))}
             onBlur={commitConnection}
@@ -205,8 +206,8 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
           <button type="button" title={revealToken ? '隐藏' : '显示'}
             aria-label={revealToken ? '隐藏访问令牌' : '显示访问令牌'}
             onClick={() => setRevealToken((value) => !value)}
-            className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-field
-              text-base-content/40 transition-colors hover:text-base-content/80">
+            className="absolute inset-y-0 right-0 flex w-9 cursor-pointer items-center justify-center rounded-r-lg
+              text-muted-foreground/70 transition-colors hover:text-foreground">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}
               strokeLinecap="round" strokeLinejoin="round" className="size-4" aria-hidden="true">
               <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" />
@@ -221,7 +222,7 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
         hint={settings.model && selectedModel
           ? undefined
           : (!settings.model ? '未选择时 AstrBot 的请求会失败' : '该模型已不在清单里，请重新选择')}>
-        <select className="select select-sm w-full font-mono text-xs" value={settings.model}
+        <select className={`${SELECT} w-full font-mono`} value={settings.model}
           onChange={(event) => updateModel(event.target.value)}>
           <option value="">请选择模型</option>
           {models.map(({ id }) => <option key={id} value={id}>{id}</option>)}
@@ -229,7 +230,7 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
       </Field>
 
       <Field label="思考深度">
-        <select className="select select-sm w-full font-mono text-xs" value={shownEffort}
+        <select className={`${SELECT} w-full font-mono`} value={shownEffort}
           disabled={!efforts.length}
           onChange={(event) => update({ reasoningEffort: event.target.value })}>
           {efforts.length
@@ -239,23 +240,23 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
       </Field>
 
       <Field label="交互策略">
-        <select className="select select-sm w-full" value={settings.interactionMode}
+        <select className={`${SELECT} w-full`} value={settings.interactionMode}
           onChange={(event) => update({ interactionMode: event.target.value as AstrBotBridgeSettings['interactionMode'] })}>
           {MODES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
-        <span className="text-[11px] leading-snug text-base-content/40">{mode.description}</span>
+        <span className={HINT}>{mode.description}</span>
       </Field>
 
       <Field label="并发 / 排队上限" hint="左：同时生成上限（排队模式固定 1）· 右：队列上限">
         <div className="flex items-center gap-1.5">
-          <input className="input input-sm w-full min-w-0" type="number" min={1} max={8}
+          <input className={`${INPUT} w-full`} type="number" min={1} max={8}
             aria-label="最大并发"
             value={settings.interactionMode === 'queue' ? 1 : numberDraft.maxConcurrent}
             disabled={settings.interactionMode === 'queue'}
             onChange={(event) => setNumberDraft((current) => ({ ...current, maxConcurrent: Number(event.target.value) }))}
             onBlur={commitNumbers} />
-          <span className="shrink-0 text-[11px] text-base-content/30">/</span>
-          <input className="input input-sm w-full min-w-0" type="number" min={0} max={100}
+          <span className="shrink-0 text-[11px] text-muted-foreground/60">/</span>
+          <input className={`${INPUT} w-full`} type="number" min={0} max={100}
             aria-label="最大排队数" value={numberDraft.maxQueued}
             onChange={(event) => setNumberDraft((current) => ({ ...current, maxQueued: Number(event.target.value) }))}
             onBlur={commitNumbers} />
@@ -263,14 +264,14 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
       </Field>
 
       <Field label="展示语言">
-        <select className="select select-sm w-full" value={settings.displayLang}
+        <select className={`${SELECT} w-full`} value={settings.displayLang}
           onChange={(event) => update({ displayLang: event.target.value as AstrBotBridgeSettings['displayLang'] })}>
           {DISPLAY_LANGS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
       </Field>
 
       <Field label="朗读文本" hint={settings.speakLang ? undefined : '仅文字：不生成朗读文本'}>
-        <select className="select select-sm w-full" value={settings.speakLang}
+        <select className={`${SELECT} w-full`} value={settings.speakLang}
           onChange={(event) => update({ speakLang: event.target.value as AstrBotBridgeSettings['speakLang'] })}>
           {SPEAK_LANGS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
@@ -278,7 +279,7 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
     </div>
 
     <Field label="唤醒词" hint="一行一个。只有 @ 本机器人，或文本以这里的词开头，才会回复。只引用、@全体成员、@其他人，以及没有这些条件的私聊，都不会触发。保存后同步到已连接的桥，不会重连。ASCII 词区分边界且不区分大小写；中文词按开头匹配。">
-      <textarea className="textarea h-20 w-full resize-y text-xs leading-relaxed" value={wakeDraft}
+      <textarea className={`${TEXTAREA} h-20 w-full resize-y`} value={wakeDraft}
         aria-label="唤醒词" placeholder={'例如：\n丛雨\n/ai'}
         onChange={(event) => setWakeDraft(event.target.value)}
         onBlur={() => {
@@ -288,22 +289,22 @@ export function AstrBotSettingsCard(context: AstrBotUiContext) {
         }} />
     </Field>
 
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-base-content/50">场景说明</span>
+        <span className={LABEL}>场景说明</span>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-base-content/35">
+          <span className={`text-[11px] ${promptDirty ? 'text-warning' : 'text-muted-foreground/70'}`}>
             {promptDraft.length} 字{promptDirty ? ' · 有未保存的修改' : ''}
           </span>
           {promptDirty && (
-            <button type="button" className="btn btn-ghost btn-xs"
+            <button type="button" className={GHOST_BUTTON_XS}
               onClick={() => { setPromptDraft(DEFAULT_ASTRBOT_SETTINGS.systemPrompt); update({ systemPrompt: DEFAULT_ASTRBOT_SETTINGS.systemPrompt }); }}>
               恢复默认
             </button>
           )}
         </div>
       </div>
-      <textarea className="textarea h-56 w-full resize-y text-xs leading-relaxed" value={promptDraft}
+      <textarea className={`${TEXTAREA} h-56 w-full resize-y`} value={promptDraft}
         placeholder="例如：QQ 群聊场景，每条不超过两句话，避免使用列表和标题"
         onChange={(event) => setPromptDraft(event.target.value)}
         onBlur={() => update({ systemPrompt: promptDraft })} />

@@ -3,7 +3,14 @@ import { buildPersonaPrompt, normalizePersona, RELATIONSHIP_STAGES } from '@app/
 import type { ModelConfig } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
 import { useModelRelationship } from '../hooks/useModelRelationship';
+import { ChevronRight, Heart, IdCard, RefreshCw } from 'lucide-react';
 import { Field, SettingsCard } from '../components/common/SettingsSection';
+import { Page } from '../components/common/Page';
+import { Button } from '../components/common/Button';
+import { Badge, StatusDot } from '../components/common/Badge';
+import { Input, Textarea } from '../components/common/FormControls';
+import { Notice } from '../components/common/Feedback';
+import { cn } from '../components/common/cn';
 
 type PersonaKey = keyof ModelConfig['persona'];
 
@@ -81,86 +88,87 @@ export default function PersonaSettingsPage({
 
   const edit = (patch: Partial<ModelConfig['persona']>) => draft.commit({ ...persona, ...patch });
 
-  return <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-5">
-    <header className="flex shrink-0 flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0">
-        <h1 className="text-lg font-semibold">角色人设</h1>
-        <p className="mt-0.5 text-xs text-base-content/50">
-          角色卡随当前模型保存，每次回复都会整段放进系统提示词。关系阶段由对话整理写入记忆，不在这里编辑。
-        </p>
-      </div>
-      <div className="flex shrink-0 items-center gap-3 text-[11px] text-base-content/45">
-        <span className="tabular-nums">{filled} / 6 项已填写</span>
-        <span>{draft.pending ? '正在保存' : '已保存'}</span>
-      </div>
-    </header>
-
-    <SettingsCard title="当前关系"
+  return <Page title="角色人设"
+    description="角色卡随当前模型保存，每次回复都会整段放进系统提示词。关系阶段由对话整理写入记忆，不在这里编辑。"
+    meta={<>
+      <Badge tone="outline" className="tabular-nums">{filled} / 6 项已填写</Badge>
+      <StatusDot tone={draft.pending ? 'warning' : 'success'} pulse={draft.pending}>
+        {draft.pending ? '正在保存' : '已保存'}
+      </StatusDot>
+    </>}>
+    <SettingsCard title="当前关系" icon={<Heart />}
       description="只读：由对话整理写入记忆，前端暂不提供修改入口。"
-      actions={<button type="button" className="btn btn-ghost btn-xs" onClick={relationship.reload}
-        disabled={relationship.loading}>{relationship.loading ? '读取中' : '刷新'}</button>}>
+      actions={<Button variant="ghost" size="xs" onClick={relationship.reload}
+        disabled={relationship.loading}>
+        <RefreshCw className={relationship.loading ? 'animate-spin' : undefined} />
+        {relationship.loading ? '读取中' : '刷新'}
+      </Button>}>
       {relationship.error
-        ? <p className="text-xs text-error">读取记忆失败：{relationship.error}</p>
-        : <div className="flex flex-wrap items-center gap-3">
-          <span className="badge badge-sm badge-outline shrink-0">
-            {relationship.view ? (stage || '未记录') : '读取中'}
-          </span>
-          <p className="text-[11px] text-base-content/40">
-            {RELATIONSHIP_STAGES.map((item, index) => <span key={item}>
-              {index ? ' · ' : null}
-              <span className={item === stage ? 'font-medium text-base-content/80' : ''}>{item}</span>
-            </span>)}
-          </p>
+        ? <Notice tone="danger">读取记忆失败：{relationship.error}</Notice>
+        : <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Badge tone="primary">{relationship.view ? (stage || '未记录') : '读取中'}</Badge>
+          </div>
+          {/* 阶段进度：当前阶段及之前的都点亮，便于看出关系走到了哪一步。 */}
+          <ol className="flex flex-wrap items-center gap-1" aria-label="关系阶段">
+            {RELATIONSHIP_STAGES.map((item, index) => {
+              const current = RELATIONSHIP_STAGES.indexOf(stage as typeof RELATIONSHIP_STAGES[number]);
+              const reached = current >= 0 && index <= current;
+              return <li key={item} className="flex items-center gap-1">
+                {index ? <span aria-hidden="true" className={cn('h-px w-3', reached ? 'bg-primary/50' : 'bg-border')} /> : null}
+                <span className={cn('rounded-full px-2 py-0.5 text-[11px] transition-colors',
+                  item === stage ? 'bg-primary font-medium text-primary-foreground'
+                    : reached ? 'bg-primary/12 text-primary' : 'bg-muted text-muted-foreground')}>{item}</span>
+              </li>;
+            })}
+          </ol>
         </div>}
-      <p className="rounded-field bg-base-content/5 px-2.5 py-2 text-xs leading-relaxed text-base-content/70">
+      <p className="rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed text-foreground/80">
         {relationship.loading && !relationship.view ? '正在读取…' : relationship.view?.line ?? '暂无可读的关系说明。'}
       </p>
-      <p className="text-[11px] leading-relaxed text-base-content/40">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
         {relationship.view?.recorded
           ? '阶段与说明都来自记忆里的「当前关系」一节，随对话整理更新。'
           : '记忆里还没有「当前关系」一节，提示词暂时按默认阶段处理。'}
       </p>
     </SettingsCard>
 
-    <SettingsCard title="角色卡"
+    <SettingsCard title="角色卡" icon={<IdCard />}
       description="每段都会成为提示词里的一节；留空的段落直接跳过，不会留下空标题。">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="名字" hint="角色在提示词里的自称，通常也是角色名">
-          <input className="input input-sm w-full" value={persona.name} placeholder="例如：丛雨"
+          <Input value={persona.name} placeholder="例如：丛雨"
             onChange={(event) => edit({ name: event.target.value })} />
         </Field>
         <Field label="对用户的称呼" hint="决定她怎么叫你；留空则不提称呼">
-          <input className="input input-sm w-full" value={persona.userAddress} placeholder="例如：主人，生气时叫全名"
+          <Input value={persona.userAddress} placeholder="例如：主人，生气时叫全名"
             onChange={(event) => edit({ userAddress: event.target.value })} />
         </Field>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {LONG_FIELDS.map(({ key, label, hint, placeholder, minHeight }) => {
           const value = persona[key];
-          return <div key={key} className="flex min-w-0 flex-col gap-1">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-xs text-base-content/55">{label}</span>
-              <span className="shrink-0 text-[10px] tabular-nums text-base-content/30">
-                {value.trim() ? `${value.trim().length} 字` : '未填写'}
-              </span>
-            </div>
-            <textarea className={`textarea textarea-sm ${minHeight} w-full resize-none overflow-y-auto field-sizing-content max-h-72 leading-relaxed`}
+          return <Field key={key} label={label} hint={hint}
+            aside={value.trim() ? `${value.trim().length} 字` : '未填写'}>
+            <Textarea className={`${minHeight} max-h-72 resize-none overflow-y-auto field-sizing-content`}
               value={value} placeholder={placeholder}
               onChange={(event) => edit({ [key]: event.target.value })} />
-            <span className="text-[11px] leading-relaxed text-base-content/40">{hint}</span>
-          </div>;
+          </Field>;
         })}
       </div>
 
-      <details className="group">
-        <summary className="cursor-pointer select-none text-[11px] text-base-content/45 marker:text-base-content/30 hover:text-base-content/70">
+      <details className="group rounded-lg border border-border">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-[11px] text-muted-foreground
+          select-none transition-colors hover:text-foreground">
+          <ChevronRight aria-hidden="true" className="size-3.5 transition-transform group-open:rotate-90" />
           提示词预览{preview ? ` · ${preview.length} 字` : '（暂无内容）'}
         </summary>
-        <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-field bg-base-content/5 p-2.5 font-mono text-[11px] leading-relaxed text-base-content/65">
+        <pre className="ui-scroll mx-3 mb-3 max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono
+          text-[11px] leading-relaxed text-foreground/75">
           {preview || '六项都还是空的，人设这一段不会出现在系统提示词里。'}
         </pre>
       </details>
     </SettingsCard>
-  </div>;
+  </Page>;
 }

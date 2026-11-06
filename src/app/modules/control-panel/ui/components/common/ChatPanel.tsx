@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DragEventHandler, KeyboardEvent, ReactNode, Ref, TextareaHTMLAttributes } from 'react';
+import { ArrowUp, AudioLines, Check, ChevronUp, LoaderCircle, MessageSquare, Mic, MicOff, Sparkles } from 'lucide-react';
 import type { ActionCategory } from '../../../../../../../shared/live2d/actionCatalog.js';
+import { cn } from './cn';
 
 interface ChatMessageView {
   id: string;
@@ -22,8 +24,8 @@ const MENTION_TONES: Record<ActionCategory, string> = {
   gaze: 'bg-info/20',
   blink: 'bg-success/20',
   emotion: 'bg-warning/25',
-  body: 'bg-secondary/20',
-  other: 'bg-base-content/15',
+  body: 'bg-accent/20',
+  other: 'bg-foreground/15',
 };
 
 function mentionTokens(mentions: readonly ChatMention[]): string[] {
@@ -122,7 +124,7 @@ interface ChatComposerProps {
 export function ChatComposer({ draft, busy, inputLabel, placeholder, onDraftChange, onSubmit,
   inputRef, inputProps, model, effort, mentions, toolbar, suggestions, voiceInput }: ChatComposerProps) {
   const submit = () => { if (!busy && draft.trim()) void onSubmit(); };
-  // 原生与 daisyUI 的聚焦描边统一取消，输入区只靠排版区分层级。
+  // 原生聚焦描边取消，聚焦由外层输入框的描边颜色表示。
   const noOutline = 'outline-none focus:outline-none focus-visible:outline-none';
   const chips = Boolean(mentions?.length);
   const layerOf = (input: HTMLTextAreaElement) =>
@@ -144,28 +146,33 @@ export function ChatComposer({ draft, busy, inputLabel, placeholder, onDraftChan
     requestAnimationFrame(() => input.setSelectionRange(hit.start, hit.start));
     return true;
   };
-  return <div className="p-3">
-    {toolbar && <div className="mb-1 flex flex-wrap items-center gap-2 px-1">{toolbar}</div>}
+  const canSend = !busy && Boolean(draft.trim());
+  return <div className="space-y-2 p-3">
+    {toolbar && <div className="flex flex-wrap items-center gap-2 px-0.5">{toolbar}</div>}
     {voiceInput?.partialText && (
-      <p className="truncate px-2 pb-1 text-xs text-base-content/50">识别中：{voiceInput.partialText}</p>
+      <p className="flex items-center gap-1.5 truncate px-1 text-xs text-muted-foreground">
+        <AudioLines aria-hidden="true" className="size-3.5 shrink-0 animate-pulse text-primary" />
+        识别中：{voiceInput.partialText}
+      </p>
     )}
     {voiceInput?.errorText && (
-      <p className="px-2 pb-1 text-xs text-error">语音识别错误：{voiceInput.errorText}</p>
+      <p role="alert" className="px-1 text-xs text-danger">语音识别错误：{voiceInput.errorText}</p>
     )}
-    <div className="relative">
+    <div className="relative rounded-xl border border-input bg-background/60 transition-colors
+      focus-within:border-primary/50 focus-within:bg-card hover:border-foreground/25">
       {suggestions}
       <div className="relative">
         {chips && (
           <div data-mention-overlay aria-hidden="true"
             className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap wrap-break-word
-              px-2 py-1.5 text-sm leading-relaxed text-transparent ${busy ? 'opacity-60' : ''}`}>
+              px-3.5 pt-3 pb-1 text-sm leading-relaxed text-transparent ${busy ? 'opacity-60' : ''}`}>
             {renderMentionHighlights(draft, mentions ?? [])}
           </div>
         )}
-        <textarea {...inputProps} ref={inputRef} rows={3} value={draft} disabled={busy}
-          className={`min-h-20 max-h-60 w-full resize-none field-sizing-content overflow-y-auto bg-transparent
-            px-2 py-1.5 text-sm leading-relaxed placeholder:text-base-content/40
-            disabled:opacity-60 ${noOutline}`}
+        <textarea {...inputProps} ref={inputRef} rows={2} value={draft} disabled={busy}
+          className={`ui-scroll block min-h-16 max-h-60 w-full resize-none field-sizing-content overflow-y-auto
+            bg-transparent px-3.5 pt-3 pb-1 text-sm leading-relaxed text-foreground
+            placeholder:text-muted-foreground/60 disabled:opacity-60 ${noOutline}`}
           aria-label={inputLabel} placeholder={placeholder}
           onChange={(event) => { onDraftChange(event.target.value); inputProps?.onChange?.(event); }}
           onScroll={(event) => {
@@ -183,28 +190,38 @@ export function ChatComposer({ draft, busy, inputLabel, placeholder, onDraftChan
             submit();
           }} />
       </div>
-      {/* 底栏：分隔线之下左语音、右侧「模型+思考强度」与发送。 */}
-      <div className="border-t border-base-300 px-2 py-2">
-        <div className="flex items-center gap-2 px-1">
-          {voiceInput && (
-            <label className="flex shrink-0 cursor-pointer items-center gap-1.5">
-              <input type="checkbox" className="toggle toggle-xs toggle-primary" aria-label="语音输入"
-                checked={voiceInput.enabled} disabled={voiceInput.loading}
-                onChange={(event) => voiceInput.onChange(event.target.checked)} />
-              <span className={`truncate text-[11px] ${voiceInput.enabled ? 'text-primary' : 'text-base-content/40'}`}>
-                {voiceInput.statusLabel ?? '语音输入'}
-              </span>
-            </label>
-          )}
-          <span className="hidden min-w-0 flex-1 truncate text-[11px] text-base-content/30 sm:inline">
-            Enter 发送 · Shift+Enter 换行
-          </span>
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            {model && <ComposerModelMenu model={model} effort={effort} />}
-            <button type="button" className="btn btn-sm btn-primary" disabled={busy || !draft.trim()} onClick={submit}>
-              发送
-            </button>
-          </div>
+      {/* 底栏：左语音、右侧「模型+思考强度」与发送。 */}
+      <div className="flex items-center gap-2 px-2 pt-1 pb-2">
+        {voiceInput && (
+          <button type="button" aria-pressed={voiceInput.enabled} aria-label="语音输入"
+            disabled={voiceInput.loading} onClick={() => voiceInput.onChange(!voiceInput.enabled)}
+            className={`flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[11px]
+              transition-colors active:scale-95 disabled:cursor-wait disabled:opacity-60
+              ${voiceInput.enabled
+              ? 'bg-primary/12 text-primary hover:bg-primary/18'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+            {voiceInput.loading
+              ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" />
+              : voiceInput.enabled
+                ? <Mic aria-hidden="true" className="size-3.5" />
+                : <MicOff aria-hidden="true" className="size-3.5" />}
+            <span className="truncate">{voiceInput.statusLabel ?? '语音输入'}</span>
+          </button>
+        )}
+        <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground/60 sm:inline">
+          Enter 发送 · Shift+Enter 换行
+        </span>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {model && <ComposerModelMenu model={model} effort={effort} />}
+          <button type="button" aria-label="发送" title="发送" disabled={!canSend} onClick={submit}
+            className={`grid size-8 cursor-pointer place-items-center rounded-full transition-all active:scale-90
+              disabled:cursor-not-allowed ${canSend
+              ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
+              : 'bg-foreground/8 text-muted-foreground/60'}`}>
+            {busy
+              ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
+              : <ArrowUp aria-hidden="true" className="size-4" strokeWidth={2.4} />}
+          </button>
         </div>
       </div>
     </div>
@@ -251,56 +268,44 @@ function ComposerModelMenu({ model, effort }: { model: ComposerSelect; effort?: 
       title={effort ? `${model.label} · ${effort.label}` : model.label}
       disabled={model.disabled}
       onClick={() => (open ? close() : setOpen(true))}
-      className="flex max-w-88 items-center gap-1.5 rounded-field px-2 py-1 text-xs text-base-content/60
-        transition-colors hover:bg-base-content/10 hover:text-base-content/90 active:scale-95
-        disabled:cursor-not-allowed disabled:opacity-60">
-      <span className="truncate">{labelOf(model)}</span>
-      {effort && <span className="shrink-0 text-base-content/40">{labelOf(effort)}</span>}
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
-        strokeLinecap="round" strokeLinejoin="round"
-        className={`size-3 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true">
-        <path d="m6 15 6-6 6 6" />
-      </svg>
+      className={cn(`flex h-7 max-w-88 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-xs
+        text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95
+        disabled:cursor-not-allowed disabled:opacity-60`, open && 'bg-muted text-foreground')}>
+      <span className="truncate font-mono">{labelOf(model)}</span>
+      {effort && <span className="shrink-0 rounded bg-foreground/8 px-1 font-mono text-[10px]">{labelOf(effort)}</span>}
+      <ChevronUp aria-hidden="true" className={cn('size-3 shrink-0 transition-transform', !open && 'rotate-180')} />
     </button>
     {open && (
       <div role="menu" aria-label={model.label}
-        className="absolute bottom-full right-0 z-30 mb-1 w-60 rounded-box border border-base-300
-          bg-base-100 p-1 shadow-xl">
+        className="absolute right-0 bottom-full z-30 mb-1.5 w-64 rounded-xl bg-card p-1 shadow-pop
+          animate-[ui-pop-in_140ms_ease-out]">
         {sections.map((section) => {
           const active = expanded === section.label;
           return <button key={section.label} type="button" role="menuitem" aria-haspopup="menu"
             aria-expanded={active}
             onClick={() => setExpanded(active ? null : section.label)}
-            className={`flex w-full items-center gap-2 rounded-field px-2 py-1.5 text-xs transition-colors
-              active:scale-[0.99] ${active ? 'bg-base-content/10' : 'hover:bg-base-content/5'}`}>
-            <span className="shrink-0 text-base-content/45">{section.label}</span>
-            <span className="ml-auto min-w-0 truncate font-mono text-base-content/85">{labelOf(section)}</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
-              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-              className={`size-3 shrink-0 text-base-content/35 transition-transform ${active ? 'rotate-180' : ''}`}>
-              <path d="m6 15 6-6 6 6" />
-            </svg>
+            className={cn('flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition-colors',
+              active ? 'bg-muted' : 'hover:bg-muted/60')}>
+            <span className="shrink-0 text-muted-foreground">{section.label}</span>
+            <span className="ml-auto min-w-0 truncate font-mono text-foreground">{labelOf(section)}</span>
+            <ChevronUp aria-hidden="true"
+              className={cn('size-3 shrink-0 text-muted-foreground transition-transform', active && 'rotate-180')} />
           </button>;
         })}
         {/* 候选列表：贴在菜单顶边向上展开，和主菜单同宽，不向两侧撑开窗口。 */}
         {activeSection && (
           <div role="menu" aria-label={activeSection.label}
-            className="absolute bottom-full left-0 z-40 mb-1 max-h-64 w-full overflow-y-auto rounded-box
-              border border-base-300 bg-base-100 p-1 shadow-xl">
+            className="ui-scroll absolute bottom-full left-0 z-40 mb-1.5 max-h-64 w-full overflow-y-auto rounded-xl
+              bg-card p-1 shadow-pop">
             {activeSection.options.map((option) => {
               const selected = option.value === activeSection.value;
               return <button key={option.value} type="button" role="menuitemradio" aria-checked={selected}
-                className={`flex w-full items-center gap-2 rounded-field px-2 py-1.5 text-left text-xs
-                  transition-colors active:scale-[0.99] ${selected
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-base-content/70 hover:bg-base-content/5 hover:text-base-content/90'}`}
+                className={cn('flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors',
+                  selected ? 'bg-primary/10 text-primary' : 'text-foreground/80 hover:bg-muted hover:text-foreground')}
                 // 选中后不关闭：菜单只在点击外部或再点触发器时收起。
                 onClick={() => activeSection.onChange(option.value)}>
                 <span className="min-w-0 flex-1 wrap-break-word font-mono">{option.label}</span>
-                {selected && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4}
-                  strokeLinecap="round" strokeLinejoin="round" className="size-3.5 shrink-0" aria-hidden="true">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>}
+                {selected && <Check aria-hidden="true" className="size-3.5 shrink-0" strokeWidth={2.4} />}
               </button>;
             })}
           </div>
@@ -308,6 +313,17 @@ function ComposerModelMenu({ model, effort }: { model: ComposerSelect; effort?: 
       </div>
     )}
   </div>;
+}
+
+const ROLE_LABEL: Record<ChatMessageView['role'], string> = { user: '你', assistant: 'AI', system: '系统' };
+
+function TypingDots() {
+  return <span aria-label="发送中" role="status" className="mt-1.5 flex items-center gap-1">
+    {[0, 150, 300].map((delay) => (
+      <span key={delay} aria-hidden="true" className="size-1.5 animate-bounce rounded-full bg-current opacity-50"
+        style={{ animationDelay: `${delay}ms` }} />
+    ))}
+  </span>;
 }
 
 interface ChatPanelProps<T extends ChatMessageView> extends ChatComposerProps {
@@ -349,45 +365,62 @@ export default function ChatPanel<T extends ChatMessageView>({ title, descriptio
     {showHeader && (
       <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium">{title}</div>
-          {description && <div className="truncate text-xs text-base-content/50">{description}</div>}
+          <div className="text-[13px] font-semibold">{title}</div>
+          {description && <div className="truncate text-xs text-muted-foreground">{description}</div>}
         </div>
         {onClear && (
-          <button type="button" className="btn btn-outline btn-error btn-xs"
-            disabled={composer.busy || !messages.length} onClick={onClear}>清空对话</button>
+          <button type="button" disabled={composer.busy || !messages.length} onClick={onClear}
+            className="h-6 cursor-pointer rounded-md px-2 text-[11px] text-danger transition-colors hover:bg-danger/10
+              disabled:pointer-events-none disabled:opacity-50">清空对话</button>
         )}
       </header>
     )}
-    {/* 消息区与输入区共用同一张带边框的卡片，与页面底色区分。 */}
-    <div className={`flex min-h-0 flex-col rounded-box border border-base-300 bg-base-100
-      ${fill ? 'flex-1' : heightClassName}`}>
+    {/* 消息区与输入区共用同一张卡片，与页面底色区分。 */}
+    <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-xl bg-card shadow-card',
+      fill ? 'flex-1' : heightClassName)}>
       <div ref={listRef} role="log" aria-label={title} aria-live="polite"
         onScroll={(event) => {
           const list = event.currentTarget;
           followBottom.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
         }}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-        {!messages.length && <div className="rounded-box bg-base-200/60 px-3 py-4 text-xs text-base-content/45">{emptyMessage}</div>}
-        {messages.map((message) => <div key={message.id} className={`chat ${message.role === 'user' ? 'chat-end' : 'chat-start'}`}>
-          <div className="chat-header mb-1 text-[11px] text-base-content/40">
-            {message.role === 'user' ? '你' : message.role === 'system' ? '系统' : 'AI'}
-          </div>
-          <div className={`chat-bubble text-sm ${message.role === 'user' ? 'chat-bubble-primary'
-            : message.role === 'system' ? 'chat-bubble-warning' : ''}`}>
-            <div className="whitespace-pre-wrap wrap-break-word">{message.text}</div>
-            {renderMessageDetails?.(message)}
-            {message.status === 'sending' && <span aria-label="发送中" className="loading loading-dots loading-xs mt-1" />}
-            {message.status === 'error' && <div className="mt-1 text-[11px] opacity-70">
-              {renderMessageError ? renderMessageError(message) : message.error}
-            </div>}
-          </div>
-        </div>)}
+        className="ui-scroll min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
+        {!messages.length && <div className="flex h-full min-h-32 flex-col items-center justify-center gap-3 text-center">
+          <span aria-hidden="true" className="grid size-11 place-items-center rounded-2xl bg-primary/10 text-primary">
+            <MessageSquare className="size-5" />
+          </span>
+          <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">{emptyMessage}</p>
+        </div>}
+        {messages.map((message) => {
+          const mine = message.role === 'user';
+          const system = message.role === 'system';
+          return <div key={message.id} className={cn('flex items-end gap-2.5', mine && 'flex-row-reverse')}>
+            {!mine && <span aria-hidden="true" className={cn(`grid size-7 shrink-0 place-items-center rounded-full
+              text-[11px] font-semibold`, system ? 'bg-warning/15 text-warning' : 'bg-primary/12 text-primary')}>
+              {system ? '!' : <Sparkles className="size-3.5" />}
+            </span>}
+            <div className={cn('flex min-w-0 max-w-[78%] flex-col gap-1', mine ? 'items-end' : 'items-start')}>
+              <div className="px-1 text-[11px] text-muted-foreground/80">{ROLE_LABEL[message.role]}</div>
+              <div className={cn('min-w-0 max-w-full rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
+                mine ? 'rounded-br-md bg-primary text-primary-foreground'
+                  : system ? 'rounded-bl-md bg-warning/12 text-foreground ring-1 ring-inset ring-warning/25'
+                    : 'rounded-bl-md bg-muted text-foreground',
+                message.status === 'error' && 'ring-1 ring-inset ring-danger/40')}>
+                <div className="whitespace-pre-wrap wrap-break-word">{message.text}</div>
+                {renderMessageDetails?.(message)}
+                {message.status === 'sending' && <TypingDots />}
+                {message.status === 'error' && <div className="mt-1 text-[11px] opacity-75">
+                  {renderMessageError ? renderMessageError(message) : message.error}
+                </div>}
+              </div>
+            </div>
+          </div>;
+        })}
       </div>
-      <div className="border-t border-base-300">
+      <div className="border-t border-border">
         <ChatComposer {...composer} />
       </div>
-      {error && <div className="border-t border-base-300 px-4 py-2 text-xs text-error" role="alert">{error}</div>}
-      {footer && <div className="border-t border-base-300 px-4 py-2 text-xs text-base-content/50">{footer}</div>}
+      {error && <div className="border-t border-border bg-danger/5 px-4 py-2 text-xs text-danger" role="alert">{error}</div>}
+      {footer && <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground">{footer}</div>}
     </div>
   </section>;
 }

@@ -1,4 +1,8 @@
+import { ArrowLeftRight, Boxes, Eraser, Heart, Scaling } from 'lucide-react';
 import ChatPanel from '../components/common/ChatPanel';
+import { Page } from '../components/common/Page';
+import { Button } from '../components/common/Button';
+import { Badge } from '../components/common/Badge';
 import { AgentCard } from '../components/ai/AgentCard';
 import { useScaleControl } from '../hooks/useScaleControl';
 import { useModelRelationship } from '../hooks/useModelRelationship';
@@ -68,10 +72,16 @@ export default function HomePage({
   const efforts = findModelEfforts(llmModels, chatModel);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-5">
+    <Page fill title="主页" description="和角色直接对话，语音识别的结果也会汇入这里。"
+      meta={/* 关系只读：由对话整理写入记忆，这里只显示当前阶段，不提供修改入口。 */
+        <Badge tone="primary" title={relationship.view?.line ?? '还没有读取到关系记录'}>
+          <Heart aria-hidden="true" className="size-3" />
+          关系 · {relationship.view?.stage || '未记录'}
+        </Badge>}>
       {/* 顶部工具条独立成卡，与页面底色区分：模型大小占满中间，右侧切模型。 */}
-      <div className="flex shrink-0 items-center gap-3 rounded-box border border-base-300 bg-base-100 px-3 py-2">
-        <span className="shrink-0 text-xs text-base-content/50">模型大小</span>
+      <div className="flex shrink-0 items-center gap-3 rounded-xl bg-card px-4 py-2.5 shadow-card">
+        <Scaling aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        <span className="shrink-0 text-xs font-medium text-foreground/80">模型大小</span>
         <input
           type="range"
           min={0.3}
@@ -90,24 +100,17 @@ export default function HomePage({
           onPointerCancel={scaleControl.finishGesture}
           onBlur={scaleControl.finishGesture}
           onChange={(event) => scaleControl.changeScale(Number.parseFloat(event.target.value))}
-          className="range range-xs min-w-0 flex-1"
+          className="ui-range min-w-0 flex-1"
         />
-        <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-base-content/45">
+        <span className="w-10 shrink-0 rounded-md bg-muted py-0.5 text-center font-mono text-[11px] tabular-nums text-foreground/80">
           {scaleControl.label}
         </span>
-        {/* 关系只读：由对话整理写入记忆，这里只显示当前阶段，不提供修改入口。 */}
-        <span className="shrink-0 rounded-full border border-base-300 px-2.5 py-1 text-[11px] text-base-content/45"
-          title={relationship.view?.line ?? '还没有读取到关系记录'}>
-          关系 <span className="text-base-content/80">{relationship.view?.stage || '未记录'}</span>
-        </span>
-        <button
-          type="button"
-          className="btn btn-outline btn-sm shrink-0"
-          title={`当前模型：${model.name}`}
-          onClick={onGotoModels}
-        >
-          切换模型
-        </button>
+        <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" />
+        <Button variant="ghost" title={`当前模型：${model.name}`} onClick={onGotoModels} className="max-w-56">
+          <Boxes />
+          <span className="truncate">{model.name || '切换模型'}</span>
+          <ArrowLeftRight className="text-muted-foreground" />
+        </Button>
       </div>
 
       <AgentCard />
@@ -139,14 +142,11 @@ export default function HomePage({
           onChange: (value) => onChatReasoningEffortChange(value as PetReasoningEffort),
         } : undefined}
         toolbar={
-          <button
-            type="button"
-            className="btn btn-outline btn-error btn-xs ml-auto"
-            disabled={chatSending || chatMessages.length === 0}
-            onClick={onClearChat}
-          >
+          <Button variant="danger" size="xs" className="ml-auto"
+            disabled={chatSending || chatMessages.length === 0} onClick={onClearChat}>
+            <Eraser />
             清空对话
-          </button>
+          </Button>
         }
         voiceInput={{
           enabled: asrEnabled,
@@ -157,6 +157,6 @@ export default function HomePage({
           onChange: (next) => void onToggleAsr(next),
         }}
       />
-    </div>
+    </Page>
   );
 }

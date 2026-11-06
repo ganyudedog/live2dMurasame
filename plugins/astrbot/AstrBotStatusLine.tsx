@@ -25,11 +25,17 @@ export function AstrBotStatusLine({ storage }: { storage: PluginStorage }) {
     return () => { active = false; stop(); };
   }, [storage]);
 
-  if (!status) return <p className="text-[11px] text-base-content/40">桌面端尚未上报连接状态。</p>;
+  if (!status) return <p className="text-[11px] text-muted-foreground">桌面端尚未上报连接状态。</p>;
   const connection = CONNECTION_LABEL[status.connection] ?? '未知';
-  return <p className="text-[11px] leading-snug text-base-content/50" role="status">
-    桥接{connection} · 协议 {status.protocol}/{status.expectedProtocol || ASTRBOT_PROTOCOL_VERSION}
-    {status.lastRequestId ? ` · 最近请求 ${status.lastRequestId}` : ''}
-    {status.lastError ? ` · ${status.lastError.code} ${status.lastError.diagnosticId}` : ''}
+  const tone = status.connection === 'ready' ? 'bg-success'
+    : status.connection === 'connecting' ? 'bg-warning animate-pulse'
+      : status.connection === 'idle' ? 'bg-muted-foreground/50' : 'bg-danger';
+  return <p className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-[11px] leading-snug text-muted-foreground" role="status">
+    <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${tone}`} />
+    <span className="min-w-0">
+      桥接{connection} · 协议 {status.protocol}/{status.expectedProtocol || ASTRBOT_PROTOCOL_VERSION}
+      {status.lastRequestId ? ` · 最近请求 ${status.lastRequestId}` : ''}
+      {status.lastError ? ` · ${status.lastError.code} ${status.lastError.diagnosticId}` : ''}
+    </span>
   </p>;
 }

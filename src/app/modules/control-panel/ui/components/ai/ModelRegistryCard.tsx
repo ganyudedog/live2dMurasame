@@ -1,5 +1,12 @@
 import { useState } from 'react';
+import { Cpu, RefreshCw, Search } from 'lucide-react';
 import { SettingsCard } from '../common/SettingsSection';
+import { Button } from '../common/Button';
+import { Badge } from '../common/Badge';
+import { Checkbox } from '../common/Checkbox';
+import { Input } from '../common/FormControls';
+import { Notice } from '../common/Feedback';
+import { cn } from '../common/cn';
 import { describeEfforts } from './describeEfforts';
 import type { RemoteModel } from '@app/modules/ai/modules/llm/infrastructure/modelCatalog';
 
@@ -62,49 +69,54 @@ export function ModelRegistryCard({
 
   return <SettingsCard
     title="模型列表"
+    icon={<Cpu />}
     description="勾选代表启用：勾上的模型写进后端清单，取消勾选即移除。对话与动作表分别用哪个模型、什么深度，在各自的输入框里选。"
-    actions={<div className="flex items-center gap-2">
+    actions={<>
       {rows.length > 0 && (
-        <span className="hidden text-[11px] text-base-content/45 sm:inline">
+        <Badge tone="outline" className="hidden sm:inline-flex">
           已启用 {models.length} / {rows.length}
-        </span>
+        </Badge>
       )}
-      <button type="button" className="btn btn-outline btn-xs" disabled={!canFetch || disabled}
+      <Button disabled={!canFetch || disabled}
         title={canFetch ? '从接口重新拉取模型清单' : '先在上面填写 Base URL'}
         onClick={onFetch}>
+        <RefreshCw className={fetching ? 'animate-spin' : undefined} />
         {fetching ? '获取中…' : '获取可用模型'}
-      </button>
-    </div>}
+      </Button>
+    </>}
   >
     {!canFetch && (
-      <p className="text-xs text-base-content/50">先填写上面的 Base URL（接口地址决定模型清单从哪里拉），再点「获取可用模型」。</p>
+      <Notice>先填写上面的 Base URL（接口地址决定模型清单从哪里拉），再点「获取可用模型」。</Notice>
     )}
     {canFetch && !available.length && !fetching && !fetchError && (
-      <p className="text-xs text-base-content/50">
+      <Notice>
         {models.length
           ? '点「获取可用模型」可以看到接口返回的全部模型，再勾选需要的。'
           : '还没有模型。点「获取可用模型」拉取接口的模型清单，然后勾选要用的。'}
-      </p>
+      </Notice>
     )}
 
     {rows.length > SEARCH_THRESHOLD && (
-      <input className="input input-sm w-full" value={query} placeholder="搜索模型名"
-        onChange={(event) => setQuery(event.target.value)} />
+      <label className="relative block">
+        <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input className="pl-8" value={query} placeholder="搜索模型名" aria-label="搜索模型名"
+          onChange={(event) => setQuery(event.target.value)} />
+      </label>
     )}
 
-    <div className="flex flex-col gap-1">
+    {visible.length > 0 && <div className="ui-scroll max-h-96 divide-y divide-border overflow-y-auto rounded-lg border border-border">
       {visible.map((row) => (
         <div key={row.id}
-          className="flex items-center gap-2 rounded-field px-2 py-1.5 transition-colors hover:bg-base-content/5">
-          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-            <input type="checkbox" className="checkbox checkbox-xs shrink-0" checked={row.registered}
-              disabled={disabled}
-              onChange={(event) => onToggle(row.id, event.target.checked)} />
+          className={cn('flex items-center gap-3 px-3 py-2 transition-colors hover:bg-muted/60',
+            row.registered && 'bg-primary/4')}>
+          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+            <Checkbox checked={row.registered} disabled={disabled} aria-label={row.id}
+              onCheckedChange={(checked) => onToggle(row.id, checked)} />
             <div className="min-w-0 flex-1">
-              <p className={`truncate font-mono text-xs ${row.registered ? 'text-base-content' : 'text-base-content/60'}`}>
+              <p className={cn('truncate font-mono text-xs', row.registered ? 'font-medium text-foreground' : 'text-muted-foreground')}>
                 {row.id}
               </p>
-              <p className="truncate text-[11px] text-base-content/45">
+              <p className="truncate text-[11px] text-muted-foreground/80">
                 {row.model ? `思考深度：${describeEfforts(row.model)}` : (row.remote?.efforts.length
                   ? `接口声明：${row.remote.efforts.join(' / ')}`
                   : '未启用')}
@@ -112,20 +124,20 @@ export function ModelRegistryCard({
             </div>
           </label>
           {row.registered && (
-            <button type="button" className="btn btn-ghost btn-xs shrink-0" disabled={disabled}
-              title="重新检测该模型支持的思考深度" onClick={() => onProbe(row.id)}>重新检测</button>
+            <Button variant="ghost" size="xs" disabled={disabled}
+              title="重新检测该模型支持的思考深度" onClick={() => onProbe(row.id)}><RefreshCw />重新检测</Button>
           )}
         </div>
       ))}
-      {!visible.length && rows.length > 0 && (
-        <p className="px-2 py-3 text-xs text-base-content/50">没有匹配的模型</p>
-      )}
-    </div>
+    </div>}
+    {!visible.length && rows.length > 0 && (
+      <p className="px-2 py-3 text-center text-xs text-muted-foreground">没有匹配的模型</p>
+    )}
 
-    {fetching && <p role="status" className="text-[11px] text-base-content/55">正在读取模型列表…</p>}
-    {fetchError && <p role="alert" className="text-[11px] text-error">{fetchError}</p>}
-    {busyLabel && <p role="status" className="text-[11px] text-base-content/55">{busyLabel}</p>}
-    {notice && <p role="status" className="text-[11px] text-base-content/55">{notice}</p>}
-    {error && <p role="alert" className="text-[11px] text-error">{error}</p>}
+    {fetching && <Notice tone="busy">正在读取模型列表…</Notice>}
+    {fetchError && <Notice tone="danger">{fetchError}</Notice>}
+    {busyLabel && <Notice tone="busy">{busyLabel}</Notice>}
+    {notice && <Notice tone="success">{notice}</Notice>}
+    {error && <Notice tone="danger">{error}</Notice>}
   </SettingsCard>;
 }

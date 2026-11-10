@@ -14,12 +14,12 @@ it('keeps AstrBot off host internals and window APIs', () => {
   expect(source).not.toMatch(/window\.[A-Za-z]+API/);
 });
 
-it('keeps desktop relationship and participant fields out of the host conversation API', () => {
+it('keeps plugin identity rules out of the host conversation API', () => {
   const executor = read('src/app/core/plugin/hosts/ai/createConversationExecutor.ts');
   const host = read('src/app/core/plugin/hosts/ai/AiHost.ts');
   const api = read('src/app/core/plugin/types/ai.ts');
   const combined = `${executor}\n${host}\n${api}`;
-  expect(combined).not.toMatch(/getActiveCharacter|readRelationship|subscribeCharacter|serializeConversations/);
+  expect(combined).not.toMatch(/getActiveCharacter|subscribeCharacter|serializeConversations/);
   expect(combined).not.toMatch(/relationshipByCharacter|ConversationParticipant|ConversationMention|ConversationQuote/);
   expect(api).not.toMatch(/userAddress/);
   expect(executor).toMatch(/userAddress: ''/);

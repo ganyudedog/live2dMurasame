@@ -109,6 +109,34 @@ describe('PluginRuntime', () => {
     expect(runtime.getControlPanelPages()).toHaveLength(0);
   });
 
+  it('groups pages by owner and group title, leaving ungrouped pages out', async () => {
+    const runtime = new PluginRuntime({ windowKind: 'control-panel' });
+    const permissions = ['control-panel.navigation'] as const;
+    runtime.registerPlugin({
+      manifest: { id: 'one.plugin', name: 'One', version: '1.0.0', apiVersion: '1.0.0', permissions },
+      activate: ({ ui }) => {
+        ui.register({ id: 'b', slot: 'control-panel', placement: 'page', group: 'Bridge', title: 'B', order: 2, render: () => null });
+        ui.register({ id: 'a', slot: 'control-panel', placement: 'page', group: 'Bridge', title: 'A', order: 1, render: () => null });
+        ui.register({ id: 'solo', slot: 'control-panel', placement: 'page', title: 'Solo', render: () => null });
+      },
+    });
+    runtime.registerPlugin({
+      manifest: { id: 'two.plugin', name: 'Two', version: '1.0.0', apiVersion: '1.0.0', permissions },
+      activate: ({ ui }) => {
+        ui.register({ id: 'c', slot: 'control-panel', placement: 'page', group: 'Bridge', title: 'C', order: 3, render: () => null });
+      },
+    });
+    await runtime.activatePlugin('one.plugin');
+    await runtime.activatePlugin('two.plugin');
+    const groups = runtime.getControlPanelPageGroups();
+    expect(groups.map((group) => [group.ownerId, group.title, group.pages.map((page) => page.contribution.id)])).toEqual([
+      ['one.plugin', 'Bridge', ['a', 'b']],
+      ['two.plugin', 'Bridge', ['c']],
+    ]);
+    await runtime.stopPlugin('one.plugin');
+    expect(runtime.getControlPanelPageGroups().map((group) => group.ownerId)).toEqual(['two.plugin']);
+  });
+
   it('fails activation when one owner registers the same contribution twice', async () => {
     const runtime = new PluginRuntime();
     runtime.registerPlugin({

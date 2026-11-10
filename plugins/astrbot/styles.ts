@@ -11,10 +11,12 @@ export const SELECT = `${FIELD} h-8 min-w-0 cursor-pointer px-2 text-xs`;
 export const TEXTAREA = `${FIELD} px-2.5 py-2 text-xs leading-relaxed`;
 
 const BUTTON_BASE = `inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-lg
-  font-medium transition-colors active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50`;
+  font-medium transition-colors active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3.5`;
 
 export const BUTTON = `${BUTTON_BASE} h-8 bg-card px-3 text-xs text-foreground shadow-card hover:bg-muted`;
+export const PRIMARY_BUTTON = `${BUTTON_BASE} h-8 bg-primary px-3 text-xs text-primary-foreground shadow-sm hover:bg-primary/90`;
 export const GHOST_BUTTON = `${BUTTON_BASE} h-7 px-2.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground`;
 export const GHOST_BUTTON_XS = `${BUTTON_BASE} h-6 px-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground`;
 export const LABEL = 'text-xs font-medium text-foreground/80';
 export const HINT = 'text-[11px] leading-snug text-muted-foreground';
+export const ERROR_NOTICE = 'rounded-lg bg-danger/10 px-3 py-2 text-[11px] leading-relaxed text-danger';

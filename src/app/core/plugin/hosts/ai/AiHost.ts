@@ -7,20 +7,27 @@ export class AiHost implements AiHostApi {
   private readonly conversations: ConversationScheduler;
   private readonly readModels: AiHostApi['getModels'];
   private readonly listen: AiHostApi['subscribe'];
+  private readonly readRelationship?: AiHostApi['getRelationship'];
 
   constructor(
     execute: PluginConversationExecutor,
     readModels: AiHostApi['getModels'],
     listen: AiHostApi['subscribe'],
     observeTasks?: ConversationTaskObserver,
+    readRelationship?: AiHostApi['getRelationship'],
   ) {
     this.conversations = new ConversationScheduler(execute, 4, observeTasks);
     this.readModels = readModels;
     this.listen = listen;
+    this.readRelationship = readRelationship;
   }
 
   openChannel(options: ConversationChannelOptions): ConversationChannel {
     return this.conversations.openChannel(options);
+  }
+
+  async getRelationship(): Promise<{ stage: string; line: string } | null> {
+    return await this.readRelationship?.() ?? null;
   }
 
   getModels(): ReturnType<AiHostApi['getModels']> {

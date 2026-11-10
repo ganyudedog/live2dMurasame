@@ -33,6 +33,11 @@ export interface ConversationMemoryArchive {
 export interface ConversationRequest {
   readonly sender?: { readonly id: string; readonly displayName?: string };
   readonly memoryArchive?: ConversationMemoryArchive;
+  /** Opt into the ordinary personal-memory flow for a successful reply. The caller decides
+   * eligibility and supplies the user's own text, without quoted messages or profile context.
+   * Omit to keep the conversation out of personal memory and relationship growth.
+   */
+  readonly personalMemory?: { readonly userText: string };
   readonly text: string;
   readonly requestId?: string;
   readonly conversationId?: string;
@@ -81,6 +86,7 @@ export interface ConversationChannel {
 /** Character conversation and the model catalog exposed to plugins. */
 export interface AiHostApi {
   openChannel(options: ConversationChannelOptions): ConversationChannel;
+  getRelationship?(): Promise<{ stage: string; line: string } | null>;
   getModels(): readonly { readonly id: string; readonly efforts: readonly string[] }[];
   subscribe(listener: () => void): Disposable;
 }

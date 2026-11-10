@@ -27,7 +27,11 @@ export class LlmMemoryRepository {
     return window.MemoryAPI?.updateCore?.(payload);
   }
 
-  consolidate(payload: { modelPath: string; content: string; processedThroughCount: number }) {
+  consolidate(payload: { modelPath: string; content: string; processedThroughCount: number; relationshipEvents?: Array<{ kind: string; experienceId?: string; summary?: string }> }) {
     return window.MemoryAPI?.consolidate?.(payload);
+  }
+
+  adjustRelationship(payload: { modelPath?: string; expectedRevision: number; stage: string }) {
+    return window.MemoryAPI?.adjustRelationship?.(payload);
   }
 }

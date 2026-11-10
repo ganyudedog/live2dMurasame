@@ -103,6 +103,7 @@ html {
 
 /* 原生 range：保留原生指针与键盘行为，只换外观。 */
 .ui-range {
+  --range-fill: 0;
   appearance: none;
   height: 1rem;
   background: transparent;
@@ -114,17 +115,24 @@ html {
   opacity: 0.5;
 }
 
+/*
+ * --range-fill（0~1）由 <Range> 写入。两段硬切的纯色而不是渐变；
+ * 分界点算到滑块圆心（0.4375rem = 半个滑块宽），两端不会露出或盖过滑块。
+ */
 .ui-range::-webkit-slider-runnable-track {
-  height: 0.25rem;
+  --range-stop: calc(0.4375rem + (100% - 0.875rem) * var(--range-fill));
+  height: 0.3rem;
   border-radius: 9999px;
-  background: color-mix(in oklab, var(--foreground) 12%, transparent);
+  background: linear-gradient(to right,
+    var(--primary) 0 var(--range-stop),
+    color-mix(in oklab, var(--foreground) 12%, transparent) var(--range-stop) 100%);
 }
 
 .ui-range::-webkit-slider-thumb {
   appearance: none;
   width: 0.875rem;
   height: 0.875rem;
-  margin-top: -0.3125rem;
+  margin-top: -0.2875rem;
   border-radius: 9999px;
   background: var(--card);
   border: 2px solid var(--primary);

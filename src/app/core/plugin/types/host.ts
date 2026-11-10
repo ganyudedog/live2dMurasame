@@ -29,6 +29,7 @@ export const hostMethodEffects = {
   ai: {
     openChannel: 'channel',
     getModels: 'none',
+    getRelationship: 'none',
     subscribe: 'disposable',
   },
   live2d: { getAvailableMotions: 'none', playMotion: 'none', interruptMotion: 'none', getModelState: 'none' },

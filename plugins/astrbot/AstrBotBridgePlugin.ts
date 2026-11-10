@@ -1,7 +1,10 @@
 import { sanitizeLogDetail } from './types';
 import type { AstrBotPluginDefinition } from './types';
 import { AstrBotBridgeClient } from './AstrBotBridgeClient';
-import { AstrBotSettingsCard } from './AstrBotSettingsCard';
+import { BotMessageSquare, Cable, Users } from 'lucide-react';
+import { AstrBotConnectionPage } from './pages/ConnectionPage';
+import { AstrBotPeoplePage } from './pages/PeoplePage';
+import { AstrBotReplyPage } from './pages/ReplyPage';
 import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, type AstrBotBridgeSettings } from './settings';
 
 export const astrBotBridgePlugin: AstrBotPluginDefinition = {
@@ -12,7 +15,19 @@ export const astrBotBridgePlugin: AstrBotPluginDefinition = {
   },
   activate: async (context) => {
     if (context.windowKind === 'control-panel') {
-      context.ui.register({ id: 'astrbot.settings', slot: 'control-panel', placement: 'page', title: 'AstrBot QQ 对话', order: 30, render: AstrBotSettingsCard });
+      const page = { slot: 'control-panel', placement: 'page', group: 'AstrBot QQ' } as const;
+      context.ui.register({
+        ...page, id: 'astrbot.connection', title: '连接与触发', icon: Cable, order: 30, render: AstrBotConnectionPage,
+        description: '连接 AstrBot 的桥接插件，并决定哪些 QQ 消息会被回复、多个会话怎么排队。',
+      });
+      context.ui.register({
+        ...page, id: 'astrbot.reply', title: '回复设置', icon: BotMessageSquare, order: 31, render: AstrBotReplyPage,
+        description: 'QQ 里回复用的模型和语言、场景说明，以及可以发送的收藏表情。',
+      });
+      context.ui.register({
+        ...page, id: 'astrbot.people', title: 'QQ 用户', icon: Users, order: 32, render: AstrBotPeoplePage,
+        description: '绑定主人，并为每个 QQ 用户单独设置称呼、关系和人物描述。',
+      });
       return;
     }
     if (context.windowKind !== 'pet') return;

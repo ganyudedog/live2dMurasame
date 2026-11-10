@@ -23,8 +23,13 @@ describe('LLM-backed memory consolidation', () => {
     const consolidate = vi.fn().mockResolvedValue(saved);
     vi.stubGlobal('window', { MemoryAPI: { consolidate } });
     const request = vi.fn().mockResolvedValue(JSON.stringify({
-      coreText: '# 核心记忆\n\n## 稳定偏好\n- 喜欢日语语音\n',
+      coreText: '## 当前关系\n- 阶段：亲密。我们在一起。\n\n# 核心记忆\n\n## 稳定偏好\n- 喜欢日语语音\n',
       processedThroughCount: 8,
+      relationshipEvents: [
+        { kind: 'stage-change', stage: '亲密' },
+        { kind: 'shared-experience', experienceId: 'voice', summary: '喜欢日语语音', stage: '亲密' },
+        { kind: 'shared-experience', experienceId: 'voice', summary: '喜欢日语语音' },
+      ],
     }));
     const trace = { record: vi.fn() };
     const service = new MemoryService(() => ({ globalModelConfig: { memoryModel: 'memory-model' } }) as unknown as PetConfigSnapshot, request);
@@ -43,9 +48,13 @@ describe('LLM-backed memory consolidation', () => {
     expect(request).toHaveBeenCalledOnce();
     expect(consolidate).toHaveBeenCalledWith({
       modelPath: 'model-a',
-      content: '## 当前关系\n- 阶段：亲近。可以开玩笑。还不会主动提起恋爱。\n\n# 核心记忆\n\n## 稳定偏好\n- 喜欢日语语音',
+      content: '# 核心记忆\n\n## 稳定偏好\n- 喜欢日语语音',
       processedThroughCount: 8,
+      relationshipEvents: [{ kind: 'shared-experience', experienceId: 'voice', summary: '喜欢日语语音' }],
     });
+    const system = String(request.mock.calls[0]?.[0] ?? '');
+    expect(system).not.toContain('必须保留一节「## 当前关系」');
+    expect(system).toContain('不能在事件里写阶段');
     expect(runtime.memoryState).toBe(saved);
     expect(trace.record).toHaveBeenCalledWith('memory.consolidated', expect.objectContaining({ processedThroughCount: 8 }));
   });
@@ -94,5 +103,19 @@ describe('LLM-backed memory consolidation', () => {
     expect(consolidate).not.toHaveBeenCalled();
     expect(trace.record).toHaveBeenCalledWith('memory.consolidation.skipped',
       expect.objectContaining({ reason: 'no-memory-model' }));
+  });
+
+  it('reads the relationship state even when core text claims another stage', async () => {
+    vi.stubGlobal('window', { MemoryAPI: {
+      get: vi.fn(async () => ({
+        coreText: '## 当前关系\n- 阶段：亲密。我们在一起。',
+        relationship: { needsSelection: false, line: '阶段：信赖。可以提起一起经历过的事。', stage: '信赖', mode: 'growth', revision: 4 },
+      })),
+      loadRecentTurns: vi.fn(async () => ({ turns: [] })),
+    } });
+    const service = new MemoryService(() => ({ activeModelPath: 'model-a' }) as PetConfigSnapshot);
+    const runtime = await service.resolve('今天过得怎么样');
+    expect(runtime.relationshipStage).toContain('信赖');
+    expect(runtime.relationshipStage).not.toContain('亲密');
   });
 });

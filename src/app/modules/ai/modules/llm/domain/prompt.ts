@@ -1,5 +1,6 @@
+import { DEFAULT_RELATIONSHIP_STAGE, STAGE_LINES } from './memory/memoryContext';
 import type { ActionCapability } from '../../../../live2d/modules/actions/domain/types';
-import { buildRelationshipPrompt, DEFAULT_RELATIONSHIP_LINE } from './memory/memoryContext';
+import { buildRelationshipPrompt } from './memory/memoryContext';
 
 export interface BuildPromptInput {
   userText: string;
@@ -87,7 +88,7 @@ export const buildStage2SystemPrompt = (input?: {
     OUTPUT_CONTRACT,
     CONVERSATION_STYLE,
     input?.personaPrompt?.trim() ?? '',
-    buildRelationshipPrompt(input?.relationshipStage?.trim() || DEFAULT_RELATIONSHIP_LINE),
+    buildRelationshipPrompt(input?.relationshipStage?.trim() || STAGE_LINES[DEFAULT_RELATIONSHIP_STAGE]),
     '角色卡和当前关系优先于上面的默认陪伴口吻。输出格式与字段语言仍遵守本轮协议。相关记忆只在用得上时引用，不要编造记忆里没有的经历。',
     // 固定规则完整放在前部；语言及动作目录在后部，减少编辑动作时失效的缓存前缀。
     `display_text 必须使用${displayLangName}。`,

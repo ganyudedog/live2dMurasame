@@ -17,7 +17,8 @@ export interface MemoryRepository {
   appendConversation(modelPath: string, conversation: unknown): unknown;
   updateCore(modelPath: string, content: unknown): unknown;
   replaceActionCatalogChat(modelPath: string, content: unknown): unknown;
-  consolidate(modelPath: string, content: unknown, processedThroughCount: unknown): unknown;
+  consolidate(modelPath: string, content: unknown, processedThroughCount: unknown, relationshipEvents?: unknown): unknown;
+  adjustRelationship(modelPath: string, input: unknown): unknown;
 }
 
 type CatalogReader = (modelPath: string) => { motions: InteractionMotion[]; hitAreas: InteractionHitArea[] };
@@ -162,8 +163,12 @@ export class ModelEnvironmentService {
     return modelPath ? this.memoryRepository.replaceActionCatalogChat(modelPath, content) : null;
   }
 
-  consolidateMemory(modelPath: string | null | undefined, content: unknown, processedThroughCount: unknown): unknown {
-    return modelPath ? this.memoryRepository.consolidate(modelPath, content, processedThroughCount) : null;
+  consolidateMemory(modelPath: string | null | undefined, content: unknown, processedThroughCount: unknown, relationshipEvents?: unknown): unknown {
+    return modelPath ? this.memoryRepository.consolidate(modelPath, content, processedThroughCount, relationshipEvents) : null;
+  }
+
+  adjustMemoryRelationship(modelPath: string | null | undefined, input: unknown): unknown {
+    return modelPath ? this.memoryRepository.adjustRelationship(modelPath, input) : null;
   }
 
   clear(modelPath: string): void {

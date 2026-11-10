@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, type ComponentType } from 'react';
 import {
   Bot, Boxes, ChevronDown, ChevronRight, House, MousePointerClick, Moon, PersonStanding, Puzzle,
   SlidersHorizontal, Sun, UserRound,
@@ -13,18 +13,36 @@ type MenuItem = {
 };
 
 type MenuGroup = {
+  key: string;
   title: string;
   items: MenuItem[];
   collapsible: boolean;
 };
 
+/** 插件页面在导航里的样子；icon 由插件提供，缺省时用拼图。 */
+export type PluginNavPage = {
+  tabId: string;
+  title: string;
+  icon?: ComponentType<{ className?: string }>;
+};
+
+export type PluginNavGroup = {
+  key: string;
+  title: string;
+  pages: readonly PluginNavPage[];
+};
+
+const toMenuItem = ({ tabId, title, icon: Icon = Puzzle }: PluginNavPage): MenuItem => ({ key: tabId, label: title, icon: <Icon /> });
+
 const MENU_STRUCTURE: MenuGroup[] = [
   {
+    key: 'home',
     title: '主页',
     collapsible: false,
     items: [{ key: 'home', label: '主页', icon: <House /> }],
   },
   {
+    key: 'model',
     title: '模型设置',
     collapsible: true,
     items: [
@@ -35,6 +53,7 @@ const MENU_STRUCTURE: MenuGroup[] = [
     ],
   },
   {
+    key: 'ai',
     title: 'AI 设置',
     collapsible: true,
     items: [
@@ -43,8 +62,6 @@ const MENU_STRUCTURE: MenuGroup[] = [
     ],
   },
 ];
-
-const PLUGIN_GROUP = '插件';
 
 function NavItem({ item, active, onSelect }: { item: MenuItem; active: boolean; onSelect: (key: string) => void }) {
   return <li>
@@ -65,6 +82,7 @@ export default function ControlPanelLayout({
   activeTab,
   onTabChange,
   pluginPages = [],
+  pluginGroups = [],
   currentModelName,
   theme,
   onToggleTheme,
@@ -72,37 +90,43 @@ export default function ControlPanelLayout({
 }: {
   activeTab: ControlPanelTabKey;
   onTabChange: (key: ControlPanelTabKey) => void;
-  pluginPages?: readonly { tabId: string; title: string }[];
+  /** 没有声明分组的插件页面，列在「插件」组里。 */
+  pluginPages?: readonly PluginNavPage[];
+  /** 插件声明的分组，各自成为一个可折叠的导航组，排在内置分组之后。 */
+  pluginGroups?: readonly PluginNavGroup[];
   /** 侧栏底部显示的当前模型；没有模型时不显示。 */
   currentModelName?: string;
   theme: ThemeMode;
   onToggleTheme: () => void;
   children: React.ReactNode;
 }) {
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    new Set(['模型设置', 'AI 设置', PLUGIN_GROUP])
-  );
+  // 记录折叠的组而不是展开的组：插件分组是激活后才出现的，默认应当展开。
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set());
 
-  const toggleGroup = (title: string) => {
-    setExpandedGroups((prev) => {
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(title)) {
-        next.delete(title);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(title);
+        next.add(key);
       }
       return next;
     });
   };
 
-  const groups: MenuGroup[] = [...MENU_STRUCTURE, {
-    title: PLUGIN_GROUP,
-    collapsible: true,
-    items: [
-      { key: 'plugins', label: '插件列表', icon: <Puzzle /> },
-      ...pluginPages.map((page) => ({ key: page.tabId, label: page.title, icon: <Puzzle /> })),
-    ],
-  }];
+  const groups: MenuGroup[] = [
+    ...MENU_STRUCTURE,
+    ...pluginGroups.map((group) => ({
+      key: group.key, title: group.title, collapsible: true, items: group.pages.map(toMenuItem),
+    })),
+    {
+      key: 'plugins',
+      title: '插件',
+      collapsible: true,
+      items: [{ key: 'plugins', label: '插件列表', icon: <Puzzle /> }, ...pluginPages.map(toMenuItem)],
+    },
+  ];
 
   return (
     <div className="grid h-full w-full grid-cols-[240px_minmax(0,1fr)] bg-background font-sans text-foreground antialiased">
@@ -121,16 +145,16 @@ export default function ControlPanelLayout({
         <nav aria-label="控制面板导航" className="ui-scroll min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-3">
           {groups.map((group) => {
             if (!group.collapsible) {
-              return <ul key={group.title} className="space-y-0.5">
+              return <ul key={group.key} className="space-y-0.5">
                 {group.items.map((item) => (
                   <NavItem key={item.key} item={item} active={item.key === activeTab} onSelect={onTabChange} />
                 ))}
               </ul>;
             }
-            const isExpanded = expandedGroups.has(group.title);
+            const isExpanded = !collapsedGroups.has(group.key);
             const Chevron = isExpanded ? ChevronDown : ChevronRight;
-            return <div key={group.title}>
-              <button type="button" aria-expanded={isExpanded} onClick={() => toggleGroup(group.title)}
+            return <div key={group.key}>
+              <button type="button" aria-expanded={isExpanded} onClick={() => toggleGroup(group.key)}
                 className="flex w-full cursor-pointer items-center justify-between rounded-md px-2.5 pb-1.5 text-[11px]
                   font-medium tracking-wide text-muted-foreground/80 transition-colors hover:text-foreground">
                 {group.title}

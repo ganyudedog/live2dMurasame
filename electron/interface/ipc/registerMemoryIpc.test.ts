@@ -2,6 +2,7 @@ import { JsonModelEnvironmentRepository } from '../../infrastructure/persistence
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const runtime = vi.hoisted(() => ({
@@ -132,5 +133,47 @@ describe('model memory IPC persistence', () => {
     expect(fs.readFileSync(path.join(memoryDir, 'action-catalog-chat.md'), 'utf8'))
       .toContain('请增加害羞反应');
     } finally { Date.now = originalNow; }
+  });
+
+  it('adjusts relationship with stage and revision, and does not expose undo', () => {
+    const current = invoke('ddd:modelenv:memory:get') as unknown as { relationship: { revision: number; stage: string } };
+    expect(() => invoke('ddd:modelenv:memory:relationship:adjust', {
+      expectedRevision: current.relationship.revision - 1, stage: '亲密', mode: 'fixed', reason: '不会写进去',
+    })).toThrow(/revision conflict/);
+    const adjusted = invoke('ddd:modelenv:memory:relationship:adjust', {
+      expectedRevision: current.relationship.revision, stage: '信赖', mode: 'fixed', reason: '先这样',
+    }) as unknown as {
+      relationship: { revision: number; stage: string };
+    };
+    expect(adjusted.relationship.stage).toBe('信赖');
+    expect(adjusted.relationship).not.toHaveProperty('mode');
+    expect(adjusted.relationship).not.toHaveProperty('undoAvailable');
+    expect(adjusted.relationship).not.toHaveProperty('events');
+    expect(adjusted.relationship).not.toHaveProperty('reason');
+    expect(() => invoke('ddd:modelenv:memory:relationship:undo', {
+      expectedRevision: adjusted.relationship.revision,
+    })).toThrow(/Missing handler/);
+    expect(() => invoke('ddd:modelenv:memory:relationship:history')).toThrow(/Missing handler/);
+    expect(broadcasts.filter((item) => item.channel === 'ddd:modelenv:memory:changed').length).toBe(1);
+  });
+});
+
+describe('relationship API wiring', () => {
+  it('exposes stage adjustment and leaves undo and history unwired', () => {
+    const root = fileURLToPath(new URL('../../..', import.meta.url));
+    const preload = fs.readFileSync(path.join(root, 'electron', 'preload.mts'), 'utf8');
+    const ipc = fs.readFileSync(path.join(root, 'electron', 'interface', 'ipc', 'registerMemoryIpc.ts'), 'utf8');
+    const repository = fs.readFileSync(path.join(root, 'src', 'app', 'modules', 'ai', 'modules', 'llm', 'infrastructure', 'LlmMemoryRepository.ts'), 'utf8');
+    const service = fs.readFileSync(path.join(root, 'electron', 'modules', 'modelenv', 'application', 'ModelEnvironmentService.ts'), 'utf8');
+    expect(preload).toContain('ddd:modelenv:memory:relationship:adjust');
+    expect(ipc).toContain('ddd:modelenv:memory:relationship:adjust');
+    for (const source of [preload, ipc, repository, service]) {
+      expect(source).not.toContain('relationship:undo');
+      expect(source).not.toContain('relationship:history');
+      expect(source).not.toContain('undoRelationship');
+      expect(source).not.toContain('relationshipHistory');
+    }
+    expect(repository).toContain('adjustRelationship');
+    expect(repository).not.toContain('characterId');
   });
 });

@@ -1,3 +1,4 @@
+import { PluginCliGrants } from '../infrastructure/PluginCliGrants.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,6 +33,7 @@ const setup = async (adapter: CodexRunner = { run: vi.fn(async () => ({ summary:
   };
   const runtime = createCliModule({
     directory: dir,
+    globalConfigPath: path.join(dir, "globalModelConfig.json"),
     adapter,
     live2dEnvironmentService: live,
     modelEnvironmentService: { updateConfiguration: () => ({}), getConfiguration: () => ({}), getInteractionView: () => null },
@@ -47,6 +49,22 @@ const setup = async (adapter: CodexRunner = { run: vi.fn(async () => ({ summary:
 };
 
 describe('CLI commands, persistence and task ownership', () => {
+  it('checks plugin availability quietly and persists grants and revocations', async () => {
+    const { runtime, dir } = await setup();
+    const remote = { ...context, local: false, source: 'plugin:test', owner: 'remote' };
+    expect(runtime.cli.isAvailable(remote)).toBe(false);
+    expect(() => runtime.cli.authorize(remote)).toThrow();
+    await runtime.cli.invoke(request('agent.settings.update', { workspaces: [], remoteSources: ['plugin:test'] }), context);
+    expect(runtime.cli.isAvailable(remote)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'globalModelConfig.json'), 'utf8')).pluginCliWhitelist)
+      .toEqual([{ pluginId: 'test', cliEnabled: true }]);
+    expect((await runtime.cli.invoke(request('agent.settings.get'), context) as { remoteSources: string[] }).remoteSources).toEqual(['plugin:test']);
+    expect(new CliService(new TaskStore(path.join(dir, 'tasks.json')), undefined, new PluginCliGrants(path.join(dir, 'globalModelConfig.json'))).isAvailable(remote)).toBe(true);
+    await runtime.cli.invoke(request('agent.settings.update', { workspaces: [], remoteSources: [] }), context);
+    expect(runtime.cli.isAvailable(remote)).toBe(false);
+    expect(new CliService(new TaskStore(path.join(dir, 'tasks.json')), undefined, new PluginCliGrants(path.join(dir, 'globalModelConfig.json'))).isAvailable(remote)).toBe(false);
+  });
+
   it('validates configuration, redacts credentials, checks revisions and broadcasts once on retry', async () => {
     const { runtime, live, publishSnapshot } = await setup();
     const read = await runtime.cli.invoke(request('config.get', { scope: 'global' }), context) as { revision: string };

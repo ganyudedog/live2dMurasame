@@ -31,6 +31,8 @@ export { hostMethodEffects, hostPermissions } from './host';
 export type { HostMethodEffect } from './host';
 export type {
   CommandContribution,
+  ControlPanelPage,
+  ControlPanelPageGroup,
   PluginContext,
   PluginDefinition,
   PluginLogger,

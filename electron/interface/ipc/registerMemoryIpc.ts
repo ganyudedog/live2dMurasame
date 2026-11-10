@@ -67,7 +67,19 @@ const registerMemoryIpcImpl = ({ live2dEnvironmentService, modelEnvironmentServi
     const body = isRecord(payload) ? payload : {};
     const target = currentPath(body.modelPath);
     if (!target) return emptyMemory;
-    const memory = modelEnvironmentService.consolidateMemory(target, body.content ?? '', body.processedThroughCount);
+    const memory = modelEnvironmentService.consolidateMemory(target, body.content ?? '', body.processedThroughCount, body.relationshipEvents);
+    const result = { modelPath: target, modelKey: getModelKeyFromPath(target), ...(isRecord(memory) ? memory : {}) };
+    sendAll('ddd:modelenv:memory:changed', result);
+    return result;
+  });
+  ipcMain.handle('ddd:modelenv:memory:relationship:adjust', (_event, payload: unknown = {}) => {
+    const body = isRecord(payload) ? payload : {};
+    const target = currentPath(body.modelPath);
+    if (!target) return emptyMemory;
+    const memory = modelEnvironmentService.adjustMemoryRelationship(target, {
+      expectedRevision: body.expectedRevision,
+      stage: body.stage,
+    });
     const result = { modelPath: target, modelKey: getModelKeyFromPath(target), ...(isRecord(memory) ? memory : {}) };
     sendAll('ddd:modelenv:memory:changed', result);
     return result;

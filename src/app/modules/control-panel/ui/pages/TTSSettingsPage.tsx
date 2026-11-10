@@ -3,7 +3,7 @@ import { FileMusic, FolderOpen, Server, SlidersHorizontal } from 'lucide-react';
 import type { ModelConfig } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
 import { Field, SettingsCard } from '../components/common/SettingsSection';
-import { Input, Select, Textarea } from '../components/common/FormControls';
+import { Input, Range, Select, Textarea } from '../components/common/FormControls';
 import { Button } from '../components/common/Button';
 import { Switch } from '../components/common/Switch';
 
@@ -290,7 +290,7 @@ export default function TTSSettingsPage({
                   onChange={(e) => updateSliderValue(key, e.target.value, value)}
                   onBlur={() => flushSliderPatch(true)} />
               </span>
-              <input type="range" className="ui-range w-full"
+              <Range className="w-full"
                 min={limits.min} max={limits.max} step={DEFAULT_SLIDER_STEPS[key]}
                 value={value}
                 onChange={(e) => updateSliderValue(key, e.target.value, value)}

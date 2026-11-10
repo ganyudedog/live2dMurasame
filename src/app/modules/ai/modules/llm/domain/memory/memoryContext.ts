@@ -1,4 +1,16 @@
 import { recallCoreMemory } from './memoryRetriever';
+import { extractRelationship } from '../../../../../../../../shared/memory/relationship.js';
+
+export {
+  DEFAULT_RELATIONSHIP_STAGE,
+  STAGE_LINES,
+  RELATIONSHIP_STAGES,
+  extractRelationship,
+  isKnownStage,
+} from '../../../../../../../../shared/memory/relationship.js';
+export type { PublicRelationship, RelationshipStage } from '../../../../../../../../shared/memory/relationship.js';
+
+export { buildRelationshipPrompt, promptLineFromMemory } from './relationshipPrompt';
 
 export interface Persona {
   name: string;
@@ -13,11 +25,6 @@ const asRecord = (value: unknown): Record<string, unknown> => (
   value && typeof value === 'object' ? value as Record<string, unknown> : {}
 );
 const asText = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
-
-const RELATION_HEADING = /^##\s*当前关系\s*$/;
-const NEXT_HEADING = /^##\s+\S/;
-export const RELATIONSHIP_STAGES = ['认识', '亲近', '信赖', '亲密', '疏远'] as const;
-export const DEFAULT_RELATIONSHIP_LINE = '阶段：亲近。可以开玩笑。还不会主动提起恋爱。';
 
 export const normalizePersona = (value: unknown): Persona => {
   const input = asRecord(value);
@@ -47,47 +54,6 @@ export const buildPersonaPrompt = (persona: Persona): string => {
     '以下角色卡每次回复都要体现。示例对话只示范说话方式，不是本轮输出格式。',
     ...parts,
   ].join('\n\n');
-};
-
-export const extractRelationship = (coreText: string): { stageLine: string; memoryText: string } => {
-  const lines = String(coreText ?? '').split(/\r?\n/);
-  const start = lines.findIndex((line) => RELATION_HEADING.test(line.trim()));
-  if (start < 0) return { stageLine: '', memoryText: String(coreText ?? '').trim() };
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (NEXT_HEADING.test(lines[index].trim()) && !RELATION_HEADING.test(lines[index].trim())) {
-      end = index;
-      break;
-    }
-  }
-  const bullet = lines.slice(start + 1, end)
-    .map((line) => line.match(/^\s*[-*]\s+(.+?)\s*$/u)?.[1]?.trim() ?? '')
-    .find(Boolean) ?? '';
-  const memoryText = [...lines.slice(0, start), ...lines.slice(end)].join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return { stageLine: bullet, memoryText };
-};
-
-export const normalizeStageLine = (bullet: string): string => {
-  const text = bullet.trim();
-  const name = text.match(/阶段[:：]\s*([^\s。，,]+)/u)?.[1] ?? '';
-  if (!RELATIONSHIP_STAGES.includes(name as typeof RELATIONSHIP_STAGES[number])) return DEFAULT_RELATIONSHIP_LINE;
-  return text;
-};
-
-export const currentRelationshipLine = (coreText: string): string => (
-  normalizeStageLine(extractRelationship(coreText).stageLine || DEFAULT_RELATIONSHIP_LINE)
-);
-
-export const buildRelationshipPrompt = (stageLine: string): string => [
-  '[当前关系]',
-  normalizeStageLine(stageLine),
-  '关系只依据这一节。不要因为本轮对话自行改变阶段。',
-].join('\n');
-
-export const ensureRelationshipSection = (coreText: string): string => {
-  const { memoryText } = extractRelationship(coreText);
-  const sectionText = `## 当前关系\n- ${currentRelationshipLine(coreText)}`;
-  return memoryText ? `${sectionText}\n\n${memoryText}` : sectionText;
 };
 
 export const buildMemoryContext = (

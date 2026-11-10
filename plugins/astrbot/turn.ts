@@ -1,3 +1,4 @@
+import { recallProfiles } from './profiles/recall';
 import { resolveAddress, type BridgeDirectory, type RelationshipStageName } from './directory';
 import type { AstrBotQuote } from './protocol';
 
@@ -9,6 +10,7 @@ export interface QqMentionTarget {
 
 export interface QqTurnInput {
   readonly scenePrompt: string;
+  readonly ownerRelationship?: string;
   readonly directory: BridgeDirectory;
   readonly sceneKey: string;
   readonly text: string;
@@ -17,10 +19,11 @@ export interface QqTurnInput {
   readonly quote?: AstrBotQuote;
 }
 
-/** Relationship and the current speaker's address are instructions. Mentions and quotes stay in the user text. */
+/** Authored profiles accompany the scene prompt; message/quote content stays in the user text. */
 export const composeQqTurn = (input: QqTurnInput): { text: string; systemPrompt: string } => {
   const record = input.sender ? input.directory.users[input.sender.id] : undefined;
   const address = input.sender ? resolveAddress(record, input.sceneKey, input.sender.displayName) : '';
+  const isOwner = Boolean(input.sender?.id && input.sender.id === input.directory.ownerUserId);
   const relationship = record?.relationship ?? '';
   const mentions = (input.mentions ?? []).map((mention) => {
     const mentionAddress = resolveAddress(input.directory.users[mention.id], input.sceneKey, mention.name);
@@ -31,14 +34,14 @@ export const composeQqTurn = (input: QqTurnInput): { text: string; systemPrompt:
     };
   });
   return {
-    systemPrompt: composeSystemPrompt(input.scenePrompt, { address, relationship }),
+    systemPrompt: [composeSystemPrompt(input.scenePrompt, { address, relationship, shared: isOwner, ownerRelationship: input.ownerRelationship }), recallProfiles(input)].filter(Boolean).join('\n\n'),
     text: composeUserText({ text: input.text, mentions, quote: input.quote }),
   };
 };
 
 export const composeSystemPrompt = (
   scenePrompt: string,
-  speaker: { address: string; relationship: RelationshipStageName | '' },
+  speaker: { address: string; relationship: RelationshipStageName | ''; shared?: boolean; ownerRelationship?: string },
 ): string => {
   const stage = speaker.relationship || '认识';
   const relationshipNote = speaker.relationship
@@ -46,7 +49,7 @@ export const composeSystemPrompt = (
     : '当前发言人没有单独配置 QQ 关系，按认识处理，不会读取桌面角色的默认关系。';
   return [
     scenePrompt.trim(),
-    `[当前关系]\n阶段：${stage}。\n${relationshipNote}`,
+    speaker.shared ? `[当前关系]\n${speaker.ownerRelationship || '主人 QQ 与桌面是同一人；当前关系暂不可用，不推测阶段。'}` : `[当前关系]\n阶段：${stage}。\n${relationshipNote}`,
     speaker.address
       ? `[对当前发言人的称呼]\n${speaker.address}\n只对当前这条消息的发言人使用这个称呼。点名和引用里的其他人不要使用这个称呼。`
       : '',
@@ -59,32 +62,8 @@ export const composeUserText = (input: {
   quote?: AstrBotQuote;
 }): string => {
   const blocks = [input.text.trim()];
-  const mentions = formatMentions(input.mentions);
-  if (mentions) blocks.push(mentions);
   if (input.quote) blocks.push(formatQuote(input.quote));
   return blocks.join('\n\n');
-};
-
-const MENTION_LIMIT = 8;
-
-const formatMentions = (mentions: readonly QqMentionTarget[] | undefined): string => {
-  const lines: string[] = [];
-  const seen = new Set<string>();
-  for (const mention of mentions ?? []) {
-    if (lines.length >= MENTION_LIMIT) break;
-    const id = mention.id.trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const name = mention.name?.replace(/[\r\n]/g, ' ').trim() ?? '';
-    const address = mention.address?.replace(/[\r\n]/g, ' ').trim() ?? '';
-    lines.push(`id=${id}${name ? ` 名字=${name}` : ''}${address ? ` 称呼=${address}` : ''}`);
-  }
-  if (!lines.length) return '';
-  return [
-    '[当前消息点名的其他人]',
-    ...lines,
-    '这些是被点名的人，不是当前发言人。不要把他们的称呼用到当前发言人身上。',
-  ].join('\n');
 };
 
 const formatQuote = (quote: AstrBotQuote): string => {

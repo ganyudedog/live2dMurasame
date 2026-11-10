@@ -69,6 +69,7 @@ const startClient = (overrides: {
         };
       },
       getModels: () => [], subscribe: () => () => {},
+      getRelationship: async () => ({ stage: '亲近', line: '阶段：亲近。与桌面共用。' }),
     },
     logger,
     settings: { ...DEFAULT_ASTRBOT_SETTINGS, ...overrides.settings },
@@ -94,6 +95,7 @@ describe('AstrBot bridge client', () => {
           onTask: (listener: typeof onTask) => { onTask = listener; return () => {}; }, cancel: vi.fn(), dispose: vi.fn(), watchTasks: vi.fn(),
         }),
         getModels: () => [], subscribe: () => () => {},
+      getRelationship: async () => ({ stage: '亲近', line: '阶段：亲近。与桌面共用。' }),
       },
       logger,
       settings: { ...DEFAULT_ASTRBOT_SETTINGS, wakeWords: ['丛雨'] },
@@ -143,6 +145,28 @@ describe('AstrBot bridge client', () => {
     client.dispose();
   });
 
+  it('contributes only the bound owner original text through the personal memory option', async () => {
+    let ownerUserId = '10001';
+    const { client, channels } = startClient({ get: async () => ({ ownerUserId, users: {} }) });
+    await flush();
+    const socket = FakeSocket.instances[0];
+    ackHello(socket);
+    socket.onmessage?.({ data: JSON.stringify({ ...message('owner', '81'), text: '今天聊起共同经历',
+      replyTo: { messageId: '8', sender: { id: '30004' }, text: '别人的经历', resolved: true },
+    }) });
+    await flush();
+    const payload = channels[0].sendText.mock.calls[0][0];
+    expect(payload.text).toContain('别人的经历');
+    expect(payload.personalMemory).toEqual({ userText: '今天聊起共同经历' });
+    channels[0].listener?.(doneResponse('owner'));
+    await flush();
+    ownerUserId = '';
+    socket.onmessage?.({ data: JSON.stringify(message('unbound', '82')) });
+    await flush();
+    expect(channels[0].sendText.mock.calls[1][0].personalMemory).toBeUndefined();
+    client.dispose();
+  });
+
   it('puts the mention target and quote in the user text and keeps the sender', async () => {
     vi.stubGlobal('WebSocket', FakeSocket);
     const sendText = vi.fn((_request: ConversationRequest) => ({ requestId: 'qq_who', accepted: true as const }));
@@ -161,6 +185,7 @@ describe('AstrBot bridge client', () => {
     const client = new AstrBotBridgeClient({
       url: 'ws://127.0.0.1:6198/ws', clientId: 'renderer', ai: {
         openChannel, getModels: () => [], subscribe: () => () => {},
+        getRelationship: async () => ({ stage: '亲近', line: '阶段：亲近。与桌面共用。' }),
       },
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       settings: DEFAULT_ASTRBOT_SETTINGS,
@@ -188,18 +213,19 @@ describe('AstrBot bridge client', () => {
     expect(sendText).toHaveBeenCalledTimes(1);
     const payload = sendText.mock.calls[0][0];
     expect(payload.sender).toEqual({ id: '2655314552', displayName: '南柯一梦' });
+    expect(payload.personalMemory).toBeUndefined();
     expect(payload.text).toContain('他是谁');
-    expect(payload.text).toContain('id=2904725137');
-    expect(payload.text).toContain('称呼=阿霓');
+    expect(payload.systemPrompt).toContain('2904725137');
+    expect(payload.systemPrompt).toContain('阿霓');
     expect(payload.text).toContain('10086');
     expect(payload.text).toContain('原话');
     expect(payload.systemPrompt).toContain('阶段：认识');
     expect(payload.systemPrompt).toContain('[对当前发言人的称呼]\n南柯一梦');
     expect(payload.systemPrompt).not.toContain('原话');
-    expect(payload.systemPrompt).not.toContain('2904725137');
+    expect(payload.systemPrompt).toContain('2904725137');
+    expect(payload.systemPrompt).toContain('阶段：亲近');
     expect(payload.systemPrompt).not.toContain('阶段：信赖');
-    expect(payload.systemPrompt).not.toContain('阶段：亲近');
-    expect(payload.systemPrompt).not.toContain('阿霓');
+    expect(payload.systemPrompt).toContain('阿霓');
     expect(JSON.stringify(sendText.mock.calls)).not.toContain('3983762587');
     expect(payload).not.toHaveProperty('participant');
     expect(payload).not.toHaveProperty('mentions');

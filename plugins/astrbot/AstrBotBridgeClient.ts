@@ -1,3 +1,6 @@
+import { mapStickerReply, type StickerChoice } from './stickers/reply';
+import { loadStickerLabels, syncStickerCatalog, type StickerRule } from './stickers/catalog';
+import { stickerPrompt } from './stickers/prompt';
 import { normalizeDirectory, sceneKeyFor, EMPTY_DIRECTORY } from './directory';
 import { ConversationLanes, MessageDedup, dedupKey } from './inbound';
 import { ASTRBOT_PROTOCOL_VERSION, isAstrBotQqMessage, normalizeAstrBotMentions, normalizeAstrBotSender, toConversationQuote } from './protocol';
@@ -37,6 +40,7 @@ export class AstrBotBridgeClient {
   /** Bumped on disconnect, reconnect, and dispose. In-flight work captures the value it started with. */
   private generation = 0;
   private readonly admissions = new Map<string, Admission>();
+  private readonly stickerChoices = new Map<string, StickerChoice[]>();
   private readonly dedup = new MessageDedup(256);
   private readonly lanes = new ConversationLanes();
   private status: BridgeRuntimeStatus;
@@ -151,6 +155,13 @@ export class AstrBotBridgeClient {
       this.options.logger.warn('message.invalid-shape');
       return;
     }
+    if (message.type === 'stickers.catalog' && this.handshakeAccepted) {
+      if (!/^[1-9][0-9]{4,19}$/.test(message.accountId) || !Array.isArray(message.items)) return;
+      const items = message.items as StickerRule[];
+      void syncStickerCatalog(this.options.storage, message.accountId, items).catch((error) =>
+        this.options.logger.error('stickers.sync.failed', { error: sanitizeLogDetail(error) }));
+      return;
+    }
     if (message.type === 'ping') { this.send({ type: 'pong', timestamp: message.timestamp ?? message.ts ?? Date.now() }); return; }
     if (message.type === 'hello.ack') {
       const requested = normalizeInteractionSettings(this.settings);
@@ -262,8 +273,31 @@ export class AstrBotBridgeClient {
       const sender = normalizeAstrBotSender(message.sender);
       const sceneKey = sceneKeyFor(message.source, message.memoryArchive);
       const mentions = normalizeAstrBotMentions(message.mentions, message.accountId);
+      let stickers = message.stickers;
+      if (message.accountId && Array.isArray(message.stickers)) {
+        const account = message.accountId;
+        const labels = await loadStickerLabels(this.options.storage);
+        const items = (message.stickers as StickerRule[]).filter((item) => item && typeof item.id === 'string'
+          && typeof item.url === 'string' && /^https?:\/\//.test(item.url)).map((item) => ({
+            id: item.id, url: item.url, description: labels[account]?.[item.id]?.description ?? '',
+          }));
+
+        stickers = items;
+
+      }
+      this.stickerChoices.set(admission.id, Array.isArray(stickers) ? stickers
+        .filter((item) => item && /^[a-f0-9]{16}$/.test(item.id) && typeof item.description === 'string'
+          && item.description.trim())
+        .slice(0, 12).map((item) => ({ id: item.id, description: item.description })) : []);
+      const ownerRelationship = directory.ownerUserId
+        ? await this.options.ai.getRelationship?.().catch((error) => {
+          this.options.logger.error('relationship.load.failed', { error: sanitizeLogDetail(error) });
+          return null;
+        }) : null;
+      if (!this.isCurrent(admission)) return;
       const turn = composeQqTurn({
-        scenePrompt: this.settings.systemPrompt,
+        ownerRelationship: ownerRelationship?.line,
+        scenePrompt: [this.settings.systemPrompt, stickerPrompt(stickers)].filter(Boolean).join('\n\n'),
         directory,
         sceneKey,
         text: message.text,
@@ -286,6 +320,8 @@ export class AstrBotBridgeClient {
       try {
         result = channel.sendText({
           text: turn.text,
+          ...(sender?.id && sender.id === directory.ownerUserId && message.text.trim()
+            ? { personalMemory: { userText: message.text } } : {}),
           systemPrompt: turn.systemPrompt,
           requestId: message.requestId,
           conversationId: message.conversationId,
@@ -338,7 +374,7 @@ export class AstrBotBridgeClient {
     }
     this.send({
       type: 'ai.response', version: ASTRBOT_PROTOCOL_VERSION, requestId: response.requestId, conversationId: response.conversationId,
-      status: 'done', text: response.text, ...(response.speakText ? { speakText: response.speakText } : {}),
+      status: 'done', text: mapStickerReply(response.text, this.stickerChoices.get(admission.id) ?? []), ...(response.speakText ? { speakText: response.speakText } : {}),
     });
     this.settle(admission);
   }
@@ -372,6 +408,7 @@ export class AstrBotBridgeClient {
   private settle(admission: Admission): void {
     if (admission.settled) return;
     admission.settled = true;
+    this.stickerChoices.delete(admission.id);
     if (this.admissions.get(admission.id) === admission) this.admissions.delete(admission.id);
     const release = admission.release;
     admission.release = null;

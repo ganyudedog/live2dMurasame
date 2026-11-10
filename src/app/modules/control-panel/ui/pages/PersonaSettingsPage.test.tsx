@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it } from 'vitest';
-import PersonaSettingsPage from './PersonaSettingsPage';
+import PersonaSettingsPage, { RelationshipCard } from './PersonaSettingsPage';
+import type { RelationshipView } from '../hooks/useModelRelationship';
 import type { ModelConfig } from '../../domain/types';
 
 /** 这个页面只读 persona，其余字段用一份占位配置即可。 */
@@ -13,35 +14,43 @@ const render = (persona: Partial<ModelConfig['persona']>) => renderToStaticMarku
   <PersonaSettingsPage modelConfig={config(persona)} modelPath={null} onModelConfigChange={async () => {}} />,
 ).replaceAll('<!-- -->', '');
 
-it('显示已填写的字段、计数与拼装后的段落', () => {
-  const html = render({ name: '丛雨', voice: '傲娇', examples: '你：早\n丛雨：嗯。' });
-  expect(html).toContain('丛雨');
-  expect(html).toContain('3 / 6 项已填写');
-  expect(html).toContain('[名字]');
-  expect(html).toContain('[性格与口吻]');
-  expect(html).toContain('[示例对话]');
-  expect(html).not.toContain('[边界]');
-  expect(html).toContain('提示词预览');
-});
-
-it('全空时不生成任何人设段落', () => {
-  const html = render({});
-  expect(html).toContain('0 / 6 项已填写');
-  expect(html).toContain('（暂无内容）');
-  expect(html).toContain('人设这一段不会出现在系统提示词里');
-});
-
-it('关系区块只读展示，且没有编辑控件', () => {
+it('关系还在读取时不冒充阶段', () => {
   const html = render({ name: '丛雨' });
   expect(html).toContain('当前关系');
-  expect(html).toContain('前端暂不提供修改入口');
-  // 关系区块里不能出现输入控件；只读文本 + 刷新按钮。
   const relationshipCard = html.slice(html.indexOf('当前关系'), html.indexOf('每段都会成为提示词里的一节'));
-  expect(relationshipCard).not.toContain('<input');
-  expect(relationshipCard).not.toContain('<textarea');
-  expect(relationshipCard).not.toContain('<select');
-  // 只读区块里唯一的交互控件是刷新按钮。
-  expect(relationshipCard.match(/<button/g)).toHaveLength(1);
-  // 首帧还没读到记忆：显示读取中，不冒充任何阶段。
   expect(relationshipCard).toContain('读取中');
+  expect(relationshipCard).toContain('正在读取关系');
+  expect(relationshipCard).not.toContain('好感');
+  expect(relationshipCard).not.toContain('progressbar');
+  expect(relationshipCard).not.toContain('<select');
+});
+
+const loadedView = (patch: Partial<RelationshipView> = {}): RelationshipView => ({
+  stage: '信赖',
+  line: '阶段：信赖。可以提起一起经历过的事，也会主动关心。',
+  needsSelection: false,
+  revision: 2,
+  ...patch,
+});
+
+it('关系卡片显示当前阶段，并只提供阶段选择', () => {
+  const html = renderToStaticMarkup(<RelationshipCard view={loadedView()} loading={false} busy={false}
+    error="" actionError="" onReload={() => {}} onApply={async () => true} />).replaceAll('<!-- -->', '');
+  expect(html).toContain('阶段：信赖');
+  expect(html).toContain('应用这个阶段');
+  expect(html).toContain('<select');
+});
+
+it('迁移不了的旧说明会明确要求先选择，而不是显示成某个阶段', () => {
+  const html = renderToStaticMarkup(<RelationshipCard view={loadedView({
+    stage: '', needsSelection: true,
+    line: '阶段待选择。原先的说明仍保留，但不能当作已经确定的阶段：阶段：讨厌。别说话。',
+  })} loading={false} busy={false} error="" actionError="关系刚刚在另一处更新了，请再看一眼现在的阶段，然后重新调整。"
+    onReload={() => {}} onApply={async () => false} />)
+    .replaceAll('<!-- -->', '');
+  expect(html).toContain('待选择');
+  expect(html).toContain('别说话');
+  expect(html).toContain('请选择阶段');
+  expect(html).toContain('关系刚刚在另一处更新了');
+  expect(html).not.toContain('阶段：亲近');
 });

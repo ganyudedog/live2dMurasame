@@ -65,7 +65,7 @@ describe('Markdown model memory persistence', () => {
 
   it('enforces the core memory size limits and replaces the action chat transcript', () => {
     expect(() => updateModelMemoryCore(modelPath, '字'.repeat(16000))).toThrow('30 KB');
-    expect(() => updateModelMemoryCore(modelPath, Array.from({ length: 2000 }, () => 'x').join('\n'))).not.toThrow();
+    expect(() => updateModelMemoryCore(modelPath, Array.from({ length: 1990 }, () => 'x').join('\n'))).not.toThrow();
     expect(() => updateModelMemoryCore(modelPath, Array.from({ length: 2001 }, () => 'x').join('\n'))).toThrow('2000 行');
     const memory = replaceActionCatalogChat(modelPath, '### user\n\n生成一个自然的点头动作\n\n### assistant\n\n已更新动作表');
     expect(memory.actionCatalogChat).toContain('生成一个自然的点头动作');

@@ -2,6 +2,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readTextFile as readText, readJsonFile, writeTextFile as atomicWrite, writeJsonFile as writeJson } from '../utils/file.js';
 import { getModelConfigDirFor, getLegacyModelMemoryFilePathsFor } from './configDao.js';
+import {
+  acceptRelationshipProposals,
+  applyManualAdjustment,
+  composeRelationshipCore,
+  evaluateRelationshipGrowth,
+  isMeaningfulDesktopExchange,
+  migrateRelationship,
+  normalizeStoredRelationship,
+  recordInteractionDay,
+  toPublicRelationship,
+  type StoredRelationship,
+} from '../modules/modelenv/domain/relationship.js';
+import { extractRelationship } from '../../shared/memory/relationship.js';
 
 const DEFAULT_CORE = '# 核心记忆\n\n';
 const APP_TIME_ZONE = 'Asia/Shanghai';
@@ -389,29 +402,93 @@ const desktopPaths = (paths: MemoryPaths | ArchivePaths): MemoryPaths => {
   return paths as MemoryPaths;
 };
 
-export const loadModelMemoryDocuments = (modelPath: string, archive?: unknown) => {
+const memoryLocks = new Set<string>();
+const withMemoryLock = <T>(modelPath: string, run: () => T): T => {
+  if (memoryLocks.has(modelPath)) throw new Error('Memory update is already in progress');
+  memoryLocks.add(modelPath);
+  try { return run(); }
+  finally { memoryLocks.delete(modelPath); }
+};
+
+const fitRelationshipCore = (sourceText: string, relationship: StoredRelationship): string => {
+  const section = composeRelationshipCore('', relationship).trimEnd();
+  const body = extractRelationship(sourceText).memoryText.trim();
+  const lines = body ? body.split(/\r?\n/) : [];
+  const build = (count: number): string => {
+    const kept = lines.slice(0, count).join('\n').trim();
+    return kept ? `${section}\n\n${kept}\n` : `${section}\n`;
+  };
+  let count = lines.length;
+  let text = build(count);
+  while (count > 0 && (Buffer.byteLength(text, 'utf8') > MAX_CORE_BYTES || coreLineCount(text) > MAX_CORE_LINES)) {
+    count -= 1;
+    text = build(count);
+  }
+  if (Buffer.byteLength(text, 'utf8') > MAX_CORE_BYTES || coreLineCount(text) > MAX_CORE_LINES) return `${section}\n`;
+  return text;
+};
+
+const strictRelationshipCore = (sourceText: string, relationship: StoredRelationship): string => {
+  const text = composeRelationshipCore(sourceText, relationship);
+  assertCoreLimits(text);
+  return text;
+};
+
+/** Reads or creates the authoritative relationship, then repairs the core section from it. */
+const adoptDesktopRelationship = (paths: MemoryPaths, state: MemoryState, now = Date.now()): boolean => {
+  const raw = state.relationship;
+  const relationship = normalizeStoredRelationship(raw) ?? migrateRelationship(readText(paths.corePath, DEFAULT_CORE), now);
+  state.relationship = relationship;
+  const currentCore = readText(paths.corePath, DEFAULT_CORE);
+  const nextCore = fitRelationshipCore(currentCore, relationship);
+  if (nextCore !== currentCore) atomicWrite(paths.corePath, nextCore);
+  return JSON.stringify(raw) !== JSON.stringify(relationship) || nextCore !== currentCore;
+};
+
+const relationshipEvidence = (paths: MemoryPaths, rememberedCount: number, throughCount: number) => {
+  type Evidence = { conversationCount: number; userText: string };
+  const priorTurns: Evidence[] = [];
+  const candidateTurns: Evidence[] = [];
+  for (const date of listEpisodeDates(paths)) {
+    for (const block of parseEpisodeBlocks(readText(path.join(paths.episodesDir, `${date}.md`)), date)) {
+      const userText = block.userText.trim();
+      if (block.conversationCount <= 0 || block.conversationCount > throughCount || userText.length < 4) continue;
+      const target = block.conversationCount <= rememberedCount ? priorTurns : candidateTurns;
+      target.push({ conversationCount: block.conversationCount, userText });
+    }
+  }
+  return { priorTurns, candidateTurns };
+};
+
+const readModelMemorySnapshot = (modelPath: string, archive?: unknown) => {
   const paths = ensureEpisodeArchive(modelPath, archive);
   const state = archive == null
     ? migrateLegacyMemory(modelPath, desktopPaths(paths))
     : readState(paths.statePath);
+  const relationshipDirty = archive == null ? adoptDesktopRelationship(desktopPaths(paths), state) : false;
   const deletedCount = pruneExpiredEpisodes(paths, Date.now(), state);
-  if (deletedCount > 0) writeJson(paths.statePath, state);
+  if (deletedCount > 0 || relationshipDirty) writeJson(paths.statePath, state);
   const pending = pendingEpisodes(paths, state);
   const episodeDates = listEpisodeDates(paths);
   const stored = archive == null ? desktopPaths(paths) : null;
+  const relationship = stored ? toPublicRelationship(state.relationship) : null;
   return {
     coreText: stored ? readText(stored.corePath) : '',
     // 只返回日期索引；原始 episode 只能通过显式历史查询读取。
     episodes: [] as unknown[],
     episodeDates,
     episodeCount: episodeDates.length,
-    state: { ...DEFAULT_STATE, ...state },
+    state: { ...DEFAULT_STATE, ...state, relationship: relationship ?? state.relationship },
+    relationship,
     pendingEpisodeText: stored ? pending.text : '',
     pendingThroughCount: pending.throughCount,
     pendingSinceDate: pending.sinceDate,
     actionCatalogChat: stored ? readText(stored.actionCatalogChatPath).slice(-MAX_ACTION_CHAT_BYTES) : '',
   };
 };
+
+export const loadModelMemoryDocuments = (modelPath: string, archive?: unknown) =>
+  withMemoryLock(modelPath, () => readModelMemorySnapshot(modelPath, archive));
 
 // Recent context is chronological, independent of relevance and consolidation cursors.
 export const loadRecentModelMemoryTurns = (modelPath: string, query: unknown = {}) => {
@@ -499,7 +576,7 @@ export const recallModelMemoryEpisodes = (modelPath: string, query: unknown = {}
   };
 };
 
-export const appendModelMemoryConversation = (modelPath: string, conversation: unknown) => {
+export const appendModelMemoryConversation = (modelPath: string, conversation: unknown) => withMemoryLock(modelPath, () => {
   const source = asObject(conversation);
   const paths = ensureEpisodeArchive(modelPath, source.archive);
   const state = readState(paths.statePath);
@@ -511,43 +588,109 @@ export const appendModelMemoryConversation = (modelPath: string, conversation: u
   const content = readText(episodePath, `# 对话片段 ${date}\n`);
   if (Buffer.byteLength(content + block, 'utf8') > MAX_EPISODE_BYTES) throw new Error('当天记忆归档超过 512 KB，已停止追加');
   atomicWrite(episodePath, `${content}${block}`);
+  // Conversation archives and personal memory have independent state.
+  if (source.archive == null) {
+    const desktop = desktopPaths(paths);
+    const now = Date.now();
+    const at = finiteNumber(source.at) ? Math.floor(source.at) : now;
+    let relationship = normalizeStoredRelationship(state.relationship)
+      ?? migrateRelationship(readText(desktop.corePath, DEFAULT_CORE), now);
+    if (isMeaningfulDesktopExchange(source.userText, source.assistantText)) {
+      relationship = evaluateRelationshipGrowth(
+        recordInteractionDay(relationship, at), now, undefined, state.conversationCount,
+      );
+    }
+    state.relationship = relationship;
+  }
   writeJson(paths.statePath, state);
-  return loadModelMemoryDocuments(modelPath, source.archive);
-};
+  return readModelMemorySnapshot(modelPath, source.archive);
+});
 
-export const updateModelMemoryCore = (modelPath: string, content: unknown) => {
+export const updateModelMemoryCore = (modelPath: string, content: unknown) => withMemoryLock(modelPath, () => {
   if (typeof content !== 'string') throw new TypeError('核心记忆必须是 Markdown 文本');
-  const normalized = normalizeCore(content);
-  assertCoreLimits(normalized);
   const paths = ensureMemoryFiles(modelPath);
+  const state = migrateLegacyMemory(modelPath, paths);
+  const relationship = normalizeStoredRelationship(state.relationship)
+    ?? migrateRelationship(readText(paths.corePath, DEFAULT_CORE), Date.now());
+  const normalized = strictRelationshipCore(content, relationship);
   atomicWrite(paths.corePath, normalized);
-  return loadModelMemoryDocuments(modelPath);
-};
+  state.relationship = relationship;
+  writeJson(paths.statePath, state);
+  return readModelMemorySnapshot(modelPath);
+});
 
-export const updateModelMemoryMaintenanceState = (modelPath: string, patch: unknown = {}) => {
+export const updateModelMemoryMaintenanceState = (modelPath: string, patch: unknown = {}) => withMemoryLock(modelPath, () => {
   const source = asObject(patch);
   const paths = ensureMemoryFiles(modelPath);
-  const current = readState(paths.statePath);
-  const next = { ...current };
+  const next = migrateLegacyMemory(modelPath, paths);
+  adoptDesktopRelationship(paths, next);
   if (finiteNumber(source.lastConsolidatedCount)) next.lastConsolidatedCount = Math.max(0, Math.floor(source.lastConsolidatedCount));
   if (finiteNumber(source.lastDecayAt)) next.lastDecayDate = safeDate(source.lastDecayAt);
   writeJson(paths.statePath, next);
   return next;
-};
+});
 
-export const saveModelMemoryConsolidation = (modelPath: string, input: unknown = {}) => {
+export const saveModelMemoryConsolidation = (modelPath: string, input: unknown = {}) => withMemoryLock(modelPath, () => {
   const source = asObject(input);
   if (!finiteNumber(source.processedThroughCount)) throw new TypeError('记忆整理必须提供已处理的对话游标');
-  updateModelMemoryCore(modelPath, source.content);
+  if (typeof source.content !== 'string') throw new TypeError('核心记忆必须是 Markdown 文本');
   const paths = ensureMemoryFiles(modelPath);
-  const current = readState(paths.statePath);
-  current.lastConsolidatedCount = Math.min(current.conversationCount, Math.max(current.lastConsolidatedCount, Math.floor(source.processedThroughCount)));
-  current.lastDecayDate = safeDate(Date.now());
-  writeJson(paths.statePath, current);
-  return loadModelMemoryDocuments(modelPath);
-};
+  const state = migrateLegacyMemory(modelPath, paths);
+  const now = Date.now();
+  let relationship = normalizeStoredRelationship(state.relationship)
+    ?? migrateRelationship(readText(paths.corePath, DEFAULT_CORE), now);
+  const processedThroughCount = Math.min(state.conversationCount, Math.max(0, Math.floor(source.processedThroughCount)));
+  const rememberedCount = state.lastConsolidatedCount ?? 0;
+  relationship = acceptRelationshipProposals(relationship, source.relationshipEvents, {
+    priorMemory: extractRelationship(readText(paths.corePath, DEFAULT_CORE)).memoryText,
+    ...(Array.isArray(source.relationshipEvents) && source.relationshipEvents.length
+      ? relationshipEvidence(paths, rememberedCount, processedThroughCount) : {}),
+  });
+  relationship = evaluateRelationshipGrowth(relationship, now, undefined, processedThroughCount);
+  atomicWrite(paths.corePath, strictRelationshipCore(source.content, relationship));
+  state.lastConsolidatedCount = Math.min(state.conversationCount, Math.max(state.lastConsolidatedCount, Math.floor(source.processedThroughCount)));
+  state.lastDecayDate = safeDate(now);
+  state.relationship = relationship;
+  writeJson(paths.statePath, state);
+  return readModelMemorySnapshot(modelPath);
+});
 
-export const replaceActionCatalogChat = (modelPath: string, content: unknown) => {
+const applyRelationshipChange = (
+  modelPath: string,
+  change: (relationship: StoredRelationship, now: number, conversationCount: number) => StoredRelationship | null,
+) =>
+  withMemoryLock(modelPath, () => {
+    const paths = ensureMemoryFiles(modelPath);
+    const state = migrateLegacyMemory(modelPath, paths);
+    const now = Date.now();
+    const current = normalizeStoredRelationship(state.relationship)
+      ?? migrateRelationship(readText(paths.corePath, DEFAULT_CORE), now);
+    const next = change(current, now, Math.max(0, Math.floor(state.conversationCount || 0)));
+    if (!next) {
+      state.relationship = current;
+      adoptDesktopRelationship(paths, state, now);
+      writeJson(paths.statePath, state);
+      return readModelMemorySnapshot(modelPath);
+    }
+    state.relationship = next;
+    atomicWrite(paths.corePath, strictRelationshipCore(readText(paths.corePath, DEFAULT_CORE), next));
+    writeJson(paths.statePath, state);
+    return readModelMemorySnapshot(modelPath);
+  });
+
+export const adjustModelMemoryRelationship = (modelPath: string, input: unknown) => (
+  applyRelationshipChange(modelPath, (relationship, now, conversationCount) => {
+    const source = asObject(input);
+    const result = applyManualAdjustment(relationship, {
+      expectedRevision: typeof source.expectedRevision === 'number' ? source.expectedRevision : undefined,
+      stage: typeof source.stage === 'string' ? source.stage : undefined,
+      conversationCount,
+    }, now);
+    return result.changed ? result.relationship : null;
+  })
+);
+
+export const replaceActionCatalogChat = (modelPath: string, content: unknown) => withMemoryLock(modelPath, () => {
   if (typeof content !== 'string') throw new TypeError('动作表配置对话必须是文本');
   const paths = ensureMemoryFiles(modelPath);
   const header = '# 动作表配置对话\n\n';
@@ -560,7 +703,7 @@ export const replaceActionCatalogChat = (modelPath: string, content: unknown) =>
     normalized = `${header}${marker}${tail}`;
   }
   atomicWrite(paths.actionCatalogChatPath, normalized);
-  return loadModelMemoryDocuments(modelPath);
-};
+  return readModelMemorySnapshot(modelPath);
+});
 
 export const getModelMemoryEpisodeAgeBand = deriveEpisodeAgeBand;

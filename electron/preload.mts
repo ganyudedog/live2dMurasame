@@ -94,6 +94,7 @@ const MemoryAPI = {
   updateCore: (payload: unknown) => ipcRenderer.invoke('ddd:modelenv:memory:update-core', payload),
   replaceActionCatalogChat: (payload: unknown) => ipcRenderer.invoke('ddd:modelenv:memory:action-chat:replace', payload),
   consolidate: (payload: unknown) => ipcRenderer.invoke('ddd:modelenv:memory:consolidate', payload),
+  adjustRelationship: (payload: unknown) => ipcRenderer.invoke('ddd:modelenv:memory:relationship:adjust', payload),
   onUpdated: snapshotStore.onModelMemoryUpdated,
 };
 

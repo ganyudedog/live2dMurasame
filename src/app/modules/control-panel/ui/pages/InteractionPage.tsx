@@ -4,7 +4,7 @@ import { Eraser, MousePointerClick, Play, Plus, Search, Shuffle, X } from 'lucid
 import Modal from '../components/common/Modal';
 import { Page } from '../components/common/Page';
 import { Button } from '../components/common/Button';
-import { Input } from '../components/common/FormControls';
+import { Input, Range } from '../components/common/FormControls';
 import { Switch } from '../components/common/Switch';
 import { StatusDot } from '../components/common/Badge';
 import { EmptyState } from '../components/common/Feedback';
@@ -161,8 +161,8 @@ const InteractionPage = observer(function InteractionPage({ manager }: { manager
                       {/* 精准模式：档位让位给拖动条 + 直接填数 */}
                       {precise && (
                         <div className="flex items-center gap-2">
-                          <input type="range" min={0} max={WEIGHT_MAX} step={1} value={Math.min(WEIGHT_MAX, motion.weight)}
-                            className="ui-range min-w-0 flex-1"
+                          <Range min={0} max={WEIGHT_MAX} step={1} value={Math.min(WEIGHT_MAX, motion.weight)}
+                            className="min-w-0 flex-1"
                             aria-label={`${label} 权重滑杆`}
                             onChange={(event) => manager.setWeight(area.name, motion.group, motion.index, Number(event.target.value))} />
                           <Input type="number" size="xs" min={0} max={WEIGHT_MAX} step={1} value={motion.weight}

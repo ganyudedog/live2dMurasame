@@ -46,7 +46,7 @@ export interface CommandSession {
   finish(requestId: string, result: unknown): Promise<void>;
 }
 export interface CliBridgeApi {
-  open(scope: CommandScope): Promise<string>;
+  open(scope: CommandScope): Promise<string | null>;
   invoke(session: string, request: CommandRequest): Promise<unknown>;
   tasks(session: string): Promise<AgentTask[]>;
   close(session: string): Promise<void>;

@@ -30,7 +30,29 @@ export interface UiContribution {
   readonly order?: number;
   /** Pages get a dedicated control-panel navigation entry; cards render in their named slot. */
   readonly placement?: 'card' | 'page';
+  /**
+   * Page only. Pages of one plugin that share this text form one collapsible navigation group titled with it;
+   * pages without a group are listed under the host's plugin group.
+   */
+  readonly group?: string;
+  /** Page only. Navigation icon, e.g. a lucide-react icon component. */
+  readonly icon?: ComponentType<{ className?: string }>;
+  /** Page only. One line under the page title. */
+  readonly description?: string;
   readonly render: ComponentType<UiRenderContext> | ((context: UiRenderContext) => ReactNode);
+}
+
+export interface ControlPanelPage {
+  readonly ownerId: string;
+  readonly contribution: UiContribution;
+  readonly tabId: string;
+}
+
+/** A navigation group built from pages that share `UiContribution.group` within one plugin. */
+export interface ControlPanelPageGroup {
+  readonly ownerId: string;
+  readonly title: string;
+  readonly pages: readonly ControlPanelPage[];
 }
 
 export interface CommandContribution {

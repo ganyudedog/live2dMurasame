@@ -77,6 +77,8 @@ const ControlPanel: React.FC = observer(() => {
           chatReasoningEffort={service.chatReasoningEffort}
           llmModels={service.llmModels}
           chatModel={service.aiSettings.model}
+          presenceEnabled={service.stateBus.presence.enabled}
+          onTogglePresence={(enabled) => void service.togglePresence(enabled)}
           asrEnabled={service.stateBus.asr.enabled}
           asrState={service.stateBus.asr.state}
           asrPartialText={service.stateBus.asr.partialText}
@@ -159,8 +161,6 @@ const ControlPanel: React.FC = observer(() => {
             return null;
           })}
           onAsrConfigChange={(next) => service.persistAsrConfig(next).catch(reportError)}
-          presenceEnabled={service.stateBus.presence.enabled}
-          onTogglePresence={(enabled) => void service.togglePresence(enabled)}
         />
       )}
 

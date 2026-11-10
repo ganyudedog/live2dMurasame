@@ -37,6 +37,7 @@ export class StateBusService {
   scale = 1;
   composerDraft = '';
   asr: SharedState['asr'] = { ...DEFAULT_ASR_STATE };
+  presence: SharedState['presence'] = { enabled: false };
   chatConfig: ChatConfig = { ...DEFAULT_CHAT_CONFIG };
   chatRequest: ChatRequest | null = null;
   chatResponse: ChatResponse | null = null;
@@ -67,6 +68,7 @@ export class StateBusService {
       scale: observable,
       composerDraft: observable,
       asr: observableRef,
+      presence: observableRef,
       chatConfig: observableRef,
       chatRequest: observableRef,
       chatResponse: observableRef,
@@ -131,6 +133,10 @@ export class StateBusService {
     this.dispatch([{ path: 'asr.enabled', value: Boolean(enabled) }], 'asr.enabled');
   }
 
+  setPresenceEnabled(enabled: boolean): void {
+    this.dispatch([{ path: 'presence.enabled', value: Boolean(enabled) }], 'presence.enabled');
+  }
+
   private seedFromPersistedConfig(): void {
     const globalConfig = this.config.globalModelConfig;
     if (typeof globalConfig?.scale === 'number' && Number.isFinite(globalConfig.scale)) {
@@ -175,6 +181,7 @@ export class StateBusService {
       this.scale = state.global.scale;
       this.composerDraft = state.composer?.draft ?? '';
       this.asr = { ...state.asr };
+      this.presence = { enabled: Boolean(state.presence?.enabled) };
       this.chatConfig = { ...state.config };
       this.chatRequest = state.chat.request;
       this.chatResponse = state.chat.response;
@@ -183,6 +190,7 @@ export class StateBusService {
 
   private applyPatchOps(ops: PatchOp[]): void {
     let nextAsr = this.asr;
+    let nextPresence = this.presence;
     let nextConfig = this.chatConfig;
     for (const op of ops) {
       if (op.path === 'global.scale' && typeof op.value === 'number') this.scale = op.value;
@@ -197,6 +205,7 @@ export class StateBusService {
       else if (op.path === 'asr.error') nextAsr = { ...nextAsr, error: typeof op.value === 'string' ? op.value : null };
       else if (op.path === 'asr.throttled') nextAsr = { ...nextAsr, throttled: Boolean(op.value) };
       else if (op.path === 'asr.lastUpdatedAt' && typeof op.value === 'number') nextAsr = { ...nextAsr, lastUpdatedAt: op.value };
+      else if (op.path === 'presence.enabled') nextPresence = { enabled: Boolean(op.value) };
       else if (op.path === 'config.model' && typeof op.value === 'string') nextConfig = { ...nextConfig, model: op.value };
       else if (op.path === 'config.apiKey' && typeof op.value === 'string') nextConfig = { ...nextConfig, apiKey: op.value };
       else if (op.path === 'config.baseURL' && typeof op.value === 'string') nextConfig = { ...nextConfig, baseURL: op.value };
@@ -208,6 +217,7 @@ export class StateBusService {
       else if (op.path === 'chat.response') this.chatResponse = op.value as ChatResponse;
     }
     if (nextAsr !== this.asr) this.asr = { ...nextAsr, lastUpdatedAt: nextAsr.lastUpdatedAt || Date.now() };
+    if (nextPresence !== this.presence) this.presence = nextPresence;
     if (nextConfig !== this.chatConfig) this.chatConfig = nextConfig;
   }
 

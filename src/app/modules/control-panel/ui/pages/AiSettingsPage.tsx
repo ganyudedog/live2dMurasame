@@ -6,7 +6,7 @@ import { Input, Select } from '../components/common/FormControls';
 import TTSSettingsPage from './TTSSettingsPage';
 import AsrSettingsPage from './AsrSettingsPage';
 import { SubtitleSettings } from '../components/subtitle/SubtitleSettingsCard';
-import { Field, SettingsCard } from '../components/common/SettingsSection';
+import { Field, SettingsCard, SwitchRow } from '../components/common/SettingsSection';
 import { ModelRegistryCard } from '../components/ai/ModelRegistryCard';
 import { keepFetchedModels } from '../components/ai/keepFetchedModels';
 import { MemoryModelCard } from '../components/ai/MemoryModelCard';
@@ -44,6 +44,8 @@ export default function AiSettingsPage({
   onTtsConfigChange,
   onPickPath,
   onAsrConfigChange,
+  presenceEnabled,
+  onTogglePresence,
   globalConfig,
   onGlobalConfigChange,
 }: {
@@ -61,6 +63,8 @@ export default function AiSettingsPage({
   onTtsConfigChange: (next: ModelConfig['tts']) => Promise<void>;
   onPickPath: (kind: 'gpt' | 'sovits' | 'ref') => Promise<string | null>;
   onAsrConfigChange: (next: AsrConfig) => Promise<void>;
+  presenceEnabled: boolean;
+  onTogglePresence: (enabled: boolean) => void;
   globalConfig: PetGlobalModelConfig;
   onGlobalConfigChange: (patch: PetGlobalModelConfigPayload) => Promise<unknown>;
 }) {
@@ -210,6 +214,11 @@ export default function AiSettingsPage({
               </div>
             </Field>
           </div>
+        </SettingsCard>
+
+        <SettingsCard title="摄像头" description="打开后，桌宠窗口根据面部动作判断当前状态。状态没变化时不重复送进对话。">
+          <SwitchRow label="启用摄像头" hint="默认关闭。只在桌宠窗口采集，关闭后立即停止。"
+            checked={presenceEnabled} onChange={onTogglePresence} />
         </SettingsCard>
 
         <ModelRegistryCard

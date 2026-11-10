@@ -426,6 +426,7 @@ app.whenReady().then(async () => {
                     '.woff': 'font/woff',
                     '.woff2': 'font/woff2',
                     '.wasm': 'application/wasm',
+                    '.task': 'application/octet-stream',
                 };
                 const contentType = mimeTypes[ext] || 'application/octet-stream';
                 const data = fs.readFileSync(filePath);

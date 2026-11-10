@@ -92,7 +92,9 @@ export const requestStage2LLM = async (
       ...(req.historyMessages ?? []).map((message) => message.role === 'assistant'
         ? { ...message, content: JSON.stringify({ display_text: message.content }) }
         : message),
-      { role: 'user' as const, content: buildStage2UserPrompt({ userText: req.userText, memoryContext: req.memoryContext }) },
+      { role: 'user' as const, content: buildStage2UserPrompt({
+        userText: req.userText, memoryContext: req.memoryContext, presenceLine: req.presenceLine, cue: req.cue,
+      }) },
     ],
     ...reasoningOptions(req.reasoningEffort),
   };

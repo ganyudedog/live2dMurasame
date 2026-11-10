@@ -8,6 +8,7 @@ import type { ActionCapability } from '../../../../live2d/modules/actions/domain
 import type { ReasoningEffort, ReasoningSummaryEvent, Stage2AskResult, Stage2LLMConfig } from '../domain/types';
 import type { GenerationProgress } from '../domain/action-catalog/generation';
 import { runSkillLoop } from '../application/skillLoop';
+import { createPresenceRuntime, type PresenceRuntimeOptions } from '../infrastructure/presenceRuntime';
 import type { CommandSession } from '../../../../../../../shared/cli/contracts';
 
 interface Stage2AskOptions {
@@ -25,6 +26,9 @@ interface Stage2AskOptions {
   onSentenceSpeechReady?: (sentence: { sentenceIndex: number; speakText: string }) => void;
   onSentenceDisplayReady?: (sentence: { sentenceIndex: number; displayText: string }) => void;
   onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
+  presenceLine?: string;
+  /** 主动开口的提示，不冠以「用户输入」。 */
+  cue?: boolean;
 }
 
 interface LlmServiceOptions {
@@ -54,6 +58,7 @@ export class LlmService {
   private readonly memory: MemoryService;
   private readonly log?: LogService;
   private readonly openCommands?: LlmServiceOptions['openCommands'];
+  private readonly presence: ReturnType<typeof createPresenceRuntime>;
 
   constructor(options: LlmServiceOptions) {
     this.openCommands = options.openCommands;
@@ -64,6 +69,15 @@ export class LlmService {
     this.config = options.defaultConfig ?? {};
     this.memory = new MemoryService(this.getConfigSnapshot,
       (system, user, signal) => this.requestMemoryStructured(system, user, signal));
+    this.presence = createPresenceRuntime(this.log);
+  }
+
+  bindPresence(options: PresenceRuntimeOptions): void {
+    this.presence.bind(options);
+  }
+
+  notePresenceInteraction(at = Date.now()): void {
+    this.presence.noteUserInteraction(at);
   }
 
   setConfig(patch: Partial<RuntimeBridgeConfig> & { reasoningEffort?: ReasoningEffort | '' }): RuntimeBridgeConfig {
@@ -242,6 +256,8 @@ export class LlmService {
           model: resolved.model,
           temperature: resolved.temperature,
           memoryContext: memoryRuntime?.contextText ?? toolContext,
+          presenceLine: options.cue ? undefined : options.presenceLine ?? this.presence.consumePrompt() ?? undefined,
+          cue: options.cue,
           personaPrompt: memoryRuntime?.personaPrompt,
           relationshipStage: memoryRuntime?.relationshipStage,
           historyMessages: memoryRuntime?.historyMessages,
@@ -339,6 +355,7 @@ export class LlmService {
   }
 
   dispose(): void {
+    void this.presence.stop();
     this.memory.dispose();
   }
 

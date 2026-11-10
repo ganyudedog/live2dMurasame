@@ -152,6 +152,8 @@ const ControlPanel: React.FC = observer(() => {
             return null;
           })}
           onAsrConfigChange={(next) => service.persistAsrConfig(next).catch(reportError)}
+          presenceEnabled={service.stateBus.presence.enabled}
+          onTogglePresence={(enabled) => void service.togglePresence(enabled)}
         />
       )}
 

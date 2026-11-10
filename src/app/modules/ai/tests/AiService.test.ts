@@ -20,7 +20,10 @@ const setup = (ownsConversationRuntime = true) => {
     onSpeechStart: vi.fn((listener: () => void) => { speechStart = listener; return offStart; }),
     onFinal: vi.fn((listener: typeof final) => { final = listener; return offFinal; }),
   };
-  const llm = { ask: vi.fn<LlmService['ask']>(), dispose: vi.fn() };
+  const llm = {
+    ask: vi.fn<LlmService['ask']>(), dispose: vi.fn(),
+    bindPresence: vi.fn(), notePresenceInteraction: vi.fn(),
+  };
   const consumers = new Map<string, { submit: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; wait: ReturnType<typeof vi.fn>; summary: ReturnType<typeof vi.fn> }>();
   const tts = { start: vi.fn(), dispose: vi.fn(), cancelActive: vi.fn(), createDispatcher: vi.fn((id: string) => {
     const consumer = { submit: vi.fn(), stop: vi.fn(), wait: vi.fn().mockResolvedValue(undefined), summary: vi.fn() };

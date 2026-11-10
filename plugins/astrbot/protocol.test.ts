@@ -23,8 +23,8 @@ describe('AstrBot sender identity', () => {
       { id: '2904725137', name: '冰霓' },
       { id: '2655314552', name: '南柯一梦' },
     ]);
-    const overflow = Array.from({ length: 9 }, (_, index) => ({ id: String(2904725130 + index), name: '人' }));
-    expect(normalizeAstrBotMentions(overflow, '3983762587')).toHaveLength(8);
+    const overflow = Array.from({ length: 33 }, (_, index) => ({ id: String(2904725130 + index), name: '人' }));
+    expect(normalizeAstrBotMentions(overflow, '3983762587')).toHaveLength(32);
   });
 
   it('does not invent missing or unsafe identifiers', () => {

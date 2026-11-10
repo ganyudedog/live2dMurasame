@@ -1,3 +1,4 @@
+import type { PluginCliGrantStore } from './PluginCliGrantStore.js';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import type { TaskStore } from '../infrastructure/TaskStore.js';
@@ -54,11 +55,13 @@ export class AgentTaskService implements AgentTaskQuery {
   private closed = false;
   private readonly sweep: ReturnType<typeof setInterval>;
 
+  private readonly grants?: PluginCliGrantStore;
   private readonly store: TaskStore;
   private readonly adapter: CodexRunner;
 
-  constructor(store: TaskStore, adapter: CodexRunner) {
+  constructor(store: TaskStore, adapter: CodexRunner, grants?: PluginCliGrantStore) {
     this.store = store;
+    this.grants = grants;
     this.adapter = adapter;
     for (const task of Object.values(store.data.tasks)) {
       if (!terminal(task)) {
@@ -99,7 +102,7 @@ export class AgentTaskService implements AgentTaskQuery {
   }
 
   getSettings(): AgentSettings {
-    return structuredClone(this.store.data.settings);
+    return { ...structuredClone(this.store.data.settings), remoteSources: this.grants?.read() ?? [...this.store.data.settings.remoteSources] };
   }
 
   updateSettings(args: AgentSettings): AgentSettings {
@@ -109,9 +112,10 @@ export class AgentTaskService implements AgentTaskQuery {
       if (!fs.statSync(directory).isDirectory()) throw new Error('Workspace must be a directory');
       return { id: item.id, path: directory };
     });
-    this.store.data.settings = { workspaces, remoteSources: args.remoteSources };
+    this.grants?.write(args.remoteSources);
+    this.store.data.settings = { workspaces, remoteSources: this.grants ? [] : args.remoteSources };
     this.store.save();
-    return structuredClone(this.store.data.settings);
+    return this.getSettings();
   }
 
   create(args: { prompt: string; workspaceId?: string; taskId?: string }, context: CommandContext, invocationId: string): AgentTaskView {

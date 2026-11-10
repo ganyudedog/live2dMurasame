@@ -1,25 +1,33 @@
+import { observer } from 'mobx-react-lite';
+import { useService } from '@app/core/useService';
+import { TOKENS } from '@app/core/serviceTokens';
+import { Checkbox } from '../common/Checkbox';
 import { useEffect, useState } from 'react';
 import type { AgentSettings, AgentTask } from '../../../../../../../shared/cli/contracts';
 import { commandRequest } from '@app/shared/electron/commandSession';
-import { Bot, LoaderCircle, Plus, Save, X } from 'lucide-react';
+import { Bot, Plus, X } from 'lucide-react';
 import { Field, SettingsCard } from '../common/SettingsSection';
 import { Button } from '../common/Button';
-import { Input, Textarea } from '../common/FormControls';
+import { Input } from '../common/FormControls';
 import { StatusDot } from '../common/Badge';
 import { Notice } from '../common/Feedback';
 
 const statusLabels = { queued: '排队中', running: '执行中', cancelling: '正在取消', succeeded: '完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' };
 
 /** Projection of Electron tasks; mounting/unmounting never owns their execution. */
-export function AgentCard({ settings = false }: { settings?: boolean }) {
+export const AgentCard = observer(function AgentCard({ settings = false }: { settings?: boolean }) {
+  const runtime = useService(TOKENS.plugin);
+  const plugins = [...runtime.plugins.values()];
   const [session, setSession] = useState<string | null>(null);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [workspaces, setWorkspaces] = useState<AgentSettings['workspaces']>([]);
-  const [sources, setSources] = useState('');
+  const [sources, setSources] = useState<string[]>([]);
   const [notice, setNotice] = useState('');
   useEffect(() => {
+    setSettingsLoaded(false);
     const api = window.CliAPI;
     if (!api) return;
     let disposed = false;
@@ -31,35 +39,37 @@ export function AgentCard({ settings = false }: { settings?: boolean }) {
       return [...combined.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 20);
     });
     void api.open({ source: 'local', conversationId: 'desktop' }).then(async (opened) => {
-      id = opened;
-      if (disposed) { await api.close(opened); return; }
+      id = opened ?? undefined;
+      if (disposed) { if (opened) await api.close(opened); return; }
+      if (!opened) return;
       setSession(opened);
       off = api.onTask(opened, ({ task }) => { if (!disposed) merge([task]); });
       const snapshot = await api.tasks(opened);
       if (!disposed) merge(snapshot);
       if (settings) {
         const config = await api.invoke(opened, commandRequest('agent.settings.get')) as AgentSettings;
-        if (!disposed) { setWorkspaces(config.workspaces); setSources(config.remoteSources.join('\n')); }
+        if (!disposed) { setWorkspaces(config.workspaces); setSources(config.remoteSources); setSettingsLoaded(true); }
       }
     }).catch((reason) => { if (!disposed) setError(String(reason)); });
     return () => { disposed = true; off?.(); if (id) void api.close(id); };
   }, [settings]);
-  const save = async () => {
-    if (!session || !window.CliAPI) return;
-    setSaving(true); setError(''); setNotice('');
+  
+  const saveSources = async (next: string[]) => {
+    if (!session || !window.CliAPI || !settingsLoaded || saving) return;
+    setSaving(true); setError('');
     try {
-      await window.CliAPI.invoke(session, commandRequest('agent.settings.update', { workspaces,
-        remoteSources: sources.split('\n').map((value) => value.trim()).filter(Boolean) }));
-      setNotice('已保存。可在本地聊天或已授权插件中请求开发任务。');
+      const current = await window.CliAPI.invoke(session, commandRequest('agent.settings.get')) as AgentSettings;
+      await window.CliAPI.invoke(session, commandRequest('agent.settings.update', { ...current, remoteSources: next }));
+      setSources(next);
+      setNotice('已保存到全局配置');
     } catch (reason) { setError(String(reason)); } finally { setSaving(false); }
   };
+
   if (!settings && !tasks.length && !error) return null;
-  return <SettingsCard title="Agent · Codex" icon={<Bot />} className="shrink-0"
-    description={settings ? '使用本机 Codex 登录。添加项目后，可直接在聊天中提出开发需求。' : undefined}
-    actions={settings ? <Button variant="primary" disabled={!session || saving} onClick={() => void save()}>
-      {saving ? <LoaderCircle className="animate-spin" /> : <Save />}
-      保存 Agent 设置
-    </Button> : undefined}>
+
+  return (
+    <SettingsCard title="Agent · Codex" icon={<Bot />} className="shrink-0"
+    description={settings ? '使用本机 Codex 登录。添加项目后，可直接在聊天中提出开发需求。' : undefined}>
     {settings && <>
       <Field label="项目">
         <div className="space-y-2">
@@ -77,8 +87,19 @@ export function AgentCard({ settings = false }: { settings?: boolean }) {
           </Button>
         </div>
       </Field>
-      <Field label="允许操作本机的远程插件来源" hint="每行一个 plugin:插件ID；留空仅允许本地。">
-        <Textarea className="min-h-20 font-mono" value={sources} onChange={(event) => setSources(event.target.value)} />
+      <Field label="允许调用 CLI 的插件" hint="勾选后立即保存到全局配置；未勾选的插件仍可正常聊天。">
+        <div className="space-y-2">
+          {plugins.map(({ manifest }) => {
+            const source = `plugin:${manifest.id}`;
+            return <label key={manifest.id} className="flex items-center gap-2 text-sm">
+              <Checkbox checked={sources.includes(source)} disabled={!session || !settingsLoaded || saving}
+                onCheckedChange={(checked) => void saveSources(checked
+                  ? [...new Set([...sources, source])] : sources.filter((item) => item !== source))} />
+              <span>{manifest.name}</span>
+            </label>;
+          })}
+          {!plugins.length && <p className="text-sm text-muted-foreground">暂无已注册插件</p>}
+        </div>
       </Field>
       {notice && <Notice tone="success">{notice}</Notice>}
     </>}
@@ -97,10 +118,11 @@ export function AgentCard({ settings = false }: { settings?: boolean }) {
           }}>取消任务</Button>}
         </div>
         <p className="select-all font-mono text-[11px] text-muted-foreground">{task.id}</p>
-        {(task.summary || task.error) && <p className={`whitespace-pre-wrap break-words ${task.error ? 'text-danger' : ''}`}>
+        {(task.summary || task.error) && <p className={`whitespace-pre-wrap wrap-break-word ${task.error ? 'text-danger' : ''}`}>
           {task.error || task.summary}
         </p>}
       </div>;
     })}</div>}
-  </SettingsCard>;
-}
+    </SettingsCard>
+  );
+});

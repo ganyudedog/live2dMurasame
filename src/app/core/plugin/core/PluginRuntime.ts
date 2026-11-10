@@ -5,6 +5,8 @@ import { parsePluginManifest } from './manifest';
 import {
   hostMethodEffects,
   hostPermissions,
+  type ControlPanelPage,
+  type ControlPanelPageGroup,
   type Disposable,
   type PluginContext,
   type PluginDefinition,
@@ -201,10 +203,27 @@ export class PluginRuntime {
     return context;
   }
 
-  getControlPanelPages(): readonly { ownerId: string; contribution: UiContribution; tabId: string }[] {
+  getControlPanelPages(): readonly ControlPanelPage[] {
     return this.registry.ui.listOwned()
       .filter(({ value }) => value.placement === 'page' && value.slot === 'control-panel')
       .map(({ ownerId, value }) => ({ ownerId, contribution: value, tabId: getPluginTabId(ownerId, value.id) }));
+  }
+
+  /**
+   * Grouped pages in navigation order. A group is keyed by owner and title, so two plugins using the same
+   * group text never merge; it sits where its first page would, and keeps its pages in page order.
+   */
+  getControlPanelPageGroups(): readonly ControlPanelPageGroup[] {
+    const groups = new Map<string, { ownerId: string; title: string; pages: ControlPanelPage[] }>();
+    for (const page of this.getControlPanelPages()) {
+      const title = page.contribution.group?.trim();
+      if (!title) continue;
+      const key = `${page.ownerId}\u0000${title}`;
+      const group = groups.get(key) ?? { ownerId: page.ownerId, title, pages: [] };
+      group.pages.push(page);
+      groups.set(key, group);
+    }
+    return [...groups.values()];
   }
 
   getUiContributions(slot: string): readonly { ownerId: string; contribution: UiContribution }[] {

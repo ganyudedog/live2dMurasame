@@ -35,6 +35,12 @@ export const createPluginHosts = (deps: PluginHostDependencies): InstalledPlugin
     () => getLlmModels().map(({ id, efforts }) => ({ id, efforts })),
     (listener) => reaction(() => JSON.stringify(getLlmModels()), () => listener()),
     observeConversationTasks,
+    async () => {
+      const modelPath = deps.config.activeModelPath;
+      if (!modelPath) return null;
+      const memory = await window.MemoryAPI?.get?.({ modelPath });
+      return memory?.relationship ? { stage: memory.relationship.stage, line: memory.relationship.line } : null;
+    },
   );
   const hosts: Partial<PluginHostApiMap> = {
     ai,

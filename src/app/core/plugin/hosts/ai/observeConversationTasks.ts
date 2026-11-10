@@ -19,6 +19,7 @@ export const observeConversationTasks: ConversationTaskObserver = (options, requ
   };
   void api.open({ source: options.source, conversationId: request.conversationId ?? options.conversationId, senderId: request.sender.id })
     .then(async (id) => {
+      if (!id) return;
       session = id;
       if (disposed) { await api.close(id); return; }
       off = api.onTask(id, emit);

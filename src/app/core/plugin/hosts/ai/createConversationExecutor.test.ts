@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
-import { requestStage2LLM } from '@app/modules/ai/modules/llm/infrastructure/llmClient';
+import { requestStage2LLM, requestStructuredLLM } from '@app/modules/ai/modules/llm/infrastructure/llmClient';
 import { createDefaultConversationExecutor } from './createConversationExecutor';
 import { runSkillLoop } from '@app/modules/ai/modules/llm/application/skillLoop';
 vi.mock('@app/modules/ai/modules/llm/application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 
 vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
   requestStage2LLM: vi.fn(async () => ({ rawText: '{"display_text":"你好"}' })),
+  requestStructuredLLM: vi.fn(),
 }));
 
 describe('plugin conversation persona injection', () => {
@@ -56,6 +57,38 @@ describe('plugin conversation persona injection', () => {
     await execute(options, { text: '失败的请求', memoryArchive: archive }, { ...context, signal: new AbortController().signal });
     expect(appendConversation).toHaveBeenCalledTimes(1);
   });
+  it.each([true, false])('uses the ordinary personal-memory flow only when requested (archive=%s)', async (withArchive) => {
+    vi.mocked(requestStructuredLLM).mockClear();
+    vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: JSON.stringify({ coreText: '# 核心记忆\n共同经历', processedThroughCount: 2 }), usedModel: 'memory' });
+    const personalState = { coreText: '# 核心记忆', state: { conversationCount: 2, lastConsolidatedCount: 0 }, pendingThroughCount: 2, pendingEpisodeText: '自己的经历'.repeat(500) };
+    const appendConversation = vi.fn(async (payload: { archive?: unknown }) => payload.archive ? { state: {} } : personalState);
+    const get = vi.fn();
+    const consolidate = vi.fn(async () => ({}));
+    vi.stubGlobal('window', { MemoryAPI: { appendConversation, get, consolidate } });
+    const config = { activeModelPath: '/character', globalModelConfig: { apiKey: 'test', memoryModel: 'memory' } };
+    const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ end: vi.fn(), fail: vi.fn(), record: vi.fn() }), dispose: vi.fn() }) } };
+    const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log as unknown as LogService);
+    const options = { source: 'example', conversationId: 'room', interaction: { mode: 'queue' as const }, model: 'chat' };
+    const context = { channelId: 'c', requestId: 'r', conversationId: 'room', signal: new AbortController().signal, emit: vi.fn() };
+    const request = { text: '本人原文\n引用内容', ...(withArchive ? { memoryArchive: { platform: 'example', scope: 'group' as const, id: '30003' } } : {}) };
+    await execute(options, request, context);
+    expect(appendConversation).toHaveBeenCalledTimes(withArchive ? 1 : 0);
+    expect(consolidate).not.toHaveBeenCalled();
+    appendConversation.mockClear();
+    await execute(options, { ...request, personalMemory: { userText: '本人原文' } }, context);
+    expect(appendConversation).toHaveBeenCalledTimes(withArchive ? 2 : 1);
+    expect(appendConversation).toHaveBeenLastCalledWith({ modelPath: '/character', userText: '本人原文', assistantText: '你好', at: expect.any(Number) });
+    expect(get).not.toHaveBeenCalled();
+    expect(requestStructuredLLM).toHaveBeenCalledWith(expect.objectContaining({ model: 'memory' }), expect.objectContaining({ cachePurpose: 'memory' }));
+    expect(consolidate).toHaveBeenCalledWith(expect.objectContaining({ modelPath: '/character', processedThroughCount: 2 }));
+    appendConversation.mockClear();
+    vi.mocked(requestStage2LLM).mockRejectedValueOnce(new Error('offline'));
+    await execute(options, { ...request, personalMemory: { userText: '本人原文' } }, context);
+    expect(appendConversation).not.toHaveBeenCalled();
+    await execute(options, { ...request, personalMemory: { userText: '本人原文' } }, { ...context, signal: AbortSignal.abort() });
+    expect(appendConversation).not.toHaveBeenCalled();
+  });
+
   it('injects the character persona and the plugin prompt without a desktop address or relationship', async () => {
     const config = {
       globalModelConfig: { apiKey: 'test' },

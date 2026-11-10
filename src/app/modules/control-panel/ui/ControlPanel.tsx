@@ -23,8 +23,13 @@ const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);
   const pluginRuntime = useService(TOKENS.plugin);
   void pluginRuntime.revision;
-  const pluginPages = pluginRuntime.getControlPanelPages().map(({ tabId, contribution }) => ({
-    tabId, title: contribution.title,
+  const pages = pluginRuntime.getControlPanelPages();
+  const toNavPage = ({ tabId, contribution }: (typeof pages)[number]) => ({
+    tabId, title: contribution.title, icon: contribution.icon,
+  });
+  const pluginPages = pages.filter(({ contribution }) => !contribution.group?.trim()).map(toNavPage);
+  const pluginGroups = pluginRuntime.getControlPanelPageGroups().map((group) => ({
+    key: `plugin-group:${group.ownerId}/${group.title}`, title: group.title, pages: group.pages.map(toNavPage),
   }));
   const { theme, toggle } = useThemeMode();
   const activeTab = service.config.hydrated && service.modelPaths.length === 0
@@ -32,6 +37,7 @@ const ControlPanel: React.FC = observer(() => {
     && !service.activeTab.startsWith('plugin:')
     ? 'model-manage'
     : service.activeTab;
+  const activePluginPage = pages.find(({ tabId }) => tabId === activeTab);
 
   const reportError = useCallback((error: unknown) => {
     toast.error(String(error instanceof Error ? error.message : error));
@@ -52,6 +58,7 @@ const ControlPanel: React.FC = observer(() => {
       activeTab={activeTab}
       onTabChange={service.setActiveTab}
       pluginPages={pluginPages}
+      pluginGroups={pluginGroups}
       currentModelName={service.currentModelPath ? service.selectedModel.name : undefined}
       theme={theme}
       onToggleTheme={toggle}
@@ -190,8 +197,8 @@ const ControlPanel: React.FC = observer(() => {
           <PluginPanelHost slot="control-panel" />
         </Page>
       )}
-      {pluginPages.some(({ tabId }) => tabId === activeTab) && (
-        <Page title={pluginPages.find(({ tabId }) => tabId === activeTab)?.title ?? '插件'}>
+      {activePluginPage && (
+        <Page title={activePluginPage.contribution.title} description={activePluginPage.contribution.description}>
           <PluginPanelHost tabId={activeTab} />
         </Page>
       )}

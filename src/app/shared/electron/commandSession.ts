@@ -4,6 +4,7 @@ export const openCommandSession = async (scope: CommandScope): Promise<CommandSe
   const api = typeof window === 'undefined' ? undefined : window.CliAPI;
   if (!api) return null;
   const session = await api.open(scope);
+  if (!session) return null;
   return { invoke: (request) => api.invoke(session, request), tasks: () => api.tasks(session), close: () => api.close(session),
     claim: (requestId, text) => api.claim(session, requestId, text), finish: (requestId, result) => api.finish(session, requestId, result) };
 };

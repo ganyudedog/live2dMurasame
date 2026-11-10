@@ -1,3 +1,4 @@
+import { RELATIONSHIP_STAGES } from '../../src/app/core/plugin';
 /** QQ user ids stay strings. Binding is explicit; chat text never creates one. */
 export const isQqUserId = (value: string): boolean => /^[1-9][0-9]{4,19}$/.test(value);
 
@@ -8,12 +9,14 @@ export const commitOwnerUserId = (draft: string): string | null => {
   return isQqUserId(ownerUserId) ? ownerUserId : null;
 };
 
-export const RELATIONSHIP_STAGE_NAMES = ['疏远', '认识', '亲近', '信赖', '亲密'] as const;
+export const RELATIONSHIP_STAGE_NAMES = RELATIONSHIP_STAGES;
 export type RelationshipStageName = typeof RELATIONSHIP_STAGE_NAMES[number];
 
 export interface BridgeUserRecord {
   userId: string;
   nickname: string;
+  /** User-authored facts; never inferred from chat. */
+  description?: string;
   defaultAddress: string;
   /** `private` or `group:<id>`. */
   sceneAddresses: Record<string, string>;
@@ -90,6 +93,7 @@ const normalizeUser = (userId: string, value: unknown): BridgeUserRecord => {
   return {
     userId,
     nickname: clip(raw.nickname),
+    description: typeof raw.description === "string" ? raw.description.slice(0, 2000) : "",
     defaultAddress: clip(raw.defaultAddress),
     sceneAddresses: normalizeScenes(raw.sceneAddresses),
     relationship: settled.relationship,
@@ -98,7 +102,7 @@ const normalizeUser = (userId: string, value: unknown): BridgeUserRecord => {
 };
 
 const emptyUser = (userId: string): BridgeUserRecord => ({
-  userId, nickname: '', defaultAddress: '', sceneAddresses: {}, relationship: '',
+  userId, nickname: '', defaultAddress: '', sceneAddresses: {}, relationship: '认识',
 });
 
 /** One shared stage becomes the plugin relationship. Disagreeing stages stay stored and unused. */
@@ -114,7 +118,7 @@ const settleRelationship = (
   const stages = [...new Set(Object.values(legacy))];
   if (stages.length === 1) return { relationship: stages[0] };
   if (stages.length > 1) return { relationship: '', legacyRelationships: legacy };
-  return { relationship: '' };
+  return { relationship: '认识' };
 };
 
 const readStage = (value: unknown): RelationshipStageName | '' => {

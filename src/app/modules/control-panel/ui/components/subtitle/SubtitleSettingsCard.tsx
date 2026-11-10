@@ -3,7 +3,7 @@ import { toast } from 'react-hot-toast';
 import { Captions, Keyboard, Move, RotateCcw, Square } from 'lucide-react';
 import { Field, SettingsCard, SwitchRow } from '../common/SettingsSection.js';
 import { Button } from '../common/Button';
-import { Input, Select } from '../common/FormControls';
+import { Input, Range, Select } from '../common/FormControls';
 import { Switch } from '../common/Switch';
 import { normalizeSubtitleSettings, normalizePushToTalk, type SubtitleSettings as Settings, type PushToTalkSettings } from '../../../../../../../shared/subtitle/subtitleSettings.js';
 
@@ -64,7 +64,7 @@ export function SubtitleSettings({ config, onChange }: {
 
         <Field label="背景透明度" hint="0% 完全透明，只留文字和描边">
           <div className="flex h-8 items-center gap-3">
-            <input type="range" min="0" max="0.8" step="0.02" className="ui-range min-w-0 flex-1"
+            <Range min="0" max="0.8" step="0.02" className="min-w-0 flex-1"
               aria-label="字幕背景透明度"
               value={settings.backgroundOpacity}
               onChange={(event) => update({ backgroundOpacity: Number(event.target.value) })} />

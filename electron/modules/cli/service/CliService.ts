@@ -1,3 +1,4 @@
+import type { PluginCliGrantStore } from './PluginCliGrantStore.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { TaskStore } from '../infrastructure/TaskStore.js';
@@ -42,11 +43,13 @@ export class CliService {
   private readonly commands = new Map<string, StoredCommand>();
   private readonly pending = new Map<string, Promise<unknown>>();
 
+  private readonly grants?: PluginCliGrantStore;
   private readonly store: TaskStore;
   private readonly tasks?: AgentTaskQuery;
 
-  constructor(store: TaskStore, tasks?: AgentTaskQuery) {
+  constructor(store: TaskStore, tasks?: AgentTaskQuery, grants?: PluginCliGrantStore) {
     this.store = store;
+    this.grants = grants;
     this.tasks = tasks;
   }
 
@@ -62,8 +65,12 @@ export class CliService {
     });
   }
 
+  isAvailable(context: CommandContext): boolean {
+    return context.local || (this.grants?.read() ?? this.store.data.settings.remoteSources).includes(context.source);
+  }
+
   authorize(context: CommandContext): void {
-    if (!context.local && !this.store.data.settings.remoteSources.includes(context.source)) {
+    if (!this.isAvailable(context)) {
       throw new Error('Remote command capability is not enabled for this plugin source');
     }
   }

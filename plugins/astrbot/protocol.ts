@@ -7,7 +7,7 @@ export interface AstrBotMention {
   readonly name?: string;
 }
 
-const MENTION_LIMIT = 8;
+const MENTION_LIMIT = 32;
 
 /** Keep the first valid id for each person. This bot is not a mention target. */
 export const normalizeAstrBotMentions = (mentions: unknown, botId = ''): AstrBotMention[] => {
@@ -44,6 +44,7 @@ export interface AstrBotQqMessage {
   readonly speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto' | null;
   readonly text: string; readonly sender?: Record<string, unknown>; readonly group?: Record<string, string | undefined>;
   readonly mentions?: readonly AstrBotMention[];
+  readonly stickers?: unknown;
   readonly replyTo?: AstrBotReply;
 }
 
@@ -67,6 +68,7 @@ export interface AstrBotAiResponse {
 }
 
 export type AstrBotInbound = AstrBotQqMessage
+  | { readonly type: 'stickers.catalog'; readonly accountId: string; readonly items: unknown[] }
   | { readonly type: 'ai.cancel'; readonly version: number; readonly requestId: string }
   | { readonly type: 'hello.ack'; readonly version: number; readonly accepted?: boolean; readonly clientId?: string; readonly interaction?: AstrBotInteraction; readonly wakeWords?: readonly string[] }
   | { readonly type: 'ping'; readonly timestamp?: number; readonly ts?: number };

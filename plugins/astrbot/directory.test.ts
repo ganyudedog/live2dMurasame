@@ -49,3 +49,9 @@ describe('QQ directory', () => {
     expect(resolveAddress(member, 'group:30004', '聊天昵称')).toBe('小王');
   });
 });
+
+it('persists the displayed default relationship and preserves the authored description', () => {
+  const directory = normalizeDirectory({ users: { '2904725137': { relationship: '', description: '至高之崔总' } } });
+  expect(directory.users['2904725137'].relationship).toBe('认识');
+  expect(directory.users['2904725137'].description).toBe('至高之崔总');
+});

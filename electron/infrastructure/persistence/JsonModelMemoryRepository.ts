@@ -8,6 +8,7 @@ import {
   replaceActionCatalogChat,
   updateModelMemoryMaintenanceState,
   saveModelMemoryConsolidation,
+  adjustModelMemoryRelationship,
 } from '../../dao/modelMemoryDao.js';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -45,7 +46,11 @@ export class JsonModelMemoryRepository implements MemoryRepository {
     return replaceActionCatalogChat(modelPath, content);
   }
 
-  consolidate(modelPath: string, content: unknown, processedThroughCount: unknown): unknown {
-    return saveModelMemoryConsolidation(modelPath, { content, processedThroughCount });
+  consolidate(modelPath: string, content: unknown, processedThroughCount: unknown, relationshipEvents?: unknown): unknown {
+    return saveModelMemoryConsolidation(modelPath, { content, processedThroughCount, relationshipEvents });
+  }
+
+  adjustRelationship(modelPath: string, input: unknown): unknown {
+    return adjustModelMemoryRelationship(modelPath, input);
   }
 }

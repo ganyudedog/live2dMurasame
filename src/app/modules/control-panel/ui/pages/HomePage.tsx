@@ -3,6 +3,7 @@ import ChatPanel from '../components/common/ChatPanel';
 import { Page } from '../components/common/Page';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
+import { Range } from '../components/common/FormControls';
 import { AgentCard } from '../components/ai/AgentCard';
 import { useScaleControl } from '../hooks/useScaleControl';
 import { useModelRelationship } from '../hooks/useModelRelationship';
@@ -73,17 +74,16 @@ export default function HomePage({
 
   return (
     <Page fill title="主页" description="和角色直接对话，语音识别的结果也会汇入这里。"
-      meta={/* 关系只读：由对话整理写入记忆，这里只显示当前阶段，不提供修改入口。 */
+      meta={/* 这里只显示阶段。待选择时不把它显示成已经确定的阶段。 */
         <Badge tone="primary" title={relationship.view?.line ?? '还没有读取到关系记录'}>
           <Heart aria-hidden="true" className="size-3" />
-          关系 · {relationship.view?.stage || '未记录'}
+          关系 · {relationship.view?.needsSelection ? '待选择' : (relationship.view?.stage || '未记录')}
         </Badge>}>
       {/* 顶部工具条独立成卡，与页面底色区分：模型大小占满中间，右侧切模型。 */}
       <div className="flex shrink-0 items-center gap-3 rounded-xl bg-card px-4 py-2.5 shadow-card">
         <Scaling aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
         <span className="shrink-0 text-xs font-medium text-foreground/80">模型大小</span>
-        <input
-          type="range"
+        <Range
           min={0.3}
           max={2}
           step={0.01}
@@ -100,7 +100,7 @@ export default function HomePage({
           onPointerCancel={scaleControl.finishGesture}
           onBlur={scaleControl.finishGesture}
           onChange={(event) => scaleControl.changeScale(Number.parseFloat(event.target.value))}
-          className="ui-range min-w-0 flex-1"
+          className="min-w-0 flex-1"
         />
         <span className="w-10 shrink-0 rounded-md bg-muted py-0.5 text-center font-mono text-[11px] tabular-nums text-foreground/80">
           {scaleControl.label}

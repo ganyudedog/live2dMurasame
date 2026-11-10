@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import type { CSSProperties, InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from './cn';
 
@@ -16,6 +16,17 @@ type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> & { size?:
 export function Input({ className, size = 'sm', type = 'text', ...props }: InputProps) {
   return <input type={type}
     className={cn(fieldBase, inputSizes[size], type === 'number' && 'ui-number tabular-nums', className)} {...props} />;
+}
+
+type RangeProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>;
+
+/** 原生滑杆：轨道从起点到滑块用主色填充，填充比例由 value 在 min~max 中的位置决定。 */
+export function Range({ className, style, min = 0, max = 100, value, ...props }: RangeProps) {
+  const low = Number(min);
+  const high = Number(max);
+  const fill = high > low ? Math.min(1, Math.max(0, (Number(value ?? low) - low) / (high - low))) : 0;
+  return <input type="range" min={min} max={max} value={value} className={cn('ui-range', className)}
+    style={{ ...style, '--range-fill': fill } as CSSProperties} {...props} />;
 }
 
 type SelectProps = Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size'> & { size?: keyof typeof inputSizes };

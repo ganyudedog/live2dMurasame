@@ -1,4 +1,5 @@
 import type { CliBridgeApi } from '../../shared/cli/contracts';
+import type { PublicRelationship } from '../../shared/memory/relationship.js';
 export {};
 
 declare global {
@@ -284,6 +285,8 @@ declare global {
     pendingEpisodeText?: string;
     pendingThroughCount?: number;
     pendingSinceDate?: string;
+    /** 关系阶段的权威状态。核心记忆里的「当前关系」只是它生成的说明。 */
+    relationship?: PublicRelationship | null;
     state?: {
       version: number;
       conversationCount: number;
@@ -422,7 +425,8 @@ declare global {
     appendConversation?: (payload: { modelPath?: string; archive?: PetMemoryArchive; sender?: { id: string; displayName?: string }; conversationId?: string; userText: string; assistantText: string; at?: number }) => Promise<PetModelMemoryState | undefined>;
     updateCore?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
     replaceActionCatalogChat?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
-    consolidate?: (payload: { modelPath?: string; content: string; processedThroughCount: number }) => Promise<PetModelMemoryState | undefined>;
+    consolidate?: (payload: { modelPath?: string; content: string; processedThroughCount: number; relationshipEvents?: Array<{ kind: string; experienceId?: string; summary?: string }> }) => Promise<PetModelMemoryState | undefined>;
+    adjustRelationship?: (payload: { modelPath?: string; expectedRevision: number; stage: string }) => Promise<PetModelMemoryState | undefined>;
     onUpdated?: (callback: (payload: PetModelMemoryState) => void) => (() => void) | void;
   }
 

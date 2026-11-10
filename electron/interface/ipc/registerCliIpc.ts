@@ -39,7 +39,7 @@ export const registerCliIpc = ({ ipcMain, cli }: { ipcMain: IpcMain; cli: CliSer
       local,
       owner: local ? 'local' : JSON.stringify([scope.source, scope.conversationId, scope.senderId ?? '']),
     };
-    cli.authorize(context);
+    if (!cli.isAvailable(context)) return null;
     if ([...sessions.values()].filter((item) => item.sender === event.sender).length >= 256) throw new Error('Too many command sessions');
     const id = randomUUID();
     sessions.set(id, { context, sender: event.sender });

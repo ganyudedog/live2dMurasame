@@ -21,10 +21,11 @@ export const PluginPanelHost = observer(({ slot, tabId }: { slot?: string; tabId
             <Render {...runtime.createUiContext(ownerId)} />
           </PluginErrorBoundary>
         );
+        // 独立页面由插件自己分卡排版，宿主不再套一层卡片；插槽里的贡献仍统一包成带标题的卡片。
+        if (page) return <div key={`${ownerId}/${contribution.id}`}>{content}</div>;
         return (
           <section key={`${ownerId}/${contribution.id}`} className="rounded-xl bg-card p-4 shadow-card">
-            {/* 独立页面的标题已经在页头里，卡片内不再重复。 */}
-            {!page && <h2 className="mb-3 text-[13px] font-semibold">{contribution.title}</h2>}
+            <h2 className="mb-3 text-[13px] font-semibold">{contribution.title}</h2>
             {content}
           </section>
         );

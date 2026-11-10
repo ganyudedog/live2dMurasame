@@ -21,7 +21,9 @@ export const composeQqTurn = (input: QqTurnInput): { text: string; systemPrompt:
   const address = input.sender ? resolveAddress(input, input.sender.id, input.sender.displayName) : '';
   const relationship = record?.relationship ?? '';
   return {
-    systemPrompt: [composeSystemPrompt(input.scenePrompt, { address, relationship, shared: isOwner, ownerRelationship: input.ownerRelationship }), recallProfiles(input), ownerAddressPrompt(input)].filter(Boolean).join('\n\n'),
+    systemPrompt: [composeSystemPrompt(input.scenePrompt, { address, relationship, shared: isOwner, ownerRelationship: input.ownerRelationship }),
+      input.sceneKey === 'private' ? '[当前会话]\n这是 QQ 私聊。对方的身份、称呼和关系以本轮人物档案为准，不因私聊而默认对方是主人或提高亲密程度。' : '',
+      recallProfiles(input), ownerAddressPrompt(input)].filter(Boolean).join('\n\n'),
     text: composeUserText({ text: input.text, quote: input.quote }),
   };
 };
@@ -48,7 +50,7 @@ export const composeSystemPrompt = (
     scenePrompt.trim(),
     speaker.shared ? `[当前关系]\n${speaker.ownerRelationship || '主人 QQ 与桌面是同一人；当前关系暂不可用，不推测阶段。'}` : `[当前关系]\n阶段：${stage}。\n${relationshipNote}`,
     speaker.address
-      ? `[对当前发言人的称呼]\n${speaker.address}\n只对当前这条消息的发言人使用这个称呼。点名和引用里的其他人不要使用这个称呼。`
+      ? `[对当前发言人的称呼]\n${speaker.address}\n称呼当前发言人或回答其“我是谁”时，优先使用此称呼；网名及历史回复不能覆盖它。提及其他人时使用各自档案中的称呼。`
       : '',
   ].filter(Boolean).join('\n\n');
 };

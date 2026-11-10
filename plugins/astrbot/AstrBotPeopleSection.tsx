@@ -52,6 +52,7 @@ export function AstrBotPeopleSection({ storage, logger }: { storage: PluginStora
     sceneId={sceneId}
     sceneAddress={sceneAddress}
     onOwner={(ownerUserId) => save({ ...directory, ownerUserId })}
+    onPrivateUsers={(allowedPrivateUsers) => save({ ...directory, allowedPrivateUsers })}
     onQuery={setQuery}
     onDraftId={setDraftId}
     onAdd={() => {

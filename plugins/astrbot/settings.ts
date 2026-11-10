@@ -10,7 +10,7 @@ export interface AstrBotBridgeSettings {
   readonly displayLang: 'zh' | 'en' | 'ja' | 'ko';
   /** Enables generation of the speak_text field; audio transport remains a separate capability. */
   readonly speakLang: '' | 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
-  /** Explicit prefixes. Empty means only an @ of this bot starts a reply. */
+  /** Group prefixes. Empty means group messages require an @ of this bot. */
   readonly wakeWords: readonly string[];
 }
 

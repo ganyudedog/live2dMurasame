@@ -28,10 +28,16 @@ export interface BridgeUserRecord {
 
 export interface BridgeDirectory {
   ownerUserId: string;
+  /** Explicit additions; the current owner is always allowed without duplicating the binding. */
+  allowedPrivateUsers: string[];
   users: Record<string, BridgeUserRecord>;
 }
 
-export const EMPTY_DIRECTORY: BridgeDirectory = { ownerUserId: '', users: {} };
+export const EMPTY_DIRECTORY: BridgeDirectory = { ownerUserId: '', allowedPrivateUsers: [], users: {} };
+
+export const privateUserAllowlist = (directory: BridgeDirectory): string[] => (
+  [...new Set([directory.ownerUserId, ...directory.allowedPrivateUsers].filter(isQqUserId))]
+);
 
 const MAX_USERS = 200;
 const MAX_SCENES = 32;
@@ -55,7 +61,10 @@ export const normalizeDirectory = (value: unknown): BridgeDirectory => {
     if (!isQqUserId(key) || Object.keys(users).length >= MAX_USERS) continue;
     users[key] = normalizeUser(key, entry);
   }
-  return { ownerUserId, users };
+  const allowedPrivateUsers = Array.isArray(raw.allowedPrivateUsers)
+    ? [...new Set(raw.allowedPrivateUsers.filter((id): id is string => typeof id === 'string')
+      .map((id) => id.trim()).filter(isQqUserId))].slice(0, MAX_USERS) : [];
+  return { ownerUserId, allowedPrivateUsers, users };
 };
 
 export const upsertUser = (directory: BridgeDirectory, userId: string): BridgeDirectory => {

@@ -12,9 +12,11 @@ Remote tool grants stay in the local Agent settings. Binding a QQ id does not gr
 
 ## When the bot replies
 
-A message is forwarded only when it @s this bot, or when its own text starts with a wake word from `连接与触发`. Wake words are pushed on hello and on `config.update`, so the Python process does not keep a second list. Changing them does not reconnect the socket. Changing nicknames, addresses, or relationships does not either.
+A group message is forwarded only when it @s this bot, or when its own text starts with a wake word from `连接与触发`. Wake words and the effective private-user allowlist are pushed on hello and on `config.update`, without reconnecting the socket.
 
-Quote-only messages, @全体成员, @ of someone else, and the bot's own messages do not start a reply. Private chats use the same rules. There is no follow-up window and no mode that answers every message.
+Private messages with current text need no wake word or mention. Only the current bound owner and users explicitly added in `QQ 用户 → 私聊白名单` are allowed. Explicit additions are stored as `directory.allowedPrivateUsers`; the owner is derived from `directory.ownerUserId` on every update, so changing the binding removes the old owner's automatic access. An empty effective list denies all private users. Adding a person profile alone does not grant private access. The bridge's old `allowed_private_users` setting is ignored.
+
+Quote-only messages, @全体成员, and the bot's own messages do not start a reply. In groups an @ of someone else alone does not trigger either. There is no follow-up window.
 
 ASCII wake words are case-insensitive and must end on a space or punctuation. A Chinese wake word matches the start of the text. The wake word itself, with nothing after it, does not trigger. An @ of this bot uses the remaining text; if nothing remains, it does not trigger.
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AstrBotBridgeClient } from './AstrBotBridgeClient';
 import { DEFAULT_ASTRBOT_SETTINGS } from './settings';
+import { normalizeDirectory } from './directory';
 import type { ConversationChannelOptions, ConversationRequest, ConversationResponse } from './types';
 
 class FakeSocket {
@@ -81,6 +82,21 @@ const startClient = (overrides: {
 
 describe('AstrBot bridge client', () => {
   afterEach(() => { FakeSocket.instances = []; vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it('syncs owner and explicit private users on connect and edits without reconnecting', async () => {
+    const { client } = startClient();
+    client.updateDirectory(normalizeDirectory({ ownerUserId: '10001', allowedPrivateUsers: ['10002', 'bad', '10002'] }));
+    await flush();
+    const socket = FakeSocket.instances[0];
+    expect(parsed(socket)[0]).toMatchObject({ type: 'hello', allowedPrivateUsers: ['10001', '10002'] });
+    ackHello(socket);
+    client.updateDirectory(normalizeDirectory({ ownerUserId: '10003', allowedPrivateUsers: ['10002'] }));
+    expect(parsed(socket).at(-1)).toMatchObject({ type: 'config.update', allowedPrivateUsers: ['10003', '10002'] });
+    client.updateDirectory(normalizeDirectory({}));
+    expect(parsed(socket).at(-1)).toMatchObject({ allowedPrivateUsers: [] });
+    expect(FakeSocket.instances).toHaveLength(1);
+    client.dispose();
+  });
 
   it('deduplicates deliveries, keeps streams internal, and pushes wake words without reconnecting', async () => {
     vi.stubGlobal('WebSocket', FakeSocket);
@@ -164,6 +180,38 @@ describe('AstrBot bridge client', () => {
     socket.onmessage?.({ data: JSON.stringify(message('unbound', '82')) });
     await flush();
     expect(channels[0].sendText.mock.calls[1][0].personalMemory).toBeUndefined();
+    client.dispose();
+  });
+
+  it.each([
+    { owner: true, sceneAddress: '私聊称呼', address: '主人', stage: '亲近' },
+    { owner: false, sceneAddress: '私聊称呼', address: '私聊称呼', stage: '信赖' },
+    { owner: false, sceneAddress: '', address: '崔总', stage: '信赖' },
+  ])('uses configured private profiles and addresses: $owner / $address', async ({ owner, sceneAddress, address, stage }) => {
+    const { client, channels } = startClient({ get: async () => ({
+      ownerUserId: owner ? '10001' : '30004', allowedPrivateUsers: ['10001'],
+      users: { '10001': { nickname: '网名', defaultAddress: '崔总',
+        sceneAddresses: { private: sceneAddress, 'group:30003': '群称呼' },
+        relationship: '信赖', description: '喜欢音乐的老朋友' } },
+    }) });
+    await flush();
+    const socket = FakeSocket.instances[0];
+    ackHello(socket);
+    socket.onmessage?.({ data: JSON.stringify({ ...message('private'), text: '我是谁',
+      source: 'qq.private', memoryArchive: 'episode/user/10001',
+      conversationId: 'qq:private:10001', interactionKey: 'qq:private:10001',
+    }) });
+    await flush();
+    expect(channels[0].sendText).toHaveBeenCalledOnce();
+    const payload = channels[0].sendText.mock.calls[0][0];
+    expect(payload.systemPrompt).toContain('这是 QQ 私聊');
+    expect(payload.systemPrompt).toContain(`[对当前发言人的称呼]\n${address}`);
+    expect(payload.systemPrompt).toContain('优先使用此称呼');
+    expect(payload.systemPrompt).toContain(`[当前关系]\n阶段：${stage}`);
+    expect(payload.systemPrompt).toContain('喜欢音乐的老朋友');
+    expect(payload.systemPrompt).not.toContain('群称呼');
+    expect(payload.personalMemory).toEqual(owner ? { userText: '我是谁' } : undefined);
+    expect(payload.memoryArchive).toEqual({ platform: 'qq', scope: 'private', id: '10001' });
     client.dispose();
   });
 

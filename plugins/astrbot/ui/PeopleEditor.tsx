@@ -1,12 +1,42 @@
 import { useMemo, useState } from 'react';
-import { Crown, Plus, Search, Trash, UserRound, Users, X } from 'lucide-react';
-import { RELATIONSHIP_STAGE_NAMES, commitOwnerUserId, type BridgeDirectory, type RelationshipStageName } from '../directory';
+import { Crown, Plus, Search, ShieldCheck, Trash, UserRound, Users, X } from 'lucide-react';
+import { RELATIONSHIP_STAGE_NAMES, commitOwnerUserId, isQqUserId, privateUserAllowlist, type BridgeDirectory, type RelationshipStageName } from '../directory';
 import { BUTTON, GHOST_BUTTON, GHOST_BUTTON_XS, HINT, INPUT, LABEL, PRIMARY_BUTTON, SELECT, TEXTAREA } from '../styles';
 import { Section } from './layout';
 
 const sceneLabel = (key: string) => key === 'private' ? '私聊' : key.startsWith('group:') ? `群 ${key.slice('group:'.length)}` : key;
 
 const initialOf = (text: string) => Array.from(text.trim())[0] ?? '#';
+
+function PrivateChatAllowlist({ directory, onChange }: { directory: BridgeDirectory; onChange: (ids: string[]) => void }) {
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
+  const add = () => {
+    const id = draft.trim();
+    if (!isQqUserId(id)) { setError('请输入 5 到 20 位、不以 0 开头的 QQ 号。'); return; }
+    if (!privateUserAllowlist(directory).includes(id)) onChange([...directory.allowedPrivateUsers, id]);
+    setDraft(''); setError('');
+  };
+  return <Section icon={<ShieldCheck />} title="私聊白名单"
+    description="当前主人自动允许私聊；其他用户需要在这里添加。白名单内的私聊无需 @ 或唤醒词，修改后自动保存并生效。">
+    <div className="flex flex-wrap gap-2">
+      {privateUserAllowlist(directory).map((id) => <span key={id} className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs">
+        <span>{directory.users[id]?.nickname ? `${directory.users[id].nickname} · ${id}` : id}</span>
+        {id === directory.ownerUserId ? <span className="text-warning">主人 · 自动允许</span>
+          : <button type="button" className={GHOST_BUTTON_XS} aria-label={`移除私聊用户 ${id}`}
+            onClick={() => onChange(directory.allowedPrivateUsers.filter((userId) => userId !== id))}><X className="size-3" /></button>}
+      </span>)}
+      {privateUserAllowlist(directory).length === 0 ? <p className={HINT}>尚未允许任何私聊用户，请绑定主人或添加 QQ 号。</p> : null}
+    </div>
+    <div className="flex max-w-sm items-center gap-2">
+      <input className={`${INPUT} w-full font-mono`} aria-label="私聊白名单 QQ" inputMode="numeric"
+        placeholder="输入允许私聊的 QQ 号" value={draft} onChange={(event) => { setDraft(event.target.value); setError(''); }}
+        onKeyDown={(event) => { if (event.key === 'Enter') add(); }} />
+      <button type="button" className={BUTTON} onClick={add}>添加</button>
+    </div>
+    {error ? <p role="alert" className="text-xs text-warning">{error}</p> : null}
+  </Section>;
+}
 
 function OwnerQQField({ ownerUserId, onOwner }: { ownerUserId: string; onOwner: (ownerUserId: string) => void }) {
   const [draft, setDraft] = useState(ownerUserId);
@@ -32,7 +62,7 @@ function OwnerQQField({ ownerUserId, onOwner }: { ownerUserId: string; onOwner: 
 
 export function PeopleEditor({
   directory, query, draftId, selectedId, sceneKind, sceneId, sceneAddress,
-  onOwner, onQuery, onDraftId, onAdd, onSelect, onDelete, onNickname, onDescription, onDefaultAddress, onRelationship,
+  onOwner, onPrivateUsers, onQuery, onDraftId, onAdd, onSelect, onDelete, onNickname, onDescription, onDefaultAddress, onRelationship,
   onSceneKind, onSceneId, onSceneAddress, onAddScene, onRemoveScene,
 }: {
   directory: BridgeDirectory;
@@ -43,6 +73,7 @@ export function PeopleEditor({
   sceneId: string;
   sceneAddress: string;
   onOwner: (ownerUserId: string) => void;
+  onPrivateUsers: (userIds: string[]) => void;
   onQuery: (value: string) => void;
   onDraftId: (value: string) => void;
   onAdd: () => void;
@@ -68,6 +99,8 @@ export function PeopleEditor({
     <Section icon={<Crown />} title="主人" description="主人 QQ 只能在这里绑定，不会从聊天记录推断。">
       <OwnerQQField key={directory.ownerUserId} ownerUserId={directory.ownerUserId} onOwner={onOwner} />
     </Section>
+
+    <PrivateChatAllowlist directory={directory} onChange={onPrivateUsers} />
 
     <Section icon={<Users />} title="QQ 用户"
       description="主人 QQ 与桌面共用关系成长；其他人的关系仅在这里手动配置，未设置时按认识。称呼顺序：这个场景的称呼、个人默认称呼、昵称。">

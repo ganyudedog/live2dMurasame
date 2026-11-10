@@ -6,6 +6,7 @@ import { AstrBotConnectionPage } from './pages/ConnectionPage';
 import { AstrBotPeoplePage } from './pages/PeoplePage';
 import { AstrBotReplyPage } from './pages/ReplyPage';
 import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, type AstrBotBridgeSettings } from './settings';
+import { EMPTY_DIRECTORY, normalizeDirectory } from './directory';
 
 export const astrBotBridgePlugin: AstrBotPluginDefinition = {
   manifest: {
@@ -35,15 +36,23 @@ export const astrBotBridgePlugin: AstrBotPluginDefinition = {
     if (!ai) { context.logger.warn('activation.skipped', { reason: 'AI conversation host is unavailable' }); return; }
     const saved = await context.storage.get<AstrBotBridgeSettings>('settings', DEFAULT_ASTRBOT_SETTINGS);
     const settings = normalizeSettings(saved, DEFAULT_ASTRBOT_SETTINGS);
+    const directory = normalizeDirectory(await context.storage.get('directory', EMPTY_DIRECTORY));
     const client = new AstrBotBridgeClient({
       url: settings.bridgeUrl, token: settings.token, clientId: `live2d-${crypto.randomUUID()}`, ai, logger: context.logger, settings,
       storage: context.storage,
+      directory,
       onStatus: (status) => {
         void context.storage.set('status', status).catch((error: unknown) => context.logger.error('status.persist.failed', { error: sanitizeLogDetail(error) }));
       },
     });
     context.subscriptions.add(() => client.dispose());
     context.subscriptions.add(context.storage.subscribe((key) => {
+      if (key === 'directory') {
+        void context.storage.get('directory', EMPTY_DIRECTORY)
+          .then((next) => client.updateDirectory(normalizeDirectory(next)))
+          .catch((error: unknown) => context.logger.error('directory.reload.failed', { error: sanitizeLogDetail(error) }));
+        return;
+      }
       if (key !== 'settings') return;
       void context.storage.get<AstrBotBridgeSettings>('settings', DEFAULT_ASTRBOT_SETTINGS)
         .then((next) => client.updateSettings(normalizeSettings(next, DEFAULT_ASTRBOT_SETTINGS)))

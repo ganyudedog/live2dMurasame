@@ -1,7 +1,7 @@
 import { mapStickerReply, type StickerChoice } from './stickers/reply';
 import { loadStickerLabels, syncStickerCatalog, type StickerRule } from './stickers/catalog';
 import { stickerPrompt } from './stickers/prompt';
-import { normalizeDirectory, sceneKeyFor, EMPTY_DIRECTORY } from './directory';
+import { normalizeDirectory, privateUserAllowlist, sceneKeyFor, EMPTY_DIRECTORY, type BridgeDirectory } from './directory';
 import { ConversationLanes, MessageDedup, dedupKey } from './inbound';
 import { ASTRBOT_PROTOCOL_VERSION, isAstrBotQqMessage, normalizeAstrBotMentions, normalizeAstrBotSender, toConversationQuote } from './protocol';
 import { composeQqTurn } from './turn';
@@ -17,6 +17,7 @@ export interface AstrBotBridgeClientOptions {
   readonly url: string; readonly token?: string; readonly clientId: string;
   readonly ai: AiHostApi; readonly logger: PluginLogger; readonly settings: AstrBotBridgeSettings;
   readonly storage: PluginStorage;
+  readonly directory?: BridgeDirectory;
   readonly onStatus?: (status: BridgeRuntimeStatus) => void;
 }
 
@@ -24,6 +25,7 @@ export interface AstrBotBridgeClientOptions {
 export class AstrBotBridgeClient {
   private readonly options: AstrBotBridgeClientOptions;
   private settings: AstrBotBridgeSettings;
+  private allowedPrivateUsers: string[];
   private bridgeUrl: string;
   private token: string;
   private socket: WebSocket | null = null;
@@ -48,6 +50,7 @@ export class AstrBotBridgeClient {
   constructor(options: AstrBotBridgeClientOptions) {
     this.options = options;
     this.settings = options.settings;
+    this.allowedPrivateUsers = privateUserAllowlist(options.directory ?? EMPTY_DIRECTORY);
     this.bridgeUrl = options.url;
     this.token = options.token ?? '';
     this.status = { connection: 'idle', protocol: ASTRBOT_PROTOCOL_VERSION, expectedProtocol: ASTRBOT_PROTOCOL_VERSION, updatedAt: Date.now() };
@@ -75,8 +78,20 @@ export class AstrBotBridgeClient {
       else this.connect();
       return;
     }
-    if (wakeChanged) this.send({ type: 'config.update', version: ASTRBOT_PROTOCOL_VERSION, wakeWords: settings.wakeWords });
+    if (wakeChanged) this.publishTriggerSettings();
     if (!this.socket) this.connect();
+  }
+
+  updateDirectory(directory: BridgeDirectory): void {
+    const allowed = privateUserAllowlist(directory);
+    if (JSON.stringify(allowed) === JSON.stringify(this.allowedPrivateUsers)) return;
+    this.allowedPrivateUsers = allowed;
+    this.publishTriggerSettings();
+  }
+
+  private publishTriggerSettings(): void {
+    this.send({ type: 'config.update', version: ASTRBOT_PROTOCOL_VERSION,
+      wakeWords: this.settings.wakeWords, allowedPrivateUsers: this.allowedPrivateUsers });
   }
 
   dispose(): void {
@@ -110,6 +125,7 @@ export class AstrBotBridgeClient {
         capabilities: { streaming: true, ttsText: this.settings.speakLang !== '', agent: true },
         interaction: normalizeInteractionSettings(this.settings),
         wakeWords: this.settings.wakeWords,
+        allowedPrivateUsers: this.allowedPrivateUsers,
       });
       this.heartbeatTimer = setInterval(() => this.send({ type: 'ping', ts: Date.now() }), 15_000);
     };

@@ -43,6 +43,7 @@ export class ControlPanelService {
   private readonly llm: LlmService;
   private reactions: IReactionDisposer[] = [];
   private aiPersistTimer: number | null = null;
+  private chatLoadVersion = 0;
 
   constructor(config: ConfigService, stateBus: StateBusService, log: LogService, llm: LlmService) {
     this.config = config;
@@ -94,11 +95,11 @@ export class ControlPanelService {
 
   start(): void {
     this.actionSettings.start();
-    this.loadChatCache();
+    void this.loadChatCache();
     this.reactions.push(
       reaction(
         () => this.currentModelPath,
-        () => this.loadChatCache(),
+        () => { void this.loadChatCache(); },
       ),
       reaction(
         () => [this.currentModelPath, this.chatDraft, this.chatMessages] as const,
@@ -109,12 +110,8 @@ export class ControlPanelService {
         }),
       ),
       reaction(
-        () => this.stateBus.chatRequest,
-        (request) => this.applyChatRequest(request),
-      ),
-      reaction(
-        () => this.stateBus.chatResponse,
-        (response) => this.applyChatResponse(response),
+        () => [this.stateBus.chatRequest, this.stateBus.chatResponse] as const,
+        () => this.syncChat(),
       ),
       reaction(
         () => this.config.globalModelConfig,
@@ -302,6 +299,7 @@ export class ControlPanelService {
   }
 
   clearChat(): void {
+    this.chatLoadVersion++;
     this.chatMessages = [];
     this.chatDraft = '';
     this.chatError = null;
@@ -423,13 +421,7 @@ export class ControlPanelService {
     };
     runInAction(() => {
       this.chatDraft = '';
-      this.chatError = null;
-      this.chatSending = true;
-      this.chatMessages = [
-        ...this.chatMessages,
-        createMessage('user', text, requestId, now, 'text', 'done'),
-        createMessage('assistant', '正在思考中...', requestId, now + 1, 'assistant', 'sending'),
-      ];
+      this.applyChatRequest(request);
     });
     this.stateBus.publishChatRequest(request);
     this.logTrace('chat', 'submit', {
@@ -440,6 +432,7 @@ export class ControlPanelService {
   }
 
   async dispose(): Promise<void> {
+    this.chatLoadVersion++;
     this.actionSettings.dispose();
     this.reactions.splice(0).forEach((dispose) => dispose());
     await this.interaction.dispose();
@@ -462,31 +455,74 @@ export class ControlPanelService {
     }).end({ persisted: true });
   }
 
-  private loadChatCache(): void {
-    const cache = readChatSessionCache(getChatCacheScope(this.currentModelPath));
+  private async loadChatCache(): Promise<void> {
+    const version = ++this.chatLoadVersion;
+    const modelPath = this.currentModelPath;
+    const cache = readChatSessionCache(getChatCacheScope(modelPath));
     runInAction(() => {
       this.chatDraft = cache.draftText;
       this.chatMessages = cache.messages;
       this.chatSending = false;
       this.chatError = null;
     });
+    try {
+      // 已有前端缓存（包括用户主动清空的记录）时直接复用。
+      if (modelPath && !cache.updatedAt && !cache.messages.length) {
+        const recent = await window.MemoryAPI?.loadRecentTurns?.({ modelPath });
+        // 异步恢复不能覆盖新消息、清空操作或切换后的模型。
+        if (version !== this.chatLoadVersion || this.chatMessages !== cache.messages) return;
+        if (recent) runInAction(() => {
+          this.chatMessages = recent.turns.flatMap((turn) => {
+            const id = `episode_${turn.date}_${turn.conversationCount}`;
+            const at = new Date(`${turn.date}T${turn.time}`).getTime();
+            return [createMessage('user', turn.userText, id, at, 'text', 'done'),
+              createMessage('assistant', turn.assistantText, id, at + 1, 'assistant', 'done')];
+          });
+        });
+      }
+    } catch (error) {
+      if (version === this.chatLoadVersion) this.captureError('chat.history.failed', error);
+    } finally {
+      if (version === this.chatLoadVersion) this.syncChat(true);
+    }
   }
 
-  private applyChatRequest(request: ChatRequest | null): void {
-    if (!request || request.source !== 'asr') return;
+  private syncChat(restoring = false): void {
+    const request = this.stateBus.chatRequest;
+    if (!request || (request.modelPath ?? '') !== (this.currentModelPath ?? '')) return;
+    // 已完成的历史由缓存/episode 提供，初次挂载只接续尚未结束的请求。
+    if (restoring && request.status !== 'pending' && request.status !== 'processing'
+      && !this.chatMessages.some((message) => message.requestId === request.id)) return;
+    runInAction(() => {
+      this.applyChatRequest(request);
+      const response = this.stateBus.chatResponse;
+      if (response?.id === request.id) this.applyChatResponse(response);
+    });
+  }
+
+  private applyChatRequest(request: ChatRequest): void {
     // 动作设置页正在编辑动作表：语音结果先落到输入框，由用户确认后再提交。
-    if (this.activeTab === 'model-motions') {
+    if (request.source === 'asr' && this.activeTab === 'model-motions') {
       if (this.lastActionAsrId === request.id) return;
       this.lastActionAsrId = request.id;
       this.actionSettings.appendDraft(request.text);
       return;
     }
-    if (this.chatMessages.some((message) => message.requestId === request.id && message.source === 'asr')) return;
     runInAction(() => {
-      this.chatMessages = [
-        ...this.chatMessages,
-        createMessage('user', request.text, request.id, request.createdAt, 'asr', 'done'),
-      ];
+      const messages = this.chatMessages.filter((message) => message.requestId === request.id);
+      if (request.source !== 'presence' && !messages.some((message) => message.role === 'user')) {
+        this.chatMessages = [...this.chatMessages,
+          createMessage('user', request.text, request.id, request.createdAt, request.source, 'done')];
+      }
+      if (!messages.some((message) => message.role === 'assistant')) {
+        const pending = request.status === 'pending' || request.status === 'processing';
+        this.chatMessages = [...this.chatMessages,
+          createMessage('assistant', pending ? '正在思考中...' : '', request.id, request.createdAt + 1, 'assistant', pending ? 'sending' : 'done')];
+      }
+      if (request.status === 'pending' || request.status === 'processing') {
+        this.chatSending = true;
+        this.chatError = null;
+      }
     });
   }
 
@@ -505,7 +541,7 @@ export class ControlPanelService {
       } else {
         this.chatMessages = this.chatMessages.map((message) => (
           message.requestId === response.id && message.role === 'assistant'
-            ? { ...message, text: response.displayText || message.text, status, error: response.error ?? undefined }
+            ? { ...message, text: response.displayText || (response.status === 'cancelled' ? '已取消' : message.text), status, error: response.error ?? undefined }
             : message
         ));
       }

@@ -74,7 +74,7 @@ function ConnectionForm({ store, context }: { store: BridgeSettingsStore; contex
     </Section>
 
     <Section icon={<Workflow />} title="触发与调度" description="决定哪些消息会被回复，以及多个会话同时说话时怎么排。">
-      <Field label="唤醒词" hint="一行一个。只有 @ 本机器人，或文本以这里的词开头，才会回复。只引用、@全体成员、@其他人，以及没有这些条件的私聊，都不会触发。保存后同步到已连接的桥，不会重连。ASCII 词区分边界且不区分大小写；中文词按开头匹配。">
+      <Field label="群聊唤醒词" hint="一行一个。群聊需要 @ 本机器人，或文本以这里的词开头。只引用、@全体成员、单独 @其他人不会触发。私聊无需唤醒词，仅回复「QQ 用户」页白名单中的用户，主人默认允许。ASCII 词区分边界且不区分大小写；中文词按开头匹配。">
         <textarea className={`${TEXTAREA} h-20 w-full resize-y`} value={wakeDraft}
           aria-label="唤醒词" placeholder={'例如：\n丛雨\n/ai'}
           onChange={(event) => setWakeDraft(event.target.value)}

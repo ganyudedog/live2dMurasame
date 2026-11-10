@@ -15,6 +15,8 @@ export interface ChatRequest {
   /** 处理状态 */
   status: 'pending' | 'processing' | 'done' | 'error' | 'cancelled';
   createdAt: number;
+  /** 发起请求时的 Live2D 模型，用于隔离不同模型的实时消息。 */
+  modelPath?: string;
   voice?: { profile: 'conversation' | 'agent'; refined: boolean };
 }
 

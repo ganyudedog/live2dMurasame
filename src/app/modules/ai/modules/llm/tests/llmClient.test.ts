@@ -82,6 +82,8 @@ describe('provider prompt cache and streaming usage', () => {
   it('streams text immediately and collects usage-only final frames', async () => {
     const delta = vi.fn();
     network.create.mockImplementation(async function* () {
+      yield { choices: [{ delta: { reasoning_content: 'private reasoning' } }] };
+      expect(delta).not.toHaveBeenCalled();
       yield { choices: [{ delta: { content: 'hello' } }], usage: null };
       expect(delta).toHaveBeenCalledWith({ deltaText: 'hello', aggregateText: 'hello' });
       yield { choices: [], usage: { prompt_tokens: 2000, completion_tokens: 10,
@@ -122,20 +124,32 @@ describe('provider prompt cache and streaming usage', () => {
     expect(network.responses).not.toHaveBeenCalled();
   });
 
-  it('uses a plugin-owned system prompt and a text-only output contract when speech is disabled', async () => {
+  it.each([false, true])('enforces the output contract before persona examples on a first turn (speech: %s)', async (speechEnabled) => {
     network.create.mockResolvedValue(response);
     await requestStage2LLM(config, {
       userText: 'question',
-      systemPrompt: 'Plugin-owned QQ assistant prompt.',
+      systemPrompt: '用户：看得到吗\n丛雨：本座就在此处。',
       displayLang: 'zh',
-      speakLang: null,
-      speechEnabled: false,
+      speakLang: speechEnabled ? 'all_ja' : null,
+      speechEnabled,
     });
-    const systemPrompt = network.create.mock.lastCall![0].messages[0].content;
-    expect(systemPrompt).toContain('Plugin-owned QQ assistant prompt.');
-    expect(systemPrompt).toContain('{ "display_text": "回复文本" }');
-    expect(systemPrompt).toContain('不要输出 speak_text 或 action_intent');
-    expect(systemPrompt).not.toContain('朗读文本');
+    const messages = network.create.mock.lastCall![0].messages;
+    expect(messages).toHaveLength(2);
+    const systemPrompt = messages[0].content;
+    expect(systemPrompt.indexOf('[本轮输出协议]')).toBeLessThan(systemPrompt.indexOf('用户：看得到吗'));
+    expect(systemPrompt).toContain('不得直接输出纯文本、角色名加冒号的对白');
+    expect(systemPrompt).toContain('首次回复也必须遵守此协议');
+    expect(systemPrompt).toContain('本轮输出仍须遵守上述 JSON Lines 契约');
+    const example = systemPrompt.split('\n').find((line: string) => line.startsWith('{"'))!;
+    expect(JSON.parse(example)).toMatchObject({ display_text: expect.any(String) });
+    if (speechEnabled) {
+      expect(JSON.parse(example)).toHaveProperty('speak_text');
+      expect(systemPrompt).toContain('speak_text 必须使用日语');
+    } else {
+      expect(Object.keys(JSON.parse(example))).toEqual(['display_text']);
+      expect(systemPrompt).toContain('不要输出 speak_text 或 action_intent');
+      expect(systemPrompt).not.toContain('朗读文本');
+    }
   });
 
   it('streams explicit reasoning requests and keeps raw reasoning out of summaries', async () => {

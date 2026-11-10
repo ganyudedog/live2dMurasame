@@ -77,7 +77,7 @@ export const requestStage2LLM = async (
       {
         role: 'system' as const,
         content: req.systemPrompt?.trim()
-          ? `${req.systemPrompt.trim()}\n\n${buildOutputContract(req)}`
+          ? `${buildOutputContract(req)}\n\n${req.systemPrompt.trim()}\n\n本轮输出仍须遵守上述 JSON Lines 契约；角色卡、示例对话和历史消息只影响内容与语气，不改变输出格式。`
           : buildStage2SystemPrompt({
             displayLang: req.displayLang,
             speakLang: req.speakLang ?? undefined,
@@ -174,14 +174,22 @@ export const requestStage2LLM = async (
 };
 
 const buildOutputContract = (request: Stage2LLMRequest): string => {
+  const rules = [
+    '[本轮输出协议]',
+    '输出必须是 JSON Lines，每行一个独立 JSON 对象，一行即可完成回复。不得使用 Markdown 代码围栏。',
+    '所有对话内容必须写入 JSON 字符串字段，不得直接输出纯文本、角色名加冒号的对白或内心独白。',
+    '人设中的“用户：… / 角色：…”示例只示范语气，不是输出格式；即使没有历史对话，首次回复也必须遵守此协议。',
+    '对象之间使用真正的换行，不要添加逗号或使用数组包裹；字符串中的引号和换行必须按 JSON 规则转义。',
+  ];
   const displayLang = request.displayLang === 'en' ? '英语'
     : request.displayLang === 'ja' ? '日语'
       : request.displayLang === 'ko' ? '韩语' : '中文';
   if (request.speechEnabled === false) return [
-    '输出必须是 JSON Lines，每行一个独立 JSON 对象，不得使用 Markdown 代码围栏。',
+    ...rules,
     '{ "display_text": "回复文本" }',
-    `display_text 必须使用${displayLang}。不要输出 speak_text 或 action_intent。`,
-    '对象之间不要添加逗号，不要使用数组包裹。',
+    `每行必须包含非空字符串 display_text，使用${displayLang}。不要输出 speak_text 或 action_intent。`,
+    '格式示例（仅演示结构，实际内容、称呼和语言以本轮配置为准）：',
+    '{"display_text":"看得到，我在这里。"}',
   ].join('\n');
   const speakLang = request.speakLang === 'all_zh' ? '中文'
     : request.speakLang === 'all_en' ? '英语'
@@ -189,10 +197,12 @@ const buildOutputContract = (request: Stage2LLMRequest): string => {
         : request.speakLang === 'all_yue' ? '粤语'
           : request.speakLang === 'auto' ? '自动选择的语音语言' : '日语';
   return [
-    '输出必须是 JSON Lines，每行一个独立 JSON 对象，不得使用 Markdown 代码围栏。',
+    ...rules,
     '{ "speak_text": "朗读文本", "display_text": "回复文本" }',
+    '每行必须同时包含非空字符串 speak_text 和 display_text，先写 speak_text；两者表达同一意思。历史归档省略语音字段，不代表本轮可以省略。',
     `display_text 必须使用${displayLang}；speak_text 必须使用${speakLang}。`,
-    '对象之间不要添加逗号，不要使用数组包裹。',
+    '格式示例（仅演示结构，实际内容、称呼和语言以本轮配置为准）：',
+    '{"speak_text":"ここにいるよ。","display_text":"我在这里。"}',
   ].join('\n');
 };
 

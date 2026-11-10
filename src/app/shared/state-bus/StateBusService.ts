@@ -116,7 +116,8 @@ export class StateBusService {
   }
 
   publishChatRequest(request: ChatRequest): void {
-    this.dispatch([{ path: 'chat.request', value: request }], 'chat.request');
+    const modelPath = request.modelPath ?? this.config.activeModelPath ?? this.config.live2denvConfig?.currentModelPath ?? '';
+    this.dispatch([{ path: 'chat.request', value: { ...request, modelPath } }], 'chat.request');
   }
 
   publishComposerDraft(text: string): void {

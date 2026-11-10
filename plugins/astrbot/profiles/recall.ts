@@ -25,6 +25,6 @@ export const recallProfiles = (input: QqTurnInput): string => {
       address: resolveAddress(input, id, person.name),
       relationship: id === input.directory.ownerUserId ? (input.ownerRelationship || '与桌面共用，当前阶段不可用') : STAGE_LINES[record?.relationship || '认识'], description: record?.description || '未填写，勿推测' };
   });
-  return profiles.length ? '[本轮相关人物档案]\n按 id 区分人物；关系是角色与该人的关系，不代表群友之间的关系。描述为已知的手工人物资料，优先于历史回复中的猜测或“不认识”；根据档案和关系自然回应，不把已认识的人说成陌生人。\n'
+  return profiles.length ? '[本轮相关人物档案]\n按 id 区分人物；关系是角色与该人的关系，不代表群友之间的关系。称呼或提及人物时优先使用其 address，nickname 和 @ 标签只用于识别身份。描述为已知的手工人物资料，优先于历史回复中的猜测或“不认识”；根据档案和关系自然回应，不把已认识的人说成陌生人。\n'
     + JSON.stringify(profiles) : '';
 };

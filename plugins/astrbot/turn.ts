@@ -2,15 +2,10 @@ import { recallProfiles } from './profiles/recall';
 import { resolveAddress, type BridgeDirectory, type RelationshipStageName } from './directory';
 import type { AstrBotQuote } from './protocol';
 
-export interface QqMentionTarget {
-  readonly id: string;
-  readonly name?: string;
-  readonly address?: string;
-}
-
 export interface QqTurnInput {
   readonly scenePrompt: string;
   readonly ownerRelationship?: string;
+  readonly ownerAddress?: string;
   readonly directory: BridgeDirectory;
   readonly sceneKey: string;
   readonly text: string;
@@ -22,21 +17,23 @@ export interface QqTurnInput {
 /** Authored profiles accompany the scene prompt; message/quote content stays in the user text. */
 export const composeQqTurn = (input: QqTurnInput): { text: string; systemPrompt: string } => {
   const record = input.sender ? input.directory.users[input.sender.id] : undefined;
-  const address = input.sender ? resolveAddress(record, input.sceneKey, input.sender.displayName) : '';
   const isOwner = Boolean(input.sender?.id && input.sender.id === input.directory.ownerUserId);
+  const address = input.sender ? resolveAddress(input, input.sender.id, input.sender.displayName) : '';
   const relationship = record?.relationship ?? '';
-  const mentions = (input.mentions ?? []).map((mention) => {
-    const mentionAddress = resolveAddress(input.directory.users[mention.id], input.sceneKey, mention.name);
-    return {
-      id: mention.id,
-      ...(mention.name ? { name: mention.name } : {}),
-      ...(mentionAddress ? { address: mentionAddress } : {}),
-    };
-  });
   return {
-    systemPrompt: [composeSystemPrompt(input.scenePrompt, { address, relationship, shared: isOwner, ownerRelationship: input.ownerRelationship }), recallProfiles(input)].filter(Boolean).join('\n\n'),
-    text: composeUserText({ text: input.text, mentions, quote: input.quote }),
+    systemPrompt: [composeSystemPrompt(input.scenePrompt, { address, relationship, shared: isOwner, ownerRelationship: input.ownerRelationship }), recallProfiles(input), ownerAddressPrompt(input)].filter(Boolean).join('\n\n'),
+    text: composeUserText({ text: input.text, quote: input.quote }),
   };
+};
+
+const ownerAddressPrompt = (input: QqTurnInput): string => {
+  const id = input.directory.ownerUserId;
+  const address = resolveAddress(input, id);
+  if (!id || !input.ownerAddress?.trim() || !address) return '';
+  return `[绑定用户称呼]\n${JSON.stringify({ id, address })}\n`
+    + '该 id 对应人设中的用户本人。称呼或提及此人时使用上面的 address；QQ 网名和 @ 标签只用于识别身份，不覆盖人设称呼。'
+    + '本人问“我是谁”时，优先按这个称呼回应；别人 @ 此人或问是否认识此人时，也用这个称呼指代他。'
+    + '“我”始终指当前发言人，不能因为消息 @ 了此人就把发言人也当成他。历史回复中的旧称呼不覆盖当前设置。';
 };
 
 export const composeSystemPrompt = (
@@ -58,7 +55,6 @@ export const composeSystemPrompt = (
 
 export const composeUserText = (input: {
   text: string;
-  mentions?: readonly QqMentionTarget[];
   quote?: AstrBotQuote;
 }): string => {
   const blocks = [input.text.trim()];

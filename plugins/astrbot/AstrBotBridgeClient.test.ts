@@ -69,7 +69,7 @@ const startClient = (overrides: {
         };
       },
       getModels: () => [], subscribe: () => () => {},
-      getRelationship: async () => ({ stage: '亲近', line: '阶段：亲近。与桌面共用。' }),
+      getRelationship: async () => ({ line: '阶段：亲近。与桌面共用。', userAddress: '主人' }),
     },
     logger,
     settings: { ...DEFAULT_ASTRBOT_SETTINGS, ...overrides.settings },
@@ -95,7 +95,7 @@ describe('AstrBot bridge client', () => {
           onTask: (listener: typeof onTask) => { onTask = listener; return () => {}; }, cancel: vi.fn(), dispose: vi.fn(), watchTasks: vi.fn(),
         }),
         getModels: () => [], subscribe: () => () => {},
-      getRelationship: async () => ({ stage: '亲近', line: '阶段：亲近。与桌面共用。' }),
+      getRelationship: async () => ({ line: '阶段：亲近。与桌面共用。', userAddress: '主人' }),
       },
       logger,
       settings: { ...DEFAULT_ASTRBOT_SETTINGS, wakeWords: ['丛雨'] },
@@ -185,7 +185,7 @@ describe('AstrBot bridge client', () => {
     const client = new AstrBotBridgeClient({
       url: 'ws://127.0.0.1:6198/ws', clientId: 'renderer', ai: {
         openChannel, getModels: () => [], subscribe: () => () => {},
-        getRelationship: async () => ({ stage: '亲近', line: '阶段：亲近。与桌面共用。' }),
+        getRelationship: async () => ({ line: '阶段：亲近。与桌面共用。', userAddress: '主人' }),
       },
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       settings: DEFAULT_ASTRBOT_SETTINGS,
@@ -216,7 +216,7 @@ describe('AstrBot bridge client', () => {
     expect(payload.personalMemory).toBeUndefined();
     expect(payload.text).toContain('他是谁');
     expect(payload.systemPrompt).toContain('2904725137');
-    expect(payload.systemPrompt).toContain('阿霓');
+    expect(payload.systemPrompt).toContain('"address":"主人"');
     expect(payload.text).toContain('10086');
     expect(payload.text).toContain('原话');
     expect(payload.systemPrompt).toContain('阶段：认识');
@@ -225,7 +225,7 @@ describe('AstrBot bridge client', () => {
     expect(payload.systemPrompt).toContain('2904725137');
     expect(payload.systemPrompt).toContain('阶段：亲近');
     expect(payload.systemPrompt).not.toContain('阶段：信赖');
-    expect(payload.systemPrompt).toContain('阿霓');
+    expect(payload.systemPrompt).toContain('"address":"主人"');
     expect(JSON.stringify(sendText.mock.calls)).not.toContain('3983762587');
     expect(payload).not.toHaveProperty('participant');
     expect(payload).not.toHaveProperty('mentions');

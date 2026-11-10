@@ -39,7 +39,10 @@ export const createPluginHosts = (deps: PluginHostDependencies): InstalledPlugin
       const modelPath = deps.config.activeModelPath;
       if (!modelPath) return null;
       const memory = await window.MemoryAPI?.get?.({ modelPath });
-      return memory?.relationship ? { stage: memory.relationship.stage, line: memory.relationship.line } : null;
+      if (deps.config.activeModelPath !== modelPath) return null;
+      const userAddress = deps.config.modelConfig?.persona?.userAddress;
+      return { line: memory?.relationship?.line ?? '',
+        userAddress: typeof userAddress === 'string' ? userAddress.trim() : '' };
     },
   );
   const hosts: Partial<PluginHostApiMap> = {

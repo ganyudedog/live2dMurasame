@@ -26,7 +26,7 @@ export class AiHost implements AiHostApi {
     return this.conversations.openChannel(options);
   }
 
-  async getRelationship(): Promise<{ stage: string; line: string } | null> {
+  async getRelationship(): ReturnType<NonNullable<AiHostApi['getRelationship']>> {
     return await this.readRelationship?.() ?? null;
   }
 

@@ -6,7 +6,7 @@ This renderer plugin owns the QQ conversation settings. The control panel shows 
 
 QQ user ids are strings. The owner QQ is saved here and is never guessed from a nickname. The bound owner shares the desktop relationship and growth. Only that sender's own messages enter shared memory; group IDs, mentions and quoted speakers never establish ownership. Other people's QQ relationships are manual only. A person with no QQ relationship set is addressed as 认识.
 
-Address order for the current message is: scene override, that person's default, then nickname. A mentioned person keeps their own id and their own address for this scene. Mentioning someone does not make them the sender. Group and private archives stay separate (`episode/<groupId>` and `episode/user/<userId>`).
+The bound owner's address comes from the character persona's user address, both when speaking and when mentioned or quoted. QQ nicknames identify that person but do not replace the persona address. For everyone else the order remains: scene override, that person's default, then nickname. A mentioned person keeps their own id and their own address for this scene. Mentioning someone does not make them the sender. Group and private archives stay separate (`episode/<groupId>` and `episode/user/<userId>`).
 
 Remote tool grants stay in the local Agent settings. Binding a QQ id does not grant tools.
 

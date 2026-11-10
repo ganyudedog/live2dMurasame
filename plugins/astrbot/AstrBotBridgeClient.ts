@@ -297,6 +297,7 @@ export class AstrBotBridgeClient {
       if (!this.isCurrent(admission)) return;
       const turn = composeQqTurn({
         ownerRelationship: ownerRelationship?.line,
+        ownerAddress: ownerRelationship?.userAddress,
         scenePrompt: [this.settings.systemPrompt, stickerPrompt(stickers)].filter(Boolean).join('\n\n'),
         directory,
         sceneKey,

@@ -86,7 +86,7 @@ export interface ConversationChannel {
 /** Character conversation and the model catalog exposed to plugins. */
 export interface AiHostApi {
   openChannel(options: ConversationChannelOptions): ConversationChannel;
-  getRelationship?(): Promise<{ stage: string; line: string } | null>;
+  getRelationship?(): Promise<{ line: string; userAddress?: string } | null>;
   getModels(): readonly { readonly id: string; readonly efforts: readonly string[] }[];
   subscribe(listener: () => void): Disposable;
 }

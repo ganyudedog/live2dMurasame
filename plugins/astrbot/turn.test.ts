@@ -92,3 +92,28 @@ it('recalls all three people by id without mixing sender and mentions', () => {
   expect(turn.systemPrompt).not.toContain('不相关的人物');
   expect(turn.systemPrompt.match(/"id":"3648487307"/g)).toHaveLength(1);
 });
+
+// Only the bound user inherits the persona address, regardless of their role in the message.
+it.each(['sender', 'mention', 'inline', 'quote'] as const)('uses the persona address for the bound user as %s', (role) => {
+  const owner = '2655314552';
+  const input = {
+    scenePrompt: '', sceneKey: 'group:1077396110', ownerAddress: '主人',
+    directory: normalizeDirectory({ ownerUserId: owner, users: {
+      [owner]: { nickname: '南柯一梦', defaultAddress: '旧称呼', sceneAddresses: { 'group:1077396110': '旧群称呼' } },
+      '2904725137': { nickname: '冰霓', defaultAddress: '崔总' },
+    } }),
+    sender: { id: role === 'sender' ? owner : '2904725137' },
+    text: role === 'sender' ? '我是谁' : role === 'inline' ? '你认识@南柯一梦(user_id=2655314552)吗' : '你认识他吗',
+    ...(role === 'mention' ? { mentions: [{ id: owner, name: '南柯一梦' }] } : {}),
+    ...(role === 'quote' ? { quote: { speaker: { id: owner }, text: '我是谁', available: true } } : {}),
+  };
+  const turn = composeQqTurn(input);
+  const line = turn.systemPrompt.split('\n').find((text) => text.startsWith('[{"id":'))!;
+  const people = JSON.parse(line) as Array<{ id: string; address: string; nickname: string }>;
+  expect(people.find((person) => person.id === owner)).toMatchObject({ address: '主人', nickname: '南柯一梦' });
+  expect(turn.systemPrompt).toContain(`[对当前发言人的称呼]\n${role === 'sender' ? '主人' : '崔总'}`);
+  expect(turn.systemPrompt).toContain('本人问“我是谁”');
+  expect(turn.systemPrompt).toContain('别人 @ 此人');
+  expect(turn.systemPrompt).not.toContain('"address":"旧称呼"');
+  expect(turn.systemPrompt).not.toContain('旧群称呼');
+});

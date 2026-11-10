@@ -17,6 +17,7 @@ import {
   adjustModelMemoryRelationship,
   appendModelMemoryConversation,
   loadModelMemoryDocuments,
+  loadRecentModelMemoryTurns,
   saveModelMemoryConsolidation,
   updateModelMemoryCore,
 } from './modelMemoryDao.js';
@@ -355,6 +356,9 @@ describe('desktop relationship persistence', () => {
       userText: '今天又聊起一起看过西湖', assistantText: '那次很安静。', at: Date.now(),
     });
     const pending = loadModelMemoryDocuments(modelPath);
+    expect(pending.pendingEpisodeText).toContain('今天又聊起一起看过西湖');
+    expect(pending.relationship?.progress.interactionDays).toHaveLength(1);
+    expect(loadRecentModelMemoryTurns(modelPath).turns.at(-1)?.userText).toBe('今天又聊起一起看过西湖');
     const saved = saveModelMemoryConsolidation(modelPath, {
       content: '## 当前关系\n- 阶段：亲密。我们在一起。\n\n# 核心记忆\n\n## 经历\n- 一起看过西湖\n',
       processedThroughCount: pending.pendingThroughCount,

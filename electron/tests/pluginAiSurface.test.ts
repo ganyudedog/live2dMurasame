@@ -21,7 +21,9 @@ it('keeps plugin identity rules out of the host conversation API', () => {
   const combined = `${executor}\n${host}\n${api}`;
   expect(combined).not.toMatch(/getActiveCharacter|subscribeCharacter|serializeConversations/);
   expect(combined).not.toMatch(/relationshipByCharacter|ConversationParticipant|ConversationMention|ConversationQuote/);
-  expect(api).not.toMatch(/userAddress/);
+  const request = api.match(/export interface ConversationRequest \{([\s\S]*?)\n\}/)?.[1];
+  expect(request).toBeDefined();
+  expect(request).not.toMatch(/userAddress/);
   expect(executor).toMatch(/userAddress: ''/);
   expect(executor).not.toMatch(/['"]owner['"]|['"]member['"]/);
   expect(host).not.toMatch(/['"]owner['"]|['"]member['"]/);

@@ -74,12 +74,16 @@ export const removeUser = (directory: BridgeDirectory, userId: string): BridgeDi
   return { ...directory, users };
 };
 
-/** Scene override, then the person's own default, then nickname. No desktop address is consulted. */
+/** All participant roles resolve the same id-to-address mapping for this turn. */
 export const resolveAddress = (
-  record: BridgeUserRecord | undefined,
-  sceneKey: string,
+  context: { directory: BridgeDirectory; sceneKey: string; ownerAddress?: string },
+  userId: string,
   displayName?: string,
 ): string => {
+  const { directory, sceneKey } = context;
+  const ownerAddress = context.ownerAddress?.trim();
+  if (userId && userId === directory.ownerUserId && ownerAddress) return ownerAddress;
+  const record = directory.users[userId];
   const scene = record && isSceneKey(sceneKey) ? record.sceneAddresses[sceneKey]?.trim() ?? '' : '';
   if (scene) return scene;
   const fallback = record?.defaultAddress.trim() ?? '';

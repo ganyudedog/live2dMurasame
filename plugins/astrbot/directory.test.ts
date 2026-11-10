@@ -36,17 +36,25 @@ describe('QQ directory', () => {
     expect(upsertUser(directory, '不是号码')).toBe(directory);
   });
 
+  it('maps the bound owner id to the persona address without changing other people or stored data', () => {
+    const context = { directory, sceneKey: 'private', ownerAddress: ' 主人 ' };
+    expect(resolveAddress(context, '10001', '聊天昵称')).toBe('主人');
+    expect(resolveAddress(context, '10002', '聊天昵称')).toBe('小王');
+    expect(resolveAddress({ ...context, directory: { ...directory, users: {} } }, '10001')).toBe('主人');
+    expect(resolveAddress({ ...context, ownerAddress: '' }, '10001')).toBe('家里');
+    expect(resolveAddress({ ...context, directory: { ...directory, ownerUserId: '' } }, '10001')).toBe('家里');
+    expect(directory.users['10001'].sceneAddresses.private).toBe('家里');
+  });
+
   it('resolves an address from the scene, then the person, then the nickname', () => {
     expect(sceneKeyFor('qq.group', 'episode/30003')).toBe('group:30003');
     expect(sceneKeyFor('qq.private', 'episode/user/10001')).toBe('private');
-    const owner = directory.users['10001'];
-    expect(resolveAddress(owner, 'private', '聊天昵称')).toBe('家里');
-    expect(resolveAddress({ ...owner, sceneAddresses: {} }, 'group:30003', '聊天昵称')).toBe('主人号');
-    const member = directory.users['10002'];
-    expect(resolveAddress(member, 'group:30003', '聊天昵称')).toBe('群友');
-    expect(resolveAddress({ ...member, sceneAddresses: {} }, 'group:30003', '聊天昵称')).toBe('小王');
-    expect(resolveAddress(undefined, 'group:30003', '路人甲')).toBe('路人甲');
-    expect(resolveAddress(member, 'group:30004', '聊天昵称')).toBe('小王');
+    expect(resolveAddress({ directory, sceneKey: 'private' }, '10001', '聊天昵称')).toBe('家里');
+    expect(resolveAddress({ directory, sceneKey: 'group:30003' }, '10001', '聊天昵称')).toBe('主人号');
+    expect(resolveAddress({ directory, sceneKey: 'group:30003' }, '10002', '聊天昵称')).toBe('群友');
+    expect(resolveAddress({ directory, sceneKey: 'private' }, '10002', '聊天昵称')).toBe('小王');
+    expect(resolveAddress({ directory, sceneKey: 'group:30003' }, '99999', '路人甲')).toBe('路人甲');
+    expect(resolveAddress({ directory, sceneKey: 'group:30004' }, '10002', '聊天昵称')).toBe('小王');
   });
 });
 

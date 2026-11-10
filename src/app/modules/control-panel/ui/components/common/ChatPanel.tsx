@@ -118,11 +118,13 @@ interface ChatComposerProps {
   toolbar?: ReactNode;
   suggestions?: ReactNode;
   voiceInput?: ChatVoiceInput;
+  /** Additional input controls, placed immediately after the microphone. */
+  inputActions?: ReactNode;
 }
 
 /** 公共输入行为：中文输入法、Shift+Enter、空输入与发送中状态统一处理。 */
 export function ChatComposer({ draft, busy, inputLabel, placeholder, onDraftChange, onSubmit,
-  inputRef, inputProps, model, effort, mentions, toolbar, suggestions, voiceInput }: ChatComposerProps) {
+  inputRef, inputProps, model, effort, mentions, toolbar, suggestions, voiceInput, inputActions }: ChatComposerProps) {
   const submit = () => { if (!busy && draft.trim()) void onSubmit(); };
   // 原生聚焦描边取消，聚焦由外层输入框的描边颜色表示。
   const noOutline = 'outline-none focus:outline-none focus-visible:outline-none';
@@ -208,6 +210,7 @@ export function ChatComposer({ draft, busy, inputLabel, placeholder, onDraftChan
             <span className="truncate">{voiceInput.statusLabel ?? '语音输入'}</span>
           </button>
         )}
+        {inputActions}
         <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground/60 sm:inline">
           Enter 发送 · Shift+Enter 换行
         </span>

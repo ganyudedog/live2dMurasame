@@ -10,8 +10,8 @@ export interface ChatRequest {
   id: string;
   /** 用户输入文本（ASR 识别结果或手动输入） */
   text: string;
-  /** 来源：'text' = 手动输入, 'asr' = 语音识别 */
-  source: 'text' | 'asr';
+  /** 来源：'text' = 手动输入, 'asr' = 语音识别, 'presence' = 摄像头状态触发的主动开口 */
+  source: 'text' | 'asr' | 'presence';
   /** 处理状态 */
   status: 'pending' | 'processing' | 'done' | 'error' | 'cancelled';
   createdAt: number;
@@ -59,6 +59,8 @@ export type SharedState = {
     throttled: boolean;
     lastUpdatedAt: number;
   };
+  /** 摄像头面部状态。关闭时不采集。 */
+  presence: { enabled: boolean };
   /** AI 配置（跨窗口同步） */
   config: ChatConfig;
   /** Chat 管道 */
@@ -76,6 +78,7 @@ export type PatchOp = {
     // asr
     | 'asr.enabled' | 'asr.state' | 'asr.partialText'
     | 'asr.error' | 'asr.throttled' | 'asr.lastUpdatedAt'
+    | 'presence.enabled'
     // config（标量独立字段）
     | 'config.model' | 'config.apiKey' | 'config.baseURL' | 'config.displayLang' | 'config.reasoningEffort'
     // chat 对象

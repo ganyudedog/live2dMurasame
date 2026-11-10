@@ -387,6 +387,11 @@ export class ControlPanelService {
     this.logTrace('model', 'remove', { path }).end({ count: nextPaths.length });
   }
 
+  async togglePresence(enabled: boolean): Promise<void> {
+    this.stateBus.setPresenceEnabled(enabled);
+    this.logTrace('presence', 'toggle', { enabled }).end({ enabled });
+  }
+
   async toggleAsr(enabled: boolean): Promise<void> {
     runInAction(() => {
       this.asrSwitchLoading = true;

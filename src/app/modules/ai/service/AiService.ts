@@ -69,6 +69,16 @@ export class AiService {
     if (!this.ownsConversationRuntime) return;
     this.tts.start();
     this.asr.start();
+    this.llm.bindPresence({
+      enabled: () => Boolean(this.stateBus.presence?.enabled),
+      blocked: () => this.processing || this.tts.playbackEvent?.state === 'started',
+      onCue: (text, at) => {
+        void this.processChatRequest({
+          id: `presence_${at.toString(36)}`, text, source: 'presence', status: 'pending', createdAt: at,
+        });
+      },
+      onStartFailed: () => this.stateBus.setPresenceEnabled(false),
+    });
     this.reactions.push(
       reaction(
         () => this.stateBus.chatRequest,
@@ -79,7 +89,10 @@ export class AiService {
       ),
     );
     this.asrSubscriptions.push(
-      this.asr.onSpeechStart(() => this.cancel('barge-in')),
+      this.asr.onSpeechStart(() => {
+        this.llm.notePresenceInteraction();
+        this.cancel('barge-in');
+      }),
       this.asr.onFinal((request) => { void this.processChatRequest(request); }),
     );
     const context = this.log.contextRegistry.register('AiService', {
@@ -120,6 +133,7 @@ export class AiService {
 
   async processChatRequest(request: ChatRequest): Promise<void> {
     if (this.disposed || !this.ownsConversationRuntime || request.id === this.lastConversationId) return;
+    if (request.source !== 'presence') this.llm.notePresenceInteraction();
     if (this.processing) {
       this.cancel('superseded-by-new-request');
     }
@@ -181,9 +195,11 @@ export class AiService {
     };
 
     try {
+      const presence = request.source === 'presence';
       const result = await this.llm.ask(request.text.trim(), {
         requestId: request.id,
         trace,
+        cue: presence,
         signal: controller.signal,
         model: aiConfig.model,
         apiKey: aiConfig.apiKey,
@@ -290,6 +306,7 @@ export class AiService {
       trace.fail('AI 对话请求失败', { requestId: request.id, err: message }, error);
     } finally {
       consumer.stop();
+      if (request.source !== 'presence') this.llm.notePresenceInteraction();
       if (this.activeController === controller) {
         this.stopChatSpeech = null;
         this.activeController = null;

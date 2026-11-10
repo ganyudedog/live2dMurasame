@@ -53,7 +53,7 @@ export const AgentCard = observer(function AgentCard({ settings = false }: { set
     }).catch((reason) => { if (!disposed) setError(String(reason)); });
     return () => { disposed = true; off?.(); if (id) void api.close(id); };
   }, [settings]);
-  
+
   const saveSources = async (next: string[]) => {
     if (!session || !window.CliAPI || !settingsLoaded || saving) return;
     setSaving(true); setError('');

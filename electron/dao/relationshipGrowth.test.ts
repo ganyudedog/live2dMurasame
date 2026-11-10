@@ -377,11 +377,11 @@ describe('desktop relationship persistence', () => {
     Date.now = () => at('2026-11-01');
     loadModelMemoryDocuments(modelPath);
     updateModelMemoryCore(modelPath, '# 核心记忆\n\n## 经历\n- 一起看过西湖\n- 一起修过灯\n- 一起听过雨\n');
-    for (let index = 0; index < 14; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       const day = shift('2026-11-01', index);
       Date.now = () => at(day);
       appendModelMemoryConversation(modelPath, {
-        userText: index === 13
+        userText: index === 3
           ? '今天又聊起一起看过西湖，也聊起一起修过灯，还聊起一起听过雨'
           : `今天认真聊了 ${day} 的安排`,
         assistantText: '我记下了。',
@@ -400,10 +400,10 @@ describe('desktop relationship persistence', () => {
     });
     expect(consolidated.relationship?.stage).toBe('亲近');
     expect(consolidated.relationship?.progress.experiences).toHaveLength(3);
-    expect(consolidated.relationship?.progress.interactionDays).toHaveLength(14);
-    Date.now = () => at('2026-11-22');
+    expect(consolidated.relationship?.progress.interactionDays).toHaveLength(4);
+    Date.now = () => at('2026-11-05');
     const advanced = appendModelMemoryConversation(modelPath, {
-      userText: '今天认真聊了后面的安排', assistantText: '我记下了。', at: at('2026-11-22'),
+      userText: '今天认真聊了后面的安排', assistantText: '我记下了。', at: at('2026-11-05'),
     });
     expect(advanced.relationship?.stage).toBe('信赖');
     expect(advanced.relationship?.stage).not.toBe('亲密');

@@ -16,6 +16,7 @@ let state: SharedState = {
     throttled: false,
     lastUpdatedAt: 0,
   },
+  presence: { enabled: false },
   config: { model: '', apiKey: '', baseURL: '', displayLang: 'zh', reasoningEffort: '' },
   chat: { request: null, response: null },
 };
@@ -96,6 +97,11 @@ const applyOp = (op: PatchOp) => {
         lastUpdatedAt: Date.now(),
       },
     };
+    return;
+  }
+
+  if (op.path === 'presence.enabled') {
+    state = { ...state, presence: { enabled: Boolean(op.value) } };
     return;
   }
 

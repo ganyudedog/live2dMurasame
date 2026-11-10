@@ -5,6 +5,9 @@ import { buildRelationshipPrompt } from './memory/memoryContext';
 export interface BuildPromptInput {
   userText: string;
   memoryContext?: string;
+  presenceLine?: string;
+  /** 主动开口的提示，不冠以「用户输入」。 */
+  cue?: boolean;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
 }
@@ -106,6 +109,7 @@ export const buildStage2UserPrompt = (input: BuildPromptInput): string => {
     parts.push('以下是相关记忆，只在相关时使用，不要编造其中没有的信息：');
     parts.push(input.memoryContext);
   }
-  parts.push(`用户输入：${input.userText}`);
+  if (input.presenceLine) parts.push(input.presenceLine);
+  parts.push(input.cue ? input.userText : `用户输入：${input.userText}`);
   return parts.join('\n\n');
 };

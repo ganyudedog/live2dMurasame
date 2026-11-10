@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Boxes, Eraser, Heart, Scaling } from 'lucide-react';
+import { ArrowLeftRight, Boxes, Camera, CameraOff, Eraser, Heart, Scaling } from 'lucide-react';
 import ChatPanel from '../components/common/ChatPanel';
 import { Page } from '../components/common/Page';
 import { Button } from '../components/common/Button';
@@ -31,6 +31,8 @@ export default function HomePage({
   chatReasoningEffort,
   llmModels,
   chatModel,
+  presenceEnabled,
+  onTogglePresence,
   asrEnabled,
   asrState,
   asrPartialText,
@@ -55,6 +57,8 @@ export default function HomePage({
   chatReasoningEffort: PetReasoningEffort | '';
   llmModels: PetLlmModel[];
   chatModel: string;
+  presenceEnabled: boolean;
+  onTogglePresence: (enabled: boolean) => void;
   asrEnabled: boolean;
   asrState: PetMicState;
   asrPartialText: string;
@@ -147,6 +151,18 @@ export default function HomePage({
             <Eraser />
             清空对话
           </Button>
+        }
+        inputActions={
+          <button type="button" aria-label="摄像头" aria-pressed={presenceEnabled}
+            onClick={() => onTogglePresence(!presenceEnabled)}
+            className={`flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[11px] transition-colors
+              active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35
+              ${presenceEnabled ? 'bg-primary/12 text-primary hover:bg-primary/18'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+            {presenceEnabled ? <Camera aria-hidden="true" className="size-3.5" />
+              : <CameraOff aria-hidden="true" className="size-3.5" />}
+            <span className="truncate">{presenceEnabled ? '关闭摄像头' : '开启摄像头'}</span>
+          </button>
         }
         voiceInput={{
           enabled: asrEnabled,

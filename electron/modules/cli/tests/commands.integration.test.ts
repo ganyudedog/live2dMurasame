@@ -128,6 +128,14 @@ describe('CLI commands, persistence and task ownership', () => {
     await expect(runtime.cli.invoke(request('agent.continue', { taskId: first.id, prompt: 'again' }), context)).rejects.toThrow('Workspace changed');
   });
 
+  it('rejects shell lookup outside Windows and still registers the command', async () => {
+    const { runtime } = await setup();
+    const listed = await runtime.cli.invoke(request('commands.list'), context) as Array<{ name: string }>;
+    expect(listed.map((item) => item.name)).toContain('shell.run');
+    if (process.platform === 'win32') return;
+    await expect(runtime.cli.invoke(request('shell.run', { command: 'Get-Location' }), context)).rejects.toThrow('仅支持 Windows');
+  });
+
   it('lets a granted remote register a new project directory', async () => {
     const { runtime, dir } = await setup();
     const remote: CommandContext = { owner: 'remote-person', local: false, source: 'plugin:example', conversationId: 'group' };

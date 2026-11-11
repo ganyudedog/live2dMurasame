@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { AgentTaskService } from '../../service/AgentTaskService.js';
 import type { CliService } from '../../service/CliService.js';
+import { runWindowsShell, type ShellResult } from '../windowsShell.js';
 
 const empty = z.object({}).strict();
 const id = z.string().min(1).max(200);
@@ -11,12 +12,22 @@ const workspace = z.object({
 }).strict();
 
 /** Schemas and command names for the agent service. The service owns workspace and task behavior. */
-export const registerAgentCommands = (cli: CliService, tasks: AgentTaskService): void => {
+export const registerAgentCommands = (
+  cli: CliService,
+  tasks: AgentTaskService,
+  runShell: (command: string) => Promise<ShellResult> = runWindowsShell,
+): void => {
   cli.register('agent.providers', {
     skill: 'development',
     description: 'List installed provider integration. Authentication is checked when running.',
     schema: empty,
     execute: () => tasks.listProviders(),
+  });
+  cli.register('shell.run', {
+    skill: 'development',
+    description: '在 Windows 上执行一条 PowerShell，不保留会话。用于把桌面、文档或文件夹名字收成绝对路径。多个相近文件夹时只列出路径，向用户求证后再登记。',
+    schema: z.object({ command: z.string().min(1).max(2000) }).strict(),
+    execute: (args) => runShell(args.command),
   });
   cli.register('agent.workspaces', {
     skill: 'development',

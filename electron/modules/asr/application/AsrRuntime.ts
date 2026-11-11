@@ -21,8 +21,6 @@ export interface AsrRuntimeEvent {
   text?: string;
   reason?: string;
   utteranceId?: string;
-  profile?: string;
-  refined?: boolean;
 }
 
 type WorkerMessage =

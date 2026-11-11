@@ -267,6 +267,7 @@ const applicationIpc = registerDomainIpc({
 const asrRuntime = applicationIpc.asrRuntime;
 const cliRuntime = createCliModule({
     directory: path.join(app.getPath('userData'), 'cli'),
+    globalConfigPath: path.join(app.getPath('userData'), 'config', 'globalModelConfig.json'),
     live2dEnvironmentService, modelEnvironmentService,
     sendAll: applicationIpc.sendAll, publishSnapshot: applicationIpc.publishSnapshot,
 });

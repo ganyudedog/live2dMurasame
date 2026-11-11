@@ -66,13 +66,11 @@ export class AsrService {
       }
       if (event.type !== 'asr.final' || !this.running || !(this.stateBus.asr.enabled || this.held || this.finishing) || !event.text.trim()
         || (this.latestUtteranceId !== null && event.utteranceId !== this.latestUtteranceId)
-        || event.utteranceId === this.submittedUtteranceId
-        || (event.profile === 'agent' && !event.refined)) return;
+        || event.utteranceId === this.submittedUtteranceId) return;
       this.submittedUtteranceId = event.utteranceId;
       const request: ChatRequest = {
         id: `asr_${event.utteranceId || Date.now().toString(36)}`,
         text: event.text.trim(), source: 'asr', status: 'pending', createdAt: Date.now(),
-        voice: { profile: event.profile ?? 'conversation', refined: event.refined ?? false },
       };
       this.stateBus.publishChatRequest(request);
       this.finalListeners.forEach((listener) => listener(request));

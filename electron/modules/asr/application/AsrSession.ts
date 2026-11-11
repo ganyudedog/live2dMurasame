@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AsrSessionEvent, Recognizer, RefineFinalInput, Vad } from './asrTypes.js';
+import type { AsrSessionEvent, Recognizer, Vad } from './asrTypes.js';
 
 const SAMPLE_RATE = 16000;
 const WINDOW_SIZE = 512;
@@ -7,19 +7,14 @@ const WINDOW_SIZE = 512;
 export const createAsrSession = ({
   recognizer,
   vad,
-  profile = 'conversation',
-  refineFinal,
   emit,
   sessionId = randomUUID(),
 }: {
   recognizer: Recognizer;
   vad: Vad;
-  profile?: string;
-  refineFinal?: (input: RefineFinalInput) => Promise<{ text?: string } | undefined>;
   emit: (event: AsrSessionEvent) => void;
   sessionId?: string;
 }) => {
-  if (profile === 'agent' && !refineFinal) throw new Error('Agent 语音档尚未配置高精度复核适配器');
   let stream = recognizer.createStream();
   let remainder = new Float32Array(0);
   let preRoll: Float32Array[] = [];
@@ -28,9 +23,7 @@ export const createAsrSession = ({
   let utteranceId = '';
   let completedText = '';
   let lastPartial = '';
-  let revision = 0;
   let disposed = false;
-  let refinement: AbortController | null = null;
 
   const publish = (type: string, payload: Record<string, unknown> = {}) => emit({ type, utteranceId, ts: Date.now(), ...payload });
   const decode = (samples: Float32Array): string => {
@@ -46,34 +39,13 @@ export const createAsrSession = ({
     stream.inputFinished();
     while (recognizer.isReady(stream)) recognizer.decode(stream);
     const text = textWith(recognizer.getResult(stream)?.text?.trim() ?? '') || draftText;
-    const id = utteranceId;
-    const version = revision;
-    const samples = profile === 'agent' && !vad.isEmpty() ? vad.front(false).samples : null;
     speaking = false;
     completedText = '';
     lastPartial = '';
     preRoll = [];
     stream = recognizer.createStream();
     while (!vad.isEmpty()) vad.pop();
-    if (profile === 'conversation') {
-      if (text) publish('asr.final', { text, profile, refined: false });
-      return;
-    }
-    if (!refineFinal) return;
-    const controller = new AbortController();
-    refinement = controller;
-    void Promise.resolve().then(() => refineFinal({ samples, sampleRate: SAMPLE_RATE, draftText: text, utteranceId: id, signal: controller.signal }))
-      .then((result) => {
-        if (disposed || version !== revision || controller.signal.aborted) return;
-        if (!result?.text?.trim()) throw new Error('高精度语音复核未返回有效文本');
-        publish('asr.final', { utteranceId: id, text: result.text.trim(), profile, refined: true });
-      })
-      .catch((error: unknown) => {
-        if (!disposed && version === revision && !controller.signal.aborted) {
-          const message = error instanceof Error ? error.message : String(error);
-          publish('asr.error', { code: 'asr-refinement-failed', message });
-        }
-      });
+    if (text) publish('asr.final', { text });
   };
 
   const processWindow = (samples: Float32Array): void => {
@@ -84,8 +56,6 @@ export const createAsrSession = ({
       if (preRoll.length > 14) preRoll.shift();
       if (!detected) return;
       speaking = true;
-      revision += 1;
-      refinement?.abort();
       utteranceId = `${sessionId}_${utteranceIndex++}`;
       publish('asr.speech-start');
       for (const frame of preRoll) decode(frame);
@@ -129,8 +99,6 @@ export const createAsrSession = ({
     },
     dispose(): void {
       disposed = true;
-      revision += 1;
-      refinement?.abort();
       vad.reset();
       remainder = new Float32Array(0);
       preRoll = [];

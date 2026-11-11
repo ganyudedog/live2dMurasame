@@ -59,7 +59,7 @@ describe('remote ASR adapter', () => {
     const link = adapter.connect({ emit: () => {}, WebSocket: FakeSocket });
     await link.ready;
     expect(socketAt(0).url).toBe('ws://127.0.0.1:6006/asr');
-    expect(texts(socketAt(0))).toEqual([{ type: 'start', sampleRate: 16000, profile: 'conversation' }]);
+    expect(texts(socketAt(0))).toEqual([{ type: 'start', sampleRate: 16000 }]);
     expect(normalizeAsrConfig({ mode: 'remote', endpoint: 'ws://127.0.0.1:6006/asr' })).toMatchObject({
       endpoint: 'ws://127.0.0.1:6006/asr', modelDir: '', vadThreshold: null, vadMinSpeechDuration: null,
     });
@@ -92,7 +92,7 @@ describe('remote ASR adapter', () => {
     await finished;
     expect(events.map((event) => event.type)).toEqual(['asr.speech-start', 'asr.partial', 'asr.final']);
     expect(events.every((event) => event.utteranceId === 'turn-1')).toBe(true);
-    expect(events.at(-1)).toMatchObject({ text: '你好', profile: 'conversation', refined: false });
+    expect(events.at(-1)).toMatchObject({ text: '你好' });
     link.accept(new Float32Array([0.1, 0.2]));
     expect(socket.sent.at(-1)).toBeInstanceOf(ArrayBuffer);
   });

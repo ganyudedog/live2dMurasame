@@ -110,7 +110,7 @@ describe('ASR service lifecycle', () => {
     expect(stateBus.publishChatRequest).toHaveBeenCalledOnce();
   });
 
-  it('interrupts on speech start, submits finals once and rejects stale or unrefined input', async () => {
+  it('interrupts on speech start and submits one final for the current utterance', async () => {
     const { service, stateBus, emit } = setup(true);
     const interrupt = vi.fn();
     const final = vi.fn();
@@ -122,13 +122,11 @@ describe('ASR service lifecycle', () => {
     expect(interrupt).toHaveBeenCalledOnce();
     expect(stateBus.publishChatRequest).not.toHaveBeenCalled();
     emit({ type: 'asr.final', utteranceId: 'old', text: 'late', ts: 2 });
-    emit({ type: 'asr.final', utteranceId: 'new', text: 'draft', profile: 'agent', refined: false, ts: 3 });
-    expect(final).not.toHaveBeenCalled();
-    const event: PetAsrFinalEvent = { type: 'asr.final', utteranceId: 'new', text: 'verified', profile: 'agent', refined: true, ts: 4 };
+    const event: PetAsrFinalEvent = { type: 'asr.final', utteranceId: 'new', text: 'verified', ts: 4 };
     emit(event);
     emit(event);
     expect(final).toHaveBeenCalledOnce();
-    expect(stateBus.publishChatRequest).toHaveBeenCalledWith(expect.objectContaining({ voice: { profile: 'agent', refined: true } }));
+    expect(stateBus.publishChatRequest).toHaveBeenCalledWith(expect.objectContaining({ text: 'verified', source: 'asr' }));
     runInAction(() => { stateBus.asr.enabled = false; });
     emit({ type: 'asr.speech-start', utteranceId: 'disabled', ts: 5 });
     emit({ type: 'asr.final', utteranceId: 'disabled', text: 'disabled', ts: 6 });
@@ -148,11 +146,11 @@ describe('ASR service lifecycle', () => {
 });
 
 describe('ASR endpoint configuration', () => {
-  it('migrates the old default pair but preserves custom values and updated presets', () => {
-    const legacy = { rule1MinTrailingSilence: 2.4, rule2MinTrailingSilence: 1.2 };
-    expect(normalizeAsrConfig(legacy)).toMatchObject({ endpointPresetVersion: 1, rule1MinTrailingSilence: 1.2, rule2MinTrailingSilence: 0.7 });
-    expect(normalizeAsrConfig({ ...legacy, endpointPresetVersion: 1 })).toMatchObject(legacy);
-    const custom = { rule1MinTrailingSilence: 1.4, rule2MinTrailingSilence: 0.8 };
-    expect(normalizeAsrConfig(custom)).toMatchObject(custom);
+  it('keeps the two silence values and reads the old rule names once', () => {
+    expect(normalizeAsrConfig({ rule1MinTrailingSilence: 1.4, rule2MinTrailingSilence: 0.8 } as PetAsrConfig))
+      .toMatchObject({ silenceAfterText: 1.4, silenceWithoutText: 0.8 });
+    expect(normalizeAsrConfig({ silenceAfterText: 1.6, silenceWithoutText: 0.5 })).toMatchObject({
+      silenceAfterText: 1.6, silenceWithoutText: 0.5,
+    });
   });
 });

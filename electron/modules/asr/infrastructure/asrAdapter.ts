@@ -82,18 +82,17 @@ export interface RemoteAsrAdapter {
   }): RemoteAsrLink;
 }
 
+const ENDPOINT_MIN_UTTERANCE_LENGTH = 20;
+
 export interface LocalAsrAdapter {
   mode: 'local';
   engine: string;
   createRecognizer(): Recognizer;
   createVad(): Vad;
-  refineFinal?: undefined;
 }
 
 const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter => {
-  if (options.profile === 'agent') throw new Error('Agent 语音档尚未配置高精度复核适配器');
   const endpoint = remoteSocketUrl(options.endpoint);
-  const profile = 'conversation';
   return {
     mode: 'remote',
     connect({ emit, onFailure, WebSocket: Socket = (globalThis as { WebSocket?: SocketConstructor }).WebSocket } = {}) {
@@ -114,7 +113,7 @@ const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter =>
       const ready = new Promise<void>((resolve, reject) => {
         socket.onopen = () => {
           opened = true;
-          const start: Record<string, unknown> = { type: 'start', sampleRate: 16000, profile };
+          const start: Record<string, unknown> = { type: 'start', sampleRate: 16000 };
           const vad: Record<string, number> = {};
           const threshold = finiteOrOmit(options.vadThreshold);
           const minSpeechDuration = finiteOrOmit(options.vadMinSpeechDuration);
@@ -151,7 +150,7 @@ const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter =>
         } else if (message.type === 'final') {
           ensureUtterance(message);
           const text = typeof message.text === 'string' ? message.text.trim() : '';
-          if (text) publish('asr.final', { text, profile, refined: message.refined === true });
+          if (text) publish('asr.final', { text });
           utteranceId = '';
         } else if (message.type === 'finished') {
           finishWaiter?.();
@@ -213,9 +212,9 @@ const createLocalAsrAdapter = (options: AsrAdapterOptions, engine: string): Loca
         decodingMethod: 'greedy_search',
         maxActivePaths: 4,
         enableEndpoint: true,
-        rule1MinTrailingSilence: finiteOr(options.rule1MinTrailingSilence, 1.2),
-        rule2MinTrailingSilence: finiteOr(options.rule2MinTrailingSilence, 0.7),
-        rule3MinUtteranceLength: finiteOr(options.rule3MinUtteranceLength, 20),
+        rule1MinTrailingSilence: finiteOr(options.silenceAfterText, 1.2),
+        rule2MinTrailingSilence: finiteOr(options.silenceWithoutText, 0.7),
+        rule3MinUtteranceLength: ENDPOINT_MIN_UTTERANCE_LENGTH,
       });
     },
     createVad() {
@@ -228,7 +227,7 @@ const createLocalAsrAdapter = (options: AsrAdapterOptions, engine: string): Loca
           threshold: options.vadThreshold ?? 0.5,
           minSpeechDuration: Math.min(0.3, Math.max(0.15, options.vadMinSpeechDuration ?? 0.2)),
           windowSize: 512,
-          minSilenceDuration: options.rule2MinTrailingSilence ?? 0.7,
+          minSilenceDuration: options.silenceWithoutText ?? 0.7,
           maxSpeechDuration: 60,
         },
         sampleRate: 16000,

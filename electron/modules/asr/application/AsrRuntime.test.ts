@@ -50,11 +50,10 @@ describe('ASR worker lifecycle', () => {
     await runtime.stop();
   });
 
-  it('migrates persisted legacy endpoint defaults exactly once', () => {
-    const legacy = { rule1MinTrailingSilence: 2.4, rule2MinTrailingSilence: 1.2 };
-    expect(normalizeLive2denvConfig({ settings: { asr: legacy } }).settings.asr).toMatchObject({ endpointPresetVersion: 1, rule1MinTrailingSilence: 1.2, rule2MinTrailingSilence: 0.7 });
-    expect(normalizeLive2denvConfig({ settings: { asr: { ...legacy, endpointPresetVersion: 1 } } }).settings.asr).toMatchObject(legacy);
-    const custom = { rule1MinTrailingSilence: 1.4, rule2MinTrailingSilence: 0.8 };
+  it('reads the old silence rule names into the endpoint settings', () => {
+    const legacy = { rule1MinTrailingSilence: 1.4, rule2MinTrailingSilence: 0.8 };
+    expect(normalizeLive2denvConfig({ settings: { asr: legacy } }).settings.asr).toMatchObject({ silenceAfterText: 1.4, silenceWithoutText: 0.8 });
+    const custom = { silenceAfterText: 1.6, silenceWithoutText: 0.5 };
     expect(normalizeLive2denvConfig({ settings: { asr: custom } }).settings.asr).toMatchObject(custom);
   });
 

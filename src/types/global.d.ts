@@ -43,8 +43,6 @@ declare global {
   }
 
   interface PetAsrConfig {
-    endpointPresetVersion?: 1;
-    profile?: 'conversation' | 'agent';
     vadModelPath?: string;
     /** 远程模式下 null 表示不覆盖服务自己的人声检测。 */
     vadThreshold?: number | null;
@@ -58,9 +56,10 @@ declare global {
     numThreads?: number;
     provider?: string;
     debug?: number;
-    rule1MinTrailingSilence?: number;
-    rule2MinTrailingSilence?: number;
-    rule3MinUtteranceLength?: number;
+    /** 已识别出文字后，静音多久提交。 */
+    silenceAfterText?: number;
+    /** 还没有识别出文字时，静音多久结束。 */
+    silenceWithoutText?: number;
   }
 
   type PetGlobalModelConfig = PetGlobalModelConfigPayload;
@@ -487,8 +486,6 @@ declare global {
     utteranceId: string;
     text: string;
     ts: number;
-    profile?: 'conversation' | 'agent';
-    refined?: boolean;
   }
 
   interface PetAsrSpeechEvent {

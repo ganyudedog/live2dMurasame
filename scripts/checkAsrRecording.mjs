@@ -11,7 +11,7 @@ if (!modelDir || !waveFiles.length) throw new Error('Usage: node scripts/checkAs
 const results = [];
 for (const silence of [0.6, 0.7, 0.8, 1.2]) {
   const worker = new Worker(new URL('../dist-electron/modules/asr/infrastructure/asrWorker.js', import.meta.url), {
-    workerData: { config: { modelDir, rule1MinTrailingSilence: 1.2, rule2MinTrailingSilence: silence, profile: 'conversation' } },
+    workerData: { config: { modelDir, silenceAfterText: 1.2, silenceWithoutText: silence } },
   });
   let resolveReady;
   let rejectReady;

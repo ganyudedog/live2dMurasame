@@ -30,14 +30,7 @@ export default function AsrSettingsPage({
     <SettingsCard title="语音识别" icon={<Mic />} description={remote
       ? '连接已经配好人声检测和识别的服务。'
       : '使用本机模型目录里的识别模型和 VAD 文件。'}>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Field label="语音输入档次">
-          <Select value={draft.profile}
-            onChange={(event) => update({ profile: event.target.value as AsrConfig['profile'] })}>
-            <option value="conversation">实时对话</option>
-            <option value="agent" disabled>Agent 高精度（待配置复核模型）</option>
-          </Select>
-        </Field>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field label="运行方式">
           <Select value={draft.mode}
             onChange={(event) => update({ mode: event.target.value as AsrConfig['mode'] })}>
@@ -107,15 +100,15 @@ export default function AsrSettingsPage({
 
     {remote ? null : <SettingsCard title="断句与性能" icon={<Gauge />} description="静音多久算一句话结束，以及识别占用的线程数。">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Field label="有声句尾静音（秒）" hint="已经识别出文字后，停顿多久就提交">
-          <Input type="number" min="0.2" max="3" step="0.1"
-            value={draft.rule2MinTrailingSilence}
-            onChange={(event) => update({ rule2MinTrailingSilence: Number(event.target.value) })} />
-        </Field>
-        <Field label="无文本端点静音（秒）" hint="一直没识别出文字时，停顿多久结束录音">
+        <Field label="已识别出文字后的停顿（秒）" hint="已经有识别结果时，静音多久就提交">
           <Input type="number" min="0.5" max="5" step="0.1"
-            value={draft.rule1MinTrailingSilence}
-            onChange={(event) => update({ rule1MinTrailingSilence: Number(event.target.value) })} />
+            value={draft.silenceAfterText}
+            onChange={(event) => update({ silenceAfterText: Number(event.target.value) })} />
+        </Field>
+        <Field label="还没有文字时的停顿（秒）" hint="一直没识别出文字时，静音多久结束录音">
+          <Input type="number" min="0.2" max="3" step="0.1"
+            value={draft.silenceWithoutText}
+            onChange={(event) => update({ silenceWithoutText: Number(event.target.value) })} />
         </Field>
         <Field label="线程数" hint="越大识别越快，但更占 CPU">
           <Input type="number" value={draft.numThreads}

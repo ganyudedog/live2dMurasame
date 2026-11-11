@@ -4,14 +4,12 @@ export interface AsrAdapterOptions {
   engine?: string;
   provider?: string;
   modelDir?: string;
-  profile?: string;
   sampleRate?: number;
   featureDim?: number;
   numThreads?: number;
   debug?: number;
-  rule1MinTrailingSilence?: number;
-  rule2MinTrailingSilence?: number;
-  rule3MinUtteranceLength?: number;
+  silenceAfterText?: number;
+  silenceWithoutText?: number;
   vadModelPath?: string;
   vadThreshold?: number | null;
   vadMinSpeechDuration?: number | null;
@@ -22,8 +20,6 @@ export interface AsrSessionEvent {
   utteranceId?: string;
   ts?: number;
   text?: string;
-  profile?: string;
-  refined?: boolean;
   code?: string;
   message?: string;
 }
@@ -49,14 +45,6 @@ export interface Vad {
   front(copy: boolean): { samples: Float32Array };
   pop(): void;
   reset(): void;
-}
-
-export interface RefineFinalInput {
-  samples: Float32Array | null;
-  sampleRate: number;
-  draftText: string;
-  utteranceId: string;
-  signal: AbortSignal;
 }
 
 export interface AsrSocket {

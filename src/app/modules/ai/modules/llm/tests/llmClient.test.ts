@@ -13,6 +13,16 @@ const actions: Pick<ActionCapability, 'actions'> = { actions: [
 const response = { choices: [{ message: { content: '{"display_text":"hello"}' } }] };
 
 describe('provider prompt cache and streaming usage', () => {
+  it.each([undefined, '插件注入的人设和关系'])('combines memory and execution data with both system prompt paths (%s)', async (systemPrompt) => {
+    network.create.mockResolvedValue(response);
+    await requestStage2LLM(config, { userText: '现在结果呢', systemPrompt,
+      memoryContext: '用户常用项目：live2dMurasame', toolContext: '{"results":[{"id":"task-123","status":"queued"}]}' });
+    const messages = network.create.mock.lastCall![0].messages;
+    expect(messages[0].content).toContain('不要否认已提供的工具能力');
+    expect(messages.at(-1).content).toContain('用户常用项目');
+    expect(messages.at(-1).content).toContain('task-123');
+    expect(messages.at(-1).content).toContain('现在结果呢');
+  });
   it('puts required output rules before archived history and the current question', async () => {
     network.create.mockResolvedValue(response);
     const historyMessages = [{ role: 'user' as const, content: '能说喜欢我吗' },

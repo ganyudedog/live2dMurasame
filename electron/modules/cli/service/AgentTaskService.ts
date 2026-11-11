@@ -1,4 +1,5 @@
 import type { PluginCliGrantStore } from './PluginCliGrantStore.js';
+import type { WorkspaceCatalog } from '../infrastructure/WorkspaceCatalog.js';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import type { TaskStore } from '../infrastructure/TaskStore.js';
@@ -56,12 +57,14 @@ export class AgentTaskService implements AgentTaskQuery {
   private readonly sweep: ReturnType<typeof setInterval>;
 
   private readonly grants?: PluginCliGrantStore;
+  private readonly workspaces: WorkspaceCatalog;
   private readonly store: TaskStore;
   private readonly adapter: CodexRunner;
 
-  constructor(store: TaskStore, adapter: CodexRunner, grants?: PluginCliGrantStore) {
+  constructor(store: TaskStore, adapter: CodexRunner, grants: PluginCliGrantStore | undefined, workspaces: WorkspaceCatalog) {
     this.store = store;
     this.grants = grants;
+    this.workspaces = workspaces;
     this.adapter = adapter;
     for (const task of Object.values(store.data.tasks)) {
       if (!terminal(task)) {
@@ -98,22 +101,25 @@ export class AgentTaskService implements AgentTaskQuery {
   }
 
   listWorkspaces(): Array<{ id: string }> {
-    return this.store.data.settings.workspaces.map(({ id }) => ({ id }));
+    return this.workspaces.list().map(({ id }) => ({ id }));
   }
 
   getSettings(): AgentSettings {
-    return { ...structuredClone(this.store.data.settings), remoteSources: this.grants?.read() ?? [...this.store.data.settings.remoteSources] };
+    return {
+      workspaces: this.workspaces.list(),
+      remoteSources: this.grants?.read() ?? [...this.store.data.settings.remoteSources],
+    };
+  }
+
+  addWorkspace(args: { id: string; path: string }): { id: string; path: string } {
+    return this.workspaces.add(args.id, args.path);
   }
 
   updateSettings(args: AgentSettings): AgentSettings {
     if (new Set(args.workspaces.map((item) => item.id)).size !== args.workspaces.length) throw new Error('Duplicate workspace ID');
-    const workspaces = args.workspaces.map((item) => {
-      const directory = fs.realpathSync(item.path);
-      if (!fs.statSync(directory).isDirectory()) throw new Error('Workspace must be a directory');
-      return { id: item.id, path: directory };
-    });
+    this.workspaces.write(args.workspaces);
     this.grants?.write(args.remoteSources);
-    this.store.data.settings = { workspaces, remoteSources: this.grants ? [] : args.remoteSources };
+    this.store.data.settings = { workspaces: [], remoteSources: this.grants ? [] : args.remoteSources };
     this.store.save();
     return this.getSettings();
   }
@@ -123,10 +129,10 @@ export class AgentTaskService implements AgentTaskQuery {
     const parent = args.taskId ? this.require(args.taskId, context.owner) : null;
     if (parent && (!terminal(parent) || !parent.providerSessionId)) throw new Error('Task cannot be continued yet');
     const workspaceId = parent?.workspaceId ?? args.workspaceId;
-    if (!workspaceId) throw new Error('Select a configured workspace first');
-    const workspace = this.store.data.settings.workspaces.find((item) => item.id === workspaceId);
-    if (!workspace) throw new Error('Select a configured workspace first');
-    const directory = fs.realpathSync(workspace.path);
+    const workspaces = this.workspaces.read();
+    const registered = workspaceId && Object.hasOwn(workspaces, workspaceId) ? workspaces[workspaceId] : undefined;
+    if (!workspaceId || !registered) throw new Error('Select a configured workspace first');
+    const directory = fs.realpathSync(registered);
     if (!fs.statSync(directory).isDirectory()) throw new Error('Workspace is not a directory');
     if (parent && directory !== parent.directory) throw new Error('Workspace changed; start a new task');
     const active = Object.values(this.store.data.tasks).filter((task) => !terminal(task));

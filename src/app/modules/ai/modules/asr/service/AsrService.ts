@@ -61,18 +61,21 @@ export class AsrService {
       }
       if (event.type === 'asr.error') {
         runInAction(() => { this.lastError = event.message; });
+        const context = this.log.contextRegistry.register('AsrService', {
+          relation: 'asr.runtime', params: { code: event.code }, behavior: '接收后端识别错误',
+        });
+        context.beginTrace('backend-error').fail('ASR 后端识别失败', { message: event.message }, new Error(event.message));
+        context.dispose();
         this.scheduleTransition(false);
         return;
       }
       if (event.type !== 'asr.final' || !this.running || !(this.stateBus.asr.enabled || this.held || this.finishing) || !event.text.trim()
         || (this.latestUtteranceId !== null && event.utteranceId !== this.latestUtteranceId)
-        || event.utteranceId === this.submittedUtteranceId
-        || (event.profile === 'agent' && !event.refined)) return;
+        || event.utteranceId === this.submittedUtteranceId) return;
       this.submittedUtteranceId = event.utteranceId;
       const request: ChatRequest = {
         id: `asr_${event.utteranceId || Date.now().toString(36)}`,
         text: event.text.trim(), source: 'asr', status: 'pending', createdAt: Date.now(),
-        voice: { profile: event.profile ?? 'conversation', refined: event.refined ?? false },
       };
       this.stateBus.publishChatRequest(request);
       this.finalListeners.forEach((listener) => listener(request));

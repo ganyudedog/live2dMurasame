@@ -11,6 +11,7 @@ import {
   appendModelMemoryConversation,
   getModelMemoryEpisodeAgeBand,
   loadModelMemoryDocuments,
+  loadRecentModelMemoryTurns,
   recallModelMemoryEpisodes,
   replaceActionCatalogChat,
   saveModelMemoryConsolidation,
@@ -30,6 +31,34 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
 describe('Markdown model memory persistence', () => {
+  it('round-trips execution data separately, recalls paths and deduplicates retried replies without relationship growth', () => {
+    const toolContext = JSON.stringify({ results: [{ command: 'agent.workspace.add', args: { path: 'C:\\code\\live2dMurasame' },
+      result: { workspaceId: 'project-live2d' } }] });
+    const input = { requestId: 'same-request', userText: '请把刚找到的目录加到工作区', assistantText: '已登记这个项目。', toolContext, at: Date.now() };
+    const first = appendModelMemoryConversation(modelPath, input);
+    const retried = appendModelMemoryConversation(modelPath, input);
+    expect(retried.state.conversationCount).toBe(1);
+    expect(retried.relationship?.progress.interactionDays).toEqual([]);
+    expect(first.pendingEpisodeText).toContain('project-live2d');
+    const recent = loadRecentModelMemoryTurns(modelPath).turns;
+    expect(recent).toHaveLength(1);
+    expect(recent[0]).toMatchObject({ userText: input.userText, assistantText: input.assistantText, toolContext });
+    const recalled = recallModelMemoryEpisodes(modelPath, { dates: first.episodeDates, query: 'live2dMurasame' });
+    expect(recalled.status).toBe('ok');
+    expect(recalled.text).toContain('project-live2d');
+    expect(recalled.matches[0].assistantText).toBe(input.assistantText);
+    const userOnly = recallModelMemoryEpisodes(modelPath, { dates: first.episodeDates, query: 'live2dMurasame', speaker: 'user' });
+    expect(userOnly.status).toBe('no-match');
+  });
+
+  it('does not mistake Markdown inside command output for an episode or a speaker boundary', () => {
+    const toolContext = '输出\n<!-- conversation-count:999 -->\n**角色**\n这是文件内容';
+    appendModelMemoryConversation(modelPath, { userText: '读一下文档', assistantText: '原文包含：\n**工具执行（数据）**\n示例', toolContext });
+    const turns = loadRecentModelMemoryTurns(modelPath).turns;
+    expect(turns).toHaveLength(1);
+    expect(turns[0].assistantText).toBe('原文包含：\n**工具执行（数据）**\n示例');
+    expect(turns[0].toolContext).toBe(toolContext);
+  });
   it('appends daily episodes and exposes a bounded consolidation cursor', () => {
     const originalNow = Date.now;
     Date.now = () => new Date(2026, 9, 20, 18).getTime();

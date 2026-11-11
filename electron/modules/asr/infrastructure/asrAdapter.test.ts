@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createAsrAdapter } from './asrAdapter.js';
 import type { AsrSessionEvent, AsrSocket } from '../application/asrTypes.js';
 import { normalizeAsrConfig } from '../../../../src/app/modules/ai/modules/asr/domain/config.ts';
@@ -19,6 +19,7 @@ class FakeSocket implements AsrSocket {
     queueMicrotask(() => {
       this.readyState = 1;
       this.onopen?.();
+      if (autoReady) this.receive({ type: 'ready' });
     });
   }
 
@@ -35,6 +36,7 @@ class FakeSocket implements AsrSocket {
 }
 
 const sockets: FakeSocket[] = [];
+let autoReady = true;
 
 const socketAt = (index: number): FakeSocket => {
   const socket = sockets[index];
@@ -59,7 +61,7 @@ describe('remote ASR adapter', () => {
     const link = adapter.connect({ emit: () => {}, WebSocket: FakeSocket });
     await link.ready;
     expect(socketAt(0).url).toBe('ws://127.0.0.1:6006/asr');
-    expect(texts(socketAt(0))).toEqual([{ type: 'start', sampleRate: 16000, profile: 'conversation' }]);
+    expect(texts(socketAt(0))).toEqual([{ type: 'start', sampleRate: 16000 }]);
     expect(normalizeAsrConfig({ mode: 'remote', endpoint: 'ws://127.0.0.1:6006/asr' })).toMatchObject({
       endpoint: 'ws://127.0.0.1:6006/asr', modelDir: '', vadThreshold: null, vadMinSpeechDuration: null,
     });
@@ -92,9 +94,46 @@ describe('remote ASR adapter', () => {
     await finished;
     expect(events.map((event) => event.type)).toEqual(['asr.speech-start', 'asr.partial', 'asr.final']);
     expect(events.every((event) => event.utteranceId === 'turn-1')).toBe(true);
-    expect(events.at(-1)).toMatchObject({ text: '你好', profile: 'conversation', refined: false });
+    expect(events.at(-1)).toMatchObject({ text: '你好' });
     link.accept(new Float32Array([0.1, 0.2]));
     expect(socket.sent.at(-1)).toBeInstanceOf(ArrayBuffer);
+  });
+
+  it('waits for model readiness, and preserves a handshake rejection', async () => {
+    autoReady = false;
+    try {
+      const failure = vi.fn();
+      const link = openRemote({ mode: 'remote', endpoint: 'ws://localhost:10095/asr' })
+        .connect({ WebSocket: FakeSocket, onFailure: failure });
+      const settled = vi.fn();
+      const outcome = link.ready.then(settled, (error: Error) => error.message);
+      await Promise.resolve();
+      expect(settled).not.toHaveBeenCalled();
+      expect(() => link.accept(new Float32Array(512))).toThrow();
+      sockets.at(-1)!.receive({ type: 'error', message: 'Unsupported ASR format' });
+      sockets.at(-1)!.close();
+      expect(await outcome).toBe('Unsupported ASR format');
+      expect(failure).toHaveBeenCalledExactlyOnceWith('Unsupported ASR format');
+    } finally { autoReady = true; }
+  });
+
+  it('waits for ready and supports repeated finishes on the same link', async () => {
+    autoReady = false;
+    try {
+      const link = openRemote({ mode: 'remote', endpoint: 'ws://localhost:10095/asr' })
+        .connect({ WebSocket: FakeSocket });
+      await Promise.resolve();
+      const socket = sockets.at(-1)!;
+      socket.receive({ type: 'ready' });
+      await link.ready;
+      for (let round = 0; round < 2; round++) {
+        link.accept(new Float32Array(512));
+        const finished = link.finish();
+        socket.receive({ type: 'finished' });
+        await finished;
+      }
+      link.dispose();
+    } finally { autoReady = true; }
   });
 
   it('rejects a missing address and still requires local model files', () => {

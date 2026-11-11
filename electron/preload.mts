@@ -194,6 +194,8 @@ const CliAPI = {
   close: (session: unknown) => ipcRenderer.invoke('cli:close', session),
   claim: (session: unknown, requestId: unknown, text: unknown) => ipcRenderer.invoke('cli:claim', session, requestId, text),
   finish: (session: unknown, requestId: unknown, result: unknown) => ipcRenderer.invoke('cli:finish', session, requestId, result),
+  reply: (session: unknown, requestId: unknown, text: unknown) => ipcRenderer.invoke('cli:reply', session, requestId, text),
+  compact: (session: unknown, input: unknown) => ipcRenderer.invoke('cli:compact', session, input),
   onTask: (session: unknown, callback: (event: { task: unknown; sequence: unknown }) => void) => {
     const listener = (_event: unknown, payload: unknown) => {
       const body = isRecord(payload) ? payload : {};

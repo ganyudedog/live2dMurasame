@@ -6,7 +6,6 @@ import type { CliService } from '../../service/CliService.js';
 const text = z.string().max(2000);
 const lang = z.enum(['zh', 'en', 'ja', 'ko']);
 const asr = z.object({
-  profile: z.enum(['conversation', 'agent']).optional(),
   mode: z.enum(['local', 'remote']).optional(),
   endpoint: text.optional(),
   modelDir: text.optional(),

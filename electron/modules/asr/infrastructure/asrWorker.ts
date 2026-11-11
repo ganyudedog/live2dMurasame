@@ -20,8 +20,6 @@ const runLocal = (adapter: ReturnType<typeof createAsrAdapter>): void => {
   const session = createAsrSession({
     vad,
     recognizer: adapter.createRecognizer(),
-    profile: config.profile,
-    refineFinal: adapter.refineFinal,
     emit: (event) => port.postMessage({ type: 'event', event }),
   });
   port.on('message', (message: { samples?: Float32Array; type?: string; id?: number }) => {

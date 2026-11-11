@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { readActionCatalog, type ActionDefinition } from '../../shared/live2d/actionCatalog.js';
 import { DEFAULT_SUBTITLE_SETTINGS, DEFAULT_PUSH_TO_TALK, normalizeSubtitleSettings, normalizePushToTalk, type SubtitleSettings, type PushToTalkSettings } from '../../shared/subtitle/subtitleSettings.js';
 import {
@@ -20,8 +21,6 @@ const optionalAsrRange = (value: unknown, min: number, max: number): number | nu
 };
 
 export interface AsrConfig {
-  endpointPresetVersion: number;
-  profile: 'conversation' | 'agent';
   vadModelPath: string;
   vadThreshold: number | null;
   vadMinSpeechDuration: number | null;
@@ -34,10 +33,39 @@ export interface AsrConfig {
   numThreads: number;
   provider: string;
   debug: number;
-  rule1MinTrailingSilence: number;
-  rule2MinTrailingSilence: number;
-  rule3MinUtteranceLength: number;
+  /** 已识别出文字后，静音多久提交。对应 Sherpa rule2。 */
+  silenceAfterText: number;
+  /** 还没有识别出文字时，静音多久结束。对应 Sherpa rule1，也用作 Silero 的最短静音。 */
+  silenceWithoutText: number;
 }
+
+const WORKSPACE_ID = /^[a-zA-Z0-9_-]{1,80}$/;
+
+/** 工作目录登记表：标识到绝对路径。非法条目丢弃。 */
+export const normalizeWorkspaces = (value: unknown): Record<string, string> => {
+  const entries: Array<[string, string]> = Array.isArray(value)
+    ? value.flatMap((item) => isRecord(item) ? [[String(item.id ?? ''), String(item.path ?? '')]] : [])
+    : isRecord(value) ? Object.entries(value).map(([id, path]) => [id, typeof path === 'string' ? path : '']) : [];
+  const next: Record<string, string> = Object.create(null);
+  for (const [id, rawPath] of entries) {
+    const key = id.trim();
+    const directory = rawPath.trim();
+    if (!WORKSPACE_ID.test(key) || !directory || Object.hasOwn(next, key)) continue;
+    next[key] = directory;
+  }
+  return next;
+};
+
+/** 保存前确认每个路径都是已有目录，并收成规范绝对路径。 */
+export const resolveWorkspaceDirectories = (workspaces: Record<string, string>): Record<string, string> => {
+  const next: Record<string, string> = Object.create(null);
+  for (const [id, rawPath] of Object.entries(workspaces)) {
+    const directory = fs.realpathSync(rawPath);
+    if (!fs.statSync(directory).isDirectory()) throw new Error('Workspace must be a directory');
+    next[id] = directory;
+  }
+  return next;
+};
 
 export type DisplayLang = 'zh' | 'en' | 'ja' | 'ko';
 
@@ -149,8 +177,6 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG: GlobalModelConfig = {
   memoryModel: '',
   memoryReasoningEffort: '',
   asr: {
-    endpointPresetVersion: 1,
-    profile: 'conversation',
     vadModelPath: '',
     vadThreshold: 0.5,
     vadMinSpeechDuration: 0.2,
@@ -163,9 +189,8 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG: GlobalModelConfig = {
     numThreads: 2,
     provider: 'cpu',
     debug: 0,
-    rule1MinTrailingSilence: 1.2,
-    rule2MinTrailingSilence: 0.7,
-    rule3MinUtteranceLength: 20,
+    silenceAfterText: 1.2,
+    silenceWithoutText: 0.7,
   },
 };
 
@@ -359,14 +384,14 @@ export const normalizeGlobalModelConfig = (settings: unknown = {}): GlobalModelC
     next.displayLang = source.displayLang;
   }
   const asr = isRecord(source.asr) ? source.asr : {};
-  const legacyEndpoints = asr.endpointPresetVersion !== 1
-    && asr.rule1MinTrailingSilence === 2.4 && asr.rule2MinTrailingSilence === 1.2;
+  const silenceAfter = finiteNumber(asr.silenceAfterText) ? asr.silenceAfterText
+    : finiteNumber(asr.rule2MinTrailingSilence) ? asr.rule2MinTrailingSilence : DEFAULT_GLOBAL_MODEL_CONFIG.asr.silenceAfterText;
+  const silenceWithout = finiteNumber(asr.silenceWithoutText) ? asr.silenceWithoutText
+    : finiteNumber(asr.rule1MinTrailingSilence) ? asr.rule1MinTrailingSilence : DEFAULT_GLOBAL_MODEL_CONFIG.asr.silenceWithoutText;
   const positiveInt = (value: unknown, fallback: number): number =>
     finiteNumber(value) && value > 0 ? Math.floor(value) : fallback;
   next.asr = {
     ...DEFAULT_GLOBAL_MODEL_CONFIG.asr,
-    endpointPresetVersion: 1,
-    profile: asr.profile === 'agent' ? 'agent' : 'conversation',
     vadModelPath: typeof asr.vadModelPath === 'string' ? asr.vadModelPath.trim() : '',
     vadThreshold: optionalAsrRange(asr.vadThreshold, 0.05, 0.95),
     vadMinSpeechDuration: optionalAsrRange(asr.vadMinSpeechDuration, 0.15, 0.3),
@@ -379,9 +404,8 @@ export const normalizeGlobalModelConfig = (settings: unknown = {}): GlobalModelC
     numThreads: positiveInt(asr.numThreads, DEFAULT_GLOBAL_MODEL_CONFIG.asr.numThreads),
     provider: typeof asr.provider === 'string' && asr.provider.trim() ? asr.provider.trim() : DEFAULT_GLOBAL_MODEL_CONFIG.asr.provider,
     debug: finiteNumber(asr.debug) ? Math.max(0, Math.floor(asr.debug)) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.debug,
-    rule1MinTrailingSilence: legacyEndpoints ? 1.2 : (finiteNumber(asr.rule1MinTrailingSilence) ? Math.max(0.5, asr.rule1MinTrailingSilence) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.rule1MinTrailingSilence),
-    rule2MinTrailingSilence: legacyEndpoints ? 0.7 : (finiteNumber(asr.rule2MinTrailingSilence) ? Math.max(0.2, asr.rule2MinTrailingSilence) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.rule2MinTrailingSilence),
-    rule3MinUtteranceLength: finiteNumber(asr.rule3MinUtteranceLength) ? Math.max(0, Math.floor(asr.rule3MinUtteranceLength)) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.rule3MinUtteranceLength,
+    silenceAfterText: Math.max(0.5, silenceAfter),
+    silenceWithoutText: Math.max(0.2, silenceWithout),
   };
   return next;
 };

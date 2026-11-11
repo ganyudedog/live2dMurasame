@@ -70,6 +70,41 @@ describe('speech-driven bubble pages', () => {
     expect(service.measurement?.lineCount).toBe(2);
   });
 
+  it('paginates the screenshot paragraph after 盼头 without revealing the next page', async () => {
+    const firstPage = '主人这话说得颠三倒四，本座听着都替汝累。不过嘛，月底发工资，这倒是个实在的盼头。';
+    const secondPage = '累归累，钱到手那刻总归是舒坦的。汝且忍忍，熬到月底，本座陪汝一起高兴。';
+    service.setPlaybackRequired(false);
+    service.prepare({ requestId: 'paragraph', text: firstPage + secondPage });
+    service.complete();
+    await measurePending(service);
+    await vi.advanceTimersByTimeAsync(3300);
+    expect(service.text).toBe(firstPage);
+    expect(service.displayedText).toBe(firstPage);
+    expect(service.measurement?.lineCount).toBe(4);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(service.text).toBe('累归累，钱到手那刻总归是舒坦的。');
+    expect(service.displayedText).toBe('');
+    await vi.advanceTimersByTimeAsync(3300);
+    expect(service.text).toBe(secondPage);
+    expect(service.displayedText).toBe(secondPage);
+    expect(service.measurement!.lineCount).toBeLessThanOrEqual(4);
+  });
+
+  it('keeps source playback mapping for punctuation segments across relayout', async () => {
+    service.onPlayback('paragraph', 'started');
+    service.prepare({ requestId: 'paragraph', text: '第一句话。第二句话！第三句话？' });
+    await measurePending(service);
+    expect(service.text).toBe('第一句话。');
+    service.configure(240, 1);
+    await measurePending(service);
+    service.onPlayback('paragraph', 'finished');
+    service.complete();
+    await vi.advanceTimersByTimeAsync(3600);
+    expect(service.displayedText).toBe('第一句话。第二句话！第三句话？');
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(service.text).toBeNull();
+  });
+
   it('handles playback preceding the translation and measurement without replaying stale sentences', async () => {
     service.onPlayback('chat_s0', 'started');
     service.onPlayback('chat_s0', 'finished');

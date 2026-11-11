@@ -129,7 +129,8 @@ export class AgentTaskService implements AgentTaskQuery {
     const parent = args.taskId ? this.require(args.taskId, context.owner) : null;
     if (parent && (!terminal(parent) || !parent.providerSessionId)) throw new Error('Task cannot be continued yet');
     const workspaceId = parent?.workspaceId ?? args.workspaceId;
-    const registered = workspaceId ? this.workspaces.read()[workspaceId] : undefined;
+    const workspaces = this.workspaces.read();
+    const registered = workspaceId && Object.hasOwn(workspaces, workspaceId) ? workspaces[workspaceId] : undefined;
     if (!workspaceId || !registered) throw new Error('Select a configured workspace first');
     const directory = fs.realpathSync(registered);
     if (!fs.statSync(directory).isDirectory()) throw new Error('Workspace is not a directory');

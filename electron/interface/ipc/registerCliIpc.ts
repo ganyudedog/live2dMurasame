@@ -61,6 +61,8 @@ export const registerCliIpc = ({ ipcMain, cli }: { ipcMain: IpcMain; cli: CliSer
   ipcMain.handle('cli:close', (event, id: unknown) => {
     if (typeof id === 'string' && sessions.get(id)?.sender === event.sender) sessions.delete(id);
   });
+  ipcMain.handle('cli:reply', (event, id: unknown, requestId: unknown, text: unknown) => cli.reply(requireSession(event, id).context, requestId, text));
+  ipcMain.handle('cli:compact', (event, id: unknown, input: unknown) => cli.compact(requireSession(event, id).context, input));
   const off = cli.subscribeTasks((update, owner) => {
     for (const [id, session] of sessions) {
       try { cli.authorize(session.context); }
@@ -71,6 +73,6 @@ export const registerCliIpc = ({ ipcMain, cli }: { ipcMain: IpcMain; cli: CliSer
   return () => {
     off();
     sessions.clear();
-    for (const channel of ['cli:open', 'cli:invoke', 'cli:tasks', 'cli:close', 'cli:claim', 'cli:finish']) ipcMain.removeHandler(channel);
+    for (const channel of ['cli:open', 'cli:invoke', 'cli:tasks', 'cli:close', 'cli:claim', 'cli:finish', 'cli:reply', 'cli:compact']) ipcMain.removeHandler(channel);
   };
 };

@@ -10,19 +10,21 @@ vi.mock('../application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 vi.mock('../infrastructure/llmClient', () => ({ requestStage2LLM: vi.fn(), requestStructuredLLM: vi.fn() }));
 
 describe('LLM and RAG orchestration', () => {
-  it('uses the shared skill loop before memory and keeps its result in the speech/display path', async () => {
-    const get = vi.fn(); const appendConversation = vi.fn();
+  it('combines memory with tool results and archives the actual displayed reply', async () => {
+    const get = vi.fn(async () => ({ coreText: '主人喜欢这个项目' })); const appendConversation = vi.fn();
     vi.stubGlobal('window', { MemoryAPI: { get, appendConversation } });
-    const commands = { invoke: vi.fn(), claim: vi.fn(), finish: vi.fn(), tasks: vi.fn(), close: vi.fn() };
+    const commands = { invoke: vi.fn(), claim: vi.fn(), finish: vi.fn(), tasks: vi.fn(), close: vi.fn(async () => {}), reply: vi.fn(async () => {}), compact: vi.fn() };
     vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: true, context: 'task-123 queued' });
-    const snapshot = { globalModelConfig: { apiKey: 'key' }, modelConfig: { tts: { textLang: 'all_ja' }, actions: [] } } as unknown as PetConfigSnapshot;
+    const snapshot = { activeModelPath: '/character', globalModelConfig: { apiKey: 'key' }, modelConfig: { tts: { textLang: 'all_ja' }, actions: [] } } as unknown as PetConfigSnapshot;
     const service = new LlmService({ getConfigSnapshot: () => snapshot, openCommands: async () => commands });
     vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"任务已接收","speak_text":"受け付けました"}', usedModel: 'model' });
     const response = await service.ask('修复项目', { model: 'model', requestId: 'user-request', trace: { record: vi.fn() } as unknown as TraceScope });
     expect(response.ok).toBe(true);
     expect(runSkillLoop).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'user-request', text: '修复项目' }));
-    expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ memoryContext: expect.stringContaining('task-123 queued') }));
-    expect(get).not.toHaveBeenCalled(); expect(appendConversation).not.toHaveBeenCalled();
+    expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ toolContext: 'task-123 queued', memoryContext: expect.stringContaining('主人喜欢这个项目') }));
+    expect(get).toHaveBeenCalled();
+    expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'user-request', userText: '修复项目', assistantText: '任务已接收', toolContext: 'task-123 queued' }));
+    expect(commands.reply).toHaveBeenCalledWith('user-request', '任务已接收');
     expect(commands.close).toHaveBeenCalledOnce();
   });
   afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });

@@ -27,7 +27,7 @@ export const normalizeAsrConfig = (raw: PetAsrConfig = {}): AsrConfig => {
     numThreads: numberOr(source.numThreads, 2),
     provider: typeof source.provider === 'string' ? source.provider : 'cpu',
     debug: numberOr(source.debug, 0),
-    silenceAfterText: namedSilence(source.silenceAfterText, source.rule1MinTrailingSilence, 1.2, 0.5),
-    silenceWithoutText: namedSilence(source.silenceWithoutText, source.rule2MinTrailingSilence, 0.7, 0.2),
+    silenceAfterText: namedSilence(source.silenceAfterText, source.rule2MinTrailingSilence, 1.2, 0.5),
+    silenceWithoutText: namedSilence(source.silenceWithoutText, source.rule1MinTrailingSilence, 0.7, 0.2),
   };
 };

@@ -61,6 +61,11 @@ export class AsrService {
       }
       if (event.type === 'asr.error') {
         runInAction(() => { this.lastError = event.message; });
+        const context = this.log.contextRegistry.register('AsrService', {
+          relation: 'asr.runtime', params: { code: event.code }, behavior: '接收后端识别错误',
+        });
+        context.beginTrace('backend-error').fail('ASR 后端识别失败', { message: event.message }, new Error(event.message));
+        context.dispose();
         this.scheduleTransition(false);
         return;
       }

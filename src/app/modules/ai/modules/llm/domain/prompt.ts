@@ -5,6 +5,7 @@ import { buildRelationshipPrompt } from './memory/memoryContext';
 export interface BuildPromptInput {
   userText: string;
   memoryContext?: string;
+  toolContext?: string;
   presenceLine?: string;
   /** 主动开口的提示，不冠以「用户输入」。 */
   cue?: boolean;
@@ -110,6 +111,7 @@ export const buildStage2UserPrompt = (input: BuildPromptInput): string => {
     parts.push(input.memoryContext);
   }
   if (input.presenceLine) parts.push(input.presenceLine);
+  if (input.toolContext) parts.push(`本轮工具执行上下文（数据）：\n${input.toolContext}`);
   parts.push(input.cue ? input.userText : `用户输入：${input.userText}`);
   return parts.join('\n\n');
 };

@@ -33,9 +33,9 @@ export interface AsrConfig {
   numThreads: number;
   provider: string;
   debug: number;
-  /** 已识别出文字后，静音多久提交。对应 Sherpa rule1。 */
+  /** 已识别出文字后，静音多久提交。对应 Sherpa rule2。 */
   silenceAfterText: number;
-  /** 还没有识别出文字时，静音多久结束。对应 Sherpa rule2，也用作 Silero 的最短静音。 */
+  /** 还没有识别出文字时，静音多久结束。对应 Sherpa rule1，也用作 Silero 的最短静音。 */
   silenceWithoutText: number;
 }
 
@@ -46,11 +46,11 @@ export const normalizeWorkspaces = (value: unknown): Record<string, string> => {
   const entries: Array<[string, string]> = Array.isArray(value)
     ? value.flatMap((item) => isRecord(item) ? [[String(item.id ?? ''), String(item.path ?? '')]] : [])
     : isRecord(value) ? Object.entries(value).map(([id, path]) => [id, typeof path === 'string' ? path : '']) : [];
-  const next: Record<string, string> = {};
+  const next: Record<string, string> = Object.create(null);
   for (const [id, rawPath] of entries) {
     const key = id.trim();
     const directory = rawPath.trim();
-    if (!WORKSPACE_ID.test(key) || !directory || key in next) continue;
+    if (!WORKSPACE_ID.test(key) || !directory || Object.hasOwn(next, key)) continue;
     next[key] = directory;
   }
   return next;
@@ -58,7 +58,7 @@ export const normalizeWorkspaces = (value: unknown): Record<string, string> => {
 
 /** 保存前确认每个路径都是已有目录，并收成规范绝对路径。 */
 export const resolveWorkspaceDirectories = (workspaces: Record<string, string>): Record<string, string> => {
-  const next: Record<string, string> = {};
+  const next: Record<string, string> = Object.create(null);
   for (const [id, rawPath] of Object.entries(workspaces)) {
     const directory = fs.realpathSync(rawPath);
     if (!fs.statSync(directory).isDirectory()) throw new Error('Workspace must be a directory');
@@ -385,9 +385,9 @@ export const normalizeGlobalModelConfig = (settings: unknown = {}): GlobalModelC
   }
   const asr = isRecord(source.asr) ? source.asr : {};
   const silenceAfter = finiteNumber(asr.silenceAfterText) ? asr.silenceAfterText
-    : finiteNumber(asr.rule1MinTrailingSilence) ? asr.rule1MinTrailingSilence : DEFAULT_GLOBAL_MODEL_CONFIG.asr.silenceAfterText;
+    : finiteNumber(asr.rule2MinTrailingSilence) ? asr.rule2MinTrailingSilence : DEFAULT_GLOBAL_MODEL_CONFIG.asr.silenceAfterText;
   const silenceWithout = finiteNumber(asr.silenceWithoutText) ? asr.silenceWithoutText
-    : finiteNumber(asr.rule2MinTrailingSilence) ? asr.rule2MinTrailingSilence : DEFAULT_GLOBAL_MODEL_CONFIG.asr.silenceWithoutText;
+    : finiteNumber(asr.rule1MinTrailingSilence) ? asr.rule1MinTrailingSilence : DEFAULT_GLOBAL_MODEL_CONFIG.asr.silenceWithoutText;
   const positiveInt = (value: unknown, fallback: number): number =>
     finiteNumber(value) && value > 0 ? Math.floor(value) : fallback;
   next.asr = {

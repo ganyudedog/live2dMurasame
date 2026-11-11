@@ -169,6 +169,8 @@ const ensureEpisodeArchive = (modelPath: string, archive: unknown): MemoryPaths 
 };
 
 interface EpisodeInput {
+  toolContext?: unknown;
+  requestId?: unknown;
   userText?: unknown;
   assistantText?: unknown;
   sender?: unknown;
@@ -177,7 +179,7 @@ interface EpisodeInput {
   conversationCount?: number;
 }
 
-const toEpisodeBlock = ({ userText, assistantText, sender, conversationId, at = Date.now(), conversationCount = 0 }: EpisodeInput) => {
+const toEpisodeBlock = ({ userText, assistantText, sender, conversationId, toolContext, requestId, at = Date.now(), conversationCount = 0 }: EpisodeInput) => {
   const date = safeDate(at);
   const time = new Date(at as number).toLocaleTimeString('zh-CN', {
     timeZone: APP_TIME_ZONE, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -186,9 +188,10 @@ const toEpisodeBlock = ({ userText, assistantText, sender, conversationId, at = 
   const metadata = JSON.stringify({
     sender: typeof senderRecord?.id === 'string' ? { id: senderRecord.id } : undefined,
     conversationId,
+    requestId: typeof requestId === 'string' ? requestId : undefined,
   }).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e');
   const quote = (text: unknown): string => String(text ?? '').trim().split(/\r?\n/).map((line) => `> ${line}`).join('\n');
-  return { date, block: `\n<!-- conversation-count:${conversationCount} -->\n### ${time}\n<!-- turn-meta:${metadata} -->\n\n**用户**\n${quote(userText)}\n\n**角色**\n${quote(assistantText)}\n` };
+  return { date, block: `\n<!-- conversation-count:${conversationCount} -->\n### ${time}\n<!-- turn-meta:${metadata} -->\n\n**用户**\n${quote(userText)}\n\n**角色**\n${quote(assistantText)}\n${typeof toolContext === 'string' && toolContext ? `\n**工具执行（数据）**\n${quote(toolContext)}\n` : ''}` };
 };
 
 const deriveEpisodeAgeBand = (date: unknown, now = Date.now()): 1 | 3 | 5 | 7 | null => {
@@ -287,6 +290,8 @@ const migrateLegacyMemory = (modelPath: string, paths: MemoryPaths): MemoryState
 };
 
 interface EpisodeBlock {
+  toolContext?: string;
+  requestId?: string;
   date: string;
   time: string;
   conversationCount: number;
@@ -301,7 +306,7 @@ const unquoteEpisodeText = (value: unknown): string => String(value ?? '')
   .split(/\r?\n/).map((line) => line.replace(/^> ?/, '')).join('\n').trim();
 
 const parseEpisodeBlocks = (content: unknown, date: string): EpisodeBlock[] => {
-  const markedBlocks = String(content ?? '').split(/(?=<!-- conversation-count:\d+ -->)/g).filter((block) => /conversation-count:\d+/.test(block));
+  const markedBlocks = String(content ?? '').split(/(?=^<!-- conversation-count:\d+ -->$)/gm).filter((block) => /^<!-- conversation-count:\d+ -->$/m.test(block));
   const rawBlocks = markedBlocks.length
     ? markedBlocks
     : String(content ?? '').split(/(?=^###\s+.+?\s+·\s+(?:用户|角色)\s*$)/m).filter((block) => /^###\s+.+?\s+·\s+(?:用户|角色)\s*$/m.test(block));
@@ -313,8 +318,9 @@ const parseEpisodeBlocks = (content: unknown, date: string): EpisodeBlock[] => {
     } catch { /* Accept archives without metadata or with damaged metadata. */ }
     const count = Number(block.match(/<!-- conversation-count:(\d+) -->/)?.[1]);
     const time = block.match(/^###\s+(.+)$/m)?.[1]?.trim() ?? '';
-    const userMatch = block.match(/\*\*用户\*\*\s*\n([\s\S]*?)(?=\n\s*\*\*角色\*\*|$)/);
-    const assistantMatch = block.match(/\*\*角色\*\*\s*\n([\s\S]*)$/);
+    const userMatch = block.match(/^\*\*用户\*\*[^\S\n]*\n([\s\S]*?)(?=^\*\*角色\*\*|(?![\s\S]))/m);
+    const assistantMatch = block.match(/^\*\*角色\*\*[^\S\n]*\n([\s\S]*?)(?=^\*\*工具执行（数据）\*\*|(?![\s\S]))/m);
+    const toolMatch = block.match(/^\*\*工具执行（数据）\*\*[^\S\n]*\n([\s\S]*)$/m);
     const legacyMatch = block.match(/^###\s+(.+?)\s+·\s+(用户|角色)\s*\n\n([\s\S]*)$/m);
     const userText = unquoteEpisodeText(userMatch?.[1] ?? (legacyMatch?.[2] === '用户' ? legacyMatch[3] : ''));
     const assistantText = unquoteEpisodeText(assistantMatch?.[1] ?? (legacyMatch?.[2] === '角色' ? legacyMatch[3] : ''));
@@ -324,6 +330,8 @@ const parseEpisodeBlocks = (content: unknown, date: string): EpisodeBlock[] => {
       conversationCount: Number.isInteger(count) ? count : 0,
       userText,
       assistantText,
+      toolContext: toolMatch ? unquoteEpisodeText(toolMatch[1]) : undefined,
+      requestId: typeof metadata.requestId === 'string' ? metadata.requestId : undefined,
       sender: isRecord(metadata.sender) && typeof metadata.sender.id === 'string' ? { id: metadata.sender.id } : undefined,
       conversationId: metadata.conversationId,
       rawText: block.trim(),
@@ -451,6 +459,7 @@ const relationshipEvidence = (paths: MemoryPaths, rememberedCount: number, throu
   const candidateTurns: Evidence[] = [];
   for (const date of listEpisodeDates(paths)) {
     for (const block of parseEpisodeBlocks(readText(path.join(paths.episodesDir, `${date}.md`)), date)) {
+      if (block.toolContext) continue;
       const userText = block.userText.trim();
       if (block.conversationCount <= 0 || block.conversationCount > throughCount || userText.length < 4) continue;
       const target = block.conversationCount <= rememberedCount ? priorTurns : candidateTurns;
@@ -531,7 +540,7 @@ export const recallModelMemoryEpisodes = (modelPath: string, query: unknown = {}
     readText(path.join(paths.episodesDir, `${date}.md`)), date,
   )).map((block) => ({
     ...block,
-    searchText: speaker === 'user' ? block.userText : speaker === 'assistant' ? block.assistantText : `${block.userText}\n${block.assistantText}`,
+    searchText: speaker === 'user' ? block.userText : speaker === 'assistant' ? block.assistantText : `${block.userText}\n${block.assistantText}\n${block.toolContext ?? ''}`,
   })).filter((block) => block.searchText);
   const scores = bm25Scores(textQuery, blocks.map((block) => block.searchText));
   const queryHasTerms = tokenizeForBm25(textQuery).length > 0;
@@ -549,22 +558,29 @@ export const recallModelMemoryEpisodes = (modelPath: string, query: unknown = {}
     conversationCount: number;
     userText: string;
     assistantText: string;
+    toolContext?: string;
     score: number;
     ageBand: 1 | 3 | 5 | 7 | null;
   }> = [];
+  const selectedTexts: string[] = [];
+  const separator = '\n\n';
   let usedChars = 0;
   for (const block of scored) {
-    const itemChars = block.userText.length + block.assistantText.length + block.date.length + block.time.length + 40;
-    if (selected.length && usedChars + itemChars > Math.min(MAX_EPISODE_RECALL_CHARS, Math.max(500, maxChars))) continue;
-    selected.push({
+    const item = {
       date: block.date,
       time: block.time,
       conversationCount: block.conversationCount,
       userText: block.userText,
       assistantText: block.assistantText,
+      toolContext: speaker === 'both' ? block.toolContext : undefined,
       score: Number(block.score.toFixed(4)),
       ageBand: block.ageBand,
-    });
+    };
+    const text = `【${item.date} ${item.time}】\n用户：${item.userText}\n角色：${item.assistantText}${item.toolContext ? `\n工具执行（数据）：${item.toolContext}` : ''}`;
+    const itemChars = text.length + (selected.length ? separator.length : 0);
+    if (selected.length && usedChars + itemChars > Math.min(MAX_EPISODE_RECALL_CHARS, Math.max(500, maxChars))) continue;
+    selected.push(item);
+    selectedTexts.push(text);
     usedChars += itemChars;
   }
   return {
@@ -572,7 +588,7 @@ export const recallModelMemoryEpisodes = (modelPath: string, query: unknown = {}
     dates: requestedDates,
     approximate,
     matches: selected,
-    text: selected.map((item) => `【${item.date} ${item.time}】\n用户：${item.userText}\n角色：${item.assistantText}`).join('\n\n'),
+    text: selectedTexts.join(separator),
   };
 };
 
@@ -581,6 +597,14 @@ export const appendModelMemoryConversation = (modelPath: string, conversation: u
   const paths = ensureEpisodeArchive(modelPath, source.archive);
   const state = readState(paths.statePath);
   pruneExpiredEpisodes(paths, Date.now(), state);
+  if (typeof source.toolContext === 'string' && Buffer.byteLength(source.toolContext, 'utf8') > 24 * 1024) throw new Error('Tool context exceeds episode budget');
+  // A retried final response must not duplicate an episode or relationship evidence.
+  if (typeof source.requestId === 'string' && listEpisodeDates(paths).some((date) =>
+    parseEpisodeBlocks(readText(path.join(paths.episodesDir, `${date}.md`)), date).some((turn) =>
+      turn.requestId === source.requestId && turn.conversationId === source.conversationId
+      && turn.sender?.id === (isRecord(source.sender) ? source.sender.id : undefined)))) {
+    return readModelMemorySnapshot(modelPath, source.archive);
+  }
   state.conversationCount += 1;
   state.lastConversationAt = finiteNumber(source.at) ? Math.floor(source.at) : Date.now();
   const { date, block } = toEpisodeBlock({ ...source, conversationCount: state.conversationCount });
@@ -595,7 +619,7 @@ export const appendModelMemoryConversation = (modelPath: string, conversation: u
     const at = finiteNumber(source.at) ? Math.floor(source.at) : now;
     let relationship = normalizeStoredRelationship(state.relationship)
       ?? migrateRelationship(readText(desktop.corePath, DEFAULT_CORE), now);
-    if (isMeaningfulDesktopExchange(source.userText, source.assistantText)) {
+    if (!source.toolContext && isMeaningfulDesktopExchange(source.userText, source.assistantText)) {
       relationship = evaluateRelationshipGrowth(
         recordInteractionDay(relationship, at), now, undefined, state.conversationCount,
       );

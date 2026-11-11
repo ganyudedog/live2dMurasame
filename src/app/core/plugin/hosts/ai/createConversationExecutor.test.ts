@@ -12,10 +12,10 @@ vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
 }));
 
 describe('plugin conversation persona injection', () => {
-  it('routes a generic remote channel through the shared loop without archiving task logs', async () => {
+  it('keeps remote tool results in both the reply and conversation archive', async () => {
     const appendConversation = vi.fn(); const loadRecentTurns = vi.fn();
-    const open = vi.fn(async () => 'session'); const close = vi.fn();
-    vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns }, CliAPI: { open, close } });
+    const open = vi.fn(async () => 'session'); const close = vi.fn(async () => {});
+    vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns }, CliAPI: { open, close, reply: vi.fn(async () => {}) } });
     vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: true, context: 'accepted task-remote' });
     const config = { activeModelPath: '/model', globalModelConfig: { apiKey: 'key' } } as unknown as ConfigService;
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ record: vi.fn(), end: vi.fn(), fail: vi.fn() }), dispose: vi.fn() }) } } as unknown as LogService;
@@ -25,7 +25,9 @@ describe('plugin conversation persona injection', () => {
       { requestId: 'request-remote', channelId: 'channel', conversationId: 'private', signal: new AbortController().signal, emit: vi.fn() });
     expect(open).toHaveBeenCalledWith({ source: 'plugin:another-platform', conversationId: 'private', senderId: 'user' });
     expect(runSkillLoop).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'request-remote' }));
-    expect(loadRecentTurns).not.toHaveBeenCalled(); expect(appendConversation).not.toHaveBeenCalled();
+    expect(loadRecentTurns).toHaveBeenCalled();
+    expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ userText: '开发任务', assistantText: '你好', toolContext: 'accepted task-remote' }));
+    expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ toolContext: 'accepted task-remote' }));
     expect(close).toHaveBeenCalledWith('session');
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -77,7 +79,7 @@ describe('plugin conversation persona injection', () => {
     appendConversation.mockClear();
     await execute(options, { ...request, personalMemory: { userText: '本人原文' } }, context);
     expect(appendConversation).toHaveBeenCalledTimes(withArchive ? 2 : 1);
-    expect(appendConversation).toHaveBeenLastCalledWith({ modelPath: '/character', userText: '本人原文', assistantText: '你好', at: expect.any(Number) });
+    expect(appendConversation).toHaveBeenLastCalledWith({ modelPath: '/character', userText: '本人原文', assistantText: '你好', at: expect.any(Number), requestId: 'r', toolContext: '', sender: undefined, conversationId: JSON.stringify(['example', 'room']) });
     expect(get).not.toHaveBeenCalled();
     expect(requestStructuredLLM).toHaveBeenCalledWith(expect.objectContaining({ model: 'memory' }), expect.objectContaining({ cachePurpose: 'memory' }));
     expect(consolidate).toHaveBeenCalledWith(expect.objectContaining({ modelPath: '/character', processedThroughCount: 2 }));
@@ -277,10 +279,10 @@ describe('plugin conversation persona injection', () => {
   it('authorizes the original sender while the tool loop sees the composed text', async () => {
     const appendConversation = vi.fn(async () => ({ state: {} }));
     const open = vi.fn(async () => 'session');
-    const close = vi.fn();
+    const close = vi.fn(async () => {});
     vi.stubGlobal('window', {
       MemoryAPI: { appendConversation, loadRecentTurns: vi.fn(async () => ({ turns: [] })), recallEpisodes: vi.fn(async () => ({ text: '' })) },
-      CliAPI: { open, close, invoke: vi.fn(), tasks: vi.fn(), claim: vi.fn(), finish: vi.fn() },
+      CliAPI: { open, close, invoke: vi.fn(), tasks: vi.fn(), claim: vi.fn(), finish: vi.fn(), reply: vi.fn(async () => {}), compact: vi.fn() },
     });
     vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: false, context: '' });
     const config = {

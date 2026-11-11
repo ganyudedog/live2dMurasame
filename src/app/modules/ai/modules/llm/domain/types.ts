@@ -28,6 +28,8 @@ export interface Stage2LLMRequest {
   model?: string;
   temperature?: number;
   memoryContext?: string;
+  toolContext?: string;
+  toolsAvailable?: boolean;
   presenceLine?: string;
   cue?: boolean;
   personaPrompt?: string;

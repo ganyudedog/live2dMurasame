@@ -1,4 +1,7 @@
 import type { PluginCliGrantStore } from './PluginCliGrantStore.js';
+import type { ToolConversationService } from './ToolConversationService.js';
+import { operationText } from '../domain/toolConversation.js';
+import type { CommandClaim } from '../../../../shared/cli/contracts.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { TaskStore } from '../infrastructure/TaskStore.js';
@@ -46,11 +49,13 @@ export class CliService {
   private readonly grants?: PluginCliGrantStore;
   private readonly store: TaskStore;
   private readonly tasks?: AgentTaskQuery;
+  private readonly conversations?: ToolConversationService;
 
-  constructor(store: TaskStore, tasks?: AgentTaskQuery, grants?: PluginCliGrantStore) {
+  constructor(store: TaskStore, tasks?: AgentTaskQuery, grants?: PluginCliGrantStore, conversations?: ToolConversationService) {
     this.store = store;
     this.grants = grants;
     this.tasks = tasks;
+    this.conversations = conversations;
   }
 
   register<TArgs>(name: string, definition: CliCommand<TArgs>): void {
@@ -77,12 +82,15 @@ export class CliService {
 
   workflowKey(context: CommandContext, requestId: unknown): string {
     const id = z.string().min(1).max(200).parse(requestId);
-    return `workflow:${createHash('sha256').update(`${context.owner}\0${id}`).digest('hex')}`;
+    return `workflow:${createHash('sha256').update(JSON.stringify([context.source, context.conversationId, context.senderId ?? '', id])).digest('hex')}`;
   }
 
-  claim(context: CommandContext, requestId: unknown, text: unknown): { cached?: unknown } {
+  claim(context: CommandContext, requestId: unknown, text: unknown): CommandClaim {
+    this.authorize(context);
     const body = z.string().max(50000).parse(text);
     const key = this.workflowKey(context, requestId);
+    const legacyKey = `workflow:${createHash('sha256').update(`${context.owner}\0${String(requestId)}`).digest('hex')}`;
+    if (this.store.data.calls[legacyKey]) throw new Error('Legacy request has no conversation scope; inspect its task status before submitting a new request');
     const hash = createHash('sha256').update(body).digest('hex');
     const previous = this.store.data.calls[key];
     if (previous) {
@@ -92,16 +100,29 @@ export class CliService {
     }
     this.store.data.calls[key] = { hash, state: 'reserved', issuedAt: Date.now() };
     this.store.save();
-    return {};
+    return this.conversations?.claim(context, String(requestId), body) ?? {};
   }
 
   finish(context: CommandContext, requestId: unknown, result: unknown): void {
+    this.authorize(context);
+    const loopError = isRecord(result) && result.error !== undefined ? z.string().max(4000).parse(result.error) : undefined;
     if (JSON.stringify(result).length > 50000) throw new Error('Workflow result too large');
     const record = this.store.data.calls[this.workflowKey(context, requestId)];
     if (!record) throw new Error('Workflow is not reserved');
     record.state = 'done';
     record.result = result;
     this.store.save();
+    this.conversations?.finish(context, String(requestId), loopError);
+  }
+
+  reply(context: CommandContext, requestId: unknown, text: unknown): void {
+    this.authorize(context);
+    this.conversations?.reply(context, requestId, text);
+  }
+
+  compact(context: CommandContext, input: unknown): boolean {
+    this.authorize(context);
+    return this.conversations?.compact(context, input) ?? false;
   }
 
   list(context: CommandContext): CommandCatalogEntry[] {
@@ -139,7 +160,9 @@ export class CliService {
     if (Date.now() - request.issuedAt > 86400000 || request.issuedAt > Date.now() + 60000) {
       throw new Error('Invocation expired; explicitly submit a new request');
     }
-    const key = createHash('sha256').update(`${context.owner}\0${request.invocationId}`).digest('hex');
+    const key = createHash('sha256').update(JSON.stringify([context.owner, context.source, context.conversationId, context.senderId ?? '', request.invocationId])).digest('hex');
+    const legacyKey = createHash('sha256').update(`${context.owner}\0${request.invocationId}`).digest('hex');
+    if (this.store.data.calls[legacyKey]) throw new Error('Legacy invocation has no conversation scope; inspect state before submitting a new invocation');
     const hash = createHash('sha256').update(JSON.stringify(canonical([request.command, args]))).digest('hex');
     const previous = this.store.data.calls[key];
     if (previous) {
@@ -152,17 +175,23 @@ export class CliService {
     }
     this.store.data.calls[key] = { hash, state: 'reserved', issuedAt: request.issuedAt };
     this.store.save();
+    const operation = { invocationId: request.invocationId, command: request.command, args: operationText(args) };
+    if (request.requestId) this.conversations?.operation(context, request.requestId, { ...operation, status: 'pending' });
     const run = Promise.resolve().then(() => definition.execute(args, {
       ...context,
       requestId: request.requestId ?? request.invocationId,
     }, request.invocationId)).then((result) => {
       this.store.data.calls[key] = { hash, state: 'done', issuedAt: request.issuedAt, result };
       this.store.save();
+      if (request.requestId) this.conversations?.operation(context, request.requestId,
+        { ...operation, status: 'succeeded', result: operationText(result) }, [args, result]);
       return structuredClone(result);
     }, (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       this.store.data.calls[key] = { hash, state: 'failed', issuedAt: request.issuedAt, error: message };
       this.store.save();
+      if (request.requestId) this.conversations?.operation(context, request.requestId,
+        { ...operation, status: 'failed', result: operationText({ error: message }) });
       throw error;
     }).finally(() => { this.pending.delete(key); });
     this.pending.set(key, run);

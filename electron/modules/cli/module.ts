@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { ToolConversationService } from './service/ToolConversationService.js';
+import { JsonToolConversationRepository } from './infrastructure/JsonToolConversationRepository.js';
 import { PluginCliGrants } from './infrastructure/PluginCliGrants.js';
 import { WorkspaceCatalog } from './infrastructure/WorkspaceCatalog.js';
 import { TaskStore } from './infrastructure/TaskStore.js';
@@ -25,7 +27,8 @@ export const createCliModule = ({ directory, globalConfigPath, adapter = new Cod
   store.data.settings.workspaces = [];
   store.save();
   const tasks = new AgentTaskService(store, adapter, grants, workspaces);
-  const cli = new CliService(store, tasks, grants);
+  const conversations = new ToolConversationService(new JsonToolConversationRepository(path.join(directory, 'conversations')));
+  const cli = new CliService(store, tasks, grants, conversations);
   registerAgentCommands(cli, tasks);
   registerConfigCommands(cli, dependencies);
   return { cli, dispose: () => tasks.dispose() };

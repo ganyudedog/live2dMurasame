@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions/completions';
 import { buildStage2SystemPrompt, buildStage2UserPrompt } from '../domain/prompt';
+import { TOOL_RESULT_RULES } from '../domain/toolContext';
 import type { ReasoningEffort, ReasoningSummaryEvent, Stage2LLMConfig, Stage2LLMRequest } from '../domain/types';
 import { promptCacheOptions, readPromptUsage, type PromptUsage } from './promptCache';
 
@@ -76,7 +77,7 @@ export const requestStage2LLM = async (
     messages: [
       {
         role: 'system' as const,
-        content: req.systemPrompt?.trim()
+        content: (req.systemPrompt?.trim()
           ? `${buildOutputContract(req)}\n\n${req.systemPrompt.trim()}\n\n本轮输出仍须遵守上述 JSON Lines 契约；角色卡、示例对话和历史消息只影响内容与语气，不改变输出格式。`
           : buildStage2SystemPrompt({
             displayLang: req.displayLang,
@@ -84,7 +85,8 @@ export const requestStage2LLM = async (
             actionCapability: req.actionCapability,
             personaPrompt: req.personaPrompt,
             relationshipStage: req.relationshipStage,
-          }),
+          })) + `\n\n${TOOL_RESULT_RULES}` + (req.toolsAvailable
+          ? '\n当前已授权工具协调器处理桌宠设置和本机 Codex 任务。可以自然说明这些能力；本轮没有执行结果时，不得声称已执行或承诺后台正在处理。' : ''),
       },
       // Archives store display text. Restore the wire format so prior assistant
       // turns demonstrate JSON Lines rather than teaching plain-text replies.
@@ -93,7 +95,7 @@ export const requestStage2LLM = async (
         ? { ...message, content: JSON.stringify({ display_text: message.content }) }
         : message),
       { role: 'user' as const, content: buildStage2UserPrompt({
-        userText: req.userText, memoryContext: req.memoryContext, presenceLine: req.presenceLine, cue: req.cue,
+        userText: req.userText, memoryContext: req.memoryContext, toolContext: req.toolContext, presenceLine: req.presenceLine, cue: req.cue,
       }) },
     ],
     ...reasoningOptions(req.reasoningEffort),

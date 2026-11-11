@@ -135,6 +135,18 @@ describe('ASR service lifecycle', () => {
     await service.dispose();
   });
 
+  it('records backend errors before shutting down capture', async () => {
+    const { service, emit, trace } = setup(true);
+    service.start();
+    await vi.waitFor(() => expect(service.running).toBe(true));
+    emit({ type: 'asr.error', code: 'asr-runtime-failed', message: 'Unsupported ASR format', ts: 1 });
+    await vi.waitFor(() => expect(service.running).toBe(false));
+    expect(service.lastError).toBe('Unsupported ASR format');
+    expect(trace.fail).toHaveBeenCalledWith('ASR 后端识别失败',
+      { message: 'Unsupported ASR format' }, expect.any(Error));
+    await service.dispose();
+  });
+
   it('does not acquire the microphone after a backend start failure', async () => {
     const { service, api } = setup(true);
     api.start.mockResolvedValue({ running: false, lastError: 'missing vad' } as never);
@@ -148,7 +160,7 @@ describe('ASR service lifecycle', () => {
 describe('ASR endpoint configuration', () => {
   it('keeps the two silence values and reads the old rule names once', () => {
     expect(normalizeAsrConfig({ rule1MinTrailingSilence: 1.4, rule2MinTrailingSilence: 0.8 } as PetAsrConfig))
-      .toMatchObject({ silenceAfterText: 1.4, silenceWithoutText: 0.8 });
+      .toMatchObject({ silenceAfterText: 0.8, silenceWithoutText: 1.4 });
     expect(normalizeAsrConfig({ silenceAfterText: 1.6, silenceWithoutText: 0.5 })).toMatchObject({
       silenceAfterText: 1.6, silenceWithoutText: 0.5,
     });

@@ -154,6 +154,14 @@ describe('CLI commands, persistence and task ownership', () => {
     await expect(runtime.cli.invoke(request('agent.workspace.add', { id: 'extra', path: dir }), remote)).rejects.toThrow('another directory');
   });
 
+  it.each(['constructor', 'toString', '__proto__'])('runs tasks in a workspace named %s', async (workspaceId) => {
+    const { runtime, dir, adapter } = await setup();
+    await runtime.cli.invoke(request('agent.workspace.add', { id: workspaceId, path: dir }), context);
+    const task = await runtime.cli.invoke(request('agent.run', { workspaceId, prompt: 'inspect project' }), context) as { workspaceId: string };
+    expect(task.workspaceId).toBe(workspaceId);
+    await vi.waitFor(() => expect(adapter.run).toHaveBeenCalledWith(expect.objectContaining({ directory: fs.realpathSync(dir) })));
+  });
+
   it('requires a remote grant and keeps remote owners separate', async () => {
     const { runtime, dir } = await setup();
     const remote: CommandContext = { owner: 'remote-person', local: false, source: 'plugin:example', conversationId: 'group' };
@@ -172,7 +180,7 @@ describe('CLI commands, persistence and task ownership', () => {
 
   it('persists workflow claims and refuses uncertain replay across restart', async () => {
     const { runtime, dir } = await setup();
-    expect(runtime.cli.claim(context, 'message-1', 'fix')).toEqual({});
+    expect(runtime.cli.claim(context, 'message-1', 'fix').context).toContain('turns');
     const reopened = new CliService(new TaskStore(path.join(dir, 'tasks.json')));
     expect(() => reopened.claim(context, 'message-1', 'fix')).toThrow('already executing');
     runtime.cli.finish(context, 'message-1', { handled: true, context: 'task accepted' });

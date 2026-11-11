@@ -19,7 +19,7 @@ export class LlmMemoryRepository {
     return window.MemoryAPI?.recallEpisodes?.(payload);
   }
 
-  appendConversation(payload: { modelPath: string; archive?: PetMemoryArchive; sender?: { id: string; displayName?: string }; conversationId?: string; userText: string; assistantText: string; at?: number }) {
+  appendConversation(payload: { modelPath: string; archive?: PetMemoryArchive; sender?: { id: string; displayName?: string }; conversationId?: string; userText: string; assistantText: string; requestId?: string; toolContext?: string; at?: number }) {
     return window.MemoryAPI?.appendConversation?.(payload);
   }
 

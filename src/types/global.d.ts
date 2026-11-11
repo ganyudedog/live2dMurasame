@@ -401,6 +401,8 @@ declare global {
   }
 
   interface PetMemoryTurn {
+    toolContext?: string;
+    requestId?: string;
     date: string;
     time: string;
     conversationCount: number;
@@ -418,10 +420,10 @@ declare global {
       status: 'ok' | 'no-match' | 'expired' | 'empty';
       dates: string[];
       approximate?: boolean;
-      matches?: Array<{ date: string; time: string; conversationCount: number; userText: string; assistantText: string; score: number; ageBand: number | null }>;
+      matches?: Array<{ date: string; time: string; conversationCount: number; userText: string; assistantText: string; toolContext?: string; score: number; ageBand: number | null }>;
       text: string;
     } | undefined>;
-    appendConversation?: (payload: { modelPath?: string; archive?: PetMemoryArchive; sender?: { id: string; displayName?: string }; conversationId?: string; userText: string; assistantText: string; at?: number }) => Promise<PetModelMemoryState | undefined>;
+    appendConversation?: (payload: { modelPath?: string; archive?: PetMemoryArchive; sender?: { id: string; displayName?: string }; conversationId?: string; userText: string; assistantText: string; requestId?: string; toolContext?: string; at?: number }) => Promise<PetModelMemoryState | undefined>;
     updateCore?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
     replaceActionCatalogChat?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
     consolidate?: (payload: { modelPath?: string; content: string; processedThroughCount: number; relationshipEvents?: Array<{ kind: string; experienceId?: string; summary?: string }> }) => Promise<PetModelMemoryState | undefined>;

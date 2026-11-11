@@ -98,7 +98,10 @@ const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter =>
     connect({ emit, onFailure, WebSocket: Socket = (globalThis as { WebSocket?: SocketConstructor }).WebSocket } = {}) {
       if (typeof Socket !== 'function') throw new Error('当前运行时没有 WebSocket，无法连接远程 ASR');
       const socket = new Socket(endpoint);
-      let opened = false;
+      let readyResolve!: () => void;
+      let readyReject!: (error: Error) => void;
+      let initialized = false;
+      let failed = false;
       let closing = false;
       let utteranceId = '';
       let utteranceIndex = 0;
@@ -110,9 +113,16 @@ const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter =>
         else if (!utteranceId) utteranceId = `${sessionId}_${utteranceIndex++}`;
         return utteranceId;
       };
+      const failure = (message: string): void => {
+        if (closing || failed) return;
+        failed = true;
+        readyReject(new Error(message));
+        onFailure?.(message);
+      };
       const ready = new Promise<void>((resolve, reject) => {
+        readyResolve = resolve;
+        readyReject = reject;
         socket.onopen = () => {
-          opened = true;
           const start: Record<string, unknown> = { type: 'start', sampleRate: 16000 };
           const vad: Record<string, number> = {};
           const threshold = finiteOrOmit(options.vadThreshold);
@@ -121,23 +131,25 @@ const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter =>
           if (minSpeechDuration !== undefined) vad.minSpeechDuration = minSpeechDuration;
           if (Object.keys(vad).length) start.vad = vad;
           socket.send(JSON.stringify(start));
-          resolve();
         };
-        socket.onerror = () => { if (!opened) reject(new Error('ASR 远程服务连接失败')); };
+        socket.onerror = () => failure('ASR 远程服务连接失败');
         socket.onclose = () => {
-          if (!opened) reject(new Error('ASR 远程服务连接失败'));
-          else if (!closing) onFailure?.('ASR 远程服务连接已断开');
+          failure('ASR 远程服务连接已断开');
         };
       });
       socket.onmessage = (event) => {
         let message: unknown;
         try { message = JSON.parse(messageText(event.data)); }
         catch {
-          onFailure?.('ASR 远程服务返回了无法解析的消息');
+          failure('ASR 远程服务返回了无法解析的消息');
           return;
         }
         if (!isRecord(message) || typeof message.type !== 'string') return;
-        if (message.type === 'speech-start') {
+        if (message.type === 'ready') {
+          if (failed || closing) return;
+          initialized = true;
+          readyResolve();
+        } else if (message.type === 'speech-start') {
           utteranceId = '';
           ensureUtterance(message);
           publish('asr.speech-start');
@@ -156,20 +168,22 @@ const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter =>
           finishWaiter?.();
           finishWaiter = null;
         } else if (message.type === 'error') {
-          onFailure?.(typeof message.message === 'string' && message.message ? message.message : 'ASR 远程服务返回错误');
+          failure(typeof message.message === 'string' && message.message ? message.message : 'ASR 远程服务返回错误');
         }
       };
       return {
         ready,
         accept(samples) {
-          if (socket.readyState !== 1) throw new Error('ASR 远程连接已断开');
+          if (!initialized || failed || closing || socket.readyState !== 1) throw new Error('ASR 远程连接已断开');
           const copy = samples.slice();
           socket.send(copy.buffer);
         },
         finish() {
-          if (socket.readyState !== 1) throw new Error('ASR 远程连接已断开');
-          socket.send(JSON.stringify({ type: 'finish' }));
-          return new Promise<void>((resolve) => { finishWaiter = resolve; });
+          if (!initialized || failed || closing || socket.readyState !== 1) throw new Error('ASR 远程连接已断开');
+          return new Promise<void>((resolve) => {
+            finishWaiter = resolve;
+            socket.send(JSON.stringify({ type: 'finish' }));
+          });
         },
         dispose() {
           closing = true;
@@ -212,8 +226,8 @@ const createLocalAsrAdapter = (options: AsrAdapterOptions, engine: string): Loca
         decodingMethod: 'greedy_search',
         maxActivePaths: 4,
         enableEndpoint: true,
-        rule1MinTrailingSilence: finiteOr(options.silenceAfterText, 1.2),
-        rule2MinTrailingSilence: finiteOr(options.silenceWithoutText, 0.7),
+        rule1MinTrailingSilence: finiteOr(options.silenceWithoutText, 0.7),
+        rule2MinTrailingSilence: finiteOr(options.silenceAfterText, 1.2),
         rule3MinUtteranceLength: ENDPOINT_MIN_UTTERANCE_LENGTH,
       });
     },

@@ -5,7 +5,7 @@ import type { Stage2LLMConfig } from '../domain/types';
 
 const skillInstructions = {
   settings: '先 config.get 读取目标配置与 revision，再提交最小 patch；不要修改凭据。明确目标模型；冲突时重新读取。保存成功不代表外部服务预热成功。',
-  development: '先列出 workspaces；项目不明确时询问用户，不猜目录。新任务使用 agent.run，续接先查 agent.list 并选明确 taskId。用户明确取消才调用 agent.cancel。提交成功只表示任务已接受，不代表开发完成。不连续轮询，结果由任务事件发送。',
+  development: '先列出 workspaces。用户给出了尚未登记的绝对路径时，用 agent.workspace.add 登记后再 agent.run；项目不明确时询问用户，不猜目录。续接先查 agent.list 并选明确 taskId。用户明确取消才调用 agent.cancel。提交成功只表示任务已接受，不代表开发完成。不连续轮询，结果由任务事件发送。',
 };
 const observation = (value: unknown, max = 6000): string => {
   const serialized = JSON.stringify(value);

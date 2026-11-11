@@ -111,6 +111,10 @@ export class AgentTaskService implements AgentTaskQuery {
     };
   }
 
+  addWorkspace(args: { id: string; path: string }): { id: string; path: string } {
+    return this.workspaces.add(args.id, args.path);
+  }
+
   updateSettings(args: AgentSettings): AgentSettings {
     if (new Set(args.workspaces.map((item) => item.id)).size !== args.workspaces.length) throw new Error('Duplicate workspace ID');
     this.workspaces.write(args.workspaces);

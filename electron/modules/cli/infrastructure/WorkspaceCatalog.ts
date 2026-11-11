@@ -37,4 +37,15 @@ export class WorkspaceCatalog {
   write(value: unknown): Record<string, string> {
     return this.persist(resolveWorkspaceDirectories(normalizeWorkspaces(value)));
   }
+
+  add(id: string, rawPath: string): { id: string; path: string } {
+    const current = this.read();
+    const resolved = resolveWorkspaceDirectories(normalizeWorkspaces({ [id]: rawPath }));
+    const directory = resolved[id];
+    if (!directory) throw new Error('Workspace id is invalid');
+    if (current[id] && current[id] !== directory) throw new Error('Workspace id already points at another directory');
+    if (current[id] === directory) return { id, path: directory };
+    this.persist({ ...current, [id]: directory });
+    return { id, path: directory };
+  }
 }

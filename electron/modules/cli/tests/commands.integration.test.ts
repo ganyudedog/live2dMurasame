@@ -128,6 +128,24 @@ describe('CLI commands, persistence and task ownership', () => {
     await expect(runtime.cli.invoke(request('agent.continue', { taskId: first.id, prompt: 'again' }), context)).rejects.toThrow('Workspace changed');
   });
 
+  it('lets a granted remote register a new project directory', async () => {
+    const { runtime, dir } = await setup();
+    const remote: CommandContext = { owner: 'remote-person', local: false, source: 'plugin:example', conversationId: 'group' };
+    const extra = path.join(dir, 'extra');
+    fs.mkdirSync(extra);
+    await expect(runtime.cli.invoke(request('agent.workspace.add', { id: 'extra', path: extra }), remote)).rejects.toThrow('not enabled');
+    await runtime.cli.invoke(request('agent.settings.update', {
+      workspaces: [{ id: 'project', path: dir }], remoteSources: ['plugin:example'],
+    }), context);
+    const added = await runtime.cli.invoke(request('agent.workspace.add', { id: 'extra', path: extra }), remote) as { id: string; path: string };
+    expect(added).toEqual({ id: 'extra', path: fs.realpathSync(extra) });
+    const stored = JSON.parse(fs.readFileSync(path.join(dir, 'globalModelConfig.json'), 'utf8')).workspaces;
+    expect(stored.extra).toBe(fs.realpathSync(extra));
+    const task = await runtime.cli.invoke(request('agent.run', { workspaceId: 'extra', prompt: 'new project' }), remote) as { id: string };
+    expect(task.id).toMatch(/^task_/);
+    await expect(runtime.cli.invoke(request('agent.workspace.add', { id: 'extra', path: dir }), remote)).rejects.toThrow('another directory');
+  });
+
   it('requires a remote grant and keeps remote owners separate', async () => {
     const { runtime, dir } = await setup();
     const remote: CommandContext = { owner: 'remote-person', local: false, source: 'plugin:example', conversationId: 'group' };

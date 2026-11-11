@@ -24,6 +24,12 @@ export const registerAgentCommands = (cli: CliService, tasks: AgentTaskService):
     schema: empty,
     execute: () => tasks.listWorkspaces(),
   });
+  cli.register('agent.workspace.add', {
+    skill: 'development',
+    description: 'Register an existing project directory under an id, then use that id with agent.run. Does not change plugin permissions.',
+    schema: workspace,
+    execute: (args) => tasks.addWorkspace(args),
+  });
   cli.register('agent.run', {
     skill: 'development',
     description: 'Start an explicitly requested development task; returns immediately. Use a listed workspace.',

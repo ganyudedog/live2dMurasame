@@ -5,11 +5,36 @@ import type { TraceScope } from '@app/shared/logging/LogService';
 import { shyAction } from '../../../../../../test/fixtures/actionCatalog';
 import { LogService } from '@app/shared/logging/LogService';
 import { runSkillLoop } from '../application/skillLoop';
+import { agentTask } from '../../../../../../test/fixtures/agentTask';
+import { TASK_REPORT_CUE, taskReportContext } from '../domain/taskReport';
 vi.mock('../application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 
 vi.mock('../infrastructure/llmClient', () => ({ requestStage2LLM: vi.fn(), requestStructuredLLM: vi.fn() }));
 
 describe('LLM and RAG orchestration', () => {
+  it('reports task results through the persona and memory without re-entering the skill loop', async () => {
+    const appendConversation = vi.fn();
+    vi.stubGlobal('window', { MemoryAPI: { get: vi.fn(async () => ({ coreText: '共同开发这个项目' })), appendConversation } });
+    const commands = { invoke: vi.fn(), claim: vi.fn(), finish: vi.fn(), tasks: vi.fn(), close: vi.fn(async () => {}), reply: vi.fn(async () => {}), compact: vi.fn() };
+    const snapshot = { activeModelPath: '/character', globalModelConfig: { apiKey: 'key' }, modelConfig: { actions: [] } } as unknown as PetConfigSnapshot;
+    const service = new LlmService({ getConfigSnapshot: () => snapshot, openCommands: async () => commands });
+    const taskReport = { task: agentTask({ status: 'succeeded', summary: '修复导入错误，检查通过' }), userText: '修复项目' };
+    const toolContext = taskReportContext(taskReport);
+    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"主人，导入错误已经修好了。"}', usedModel: 'model' });
+    const response = await service.ask(TASK_REPORT_CUE, { model: 'model', requestId: 'report:task-1', cue: true, taskReport,
+      trace: { record: vi.fn() } as unknown as TraceScope });
+    expect(response.ok).toBe(true);
+    expect(runSkillLoop).not.toHaveBeenCalled();
+    expect(commands.invoke).not.toHaveBeenCalled();
+    expect(commands.claim).toHaveBeenCalledWith('report:task-1', expect.stringContaining('修复导入错误'));
+    expect(commands.reply).toHaveBeenCalledWith('report:task-1', '主人，导入错误已经修好了。');
+    expect(requestStage2LLM).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cue: true, toolContext,
+      memoryContext: expect.stringContaining('共同开发这个项目') }));
+    expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'report:task-1', toolContext,
+      assistantText: '主人，导入错误已经修好了。' }));
+    expect(commands.close).toHaveBeenCalledOnce();
+    service.dispose();
+  });
   it('combines memory with tool results and archives the actual displayed reply', async () => {
     const get = vi.fn(async () => ({ coreText: '主人喜欢这个项目' })); const appendConversation = vi.fn();
     vi.stubGlobal('window', { MemoryAPI: { get, appendConversation } });

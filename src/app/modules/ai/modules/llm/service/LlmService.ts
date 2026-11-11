@@ -8,11 +8,14 @@ import type { ActionCapability } from '../../../../live2d/modules/actions/domain
 import type { ReasoningEffort, ReasoningSummaryEvent, Stage2AskResult, Stage2LLMConfig } from '../domain/types';
 import type { GenerationProgress } from '../domain/action-catalog/generation';
 import { runSkillLoop } from '../application/skillLoop';
+import { taskReportContext, type TaskReport } from '../domain/taskReport';
 import { createPresenceRuntime, type PresenceRuntimeOptions } from '../infrastructure/presenceRuntime';
-import type { CommandSession } from '../../../../../../../shared/cli/contracts';
+import type { AgentTask, CommandSession } from '../../../../../../../shared/cli/contracts';
 
 interface Stage2AskOptions {
   requestId?: string;
+  taskReport?: TaskReport;
+  onTaskCreated?: (task: AgentTask) => void;
   signal?: AbortSignal;
   trace: TraceScope;
   model?: string;
@@ -202,15 +205,19 @@ export class LlmService {
       const resolved = this.resolveConfig(options);
       assertCurrentModel();
       const memoryRuntime = await this.memory.resolve(cleanText, options.trace, snapshot);
-      commandSession = options.cue ? null : await this.openCommands?.().catch((error) => {
+      commandSession = options.cue && !options.taskReport ? null : await this.openCommands?.().catch((error) => {
         options.trace.record('tool.session.unavailable', { error: String(error) });
         return null;
       });
-      let toolContext = '';
-      if (commandSession) {
+      let toolContext = options.taskReport ? taskReportContext(options.taskReport) : '';
+      if (commandSession && options.taskReport) {
+        await commandSession.claim(requestId, `${cleanText}\n${toolContext}`);
+        await commandSession.finish(requestId, { handled: true, context: toolContext });
+      } else if (commandSession) {
         try {
           const tools = await runSkillLoop({ config: { ...resolved, reasoningEffort: options.reasoningEffort },
             text: cleanText, requestId, signal: options.signal, session: commandSession,
+            onTaskCreated: options.onTaskCreated,
             historyMessages: memoryRuntime.historyMessages,
             summarize: snapshot?.globalModelConfig?.memoryModel?.trim()
               ? (system, user, signal) => this.requestMemoryStructured(system, user, signal) : undefined });

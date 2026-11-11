@@ -10,8 +10,8 @@ export interface ChatRequest {
   id: string;
   /** 用户输入文本（ASR 识别结果或手动输入） */
   text: string;
-  /** 来源：'text' = 手动输入, 'asr' = 语音识别, 'presence' = 摄像头状态触发的主动开口 */
-  source: 'text' | 'asr' | 'presence';
+  /** 来源：手动输入、语音识别、摄像头主动开口或异步任务汇报。 */
+  source: 'text' | 'asr' | 'presence' | 'task-report';
   /** 处理状态 */
   status: 'pending' | 'processing' | 'done' | 'error' | 'cancelled';
   createdAt: number;

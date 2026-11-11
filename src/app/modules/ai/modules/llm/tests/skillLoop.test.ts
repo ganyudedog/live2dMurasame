@@ -12,7 +12,7 @@ const setup = () => {
       { name: 'agent.run', skill: 'development', description: 'run', parameters: { type: 'object', properties: {} } },
       { name: 'config.get', skill: 'settings', description: 'get', parameters: { type: 'object', properties: {} } },
       { name: 'agent.settings.update', skill: 'management', description: 'admin', parameters: {} },
-    ] : request.command === 'agent.workspaces' ? [{ id: 'project' }] : { id: 'task-1', status: 'queued' }),
+    ] : request.command === 'agent.workspaces' ? [{ id: 'project' }] : { id: 'task-1', status: 'queued', requestId: request.requestId }),
   };
   return session;
 };
@@ -84,6 +84,7 @@ describe('progressive skill loop', () => {
   });
   it('loads tools, executes them and feeds observations back until the model finishes', async () => {
     const session = setup();
+    const onTaskCreated = vi.fn();
     const replies = [call('loadSkill', { name: 'development' }), call('agent_workspaces', {}), call('agent_run', { workspaceId: 'project', prompt: 'fix' }), { content: '任务已接收' }];
     const offered: string[][] = [];
     const complete = vi.fn<NonNullable<SkillLoopOptions['complete']>>(async (messages, tools) => {
@@ -91,7 +92,8 @@ describe('progressive skill loop', () => {
       if (offered.length === 4) expect(JSON.stringify(messages)).toContain('task-1');
       return replies.shift()!;
     });
-    const result = await runSkillLoop({ config: { model: 'model' }, text: '修复项目', requestId: 'message-1', session, complete });
+    const result = await runSkillLoop({ config: { model: 'model' }, text: '修复项目', requestId: 'message-1', session, complete, onTaskCreated });
+    expect(onTaskCreated).toHaveBeenCalledExactlyOnceWith({ id: 'task-1', status: 'queued', requestId: 'message-1' });
     expect(result.handled).toBe(true);
     expect(offered[0]).toEqual(['loadSkill']);
     expect(offered[1]).toContain('agent_run'); expect(offered.flat()).not.toContain('config_get');

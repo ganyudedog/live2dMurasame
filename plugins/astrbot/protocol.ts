@@ -75,6 +75,7 @@ export type AstrBotInbound = AstrBotQqMessage
   | { readonly type: 'ping'; readonly timestamp?: number; readonly ts?: number };
 
 export type AstrBotOutbound = AstrBotHello | AstrBotAiResponse
+  | { readonly type: 'ai.notification'; readonly version: 3; readonly notificationId: string; readonly inReplyTo: string; readonly conversationId: string; readonly text: string }
   | { readonly type: 'config.update'; readonly version: 3; readonly wakeWords: readonly string[]; readonly allowedPrivateUsers: readonly string[] }
   | { readonly type: 'agent.task'; readonly version: 3; readonly requestId: string; readonly conversationId: string; readonly taskId: string; readonly status: string; readonly sequence: number; readonly text: string; readonly error?: AstrBotPublicError }
   | { readonly type: 'ping'; readonly ts?: number } | { readonly type: 'pong'; readonly timestamp?: number };

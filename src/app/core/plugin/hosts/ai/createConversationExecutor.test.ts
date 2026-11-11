@@ -4,6 +4,8 @@ import type { LogService } from '@app/shared/logging/LogService';
 import { requestStage2LLM, requestStructuredLLM } from '@app/modules/ai/modules/llm/infrastructure/llmClient';
 import { createDefaultConversationExecutor } from './createConversationExecutor';
 import { runSkillLoop } from '@app/modules/ai/modules/llm/application/skillLoop';
+import { agentTask } from '../../../../../test/fixtures/agentTask';
+import { TASK_REPORT_CUE, taskReportContext } from '@app/modules/ai/modules/llm/domain/taskReport';
 vi.mock('@app/modules/ai/modules/llm/application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 
 vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
@@ -12,6 +14,31 @@ vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
 }));
 
 describe('plugin conversation persona injection', () => {
+  it('injects and archives remote task results without calling tools again', async () => {
+    vi.mocked(runSkillLoop).mockClear();
+    const appendConversation = vi.fn(async () => ({ state: {} }));
+    const cli = { open: vi.fn(async () => 'session'), close: vi.fn(async () => {}), claim: vi.fn(async () => ({})),
+      finish: vi.fn(async () => {}), reply: vi.fn(async () => {}), invoke: vi.fn() };
+    vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns: vi.fn() }, CliAPI: cli });
+    const config = { activeModelPath: '/model', globalModelConfig: { apiKey: 'key' } } as unknown as ConfigService;
+    const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ record: vi.fn(), end: vi.fn(), fail: vi.fn() }), dispose: vi.fn() }) } } as unknown as LogService;
+    const execute = createDefaultConversationExecutor(config, log);
+    const taskReport = { task: agentTask({ status: 'failed', error: '检查未通过', conversationId: 'private' }), userText: '检查项目' };
+    const toolContext = taskReportContext(taskReport);
+    const emit = vi.fn();
+    await execute({ source: 'plugin:astrbot', conversationId: 'private', interaction: { mode: 'queue' }, model: 'model' },
+      { text: TASK_REPORT_CUE, sender: { id: 'owner' }, memoryArchive: { platform: 'qq', scope: 'private', id: 'owner' } },
+      { taskReport, requestId: 'report:task-1', channelId: 'channel', conversationId: 'private', signal: new AbortController().signal, emit });
+    expect(runSkillLoop).not.toHaveBeenCalled();
+    expect(cli.invoke).not.toHaveBeenCalled();
+    expect(cli.open).toHaveBeenCalledWith({ source: 'plugin:astrbot', conversationId: 'private', senderId: 'owner' });
+    expect(cli.claim).toHaveBeenCalledWith('session', 'report:task-1', expect.stringContaining('检查未通过'));
+    expect(cli.reply).toHaveBeenCalledWith('session', 'report:task-1', '你好');
+    expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ cue: true, toolContext }));
+    expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'report:task-1', toolContext,
+      sender: { id: 'owner' }, conversationId: 'private', assistantText: '你好' }));
+    expect(emit).toHaveBeenLastCalledWith({ text: '你好', status: 'done' });
+  });
   it('keeps remote tool results in both the reply and conversation archive', async () => {
     const appendConversation = vi.fn(); const loadRecentTurns = vi.fn();
     const open = vi.fn(async () => 'session'); const close = vi.fn(async () => {});

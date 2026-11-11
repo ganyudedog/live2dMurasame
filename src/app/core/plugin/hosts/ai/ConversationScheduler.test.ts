@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConversationChannelOptions } from '../../types';
 import { ConversationScheduler } from './ConversationScheduler';
+import { agentTask } from '../../../../../test/fixtures/agentTask';
+import type { TaskEvent } from '../../../../../../shared/cli/contracts';
+import type { ConversationResponse } from '../../types';
 
 const options = (mode: 'queue' | 'interrupt' | 'concurrent' = 'queue'): ConversationChannelOptions => {
   const interaction = mode === 'queue'
@@ -12,6 +15,41 @@ const options = (mode: 'queue' | 'interrupt' | 'concurrent' = 'queue'): Conversa
 };
 
 describe('ConversationScheduler', () => {
+  it('queues a report behind regular replies and keeps the original sender and conversation', async () => {
+    const listeners: Array<(event: TaskEvent) => void> = [];
+    const stop = vi.fn();
+    let finish!: () => void;
+    const task = agentTask({ conversationId: 'remote' });
+    const execute = vi.fn<import('./ConversationScheduler').PluginConversationExecutor>(async (_options, request, context) => {
+      if (context.taskReport) {
+        expect(context.taskReport).toMatchObject({ userText: '修复项目', task: { status: 'succeeded', summary: '修复完成' } });
+        expect(request.sender?.id).toBe('owner');
+        expect(request.memoryArchive).toEqual({ platform: 'qq', scope: 'group', id: 'group' });
+        context.emit({ text: '项目修好了', status: 'done' });
+      } else if (request.requestId === task.requestId) {
+        context.onTaskCreated?.(task);
+        await new Promise<void>((resolve) => { finish = resolve; });
+        context.emit({ text: '任务已接收', status: 'done' });
+      } else context.emit({ text: '普通回复', status: 'done' });
+    });
+    const host = new ConversationScheduler(execute, 4, (_options, _request, listener) => { listeners.push(listener); return stop; });
+    const channel = host.openChannel(options());
+    const responses: ConversationResponse[] = [];
+    channel.onResponse((response) => responses.push(response));
+    channel.sendText({ requestId: task.requestId, text: '修复项目', conversationId: 'remote', sender: { id: 'owner' },
+      memoryArchive: { platform: 'qq', scope: 'group', id: 'group' } });
+    channel.sendText({ requestId: 'normal', text: '正在处理别的聊天' });
+    const completed = { task: { ...task, status: 'succeeded' as const, summary: '修复完成', sequence: 2 }, sequence: 2 };
+    listeners.forEach((listener) => listener(completed));
+    expect(execute).toHaveBeenCalledOnce();
+    finish();
+    await vi.waitFor(() => expect(responses).toHaveLength(3));
+    expect(responses.map((response) => response.text)).toEqual(['任务已接收', '普通回复', '项目修好了']);
+    expect(responses[2]).toMatchObject({ requestId: 'report:task-1', inReplyTo: task.requestId, conversationId: 'remote' });
+    listeners.forEach((listener) => listener(completed));
+    expect(execute).toHaveBeenCalledTimes(3);
+    host.dispose();
+  });
   it('keeps task observation independent from chat completion and disposes only subscriptions', async () => {
     let deliver: ((event: import('../../../../../../shared/cli/contracts').TaskEvent) => void) | undefined;
     const stop = vi.fn();

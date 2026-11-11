@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions/completions';
-import type { CommandDefinition, CommandSession } from '../../../../../../../shared/cli/contracts';
+import type { AgentTask, CommandDefinition, CommandSession } from '../../../../../../../shared/cli/contracts';
 import type { Stage2LLMConfig } from '../domain/types';
 import { boundedToolText, toolOutcomeFacts } from '../domain/toolContext';
 
@@ -41,6 +41,7 @@ export interface SkillLoopOptions {
   requestId: string;
   signal?: AbortSignal;
   session: CommandSession;
+  onTaskCreated?: (task: AgentTask) => void;
   historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   summarize?: (system: string, user: string, signal: AbortSignal) => Promise<string>;
   /** Injectable model transport for behavioral tests, not a second execution path. */
@@ -133,6 +134,9 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
             result = await session.invoke({ command: definition.name, args: args as Record<string, unknown>,
               invocationId: `${options.requestId}:${round}:${index}`, requestId: options.requestId, issuedAt });
             results.push({ command: definition.name, args, result: observation(result), facts: toolOutcomeFacts(result) });
+            if ((definition.name === 'agent.run' || definition.name === 'agent.continue')
+              && result && typeof result === 'object' && 'id' in result && 'requestId' in result
+              && result.requestId === options.requestId) options.onTaskCreated?.(result as AgentTask);
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

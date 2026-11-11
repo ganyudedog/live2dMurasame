@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { observable, runInAction } from 'mobx';
 import { AiService } from '../service/AiService';
 import type { LlmService } from '../modules/llm/service/LlmService';
@@ -7,6 +7,7 @@ import type { AsrService } from '../modules/asr/service/AsrService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import type { ChatRequest } from '@app/shared/state-bus/sharedStateTypes';
 import type { LogService } from '@app/shared/logging/LogService';
+import { agentTask } from '../../../../test/fixtures/agentTask';
 
 const request = (id: string): ChatRequest => ({ id, text: id, source: 'asr', status: 'pending', createdAt: 1 });
 const setup = (ownsConversationRuntime = true) => {
@@ -42,6 +43,38 @@ const setup = (ownsConversationRuntime = true) => {
 };
 
 describe('voice interruption orchestration', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reports a fast task after acknowledgement through desktop text and TTS', async () => {
+    const task = agentTask();
+    const completed = agentTask({ status: 'succeeded', summary: '项目检查通过', sequence: 2 });
+    const cli = { open: vi.fn(async () => 'observer'), close: vi.fn(async () => {}),
+      tasks: vi.fn(async () => [completed]), onTask: vi.fn(() => vi.fn()) };
+    vi.stubGlobal('window', { CliAPI: cli });
+    const { service, llm, stateBus, consumers } = setup();
+    let finish!: () => void;
+    llm.ask.mockImplementationOnce(async (_text, options) => {
+      options.onTaskCreated?.(task);
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return { ok: true, reply: { display_text: '任务已接收' } };
+    }).mockResolvedValueOnce({ ok: true, reply: { display_text: '项目检查通过', speak_text: '检查通过' } });
+    const run = service.processChatRequest({ ...request(task.requestId), source: 'text', text: '检查项目' });
+    await vi.waitFor(() => expect(cli.tasks).toHaveBeenCalled());
+    expect(llm.ask).toHaveBeenCalledOnce();
+    finish();
+    await run;
+    await vi.waitFor(() => expect(stateBus.publishChatResponse).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'report:task-1', displayText: '项目检查通过', status: 'done',
+    })));
+    expect(llm.ask).toHaveBeenLastCalledWith(expect.stringContaining('系统事件'), expect.objectContaining({
+      cue: true, taskReport: { task: completed, userText: '检查项目' },
+    }));
+    expect(cli.open).toHaveBeenCalledWith({ source: 'local', conversationId: 'desktop' });
+    expect(stateBus.publishChatRequest).toHaveBeenCalledWith(expect.objectContaining({ id: 'report:task-1', source: 'task-report' }));
+    expect(consumers.get('report:task-1')?.submit).toHaveBeenCalledWith('检查通过', '项目检查通过', 0);
+    expect(llm.notePresenceInteraction).toHaveBeenCalledTimes(2);
+    await service.dispose();
+  });
   it('executes a broadcast request only in the pet, retaining the panel LLM for action authoring', async () => {
     const pet = setup(true);
     const panel = setup(false);

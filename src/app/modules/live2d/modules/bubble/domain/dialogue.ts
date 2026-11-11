@@ -19,3 +19,7 @@ export interface DialogueSentence {
 }
 
 export type DialoguePlaybackState = 'started' | 'finished' | 'cancelled' | 'error' | 'skipped';
+
+/** Sentence boundaries are visual layout units, not TTS request boundaries. */
+export const splitDialogueParagraph = (text: string): string[] =>
+  text.match(/[^。！？!?]+(?:[。！？!?]+[”’」』】）\u0022']*|$)|[。！？!?]+/gu) ?? [];

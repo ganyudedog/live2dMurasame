@@ -1,6 +1,11 @@
 import { makeObservable, observable, observableRef, runInAction } from 'mobx';
 import { BUBBLE_MAX_LINES } from '../domain/constants';
 import type { DialogueMeasurement, DialogueMeasurementRequest, DialoguePlaybackState, DialogueSentence } from '../domain/dialogue';
+import { splitDialogueParagraph } from '../domain/dialogue';
+
+interface VisualSentence extends DialogueSentence {
+  joinPrevious?: boolean;
+}
 
 interface PlannedSentence extends DialogueSentence {
   page: number;
@@ -63,7 +68,7 @@ export class BubbleDialogueService {
   private planTail: Promise<void> = Promise.resolve();
   private plannedPage = 0;
   private plannedText = '';
-  private readonly sentences = new Map<string, DialogueSentence>();
+  private readonly sentences = new Map<string, VisualSentence>();
   private readonly sourceSegments = new Map<string, string[]>();
   private readonly planned = new Map<string, PlannedSentence>();
   private readonly playback = new Map<string, DialoguePlaybackState>();
@@ -139,7 +144,12 @@ export class BubbleDialogueService {
 
   prepare(sentence: DialogueSentence): void {
     if (!this.conversationId || !sentence.text || this.sourceSegments.has(sentence.requestId)) return;
-    const parts = sentence.text.split(/\r?\n/).map((part) => part.trim()).filter(Boolean);
+    const parts = sentence.text.split(/\r?\n/).map((part) => part.trim()).filter(Boolean)
+      .flatMap((paragraph, paragraphIndex) => splitDialogueParagraph(paragraph).map((text, index) => ({
+        text,
+        joinPrevious: index > 0,
+        pageBreakBefore: index === 0 && (paragraphIndex > 0 || sentence.pageBreakBefore),
+      })));
     if (!parts.length) return;
     const requestIds = parts.map((_, index) => parts.length === 1
       ? sentence.requestId
@@ -155,20 +165,19 @@ export class BubbleDialogueService {
         }
       });
     }
-    parts.forEach((text, index) => this.prepareSegment({
+    parts.forEach((part, index) => this.prepareSegment({
+      ...part,
       requestId: requestIds[index],
-      text,
-      pageBreakBefore: index > 0 || sentence.pageBreakBefore,
     }));
   }
 
-  private prepareSegment(sentence: DialogueSentence): void {
+  private prepareSegment(sentence: VisualSentence): void {
     if (this.sentences.has(sentence.requestId)) return;
     this.sentences.set(sentence.requestId, sentence);
     const epoch = this.epoch;
     this.planTail = this.planTail.then(async () => {
       if (epoch !== this.epoch) return;
-      let prefix = this.plannedText ? `${this.plannedText}\n` : '';
+      let prefix = this.plannedText ? this.plannedText + (sentence.joinPrevious ? '' : '\n') : '';
       let pageText = prefix + sentence.text;
       let measurement = await this.measure(pageText);
       if (!measurement || epoch !== this.epoch) return;

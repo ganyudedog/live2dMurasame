@@ -6,7 +6,7 @@ import { registerServiceModules } from './loadServiceModules';
 import { TOKENS } from './serviceTokens';
 import { reaction } from 'mobx';
 import { bindAiPresentation } from './bindings/bindAiPresentation';
-import { parsePluginDefinition } from './plugin/core/manifest';
+import { parsePluginDefinition } from '../modules/plugin/core/manifest';
 
 export interface RendererApplication {
   readonly container: ServiceContainer;

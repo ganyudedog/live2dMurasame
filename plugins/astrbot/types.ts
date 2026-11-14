@@ -1,4 +1,4 @@
-export { createDiagnosticId, sanitizeLogDetail } from '../../src/app/core/plugin';
+export { createDiagnosticId, sanitizeLogDetail } from '../../src/app/modules/plugin';
 export type {
   AiHostApi,
   ConversationErrorCode,
@@ -14,4 +14,4 @@ export type {
   PluginLogger as AstrBotLogger,
   PluginManifest as AstrBotPluginManifest,
   UiRenderContext as AstrBotUiContext,
-} from '../../src/app/core/plugin';
+} from '../../src/app/modules/plugin';

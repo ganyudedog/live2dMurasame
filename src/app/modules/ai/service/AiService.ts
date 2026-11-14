@@ -6,7 +6,7 @@ import { toErrorMessage } from '@app/shared/utils/errors';
 import type { ChatRequest } from '@app/shared/state-bus/sharedStateTypes';
 import type { LogService } from '@app/shared/logging/LogService';
 import type { StateBusService } from '@app/shared/state-bus/StateBusService';
-import type { Disposable } from '@app/core/plugin';
+import type { Disposable } from '@app/modules/plugin';
 import type { TextAiInput, TextAiResponse, TextAiResult } from '../textChannel';
 import type { AiDialogueEvent, AiActionEvent } from '../types';
 import { TaskReportCoordinator } from './TaskReportCoordinator';

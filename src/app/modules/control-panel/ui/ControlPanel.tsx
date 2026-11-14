@@ -12,7 +12,7 @@ import ModelSelectPage from './pages/ModelSelectPage';
 import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
 import PersonaSettingsPage from './pages/PersonaSettingsPage';
-import { PluginPanelHost } from '@app/core/plugin/hosts/control-panel/PluginPanelHost';
+import { PluginPanelHost } from '@app/modules/plugin/hosts/control-panel/PluginPanelHost';
 import { ChevronRight, Puzzle } from 'lucide-react';
 import { Page } from './components/common/Page';
 import { Button } from './components/common/Button';

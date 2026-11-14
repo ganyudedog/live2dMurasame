@@ -1,4 +1,4 @@
-import { STAGE_LINES } from '../../../src/app/core/plugin';
+import { STAGE_LINES } from '../../../src/app/modules/plugin';
 import { resolveAddress } from '../directory';
 import type { QqTurnInput } from '../turn';
 

@@ -83,6 +83,31 @@ const startClient = (overrides: {
 describe('AstrBot bridge client', () => {
   afterEach(() => { FakeSocket.instances = []; vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+  it('delivers an unsolicited report once after the original response is settled', async () => {
+    const { client, channels } = startClient();
+    await flush();
+    const socket = FakeSocket.instances[0];
+    ackHello(socket);
+    socket.onmessage?.({ data: JSON.stringify(message('qq_origin')) });
+    await flush();
+    const channel = channels[0];
+    channel.listener?.(doneResponse('qq_origin'));
+    await flush();
+    const report: ConversationResponse = { ...doneResponse('report:task'), text: '检查完成', inReplyTo: 'qq_origin' };
+    channel.listener?.({ ...report, status: 'streaming' });
+    channel.listener?.({ ...report, inReplyTo: 'unknown' });
+    channel.listener?.({ ...report, conversationId: 'qq:group:wrong' });
+    expect(parsed(socket).filter((frame) => frame.type === 'ai.notification')).toHaveLength(0);
+    channel.listener?.(report);
+    channel.listener?.(report);
+    expect(parsed(socket).filter((frame) => frame.type === 'ai.notification')).toEqual([{
+      type: 'ai.notification', version: 3, notificationId: 'report:task', inReplyTo: 'qq_origin',
+      conversationId: 'qq:group:30003', text: '检查完成',
+    }]);
+    expect(channel.sendText).toHaveBeenCalledOnce();
+    client.dispose();
+  });
+
   it('syncs owner and explicit private users on connect and edits without reconnecting', async () => {
     const { client } = startClient();
     client.updateDirectory(normalizeDirectory({ ownerUserId: '10001', allowedPrivateUsers: ['10002', 'bad', '10002'] }));

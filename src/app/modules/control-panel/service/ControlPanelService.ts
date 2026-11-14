@@ -510,7 +510,7 @@ export class ControlPanelService {
     }
     runInAction(() => {
       const messages = this.chatMessages.filter((message) => message.requestId === request.id);
-      if (request.source !== 'presence' && !messages.some((message) => message.role === 'user')) {
+      if (request.source !== 'presence' && request.source !== 'task-report' && !messages.some((message) => message.role === 'user')) {
         this.chatMessages = [...this.chatMessages,
           createMessage('user', request.text, request.id, request.createdAt, request.source, 'done')];
       }

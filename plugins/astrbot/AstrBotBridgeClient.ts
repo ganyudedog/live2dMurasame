@@ -42,6 +42,8 @@ export class AstrBotBridgeClient {
   /** Bumped on disconnect, reconnect, and dispose. In-flight work captures the value it started with. */
   private generation = 0;
   private readonly admissions = new Map<string, Admission>();
+  private readonly notificationOrigins = new Map<string, string>();
+  private readonly sentNotifications = new Set<string>();
   private readonly stickerChoices = new Map<string, StickerChoice[]>();
   private readonly dedup = new MessageDedup(256);
   private readonly lanes = new ConversationLanes();
@@ -332,6 +334,8 @@ export class AstrBotBridgeClient {
       }
       if (!this.isCurrent(admission)) return;
       admission.submitted = true;
+      this.notificationOrigins.set(message.requestId, message.conversationId);
+      if (this.notificationOrigins.size > 256) this.notificationOrigins.delete(this.notificationOrigins.keys().next().value!);
       const done = this.waitTerminal(admission);
       let result: ReturnType<ConversationChannel['sendText']>;
       try {
@@ -373,6 +377,16 @@ export class AstrBotBridgeClient {
   }
 
   private handleAiResponse(response: ConversationResponse): void {
+    if (response.inReplyTo) {
+      if (response.status !== 'done' || !response.text.trim() || this.socket?.readyState !== WebSocket.OPEN
+        || this.notificationOrigins.get(response.inReplyTo) !== response.conversationId
+        || this.sentNotifications.has(response.requestId)) return;
+      this.send({ type: 'ai.notification', version: ASTRBOT_PROTOCOL_VERSION, notificationId: response.requestId,
+        inReplyTo: response.inReplyTo, conversationId: response.conversationId, text: response.text });
+      this.sentNotifications.add(response.requestId);
+      if (this.sentNotifications.size > 512) this.sentNotifications.delete(this.sentNotifications.values().next().value!);
+      return;
+    }
     const admission = this.admissions.get(response.requestId);
     if (!admission || !this.owns(admission) || !admission.submitted) return;
     if (response.status === 'streaming') return;
@@ -433,6 +447,8 @@ export class AstrBotBridgeClient {
   }
 
   private releaseAll(): void {
+    this.notificationOrigins.clear();
+    this.sentNotifications.clear();
     this.generation += 1;
     const stale = [...this.admissions.values()];
     this.admissions.clear();

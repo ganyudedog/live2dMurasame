@@ -6,11 +6,15 @@ import type {
   ConversationResponse,
   Disposable,
 } from '../../types';
-import type { TaskEvent } from '../../../../../../shared/cli/contracts';
+import type { AgentTask, TaskEvent } from '../../../../../../shared/cli/contracts';
+import { TaskReportCoordinator } from '@app/modules/ai/service/TaskReportCoordinator';
+import { TASK_REPORT_CUE, taskReportId, type TaskReport } from '@app/modules/ai/modules/llm/domain/taskReport';
 import type { ConversationTaskObserver } from './observeConversationTasks';
 import { classifyConversationError, toPublicError } from '../../publicError';
 
 export interface PluginConversationExecutionContext {
+  readonly taskReport?: TaskReport;
+  readonly onTaskCreated?: (task: AgentTask) => void;
   readonly channelId: string;
   readonly requestId: string;
   readonly conversationId: string;
@@ -116,6 +120,9 @@ export class ConversationScheduler implements ConversationPool {
 }
 
 class PluginConversationChannel implements ConversationChannel {
+  private readonly reports: TaskReportCoordinator<ConversationRequest>;
+  private readonly reportQueue: Array<{ task: AgentTask; origin: ConversationRequest }> = [];
+  private readonly followUps = new Map<string, string>();
   readonly id = makeId('channel');
   readonly options: ConversationChannelOptions;
   private readonly listeners = new Set<(response: ConversationResponse) => void>();
@@ -152,9 +159,25 @@ class PluginConversationChannel implements ConversationChannel {
     this.options = normalizeOptions(options);
     this.maxConcurrent = this.options.interaction.mode === 'queue' ? 1 : this.options.interaction.maxConcurrent ?? 1;
     this.maxQueued = this.options.interaction.maxQueued ?? 16;
+    this.reports = new TaskReportCoordinator(
+      (origin, listener) => this.observeTasks?.(this.options, origin, listener) ?? (() => {}),
+      (task, origin) => { this.reportQueue.push({ task, origin }); this.drainReports(); },
+    );
   }
 
   sendText(request: ConversationRequest): ConversationRequestResult {
+    return this.enqueue(request);
+  }
+
+  private drainReports(): void {
+    if (this.disposed || this.closing || this.scheduled.size || this.jobs.length) return;
+    const next = this.reportQueue.shift();
+    if (!next) return;
+    const { task, origin } = next;
+    this.enqueue({ ...origin, requestId: taskReportId(task), text: TASK_REPORT_CUE }, { task, userText: origin.text });
+  }
+
+  private enqueue(request: ConversationRequest, taskReport?: TaskReport): ConversationRequestResult {
     const requestId = request.requestId?.trim() || makeId('request');
     const text = request.text.trim();
     if (!text) return { requestId, accepted: false, reason: 'invalid' };
@@ -164,14 +187,15 @@ class PluginConversationChannel implements ConversationChannel {
     if (this.controllers.has(requestId)) return { requestId, accepted: false, reason: 'duplicate' };
 
     const conversationId = request.conversationId?.trim() || this.options.conversationId;
-    if (request.sender?.id) this.watchTasks({ conversationId, senderId: request.sender.id });
+    if (!taskReport && request.sender?.id) this.watchTasks({ conversationId, senderId: request.sender.id });
     const interactionKey = request.interactionKey?.trim() || conversationId;
-    if (this.options.interaction.mode === 'interrupt') this.cancelInteraction(interactionKey);
+    if (!taskReport && this.options.interaction.mode === 'interrupt') this.cancelInteraction(interactionKey);
 
     const controller = new AbortController();
     this.controllers.set(requestId, controller);
     this.conversations.set(requestId, conversationId);
     this.interactionKeys.set(requestId, interactionKey);
+    if (taskReport) this.followUps.set(requestId, taskReport.task.requestId);
     const queuedCount = this.jobs.length + this.scheduled.size - this.active.size;
     const waitingForSlot = this.scheduled.size >= this.maxConcurrent;
     if (waitingForSlot && queuedCount >= this.maxQueued) {
@@ -181,7 +205,7 @@ class PluginConversationChannel implements ConversationChannel {
     this.jobs.push({
       id: requestId,
       controller,
-      run: () => this.run(requestId, { ...request, requestId, text }, controller),
+      run: () => this.run(requestId, { ...request, requestId, text }, controller, taskReport),
     });
     this.pump();
     return {
@@ -240,6 +264,8 @@ class PluginConversationChannel implements ConversationChannel {
     this.closing = true;
     this.cancel();
     this.disposed = true;
+    this.reports.dispose();
+    this.reportQueue.splice(0);
     this.jobs.splice(0);
     this.listeners.clear();
     this.taskSubscriptions.forEach((stop) => stop());
@@ -268,6 +294,7 @@ class PluginConversationChannel implements ConversationChannel {
           this.scheduled.delete(job.id);
           this.removeRequest(job.id);
           this.pump();
+          this.drainReports();
         },
       });
       if (status === 'disposed') {
@@ -282,16 +309,23 @@ class PluginConversationChannel implements ConversationChannel {
     requestId: string,
     request: ConversationRequest,
     controller: AbortController,
+    taskReport?: TaskReport,
   ): Promise<void> {
     if (controller.signal.aborted) return;
     const conversationId = this.conversations.get(requestId) ?? this.options.conversationId;
-    await this.execute(this.options, request, {
-      channelId: this.id,
-      requestId,
-      conversationId,
-      signal: controller.signal,
-      emit: (response) => this.emit(requestId, response, controller),
-    });
+    try {
+      await this.execute(this.options, request, {
+        taskReport,
+        onTaskCreated: (task) => this.reports.track(task, { ...request, conversationId }),
+        channelId: this.id,
+        requestId,
+        conversationId,
+        signal: controller.signal,
+        emit: (response) => this.emit(requestId, response, controller),
+      });
+    } finally {
+      this.reports.release(requestId);
+    }
   }
 
   private cancelInteraction(key: string): void {
@@ -310,6 +344,7 @@ class PluginConversationChannel implements ConversationChannel {
     this.conversations.delete(id);
     this.interactionKeys.delete(id);
     this.terminal.delete(id);
+    this.followUps.delete(id);
   }
 
   private poolKey(id: string): string { return `${this.id}/${id}`; }
@@ -326,6 +361,7 @@ class PluginConversationChannel implements ConversationChannel {
       requestId: id,
       conversationId: this.conversations.get(id) ?? this.options.conversationId,
       ...response,
+      ...(this.followUps.has(id) ? { inReplyTo: this.followUps.get(id) } : {}),
     };
     this.listeners.forEach((listener) => {
       try { listener(full); } catch (error) { console.error('[PluginConversation] response listener failed', error); }

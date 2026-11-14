@@ -9,6 +9,7 @@ import { buildPersonaPrompt, normalizePersona } from '@app/modules/ai/modules/ll
 import { LlmMemoryRepository } from '@app/modules/ai/modules/llm/infrastructure/LlmMemoryRepository';
 import { resolveEpisodeQuery } from '@app/modules/ai/modules/llm/domain/memory/episodeQuery';
 import { runSkillLoop } from '@app/modules/ai/modules/llm/application/skillLoop';
+import { taskReportContext } from '@app/modules/ai/modules/llm/domain/taskReport';
 import type { CommandSession } from '../../../../../../shared/cli/contracts';
 import { openCommandSession } from '@app/shared/electron/commandSession';
 import { classifyConversationError, createDiagnosticId, sanitizeLogDetail } from '../../publicError';
@@ -50,7 +51,7 @@ export const createDefaultConversationExecutor = (
     let displayText = '';
     let speakText = '';
     let commands: CommandSession | null = null;
-    let toolContext = '';
+    let toolContext = context.taskReport ? taskReportContext(context.taskReport) : '';
     const parser = new SentenceStreamParser();
     const traceContext = log.contextRegistry.register('PluginConversation', {
       relation: 'conversation.request',
@@ -89,10 +90,14 @@ export const createDefaultConversationExecutor = (
           return null;
         })
         : null;
-      if (commands) {
+      if (commands && context.taskReport) {
+        await commands.claim(context.requestId, `${request.text}\n${toolContext}`);
+        await commands.finish(context.requestId, { handled: true, context: toolContext });
+      } else if (commands) {
         try {
           const tools = await runSkillLoop({ config: { apiKey: global.apiKey, baseURL: global.baseURL, model, reasoningEffort: options.reasoningEffort },
             text: request.text, requestId: context.requestId, signal: context.signal, session: commands,
+            onTaskCreated: context.onTaskCreated,
             historyMessages: buildRecentConversation(recent.turns.filter((turn) =>
               turn.sender?.id === request.sender?.id && turn.conversationId === context.conversationId)).historyMessages,
             summarize: global.memoryModel?.trim() ? async (systemPrompt, userPrompt, signal) => {
@@ -113,7 +118,8 @@ export const createDefaultConversationExecutor = (
         baseURL: global.baseURL,
         model,
       }, {
-        userText: speakerText(request.text, request.sender),
+        userText: context.taskReport ? request.text : speakerText(request.text, request.sender),
+        cue: Boolean(context.taskReport),
         historyMessages: recent.historyMessages,
         toolContext,
         toolsAvailable: Boolean(commands),
@@ -175,7 +181,7 @@ export const createDefaultConversationExecutor = (
       ensureModelPath();
       if (request.personalMemory?.userText.trim() && modelPath && displayText.trim()) {
         const runtime = { contextText: '', modelPath, memoryState: null };
-        await personalMemory.persistConversation(runtime, request.personalMemory.userText, displayText, trace, {
+        await personalMemory.persistConversation(runtime, context.taskReport ? request.text : request.personalMemory.userText, displayText, trace, {
           requestId: context.requestId, toolContext, sender: request.sender,
           conversationId: JSON.stringify([options.source, context.conversationId]),
         });

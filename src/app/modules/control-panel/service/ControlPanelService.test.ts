@@ -93,6 +93,17 @@ it('同步悬浮输入、等待状态、流式回复和完成状态，面板自�
   expect(control.chatMessages).toHaveLength(4);
 });
 
+it('任务汇报只显示桌宠回复，不伪造用户发言', async () => {
+  const pet = await bus('pet');
+  const control = await panel();
+  pet.publishChatRequest({ id: 'report:task', text: '系统事件：任务已结束', source: 'task-report', status: 'processing', createdAt: 1 });
+  await flush();
+  pet.publishChatResponse({ id: 'report:task', displayText: '检查通过', status: 'done', error: null, updatedAt: 2 });
+  await flush();
+  expect(control.chatMessages.map((message) => ({ role: message.role, text: message.text })))
+    .toEqual([{ role: 'assistant', text: '检查通过' }]);
+});
+
 it('无缓存时从 episode 接口恢复最近 10 轮，已有缓存和主动清空不重复读取', async () => {
   const pet = await bus('pet');
   const turns = Array.from({ length: 10 }, (_, i) => ({ date: '2026-11-11', time: '12:00:00',

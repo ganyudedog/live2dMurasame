@@ -52,6 +52,8 @@ export interface ConversationRequest {
 export type ConversationResponseStatus = 'streaming' | 'done' | 'error' | 'cancelled';
 
 export interface ConversationResponse {
+  /** An unsolicited follow-up to this original request, with its own requestId. */
+  readonly inReplyTo?: string;
   readonly channelId: string;
   readonly requestId: string;
   readonly conversationId: string;

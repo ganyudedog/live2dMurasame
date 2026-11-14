@@ -9,6 +9,9 @@ import type { StateBusService } from '@app/shared/state-bus/StateBusService';
 import type { Disposable } from '@app/modules/plugin';
 import type { TextAiInput, TextAiResponse, TextAiResult } from '../textChannel';
 import type { AiDialogueEvent, AiActionEvent } from '../types';
+import { TaskReportCoordinator } from './TaskReportCoordinator';
+import { observeCommandTasks } from '@app/shared/electron/observeCommandTasks';
+import { TASK_REPORT_CUE, taskReportId, type TaskReport } from '../modules/llm/domain/taskReport';
 
 export class AiService {
   processing = false;
@@ -29,6 +32,18 @@ export class AiService {
   private lastConversationId: string | null = null;
   private activeDisplayText = '';
   private readonly asrSubscriptions: Array<() => void> = [];
+  private readonly reports = new TaskReportCoordinator<ChatRequest>(
+    (_origin, listener) => observeCommandTasks({ source: 'local', conversationId: 'desktop' }, listener),
+    (task, origin) => { this.reportQueue.push({ task, userText: origin.text }); this.drainReports(); },
+  );
+  private readonly reportQueue: TaskReport[] = [];
+
+  private drainReports(): void {
+    if (this.disposed || this.processing || !this.reportQueue.length) return;
+    const report = this.reportQueue.shift()!;
+    void this.processChatRequest({ id: taskReportId(report.task), text: TASK_REPORT_CUE,
+      source: 'task-report', status: 'pending', createdAt: Date.now() }, report);
+  }
 
   readonly llm: LlmService;
   readonly tts: TtsService;
@@ -131,9 +146,9 @@ export class AiService {
     return () => this.actionListeners.delete(listener);
   }
 
-  async processChatRequest(request: ChatRequest): Promise<void> {
+  async processChatRequest(request: ChatRequest, taskReport?: TaskReport): Promise<void> {
     if (this.disposed || !this.ownsConversationRuntime || request.id === this.lastConversationId) return;
-    if (request.source !== 'presence') this.llm.notePresenceInteraction();
+    if (request.source !== 'presence' && !taskReport) this.llm.notePresenceInteraction();
     if (this.processing) {
       this.cancel('superseded-by-new-request');
     }
@@ -199,7 +214,9 @@ export class AiService {
       const result = await this.llm.ask(request.text.trim(), {
         requestId: request.id,
         trace,
-        cue: presence,
+        cue: presence || Boolean(taskReport),
+        taskReport,
+        onTaskCreated: (task) => this.reports.track(task, request),
         signal: controller.signal,
         model: aiConfig.model,
         apiKey: aiConfig.apiKey,
@@ -306,7 +323,7 @@ export class AiService {
       trace.fail('AI 对话请求失败', { requestId: request.id, err: message }, error);
     } finally {
       consumer.stop();
-      if (request.source !== 'presence') this.llm.notePresenceInteraction();
+      if (request.source !== 'presence' && !taskReport) this.llm.notePresenceInteraction();
       if (this.activeController === controller) {
         this.stopChatSpeech = null;
         this.activeController = null;
@@ -317,6 +334,8 @@ export class AiService {
         });
       }
       context.dispose();
+      this.reports.release(request.id);
+      this.drainReports();
     }
   }
 
@@ -356,6 +375,8 @@ export class AiService {
   }
 
   async dispose(): Promise<void> {
+    this.reports.dispose();
+    this.reportQueue.splice(0);
     if (this.disposed) return;
     this.disposed = true;
     this.reactions.splice(0).forEach((dispose) => dispose());

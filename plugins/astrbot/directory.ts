@@ -1,4 +1,4 @@
-import { RELATIONSHIP_STAGES } from '../../src/app/core/plugin';
+import { RELATIONSHIP_STAGES } from '../../src/app/modules/plugin';
 /** QQ user ids stay strings. Binding is explicit; chat text never creates one. */
 export const isQqUserId = (value: string): boolean => /^[1-9][0-9]{4,19}$/.test(value);
 

@@ -1,5 +1,5 @@
-import type { ServiceModule } from '../di/module';
-import { TOKENS } from '../serviceTokens';
+import type { ServiceModule } from '../../core/di/module';
+import { TOKENS } from '../../core/serviceTokens';
 import { PluginRuntime } from './core/PluginRuntime';
 import { createPluginHosts } from './hosts/createPluginHosts';
 

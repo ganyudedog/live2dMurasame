@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import { Component, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
-import { useService } from '../../../useService';
-import { TOKENS } from '../../../serviceTokens';
+import { useService } from '../../../../core/useService';
+import { TOKENS } from '../../../../core/serviceTokens';
 import type { UiRenderContext } from '../../types';
 
 export const PluginPanelHost = observer(({ slot, tabId }: { slot?: string; tabId?: string }) => {

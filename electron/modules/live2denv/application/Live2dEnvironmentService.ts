@@ -84,6 +84,7 @@ export class Live2dEnvironmentService {
       if (!selected || !current.modelPaths.includes(selected)) throw new Error('Model path is not registered');
       next = { ...current, currentModelPath: selected };
     }
+    if (typeof input.pluginDir === 'string') next = { ...next, pluginDir: input.pluginDir.trim() };
     if (isRecord(input.settings)) {
       const patch = input.settings;
       next = { ...next, settings: {

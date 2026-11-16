@@ -15,7 +15,7 @@ describe.skipIf(process.platform !== 'win32')('Windows host shell', () => {
     fs.mkdirSync(directory);
     fs.writeFileSync(path.join(root, 'large.txt'), 'x'.repeat(80000));
   });
-  afterAll(() => { fs.unlinkSync(path.join(root, 'large.txt')); fs.rmdirSync(directory); fs.rmdirSync(root); });
+  afterAll(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
   it('returns successful queries without throwing and preserves Chinese paths', async () => {
     const result = await runWindowsShell(`Get-ChildItem -LiteralPath ${quote(root)} -Directory | Select-Object -ExpandProperty FullName`);
@@ -46,8 +46,29 @@ describe.skipIf(process.platform !== 'win32')('Windows host shell', () => {
   });
 
   it('reports excessive output distinctly from a timeout', async () => {
-    await expect(runWindowsShell(`Get-Content -LiteralPath ${quote(path.join(root, 'large.txt'))} -Raw`))
+    await expect(runWindowsShell(`Get-Content -LiteralPath ${quote(path.join(root, 'large.txt'))} -Raw`, { roots: [root], denied: [] }))
       .rejects.toThrow('输出超过限制');
+  });
+
+  it('reads file content only inside a configured directory and never inside the protected directory', async () => {
+    const note = path.join(directory, 'note.txt');
+    const secret = path.join(root, 'appdata');
+    fs.mkdirSync(secret);
+    fs.writeFileSync(note, 'hello');
+    fs.writeFileSync(path.join(secret, 'key.txt'), 'SECRET');
+    const inside = await runWindowsShell(`Get-Content -LiteralPath ${quote(note)} -Raw`, { roots: [directory], denied: [secret] });
+    expect(inside.exitCode).toBe(0);
+    expect(inside.stdout).toContain('hello');
+    const outside = await runWindowsShell(`Get-Content -LiteralPath ${quote(path.join(root, 'large.txt'))} -Raw`, { roots: [directory], denied: [secret] });
+    expect(outside.exitCode).not.toBe(0);
+    expect(outside.stdout).toBe('');
+    expect(outside.stderr).toContain('不在可读目录中');
+    const protectedFile = await runWindowsShell(`Get-Content -LiteralPath ${quote(path.join(secret, 'key.txt'))} -Raw`, { roots: [root], denied: [secret] });
+    expect(protectedFile.exitCode).not.toBe(0);
+    expect(protectedFile.stdout).toBe('');
+    const listed = await runWindowsShell(`Get-ChildItem -LiteralPath ${quote(root)} -Directory | Select-Object -ExpandProperty FullName`, { roots: [], denied: [secret] });
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain(directory);
   });
 
   it.each([
@@ -60,6 +81,7 @@ describe.skipIf(process.platform !== 'win32')('Windows host shell', () => {
     'Write-Output bad > PLACEHOLDER',
     'Write-Output ok | ForEach-Object { Remove-Item -LiteralPath PLACEHOLDER }',
     'cmd.exe /c echo forbidden',
+    'Write-Output $env:OS',
     'Set-Item env:PATH bad',
     '#requires -Modules UntrustedModule\nGet-Location',
     'Microsoft.PowerShell.Management\\Remove-Item -LiteralPath PLACEHOLDER',

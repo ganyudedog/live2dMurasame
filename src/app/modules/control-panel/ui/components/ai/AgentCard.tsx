@@ -24,6 +24,7 @@ export const AgentCard = observer(function AgentCard({ settings = false }: { set
   const [saving, setSaving] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [workspaces, setWorkspaces] = useState<AgentSettings['workspaces']>([]);
+  const [readRoots, setReadRoots] = useState<string[]>([]);
   const [sources, setSources] = useState<string[]>([]);
   const [notice, setNotice] = useState('');
   useEffect(() => {
@@ -48,18 +49,38 @@ export const AgentCard = observer(function AgentCard({ settings = false }: { set
       if (!disposed) merge(snapshot);
       if (settings) {
         const config = await api.invoke(opened, commandRequest('agent.settings.get')) as AgentSettings;
-        if (!disposed) { setWorkspaces(config.workspaces); setSources(config.remoteSources); setSettingsLoaded(true); }
+        if (!disposed) {
+          setWorkspaces(config.workspaces);
+          setReadRoots(config.shellReadRoots);
+          setSources(config.remoteSources);
+          setSettingsLoaded(true);
+        }
       }
     }).catch((reason) => { if (!disposed) setError(String(reason)); });
     return () => { disposed = true; off?.(); if (id) void api.close(id); };
   }, [settings]);
+
+  const saveReadRoots = async () => {
+    if (!session || !window.CliAPI || !settingsLoaded || saving) return;
+    setSaving(true); setError('');
+    try {
+      const current = await window.CliAPI.invoke(session, commandRequest('agent.settings.get')) as AgentSettings;
+      const saved = await window.CliAPI.invoke(session, commandRequest('agent.settings.update', {
+        ...current, shellReadRoots: readRoots.map((item) => item.trim()).filter(Boolean),
+      })) as AgentSettings;
+      setReadRoots(saved.shellReadRoots);
+      setNotice('已保存');
+    } catch (reason) { setError(String(reason)); } finally { setSaving(false); }
+  };
 
   const saveSources = async (next: string[]) => {
     if (!session || !window.CliAPI || !settingsLoaded || saving) return;
     setSaving(true); setError('');
     try {
       const current = await window.CliAPI.invoke(session, commandRequest('agent.settings.get')) as AgentSettings;
-      await window.CliAPI.invoke(session, commandRequest('agent.settings.update', { ...current, remoteSources: next }));
+      await window.CliAPI.invoke(session, commandRequest('agent.settings.update', {
+        workspaces: current.workspaces, remoteSources: next,
+      }));
       setSources(next);
       setNotice('已保存到全局配置');
     } catch (reason) { setError(String(reason)); } finally { setSaving(false); }
@@ -85,6 +106,25 @@ export const AgentCard = observer(function AgentCard({ settings = false }: { set
             <Plus />
             添加项目
           </Button>
+        </div>
+      </Field>
+      <Field label="可读取内容的目录" hint="shell.run 只能在这些目录里读取文件正文。留空则拒绝读取。列目录不受影响。">
+        <div className="space-y-2">
+          {readRoots.map((directory, index) => <div className="flex gap-2" key={index}>
+            <Input aria-label={`可读目录 ${index + 1}`} placeholder="本机目录绝对路径" className="flex-1 font-mono" value={directory}
+              onChange={(event) => setReadRoots((items) => items.map((item, i) => i === index ? event.target.value : item))} />
+            <Button variant="ghost" size="icon" aria-label={`移除可读目录 ${index + 1}`} title="移除"
+              onClick={() => setReadRoots((items) => items.filter((_, i) => i !== index))}><X /></Button>
+          </div>)}
+          <div className="flex gap-2">
+            <Button variant="soft" size="xs" onClick={() => setReadRoots((items) => [...items, ''])}>
+              <Plus />
+              添加目录
+            </Button>
+            <Button variant="primary" size="xs" disabled={!session || !settingsLoaded || saving} onClick={() => void saveReadRoots()}>
+              保存
+            </Button>
+          </div>
         </div>
       </Field>
       <Field label="允许调用 CLI 的插件" hint="勾选后立即保存到全局配置；未勾选的插件仍可正常聊天。">

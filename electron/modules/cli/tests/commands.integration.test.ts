@@ -22,7 +22,9 @@ const request = (command: string, args: Record<string, unknown> = {}, id = `call
 const setup = async (adapter: CodexRunner = { run: vi.fn(async () => ({ summary: 'done', providerSessionId: 'session-a' })) }) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live2d-cli-'));
   cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const settings = { displayLang: 'zh', scale: 1, apiKey: 'SECRET', asr: { mode: 'local', numThreads: 2 } };
+  const settings: { displayLang: string; scale: number; apiKey: string; asr: { mode: string; numThreads: number }; shellReadRoots: string[] } = {
+    displayLang: 'zh', scale: 1, apiKey: 'SECRET', asr: { mode: 'local', numThreads: 2 }, shellReadRoots: [],
+  };
   const publishSnapshot = vi.fn();
   const live = {
     root: { settings, currentModelPath: null as string | null },
@@ -34,6 +36,7 @@ const setup = async (adapter: CodexRunner = { run: vi.fn(async () => ({ summary:
   const runtime = createCliModule({
     directory: dir,
     globalConfigPath: path.join(dir, "globalModelConfig.json"),
+    protectedRoot: path.join(dir, 'appdata'),
     adapter,
     live2dEnvironmentService: live,
     modelEnvironmentService: { updateConfiguration: () => ({}), getConfiguration: () => ({}), getInteractionView: () => null },
@@ -65,6 +68,33 @@ describe('CLI commands, persistence and task ownership', () => {
     expect(new CliService(new TaskStore(path.join(dir, 'tasks.json')), undefined, new PluginCliGrants(path.join(dir, 'globalModelConfig.json'))).isAvailable(remote)).toBe(false);
   });
 
+  it('stores readable directories in live2denv settings without exposing them through config.get', async () => {
+    const { runtime, dir, live } = await setup();
+    fs.mkdirSync(path.join(dir, 'appdata'));
+    const readable = fs.mkdtempSync(path.join(dir, 'readable-'));
+    const updated = await runtime.cli.invoke(request('agent.settings.update', {
+      workspaces: [{ id: 'project', path: dir }],
+      remoteSources: [],
+      shellReadRoots: [` ${readable} `],
+    }), context) as { shellReadRoots: string[]; workspaces: Array<{ id: string; path: string }> };
+    expect(updated.shellReadRoots).toEqual([fs.realpathSync(readable)]);
+    expect(updated.workspaces).toEqual([{ id: 'project', path: fs.realpathSync(dir) }]);
+    expect(live.root.settings.shellReadRoots).toEqual([fs.realpathSync(readable)]);
+    const visible = await runtime.cli.invoke(request('config.get', { scope: 'global' }), context) as { value: Record<string, unknown> };
+    expect(visible.value).not.toHaveProperty('shellReadRoots');
+    const remote: CommandContext = { owner: 'remote-person', local: false, source: 'plugin:example', conversationId: 'group' };
+    await runtime.cli.invoke(request('agent.settings.update', {
+      workspaces: [{ id: 'project', path: dir }], remoteSources: ['plugin:example'],
+    }), context);
+    const extra = path.join(dir, 'extra');
+    fs.mkdirSync(extra);
+    await runtime.cli.invoke(request('agent.workspace.add', { id: 'extra', path: extra }), remote);
+    expect(live.root.settings.shellReadRoots).toEqual([fs.realpathSync(readable)]);
+    await expect(runtime.cli.invoke(request('agent.settings.update', {
+      workspaces: [{ id: 'project', path: dir }], remoteSources: [], shellReadRoots: [path.join(dir, 'missing')],
+    }), context)).rejects.toThrow('existing directory');
+  });
+
   it('validates configuration, redacts credentials, checks revisions and broadcasts once on retry', async () => {
     const { runtime, live, publishSnapshot } = await setup();
     const read = await runtime.cli.invoke(request('config.get', { scope: 'global' }), context) as { revision: string };
@@ -82,7 +112,7 @@ describe('CLI commands, persistence and task ownership', () => {
     await expect(runtime.cli.invoke({ ...update, args: { ...update.args, patch: { scale: 2 } } }, context)).rejects.toThrow('Invocation conflict');
   });
 
-  it('deduplicates starts, serializes a workspace, and survives subscriber disposal', async () => {
+  it('deduplicates starts, runs three tasks, and queues the fourth', async () => {
     const finishes: Array<() => void> = [];
     const adapter: CodexRunner = {
       run: vi.fn((input: CodexRunRequest) => new Promise<CodexRunResult>((resolve, reject) => {
@@ -99,14 +129,18 @@ describe('CLI commands, persistence and task ownership', () => {
     ]) as [{ id: string }, { id: string }];
     expect(retry.id).toBe(first.id);
     const second = await runtime.cli.invoke(request('agent.run', { workspaceId: 'project', prompt: 'two' }), context) as { id: string };
+    const third = await runtime.cli.invoke(request('agent.run', { workspaceId: 'project', prompt: 'three' }), context) as { id: string };
+    const fourth = await runtime.cli.invoke(request('agent.run', { workspaceId: 'project', prompt: 'four' }), context) as { id: string };
     const off = runtime.cli.subscribeTasks(() => {});
     off();
-    await vi.waitFor(() => expect(adapter.run).toHaveBeenCalledTimes(1));
-    expect(runtime.cli.getTask(second.id, 'local').status).toBe('queued');
+    await vi.waitFor(() => expect(adapter.run).toHaveBeenCalledTimes(3));
+    expect(runtime.cli.getTask(second.id, 'local').status).toBe('running');
+    expect(runtime.cli.getTask(third.id, 'local').status).toBe('running');
+    expect(runtime.cli.getTask(fourth.id, 'local').status).toBe('queued');
     finishes[0]?.();
-    await vi.waitFor(() => expect(adapter.run).toHaveBeenCalledTimes(2));
-    await runtime.cli.invoke(request('agent.cancel', { taskId: second.id }), context);
-    await vi.waitFor(() => expect(runtime.cli.getTask(second.id, 'local').status).toBe('cancelled'));
+    await vi.waitFor(() => expect(adapter.run).toHaveBeenCalledTimes(4));
+    await runtime.cli.invoke(request('agent.cancel', { taskId: fourth.id }), context);
+    await vi.waitFor(() => expect(runtime.cli.getTask(fourth.id, 'local').status).toBe('cancelled'));
     expect(runtime.cli.getTask(first.id, 'local').status).toBe('succeeded');
     expect(() => runtime.cli.getTask(first.id, 'other-owner')).toThrow('not found');
   });

@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeModelConfig, normalizeGlobalModelConfig } from './globalConfig.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { normalizeModelConfig, normalizeGlobalModelConfig, resolveShellReadRoots } from './globalConfig.js';
 import { headAction } from '../../src/test/fixtures/actionCatalog';
+
+describe('shell read directory persistence', () => {
+  it('keeps an empty list when the field is absent and drops blank entries', () => {
+    expect(normalizeGlobalModelConfig({}).shellReadRoots).toEqual([]);
+    expect(normalizeGlobalModelConfig({ shellReadRoots: ['  D:\\proj  ', '', 'd:\\proj', 1] }).shellReadRoots).toEqual(['D:\\proj']);
+  });
+
+  it('resolves an existing directory and rejects a missing path', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-roots-'));
+    expect(resolveShellReadRoots([`${root}${path.sep}`])).toEqual([fs.realpathSync(root)]);
+    expect(() => resolveShellReadRoots([path.join(root, 'missing')])).toThrow('existing directory');
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
 
 describe('persona card persistence contract', () => {
   it('preserves all six card fields through normalization and reload', () => {

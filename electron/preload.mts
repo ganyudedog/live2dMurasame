@@ -173,6 +173,10 @@ const TtsDiagnosticsAPI = {
   saveArtifacts: (artifacts: unknown) => ipcRenderer.invoke('ddd:tts:save-artifacts', { artifacts }),
 };
 
+const PluginAPI = {
+  list: () => ipcRenderer.invoke('ddd:plugins:list'),
+};
+
 const PluginStorageAPI = {
   get: (pluginId: unknown, key: unknown) => ipcRenderer.invoke('ddd:plugin:storage:get', { pluginId, key }),
   set: (pluginId: unknown, key: unknown, value: unknown) => ipcRenderer.invoke('ddd:plugin:storage:set', { pluginId, key, value }),
@@ -229,5 +233,6 @@ contextBridge.exposeInMainWorld('AsrAPI', AsrAPI);
 contextBridge.exposeInMainWorld('SubtitleAPI', SubtitleAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);
 contextBridge.exposeInMainWorld('TtsDiagnosticsAPI', TtsDiagnosticsAPI);
+contextBridge.exposeInMainWorld('PluginAPI', PluginAPI);
 contextBridge.exposeInMainWorld('PluginStorageAPI', PluginStorageAPI);
 contextBridge.exposeInMainWorld('CliAPI', CliAPI);

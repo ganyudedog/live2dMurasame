@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentSettings, TaskStatus } from '../service/commandTypes.js';
 
+/** 账本里只留迁移前的工作区和远程来源。可读目录写在 live2denv 的 settings 里。 */
+export interface LedgerSettings {
+  workspaces: AgentSettings['workspaces'];
+  remoteSources: string[];
+}
+
 export interface CallRecord {
   hash: string;
   state: 'reserved' | 'done' | 'failed';
@@ -33,7 +39,7 @@ export interface CliLedger {
   version: 1;
   calls: Record<string, CallRecord>;
   tasks: Record<string, AgentTaskRecord>;
-  settings: AgentSettings;
+  settings: LedgerSettings;
 }
 
 const emptyLedger = (): CliLedger => ({

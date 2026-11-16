@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import type { TaskStore } from '../infrastructure/TaskStore.js';
 import type { AgentTaskRecord } from '../infrastructure/TaskStore.js';
+import type { ShellAccess } from '../infrastructure/windowsShellPolicy.js';
 import type { AgentSettings, AgentTaskQuery, AgentTaskView, CommandContext, TaskEvent } from './commandTypes.js';
+
+const MAX_RUNNING_TASKS = 3;
 
 const terminal = (task: AgentTaskRecord): boolean =>
   ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(task.status);
@@ -24,6 +27,12 @@ export interface CodexRunResult {
 
 export interface CodexRunner {
   run(input: CodexRunRequest): Promise<CodexRunResult>;
+}
+
+export interface ShellReadStore {
+  read(): string[];
+  write(paths: string[]): string[];
+  access(): ShellAccess;
 }
 
 interface RunningTask {
@@ -58,13 +67,15 @@ export class AgentTaskService implements AgentTaskQuery {
 
   private readonly grants?: PluginCliGrantStore;
   private readonly workspaces: WorkspaceCatalog;
+  private readonly shellReads?: ShellReadStore;
   private readonly store: TaskStore;
   private readonly adapter: CodexRunner;
 
-  constructor(store: TaskStore, adapter: CodexRunner, grants: PluginCliGrantStore | undefined, workspaces: WorkspaceCatalog) {
+  constructor(store: TaskStore, adapter: CodexRunner, grants: PluginCliGrantStore | undefined, workspaces: WorkspaceCatalog, shellReads?: ShellReadStore) {
     this.store = store;
     this.grants = grants;
     this.workspaces = workspaces;
+    this.shellReads = shellReads;
     this.adapter = adapter;
     for (const task of Object.values(store.data.tasks)) {
       if (!terminal(task)) {
@@ -108,17 +119,23 @@ export class AgentTaskService implements AgentTaskQuery {
     return {
       workspaces: this.workspaces.list(),
       remoteSources: this.grants?.read() ?? [...this.store.data.settings.remoteSources],
+      shellReadRoots: this.shellReads?.read() ?? [],
     };
+  }
+
+  shellAccess(): ShellAccess {
+    return this.shellReads?.access() ?? { roots: [], denied: [] };
   }
 
   addWorkspace(args: { id: string; path: string }): { id: string; path: string } {
     return this.workspaces.add(args.id, args.path);
   }
 
-  updateSettings(args: AgentSettings): AgentSettings {
+  updateSettings(args: { workspaces: AgentSettings['workspaces']; remoteSources: string[]; shellReadRoots?: string[] }): AgentSettings {
     if (new Set(args.workspaces.map((item) => item.id)).size !== args.workspaces.length) throw new Error('Duplicate workspace ID');
     this.workspaces.write(args.workspaces);
     this.grants?.write(args.remoteSources);
+    if (args.shellReadRoots) this.shellReads?.write(args.shellReadRoots);
     this.store.data.settings = { workspaces: [], remoteSources: this.grants ? [] : args.remoteSources };
     this.store.save();
     return this.getSettings();
@@ -194,14 +211,11 @@ export class AgentTaskService implements AgentTaskQuery {
 
   private pump(): void {
     if (this.closed) return;
-    const busy = new Set<string>();
-    for (const id of this.running.keys()) {
-      const directory = this.store.data.tasks[id]?.directory;
-      if (directory) busy.add(directory);
-    }
-    for (const task of Object.values(this.store.data.tasks)) {
-      if (task.status !== 'queued' || busy.has(task.directory)) continue;
-      busy.add(task.directory);
+    const queued = Object.values(this.store.data.tasks)
+      .filter((task) => task.status === 'queued')
+      .sort((left, right) => left.createdAt - right.createdAt);
+    for (const task of queued) {
+      if (this.running.size >= MAX_RUNNING_TASKS) return;
       const controller = new AbortController();
       const entry: RunningTask = { controller, done: null };
       this.running.set(task.id, entry);

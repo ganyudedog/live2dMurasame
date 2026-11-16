@@ -12,12 +12,9 @@ import ModelSelectPage from './pages/ModelSelectPage';
 import ModelParamsPage from './pages/ModelParamsPage';
 import MotionSettingsPage from './pages/MotionSettingsPage';
 import PersonaSettingsPage from './pages/PersonaSettingsPage';
+import PluginsPage from './pages/PluginsPage';
 import { PluginPanelHost } from '@app/modules/plugin/hosts/control-panel/PluginPanelHost';
-import { ChevronRight, Puzzle } from 'lucide-react';
 import { Page } from './components/common/Page';
-import { Button } from './components/common/Button';
-import { StatusDot } from './components/common/Badge';
-import { EmptyState, Notice } from './components/common/Feedback';
 
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);
@@ -165,39 +162,13 @@ const ControlPanel: React.FC = observer(() => {
       )}
 
       {activeTab === 'plugins' && (
-        <Page title="插件" description="已发现的插件默认加载，可进入各插件页面配置。">
-          {pluginRuntime.plugins.size === 0 && <EmptyState icon={<Puzzle />} title="暂无插件" />}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {[...pluginRuntime.plugins.values()].map(({ manifest, state, error }) => (
-              <section key={manifest.id} className="flex flex-col gap-3 rounded-xl bg-card p-4 shadow-card">
-                <div className="flex items-start gap-3">
-                  <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
-                    <Puzzle className="size-4" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="truncate text-[13px] font-semibold">{manifest.name}</h2>
-                    <p className="truncate font-mono text-[11px] text-muted-foreground">{manifest.id} · {manifest.version}</p>
-                  </div>
-                  <StatusDot tone={state === 'active' ? 'success' : state === 'failed' ? 'danger' : 'warning'}>
-                    {state === 'active' ? '已加载' : state === 'failed' ? '加载失败' : '尚未就绪'}
-                  </StatusDot>
-                </div>
-                {error && <Notice tone="danger">{error}</Notice>}
-                {pluginRuntime.getControlPanelPages().some((page) => page.ownerId === manifest.id) && (
-                  <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-                    {pluginRuntime.getControlPanelPages().filter((page) => page.ownerId === manifest.id).map((page) => (
-                      <Button key={page.tabId} onClick={() => service.setActiveTab(page.tabId)}>
-                        {page.contribution.title}
-                        <ChevronRight />
-                      </Button>
-                    ))}
-                  </div>
-                )}
-              </section>
-            ))}
-          </div>
-          <PluginPanelHost slot="control-panel" />
-        </Page>
+        <PluginsPage
+          pluginDir={service.config.live2denvConfig?.pluginDir ?? ''}
+          plugins={pluginRuntime.plugins.values()}
+          pages={pages}
+          onSavePluginDir={(pluginDir) => void service.config.updateLive2denvConfig({ pluginDir }).catch(reportError)}
+          onOpenPage={service.setActiveTab}
+        />
       )}
       {activePluginPage && (
         <Page title={activePluginPage.contribution.title} description={activePluginPage.contribution.description}>

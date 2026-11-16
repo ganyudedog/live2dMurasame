@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { buildWindowsShellScript } from './windowsShellPolicy.js';
+import { buildWindowsShellScript, type ShellAccess } from './windowsShellPolicy.js';
 
 const OUTPUT_LIMIT = 4000;
 const TIMEOUT_MS = 10000;
@@ -23,10 +23,10 @@ const powershellPath = (): string => path.join(
 );
 
 /** Run an allowlisted PowerShell query on the host, with a fresh process per call. */
-export const runWindowsShell = (command: string): Promise<ShellResult> => {
+export const runWindowsShell = (command: string, access: ShellAccess = { roots: [], denied: [] }): Promise<ShellResult> => {
   if (process.platform !== 'win32') return Promise.reject(new Error('shell.run 仅支持 Windows'));
   return new Promise((resolve, reject) => {
-    const script = Buffer.from(buildWindowsShellScript(command), 'utf16le').toString('base64');
+    const script = Buffer.from(buildWindowsShellScript(command, access), 'utf16le').toString('base64');
     execFile(powershellPath(), ['-NoProfile', '-NonInteractive', '-EncodedCommand', script], {
       cwd: process.env.USERPROFILE || os.homedir(),
       windowsHide: true,

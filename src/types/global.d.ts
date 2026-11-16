@@ -22,8 +22,7 @@ declare global {
     probedAt: number;
   }
 
-  // 全局模型设置负载
-  // 此处对应配置文件GlobalModelConfig.json中的字段
+  // 全局设置，存在 live2denv.json 的 settings 里。
   interface PetGlobalModelConfigPayload {
     scale?: number;
     ignoreMouse?: boolean;
@@ -40,6 +39,7 @@ declare global {
     asr?: PetAsrConfig;
     subtitle?: Partial<import('../../shared/subtitle/subtitleSettings.js').SubtitleSettings>;
     pushToTalk?: Partial<import('../../shared/subtitle/subtitleSettings.js').PushToTalkSettings>;
+    shellReadRoots?: string[];
   }
 
   interface PetAsrConfig {
@@ -68,6 +68,7 @@ declare global {
   interface PetLive2denvConfig {
     modelPaths: string[];
     currentModelPath: string | null;
+    pluginDir?: string;
     settings?: PetGlobalModelConfig;
     windowState?: { bounds: { x: number; y: number; width: number; height: number } | null; updatedAt: number };
     [key: string]: unknown;
@@ -549,6 +550,15 @@ declare global {
     onState: (callback: (state: PetSubtitleState) => void) => () => void;
   }
 
+  interface RuntimePluginEntry {
+    id: string;
+    url: string;
+  }
+
+  interface PluginAPI {
+    list?: () => Promise<RuntimePluginEntry[]>;
+  }
+
   interface Window {
     CliAPI?: CliBridgeApi;
     WindowAPI?: PetWindowAPI;
@@ -563,6 +573,7 @@ declare global {
     SystemAPI?: PetSystemAPI;
     TtsDiagnosticsAPI?: PetTtsDiagnosticsAPI;
     PluginStorageAPI?: PetPluginStorageAPI;
+    PluginAPI?: PluginAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
   }
 }

@@ -56,6 +56,7 @@ export interface TaskEvent {
 export interface AgentSettings {
   workspaces: Array<{ id: string; path: string }>;
   remoteSources: string[];
+  shellReadRoots: string[];
 }
 
 export interface CommandCatalogEntry {

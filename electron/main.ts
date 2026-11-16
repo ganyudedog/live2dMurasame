@@ -23,6 +23,7 @@ import { registerTtsDiagnosticsIpc } from './utils/ttsDiagnostics.js';
 import { createSubtitleModule } from './modules/subtitle/module.js';
 import { createCliModule } from './modules/cli/module.js';
 import { registerCliIpc } from './interface/ipc/registerCliIpc.js';
+import { resolveRuntimePluginFile, scanRuntimePlugins } from './modules/plugins/scanRuntimePlugins.js';
 import { startCommandServer } from './modules/cli/infrastructure/commandServer.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -45,11 +46,10 @@ const appBaseDir = (() => {
 })();
 const isDevServerMode = Boolean(devServerUrl);
 
-if (!isDevServerMode) {
-  protocol.registerSchemesAsPrivileged([
-    { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
-  ]);
-}
+protocol.registerSchemesAsPrivileged([
+  ...(isDevServerMode ? [] : [{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]),
+  { scheme: 'plugin', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+]);
 
 // 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
 const enableGpu = process.env.VITE_ENABLE_GPU === '1';
@@ -268,6 +268,7 @@ const asrRuntime = applicationIpc.asrRuntime;
 const cliRuntime = createCliModule({
     directory: path.join(app.getPath('userData'), 'cli'),
     globalConfigPath: path.join(app.getPath('userData'), 'config', 'globalModelConfig.json'),
+    protectedRoot: app.getPath('userData'),
     live2dEnvironmentService, modelEnvironmentService,
     sendAll: applicationIpc.sendAll, publishSnapshot: applicationIpc.publishSnapshot,
 });
@@ -403,6 +404,23 @@ app.on('before-quit', (event) => {
 });
 
 app.whenReady().then(async () => {
+    protocol.handle('plugin', (request) => {
+        try {
+            const url = new URL(request.url);
+            const parts = decodeURIComponent(url.pathname).split('/').filter(Boolean);
+            const id = parts.length === 2 && parts[1] === 'index.js' ? parts[0] : '';
+            const filePath = id ? resolveRuntimePluginFile(live2dEnvironmentService.root.pluginDir, id) : null;
+            if (!filePath) return new Response('Not Found', { status: 404 });
+            return new Response(fs.readFileSync(filePath), {
+                status: 200,
+                headers: { 'content-type': 'text/javascript; charset=utf-8' },
+            });
+        } catch {
+            return new Response('Not Found', { status: 404 });
+        }
+    });
+    ipcMain.handle('ddd:plugins:list', () => scanRuntimePlugins(live2dEnvironmentService.root.pluginDir)
+        .map(({ id, url }) => ({ id, url })));
     if (!isDevServerMode) {
         protocol.handle('app', (request) => {
             try {

@@ -37,6 +37,7 @@ export interface TaskEvent { task: AgentTask; sequence: number }
 export interface AgentSettings {
   workspaces: Array<{ id: string; path: string }>;
   remoteSources: string[];
+  shellReadRoots: string[];
 }
 export interface CommandSession {
   invoke(request: CommandRequest): Promise<unknown>;

@@ -38,6 +38,13 @@ describe('environment settings application events', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it('stores the runtime plugin directory on the environment config', () => {
+    const { service, readPersisted } = setup();
+    service.update({ pluginDir: ' D:\\plugins ' });
+    expect(readPersisted().pluginDir).toBe('D:\\plugins');
+    expect(service.root.pluginDir).toBe('D:\\plugins');
+  });
+
   it('does not notify when persistence fails', () => {
     const { service, repository } = setup();
     const listener = vi.fn();

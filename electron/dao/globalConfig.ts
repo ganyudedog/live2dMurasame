@@ -85,6 +85,8 @@ export interface GlobalModelConfig {
   memoryModel: string;
   memoryReasoningEffort: string;
   asr: AsrConfig;
+  /** shell.run 可以读取文件正文的目录。空数组表示不能读任何文件内容。 */
+  shellReadRoots: string[];
 }
 
 export interface BubbleConfig {
@@ -153,6 +155,8 @@ export interface PersistedWindowState {
 export interface Live2denvConfig {
   modelPaths: string[];
   currentModelPath: string | null;
+  /** 运行时插件目录。每个子目录包含 manifest.json 和 index.js。空字符串表示不扫描。 */
+  pluginDir: string;
   settings: GlobalModelConfig;
   touchPriority?: string[];
   eyeMaxUp?: unknown;
@@ -192,11 +196,13 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG: GlobalModelConfig = {
     silenceAfterText: 1.2,
     silenceWithoutText: 0.7,
   },
+  shellReadRoots: [],
 };
 
 export const DEFAULT_LIVE2DENV_CONFIG: Live2denvConfig = {
   modelPaths: [],
   currentModelPath: null,
+  pluginDir: '',
   settings: { ...DEFAULT_GLOBAL_MODEL_CONFIG },
   windowState: { bounds: null, updatedAt: 0 },
 };
@@ -407,6 +413,35 @@ export const normalizeGlobalModelConfig = (settings: unknown = {}): GlobalModelC
     silenceAfterText: Math.max(0.5, silenceAfter),
     silenceWithoutText: Math.max(0.2, silenceWithout),
   };
+  next.shellReadRoots = normalizeShellReadRoots(source.shellReadRoots);
+  return next;
+};
+
+/** 可读目录：去掉空白和重复项。加载时不访问磁盘。 */
+export const normalizeShellReadRoots = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const next: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const directory = item.trim();
+    if (!directory || directory.length > 1024 || next.some((existing) => existing.toLowerCase() === directory.toLowerCase())) continue;
+    next.push(directory);
+    if (next.length >= 50) break;
+  }
+  return next;
+};
+
+/** 保存前确认每一项都是已有目录，并收成真实绝对路径。 */
+export const resolveShellReadRoots = (value: unknown): string[] => {
+  const next: string[] = [];
+  for (const raw of normalizeShellReadRoots(value)) {
+    let directory: string;
+    try { directory = fs.realpathSync(raw); }
+    catch { throw new Error('Readable directory must be an existing directory'); }
+    if (!fs.statSync(directory).isDirectory()) throw new Error('Readable directory must be an existing directory');
+    if (next.some((existing) => existing.toLowerCase() === directory.toLowerCase())) continue;
+    next.push(directory);
+  }
   return next;
 };
 
@@ -428,6 +463,7 @@ export const normalizeLive2denvConfig = (input: unknown = {}): Live2denvConfig =
   if (!currentModelPath || !modelPaths.includes(currentModelPath)) currentModelPath = modelPaths[0] ?? null;
   next.modelPaths = [...new Set(modelPaths)];
   next.currentModelPath = currentModelPath;
+  next.pluginDir = typeof source.pluginDir === 'string' ? source.pluginDir.trim() : '';
   next.touchPriority = Array.isArray(source.touchPriority)
     ? stringList(source.touchPriority)
     : (Array.isArray(source.VITE_TOUCH_PRIORITY) ? stringList(source.VITE_TOUCH_PRIORITY) : undefined);

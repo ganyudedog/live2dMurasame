@@ -95,6 +95,29 @@ describe('CLI commands, persistence and task ownership', () => {
     }), context)).rejects.toThrow('existing directory');
   });
 
+  it('registers an external command after startup and removes it from the catalog', async () => {
+    const { runtime } = await setup();
+    const execute = vi.fn((args: { text: string }) => ({ saved: args.text }));
+    const remove = runtime.cli.registerExternal('plugin.notes', 'notes.add', {
+      skill: 'notes',
+      description: 'Save a note',
+      instructions: '先确认内容再写入。',
+      schema: z.object({ text: z.string().min(1).max(200) }).strict(),
+      execute,
+    });
+    const listed = await runtime.cli.invoke(request('commands.list'), context) as Array<{ name: string; skill: string; instructions?: string }>;
+    expect(listed.find((item) => item.name === 'notes.add')).toMatchObject({ skill: 'notes', instructions: '先确认内容再写入。' });
+    expect(await runtime.cli.invoke(request('notes.add', { text: 'hello' }), context)).toEqual({ saved: 'hello' });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(() => runtime.cli.registerExternal('plugin.other', 'agent.run', {
+      skill: 'notes', description: 'replace', schema: z.object({}).strict(), execute: () => ({}),
+    })).toThrow('Duplicate command');
+    remove();
+    const after = await runtime.cli.invoke(request('commands.list'), context) as Array<{ name: string }>;
+    expect(after.map((item) => item.name)).not.toContain('notes.add');
+    await expect(runtime.cli.invoke(request('notes.add', { text: 'again' }), context)).rejects.toThrow('unavailable');
+  });
+
   it('validates configuration, redacts credentials, checks revisions and broadcasts once on retry', async () => {
     const { runtime, live, publishSnapshot } = await setup();
     const read = await runtime.cli.invoke(request('config.get', { scope: 'global' }), context) as { revision: string };

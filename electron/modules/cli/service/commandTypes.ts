@@ -19,7 +19,8 @@
  * - providerSessionId: Codex thread id returned by the adapter. Continue reuses it; it is not a task id.
  * - parentTaskId: the previous task a continue execution was started from.
  */
-export type CommandSkill = 'settings' | 'development' | 'management';
+/** `management` 不进入 agent loop。其余技能由目录决定，外部注册可以新增。 */
+export type CommandSkill = string;
 
 export interface CommandContext {
   source: string;
@@ -64,6 +65,8 @@ export interface CommandCatalogEntry {
   description: string;
   skill: CommandSkill;
   parameters: Record<string, unknown>;
+  /** 该技能的操作说明。agent loop 加载技能时读这里。 */
+  instructions?: string;
 }
 
 export interface AgentTaskQuery {
@@ -76,6 +79,10 @@ export interface CliCommand<TArgs> {
   schema: { parse: (input: unknown) => TArgs };
   description: string;
   skill: CommandSkill;
+  /** 随技能一起交给 agent loop。同一技能的多条说明会合并。 */
+  instructions?: string;
+  /** 目录里直接使用的 JSON Schema。运行时插件跨进程登记时无法传递 Zod。 */
+  parameters?: Record<string, unknown>;
   localOnly?: boolean;
   execute: (args: TArgs, context: CommandContext, invocationId: string) => unknown | Promise<unknown>;
 }

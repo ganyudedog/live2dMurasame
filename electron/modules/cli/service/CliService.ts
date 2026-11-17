@@ -19,6 +19,7 @@ interface StoredCommand {
   schema: { parse: (input: unknown) => unknown };
   description: string;
   skill: CommandSkill;
+  instructions?: string;
   localOnly: boolean;
   toJsonSchema: () => Record<string, unknown>;
   execute: (args: unknown, context: CommandContext, invocationId: string) => unknown | Promise<unknown>;
@@ -42,8 +43,13 @@ const jsonSchemaOf = (schema: { parse: (input: unknown) => unknown }): Record<st
  * Command registration, authorization, runtime validation, and idempotent dispatch.
  * Task queries go through this type so IPC and HTTP never touch the ledger or AgentTaskService.
  */
+const COMMAND_NAME = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/;
+const COMMAND_SKILL = /^[a-z][a-z0-9-]{0,32}$/;
+const COMMAND_OWNER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,80}$/;
+
 export class CliService {
   private readonly commands = new Map<string, StoredCommand>();
+  private readonly owners = new Map<string, string>();
   private readonly pending = new Map<string, Promise<unknown>>();
 
   private readonly grants?: PluginCliGrantStore;
@@ -60,14 +66,36 @@ export class CliService {
 
   register<TArgs>(name: string, definition: CliCommand<TArgs>): void {
     if (this.commands.has(name)) throw new Error(`Duplicate command: ${name}`);
+    const instructions = definition.instructions?.trim();
     this.commands.set(name, {
       schema: definition.schema,
       description: definition.description,
       skill: definition.skill,
+      ...(instructions ? { instructions } : {}),
       localOnly: definition.localOnly ?? false,
-      toJsonSchema: () => jsonSchemaOf(definition.schema),
+      toJsonSchema: () => definition.parameters ?? jsonSchemaOf(definition.schema),
       execute: (args, context, invocationId) => definition.execute(definition.schema.parse(args), context, invocationId),
     });
+  }
+
+  /**
+   * 启动后登记外部命令。下一次 agent loop 拉目录时就能调用。
+   * 不能覆盖已有命令。返回的函数会撤下该命令。
+   */
+  registerExternal<TArgs extends Record<string, unknown>>(owner: string, name: string, definition: CliCommand<TArgs>): () => void {
+    if (!COMMAND_OWNER.test(owner)) throw new Error('Invalid command owner');
+    if (!COMMAND_NAME.test(name) || name.length > 100 || name === 'commands.list') throw new Error('Invalid command name');
+    if (!COMMAND_SKILL.test(definition.skill)) throw new Error('Invalid command skill');
+    if (this.commands.has(name)) throw new Error(`Duplicate command: ${name}`);
+    this.owners.set(name, owner);
+    this.register(name, definition);
+    let removed = false;
+    return () => {
+      if (removed || this.owners.get(name) !== owner) return;
+      removed = true;
+      this.owners.delete(name);
+      this.commands.delete(name);
+    };
   }
 
   isAvailable(context: CommandContext): boolean {
@@ -132,6 +160,7 @@ export class CliService {
       description: definition.description,
       skill: definition.skill,
       parameters: definition.toJsonSchema(),
+      ...(definition.instructions ? { instructions: definition.instructions } : {}),
     }));
   }
 

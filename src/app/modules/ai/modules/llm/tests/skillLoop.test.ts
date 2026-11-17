@@ -82,6 +82,25 @@ describe('progressive skill loop', () => {
     await runSkillLoop({ config: {}, text: '继续', requestId: 'r2', session, summarize, complete });
     expect(session.compact).toHaveBeenCalledWith({ ...compaction, summary: '用户已确认目录，等待下一步。' });
   });
+  it('loads an externally registered skill and invokes its command', async () => {
+    const session = setup();
+    session.invoke = vi.fn(async (request) => request.command === 'commands.list' ? [
+      { name: 'notes.add', skill: 'notes', description: 'add a note', instructions: '先确认内容再写入。', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
+    ] : { saved: true });
+    let sawInstructions = false;
+    const complete = vi.fn(async (messages: unknown) => {
+      if (JSON.stringify(messages).includes('先确认内容再写入')) sawInstructions = true;
+      if (!sawInstructions) return call('loadSkill', { name: 'notes' });
+      if (!vi.mocked(session.invoke).mock.calls.some(([request]) => request.command === 'notes.add')) return call('notes_add', { text: 'hello' });
+      return { content: '已记下' };
+    });
+    const result = await runSkillLoop({ config: {}, text: '记下来', requestId: 'note-1', session, complete });
+    expect(sawInstructions).toBe(true);
+    expect(vi.mocked(session.invoke)).toHaveBeenCalledWith(expect.objectContaining({ command: 'notes.add', requestId: 'note-1' }));
+    expect(result.context).toContain('saved');
+    expect(result.handled).toBe(true);
+  });
+
   it('loads tools, executes them and feeds observations back until the model finishes', async () => {
     const session = setup();
     const onTaskCreated = vi.fn();

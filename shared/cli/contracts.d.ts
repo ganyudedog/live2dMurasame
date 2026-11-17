@@ -14,8 +14,9 @@ export interface CommandRequest {
 export interface CommandDefinition {
   name: string;
   description: string;
-  skill: 'settings' | 'development' | 'management';
+  skill: string;
   parameters: Record<string, unknown>;
+  instructions?: string;
 }
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
 export interface AgentTask {

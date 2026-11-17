@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { resolveRuntimePluginFile, scanRuntimePlugins } from './scanRuntimePlugins.js';
+import { listRuntimeCliEntries, resolveRuntimePluginFile, scanRuntimePlugins } from './scanRuntimePlugins.js';
 
 const roots: string[] = [];
 afterEach(() => { roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })); });
@@ -28,5 +28,21 @@ describe('runtime plugin directory scan', () => {
     }]);
     expect(resolveRuntimePluginFile(root, 'live2d.feishu')).toBe(path.join(root, 'feishu', 'index.js'));
     expect(resolveRuntimePluginFile(root, '../feishu')).toBeNull();
+  });
+
+  it('lists a backend CLI entry only when the plugin may register commands', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'live2d-plugins-'));
+    roots.push(root);
+    const folder = path.join(root, 'notes');
+    mkdirSync(folder);
+    writeFileSync(path.join(folder, 'manifest.json'), JSON.stringify({
+      id: 'live2d.notes', name: 'Notes', version: '1.0.0', permissions: ['commands.register'], entry: { service: 'cli.js' },
+    }));
+    writeFileSync(path.join(folder, 'cli.js'), 'export const commands = [];\n');
+    const silent = path.join(root, 'silent');
+    mkdirSync(silent);
+    writeFileSync(path.join(silent, 'manifest.json'), JSON.stringify({ id: 'live2d.silent', name: 'Silent', version: '1.0.0' }));
+    writeFileSync(path.join(silent, 'cli.js'), 'export const commands = [];\n');
+    expect(listRuntimeCliEntries(root)).toEqual([{ id: 'live2d.notes', servicePath: path.join(folder, 'cli.js') }]);
   });
 });

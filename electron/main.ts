@@ -23,6 +23,7 @@ import { registerTtsDiagnosticsIpc } from './utils/ttsDiagnostics.js';
 import { createSubtitleModule } from './modules/subtitle/module.js';
 import { createCliModule } from './modules/cli/module.js';
 import { registerCliIpc } from './interface/ipc/registerCliIpc.js';
+import { registerRuntimeCli } from './modules/plugins/registerRuntimeCli.js';
 import { resolveRuntimePluginFile, scanRuntimePlugins } from './modules/plugins/scanRuntimePlugins.js';
 import { startCommandServer } from './modules/cli/infrastructure/commandServer.js';
 
@@ -382,6 +383,7 @@ const createMainWindow = (): BrowserWindow => {
     return window;
 };
 
+let releaseRuntimeCli: (() => void) | undefined;
 let cliShutdownComplete = false;
 let cliShutdownStarted = false;
 app.on('before-quit', (event) => {
@@ -389,6 +391,7 @@ app.on('before-quit', (event) => {
         event.preventDefault();
         if (!cliShutdownStarted) {
             cliShutdownStarted = true;
+            releaseRuntimeCli?.();
             stopCliIpc();
             void Promise.allSettled([cliRuntime.dispose(), commandServer.then((server) => server?.close())])
                 .finally(() => { cliShutdownComplete = true; app.quit(); });
@@ -466,6 +469,7 @@ app.whenReady().then(async () => {
     let loadedConfig: Record<string, unknown>;
     try {
         live2dEnvironmentService.initialize();
+        releaseRuntimeCli = await registerRuntimeCli(cliRuntime.cli, live2dEnvironmentService.root.pluginDir);
         loadedConfig = { ...live2dEnvironmentService.root.settings };
     } catch (error: unknown) {
         backendLog.error('bootstrap', 'config.initialize.failed', { message: errorMessage(error) });

@@ -11,7 +11,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "pnpm electron:compile && tsc -p test/tsconfig.json --noEmit --pretty false && vitest run",
-    "electron:dev": "pnpm electron:compile && set VITE_DEV_SERVER_URL=http://localhost:5180&& electron ./dist-electron/main.js",
+    "electron:dev": "pnpm electron:compile && set VITE_DEV_SERVER_URL=http://localhost:5180&& node --env-file=infra/jaeger/dev.env node_modules/electron/cli.js ./dist-electron/main.js",
     "lint": "eslint .",
     "check:boundaries": "knip --no-progress && node scripts/checkRetiredEntries.mjs",
     "prepare": "husky",
@@ -44,10 +44,11 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@opentelemetry/api": "^1.10.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.301.2",
+    "@opentelemetry/resources": "3.1.1",
     "@opentelemetry/sdk-trace": "^3.1.1",
-    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.2.0",
     "@types/node": "^24.10.13",
     "@types/react": "^19.2.14",

@@ -11,8 +11,10 @@ const loadTracer = (url) => {
       import('@opentelemetry/api'),
       import('@opentelemetry/exporter-trace-otlp-http'),
       import('@opentelemetry/sdk-trace'),
-    ]).then(([api, exporter, sdk]) => {
+      import('@opentelemetry/resources'),
+    ]).then(([api, exporter, sdk, resources]) => {
       const provider = new sdk.TracerProvider({
+        resource: resources.defaultResource().merge(resources.detectResources({ detectors: [resources.serviceNameEnvDetector] })),
         spanProcessors: [new sdk.SimpleSpanProcessor({ exporter: new exporter.OTLPTraceExporter({ url }) })],
       });
       return { api, tracer: provider.getTracer('live2d') };

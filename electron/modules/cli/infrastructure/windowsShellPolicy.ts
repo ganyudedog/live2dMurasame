@@ -1,162 +1,100 @@
-export const WINDOWS_SHELL_COMMANDS = [
-  'Get-Location', 'Get-ChildItem', 'Get-Item', 'Get-Content', 'Test-Path', 'Resolve-Path',
-  'Join-Path', 'Split-Path', 'Get-FileHash', 'Get-PSDrive', 'Get-Date', 'Get-Process',
-  'Get-Service', 'Select-Object', 'Where-Object', 'Sort-Object', 'Measure-Object',
-  'Select-String', 'Format-Table', 'Format-List', 'Out-String', 'ConvertTo-Json', 'Write-Output',
-] as const;
+// Native cmdlets bind their own arguments. The allowlist describes only which operations
+// may discover metadata, read contents, or manipulate path text without resolving it.
+const pathCommands = {
+  'Get-ChildItem': ['discover', 'Path LiteralPath Directory File Force'],
+  'Get-Item': ['discover', 'Path LiteralPath Force'],
+  'Test-Path': ['discover', 'Path LiteralPath PathType'],
+  'Resolve-Path': ['discover', 'Path LiteralPath'],
+  'Get-Content': ['read', 'Path LiteralPath TotalCount Tail Raw Encoding'],
+  'Get-FileHash': ['read', 'Path LiteralPath Algorithm'],
+  'Select-String': ['read', 'Path LiteralPath Pattern InputObject SimpleMatch CaseSensitive AllMatches List Quiet NotMatch'],
+  'Join-Path': ['join', 'Path ChildPath'],
+  'Split-Path': ['split', 'Path Parent Leaf Qualifier NoQualifier IsAbsolute'],
+} as const;
 
+export const WINDOWS_SHELL_COMMANDS = [...Object.keys(pathCommands),
+  'Get-Location', 'Get-PSDrive', 'Get-Date', 'Get-Process', 'Get-Service', 'Select-Object',
+  'Where-Object', 'Sort-Object', 'Measure-Object', 'Format-Table', 'Format-List', 'Out-String', 'ConvertTo-Json', 'Write-Output'];
 export const SHELL_CONTENT_DENIED = 'shell.run 该路径不在可读目录中';
-
-export interface ShellAccess {
-  roots: string[];
-  denied: string[];
-}
-
+export interface ShellAccess { roots: string[]; denied: string[] }
 const psQuote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 const psList = (values: string[]): string => values.map(psQuote).join(', ');
 
-/** Validate the whole program before executing any statement. Never interpolate raw command text. */
-export const buildWindowsShellScript = (command: string, access: ShellAccess): string => `
+export const buildWindowsShellScript = (command: string, access: ShellAccess): string => String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Console]::OutputEncoding
+$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
+Import-Module Microsoft.PowerShell.Management, Microsoft.PowerShell.Utility
 $script:ShellReadRoots = @(${psList(access.roots)})
 $script:ShellDenied = @(${psList(access.denied)})
-function Test-ShellUnder([string]$Path, [string[]]$Roots) {
-  $left = $Path.TrimEnd('\\', '/')
-  foreach ($root in @($Roots)) {
-    if ([string]::IsNullOrWhiteSpace($root)) { continue }
-    $base = [System.IO.Path]::GetFullPath($root).TrimEnd('\\', '/')
-    if ($left.Equals($base, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    if ($left.StartsWith($base + '\\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+function Test-ShellUnder($full, $roots) {
+  foreach ($root in $roots) {
+    $base = $root.TrimEnd('\')
+    if ($full -ieq $base -or $full.StartsWith($base + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
   }
   return $false
 }
-function Assert-ShellReadable([string]$Candidate) {
-  if ([string]::IsNullOrWhiteSpace($Candidate)) { throw '${SHELL_CONTENT_DENIED}' }
-  $plain = $Candidate
-  $marker = $plain.IndexOf('::')
-  if ($marker -ge 0 -and $plain.StartsWith('Microsoft.PowerShell')) { $plain = $plain.Substring($marker + 2) }
-  $full = [System.IO.Path]::GetFullPath($plain)
-  $target = $full
-  if (Test-Path -LiteralPath $full) {
-    $item = Get-Item -LiteralPath $full -Force
-    $guard = 0
-    while ($item.LinkType -and $guard -lt 8) {
-      $next = $item.Target
-      if ($next -is [System.Array]) { $next = $next[0] }
-      if (-not $next) { break }
-      if (-not [System.IO.Path]::IsPathRooted([string]$next)) { $next = Join-Path $item.Directory.FullName ([string]$next) }
-      $nextFull = [System.IO.Path]::GetFullPath([string]$next)
-      if (-not (Test-Path -LiteralPath $nextFull)) { $target = $nextFull; break }
-      $item = Get-Item -LiteralPath $nextFull -Force
-      $target = $item.FullName
-      $guard++
-    }
-    if (-not $item.LinkType) { $target = $item.FullName }
+function Get-CheckedPath([string]$value, [bool]$read) {
+  $value = $value -replace '^Microsoft\.PowerShell\.Core\\FileSystem::', ''
+  if (!$value -or $value -match '[*?\[\]~]|^(?:[/\\]{2}|[a-z]:(?![/\\]))|:(?![/\\])' -or
+      @($value -split '[/\\]' | Where-Object { $_ -notin @('.', '..') -and $_ -match '[. ]$' }).Count) {
+    throw '${SHELL_CONTENT_DENIED}'
   }
-  if (Test-ShellUnder $target $script:ShellDenied) { throw '${SHELL_CONTENT_DENIED}' }
-  $allowed = $false
-  foreach ($root in @($script:ShellReadRoots)) { if (Test-ShellUnder $target @($root)) { $allowed = $true } }
-  if (-not $allowed) { throw '${SHELL_CONTENT_DENIED}' }
-  return $target
+  $provider = $null; $drive = $null
+  $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($value, [ref]$provider, [ref]$drive)
+  if ($provider.Name -ne 'FileSystem' -or $full -notmatch '^[a-z]:\\' -or $full.Substring(2).Contains(':')) { throw '${SHELL_CONTENT_DENIED}' }
+  $full = [IO.Path]::GetFullPath($full).TrimEnd('\')
+  if ((Test-ShellUnder $full $script:ShellDenied) -or ($read -and !(Test-ShellUnder $full $script:ShellReadRoots))) { throw '${SHELL_CONTENT_DENIED}' }
+  if ($full.Length -eq 2) { $full += '\' }
+  for ($item = $full; $item; $item = [IO.Path]::GetDirectoryName($item)) {
+    try { $attrs = [IO.File]::GetAttributes($item) }
+    catch [IO.FileNotFoundException] { continue }
+    catch [IO.DirectoryNotFoundException] { continue }
+    if ($attrs -band [IO.FileAttributes]::ReparsePoint) { throw '${SHELL_CONTENT_DENIED}' }
+  }
+  return $full
 }
-function Expand-ShellPath([string]$Candidate, [bool]$Literal) {
-  if ([string]::IsNullOrWhiteSpace($Candidate)) { throw '${SHELL_CONTENT_DENIED}' }
-  if (-not $Literal -and $Candidate -match '[\\*\\?]') {
-    $items = @(Get-ChildItem -Path $Candidate -Force -ErrorAction SilentlyContinue)
-    if ($items.Count -eq 0) { throw '${SHELL_CONTENT_DENIED}' }
-    return @($items | ForEach-Object { $_.FullName })
-  }
-  return @($Candidate)
+$script:PathRules = @{
+${Object.entries(pathCommands).map(([name, [mode, params]]) => `  '${name}' = @('${mode}', '${params}')`).join('\n')}
 }
-function Resolve-ShellContent([string[]]$Paths, [bool]$Literal) {
-  $checked = New-Object System.Collections.Generic.List[string]
-  foreach ($path in @($Paths)) {
-    foreach ($expanded in @(Expand-ShellPath $path $Literal)) { [void]$checked.Add((Assert-ShellReadable $expanded)) }
+$script:NativeCommands = @{}
+function Invoke-GuardedCommand($name, $bound) {
+  $mode, $fields = $script:PathRules[$name]; $native = $script:NativeCommands[$name]; $argsMap = @{}
+  foreach ($key in $bound.Keys) {
+    if ($key -notin $fields.Split(' ')) { throw ('shell.run parameter not allowed: ' + $key) }
+    $argsMap[$key] = $bound[$key]
   }
-  if ($checked.Count -eq 0) { throw '${SHELL_CONTENT_DENIED}' }
-  return $checked.ToArray()
-}
-function Get-Content {
-  [CmdletBinding(DefaultParameterSetName='Path')]
-  param(
-    [Parameter(ParameterSetName='Path', Position=0, ValueFromPipeline=$true, ValueFromPipelineByPropertyName=$true)]
-    [Alias('PSPath')]
-    [string[]]$Path,
-    [Parameter(ParameterSetName='LiteralPath', Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
-    [string[]]$LiteralPath,
-    [Alias('First')][long]$TotalCount = -1,
-    [int]$Tail = -1,
-    [switch]$Raw,
-    [string]$Encoding
-  )
-  begin { $collected = New-Object System.Collections.Generic.List[string] }
-  process {
-    $incoming = $(if ($PSCmdlet.ParameterSetName -eq 'LiteralPath') { $LiteralPath } else { $Path })
-    foreach ($item in @($incoming)) { if ($item) { [void]$collected.Add([string]$item) } }
+  if ($argsMap.ContainsKey('InputObject')) {
+    if ($argsMap.InputObject -isnot [string]) { throw '${SHELL_CONTENT_DENIED}' }
+    & $native @argsMap; return
   }
-  end {
-    $checked = Resolve-ShellContent $collected.ToArray() ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
-    $params = @{ LiteralPath = $checked }
-    if ($Raw) { $params.Raw = $true }
-    if ($TotalCount -ge 0) { $params.TotalCount = $TotalCount }
-    if ($Tail -ge 0) { $params.Tail = $Tail }
-    if ($Encoding) { $params.Encoding = $Encoding }
-    Microsoft.PowerShell.Management\\Get-Content @params
+  $key = if ($argsMap.ContainsKey('LiteralPath')) { 'LiteralPath' } else { 'Path' }
+  $paths = if ($argsMap.ContainsKey($key)) { $argsMap[$key] } else { '.' }
+  $argsMap.Remove($key)
+  foreach ($candidate in $paths) {
+    $checked = Get-CheckedPath $candidate ($mode -eq 'read')
+    if ($mode -eq 'join' -or $mode -eq 'split') {
+      $argsMap.Path = $checked
+      if ($mode -eq 'join') { $null = Get-CheckedPath ([IO.Path]::Combine($checked, $argsMap.ChildPath)) $false }
+    } else { $argsMap.LiteralPath = $checked }
+    if ($name -eq 'Get-ChildItem') {
+      & $native @argsMap | Where-Object { !(Test-ShellUnder $_.FullName $script:ShellDenied) -and !($_.Attributes -band [IO.FileAttributes]::ReparsePoint) }
+    } else { & $native @argsMap }
   }
 }
-function Select-String {
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory=$true, Position=0)][string]$Pattern,
-    [Parameter(ValueFromPipeline=$true)][psobject]$InputObject,
-    [Parameter(ValueFromPipelineByPropertyName=$true)][Alias('PSPath')][string[]]$Path,
-    [string[]]$LiteralPath,
-    [switch]$SimpleMatch, [switch]$CaseSensitive, [switch]$AllMatches, [switch]$List, [switch]$Quiet, [switch]$NotMatch
-  )
-  begin { $texts = New-Object System.Collections.Generic.List[string]; $files = New-Object System.Collections.Generic.List[string] }
-  process {
-    foreach ($item in @($LiteralPath)) { if ($item) { [void]$files.Add([string]$item) } }
-    foreach ($item in @($Path)) { if ($item) { [void]$files.Add([string]$item) } }
-    if ($InputObject -is [string]) { [void]$texts.Add($InputObject) }
-    elseif ($null -ne $InputObject -and $InputObject.PSObject.Properties['FullName']) { [void]$files.Add([string]$InputObject.FullName) }
+foreach ($name in $script:PathRules.Keys) {
+  $native = if ($name -in @('Get-Content','Get-ChildItem')) { Get-Command $name -ArgumentList $HOME } else { Get-Command $name }
+  $script:NativeCommands[$name] = $native
+  $meta = [System.Management.Automation.CommandMetadata]::new($native)
+  $meta.Parameters.Clear()
+  foreach ($key in $script:PathRules[$name][1].Split(' ')) {
+    if ($native.Parameters.ContainsKey($key)) { $meta.Parameters.Add($key, $native.Parameters[$key]) }
   }
-  end {
-    $common = @{}
-    if ($SimpleMatch) { $common.SimpleMatch = $true }
-    if ($CaseSensitive) { $common.CaseSensitive = $true }
-    if ($AllMatches) { $common.AllMatches = $true }
-    if ($List) { $common.List = $true }
-    if ($Quiet) { $common.Quiet = $true }
-    if ($NotMatch) { $common.NotMatch = $true }
-    if ($files.Count -gt 0) {
-      $checked = Resolve-ShellContent $files.ToArray() ([bool]$PSBoundParameters.ContainsKey('LiteralPath'))
-      Microsoft.PowerShell.Utility\\Select-String -Pattern $Pattern -LiteralPath $checked @common
-    }
-    if ($texts.Count -gt 0) { $texts.ToArray() | Microsoft.PowerShell.Utility\\Select-String -Pattern $Pattern @common }
-    if ($files.Count -eq 0 -and $texts.Count -eq 0) { throw '${SHELL_CONTENT_DENIED}' }
-  }
-}
-function Get-FileHash {
-  [CmdletBinding(DefaultParameterSetName='Path')]
-  param(
-    [Parameter(ParameterSetName='Path', Position=0, ValueFromPipeline=$true, ValueFromPipelineByPropertyName=$true)]
-    [Alias('PSPath')][string[]]$Path,
-    [Parameter(ParameterSetName='LiteralPath', Mandatory=$true)][string[]]$LiteralPath,
-    [string]$Algorithm = 'SHA256'
-  )
-  begin { $collected = New-Object System.Collections.Generic.List[string] }
-  process {
-    $incoming = $(if ($PSCmdlet.ParameterSetName -eq 'LiteralPath') { $LiteralPath } else { $Path })
-    foreach ($item in @($incoming)) { if ($item) { [void]$collected.Add([string]$item) } }
-  }
-  end {
-    $checked = Resolve-ShellContent $collected.ToArray() ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
-    Microsoft.PowerShell.Utility\\Get-FileHash -LiteralPath $checked -Algorithm $Algorithm
-  }
+  $params = [System.Management.Automation.ProxyCommand]::GetParamBlock($meta)
+  $binding = [System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($meta)
+  Set-Item -LiteralPath ('Function:' + $name) -Value ([scriptblock]::Create($binding + 'param(' + $params + ') process { Invoke-GuardedCommand ''' + $name + ''' $PSBoundParameters }'))
 }
 $source = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(command, 'utf8').toString('base64')}'))
 $allowed = @(${WINDOWS_SHELL_COMMANDS.map((name) => `'${name}'`).join(', ')})
@@ -171,6 +109,12 @@ try {
   if ($ast.ScriptRequirements) { throw 'shell.run blocked syntax: #requires' }
   foreach ($node in $ast.FindAll({ param($n) $true }, $true)) {
     if ($node.GetType().Name -notin $allowedNodes) { throw ('shell.run blocked syntax: ' + $node.GetType().Name) }
+    if ($node -is [System.Management.Automation.Language.CommandParameterAst]) {
+      $paramName = $node.ParameterName
+      foreach ($reserved in @('OutVariable','ErrorVariable','WarningVariable','InformationVariable','PipelineVariable','ov','ev','wv','iv','pv')) {
+        if ($reserved.StartsWith($paramName, [StringComparison]::OrdinalIgnoreCase)) { throw ('shell.run parameter not allowed: ' + $paramName) }
+      }
+    }
     if ($node -is [System.Management.Automation.Language.CommandAst]) {
       $name = $node.GetCommandName()
       if ($node.InvocationOperator -ne 'Unknown' -or $name -notin $allowed) {

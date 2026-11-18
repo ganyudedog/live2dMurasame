@@ -348,9 +348,11 @@ it('an existing channel follows host selection and supports an unauthenticated e
   const options = { source: 'test', conversationId: 'room', interaction: { mode: 'queue' as const } };
   const context = { channelId: 'channel', requestId: 'first-request', conversationId: 'room', signal: new AbortController().signal, emit: vi.fn() };
   saveLlmSelection(models, 'chat', { model: 'second', effort: 'high' });
+  await execute(options, { text: '单次覆盖', reasoningEffort: 'low' }, { ...context, requestId: 'override' });
+  expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'second' }), expect.objectContaining({ reasoningEffort: 'low' }));
   await execute(options, { text: '你好' }, context);
   expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'second' }), expect.objectContaining({ reasoningEffort: 'high' }));
   config.globalModelConfig = { apiKey: '', baseURL: 'new-url', llmModels: [{ id: 'new-first', efforts: ['none'], effortsSource: 'probe', probedAt: 2 }] };
-  await execute(options, { text: '换接口后的下一轮' }, { ...context, requestId: 'second-request' });
+  await execute(options, { text: '换接口后的下一轮', reasoningEffort: 'low' }, { ...context, requestId: 'second-request' });
   expect(requestStage2LLM).toHaveBeenLastCalledWith({ apiKey: '', baseURL: 'new-url', model: 'new-first' }, expect.objectContaining({ reasoningEffort: 'none' }));
 });

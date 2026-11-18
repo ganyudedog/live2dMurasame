@@ -65,7 +65,7 @@ describe('runtime CLI registration', () => {
       writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ id: folder, permissions: ['commands.register'] }));
       writeFileSync(path.join(dir, 'cli.js'), body);
     }
-    const errors = [];
+    const errors: unknown[] = [];
     const cli = new CliService(new CallStore(path.join(root, 'tasks.json')));
     await registerRuntimeCli(cli, root, { error: (_scope, _event, data) => { errors.push(data); }, open: () => ({ traceId: '', event() {} }) }, new PluginStorageService({ directory: path.join(root, 'storage') }));
     expect(errors).toEqual([expect.objectContaining({ pluginId: 'broken', message: 'cli exploded' })]);

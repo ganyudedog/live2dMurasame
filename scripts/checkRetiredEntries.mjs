@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,20 +13,20 @@ const sourceExt = new Set(['.ts', '.tsx', '.js', '.mjs', '.mts']);
 
 const files = [];
 const walk = (dir) => {
-  for (const name of readdirSync(dir)) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const { name } = entry;
     if (skipDir.has(name)) continue;
     const full = path.join(dir, name);
-    const stat = statSync(full);
-    if (stat.isDirectory()) {
+    if (entry.isDirectory()) {
       walk(full);
       continue;
     }
-    if (name.endsWith('.test.ts') || name.endsWith('.test.tsx')) continue;
+    if (!entry.isFile() || name.endsWith('.test.ts') || name.endsWith('.test.tsx')) continue;
     if (!sourceExt.has(path.extname(name))) continue;
     files.push(full);
   }
 };
-walk(root);
+for (const core of ['src', 'electron', 'shared']) walk(path.join(root, core));
 
 const hits = [];
 for (const file of files) {

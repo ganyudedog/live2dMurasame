@@ -28,6 +28,8 @@ export interface ConversationMemoryArchive {
 }
 
 export interface ConversationRequest {
+  /** A supported effort for this turn only. Omit to inherit the current chat selection. */
+  readonly reasoningEffort?: string;
   readonly sender?: { readonly id: string; readonly displayName?: string };
   readonly memoryArchive?: ConversationMemoryArchive;
   /** Opt into the ordinary personal-memory flow for a successful reply. The caller decides
@@ -80,6 +82,7 @@ export interface ConversationChannel {
 export interface AiHostApi {
   openChannel(options: ConversationChannelOptions): ConversationChannel;
   getRelationship?(): Promise<{ line: string; userAddress?: string } | null>;
-  getModels(): readonly { readonly id: string; readonly efforts: readonly string[] }[];
+  /** chatEffort is present only on the current chat model (empty when unsupported). */
+  getModels(): readonly { readonly id: string; readonly efforts: readonly string[]; readonly chatEffort?: string }[];
   subscribe(listener: () => void): Disposable;
 }

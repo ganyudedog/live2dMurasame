@@ -69,7 +69,14 @@ describe.skipIf(process.platform !== 'win32')('Windows host shell', () => {
     const listed = await runWindowsShell(`Get-ChildItem -LiteralPath ${quote(root)} -Directory | Select-Object -ExpandProperty FullName`, { roots: [], denied: [secret] });
     expect(listed.exitCode).toBe(0);
     expect(listed.stdout).toContain(directory);
-  });
+    expect(listed.stdout).not.toContain(secret);
+    for (const command of ['Get-ChildItem', 'Get-Item', 'Test-Path', 'Resolve-Path']) {
+      const result = await runWindowsShell(`${command} -LiteralPath ${quote(secret)}`, { roots: [root], denied: [secret] });
+      expect(result.exitCode, command).not.toBe(0);
+      expect(result.stderr).toContain('不在可读目录中');
+      expect(result.stdout).toBe('');
+    }
+  }, 15000);
 
   it.each([
     'Remove-Item -LiteralPath PLACEHOLDER',

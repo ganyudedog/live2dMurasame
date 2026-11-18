@@ -69,7 +69,10 @@ export type BoundaryForward = (payload: {
   level: 'info';
   traceId: string;
   boundary: BoundaryName;
-  events: Array<{ event: string }>;
+  startedAt: number;
+  endedAt: number;
+  failed: boolean;
+  events: Array<{ event: string; at: number }>;
 }) => void;
 
 export class LogService {
@@ -270,14 +273,18 @@ export class LogService {
   }
 
   private publishBoundary(trace: TraceState): void {
-    const boundary = trace.boundary;
-    if (!boundary) return;
+    const { boundary, endedAt } = trace;
+    if (!boundary || endedAt === undefined) return;
+    const origin = typeof performance === 'undefined' ? 0 : performance.timeOrigin;
     this.forwardBoundary?.({
       kind: 'boundary',
       level: 'info',
       traceId: trace.traceId,
       boundary,
-      events: trace.events.map((event) => ({ event: event.event })),
+      startedAt: origin + trace.startedAt,
+      endedAt: origin + endedAt,
+      failed: trace.status === 'failed',
+      events: trace.events.map(({ event, timestamp }) => ({ event, at: origin + Math.min(timestamp, endedAt) })),
     });
   }
 

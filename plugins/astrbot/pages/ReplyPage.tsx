@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { BotMessageSquare, RotateCcw, ScrollText } from 'lucide-react';
 import type { AstrBotUiContext } from '../types';
 import { StickerSection } from '../stickers/StickerSection';
@@ -33,12 +33,30 @@ export function AstrBotReplyPage(context: AstrBotUiContext) {
 
 function ReplyForm({ store, context }: { store: BridgeSettingsStore; context: AstrBotUiContext }) {
   const { settings, update } = store;
+  const ai = context.hostApi.ai;
+  const readChat = useCallback(() => ai?.getModels().find(model => model.chatEffort !== undefined), [ai]);
+  const [chat, setChat] = useState(readChat);
+  useEffect(() => {
+    const refresh = () => setChat(readChat());
+    refresh();
+    return ai?.subscribe(refresh);
+  }, [ai, readChat]);
   const [promptDraft, setPromptDraft] = useState(settings.systemPrompt);
   const promptDirty = promptDraft !== settings.systemPrompt;
 
   return <div className="space-y-4">
-    <Section icon={<BotMessageSquare />} title="回复生成" description="QQ 回复跟随宿主当前的对话模型和思考深度，可以同时附带一段朗读文本。">
+    <Section icon={<BotMessageSquare />} title="回复生成" description="QQ 回复使用宿主当前的对话模型。">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="思考深度">
+          <select aria-label="思考深度" className={`${SELECT} w-full`}
+            value={settings.reasoningEffort}
+            onChange={(event) => update({ reasoningEffort: event.target.value })}>
+            <option value="">跟随内核{chat?.chatEffort ? `（${chat.chatEffort}）` : ''}</option>
+            {settings.reasoningEffort && !chat?.efforts.includes(settings.reasoningEffort) &&
+              <option value={settings.reasoningEffort} disabled>{settings.reasoningEffort}（当前不可用，跟随内核）</option>}
+            {chat?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}
+          </select>
+        </Field>
         <Field label="展示语言">
           <select className={`${SELECT} w-full`} value={settings.displayLang}
             onChange={(event) => update({ displayLang: event.target.value as AstrBotBridgeSettings['displayLang'] })}>

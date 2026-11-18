@@ -1,7 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { ConversationChannelOptions } from '../../types';
 import { ConversationScheduler } from './ConversationScheduler';
-import type { ConversationResponse } from '../../types';
 
 const options = (mode: 'queue' | 'interrupt' | 'concurrent' = 'queue'): ConversationChannelOptions => {
   const interaction = mode === 'queue'

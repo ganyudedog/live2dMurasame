@@ -13,7 +13,7 @@
     "test": "pnpm electron:compile && tsc -p test/tsconfig.json --noEmit --pretty false && vitest run",
     "electron:dev": "pnpm electron:compile && set VITE_DEV_SERVER_URL=http://localhost:5180&& node --env-file=infra/jaeger/dev.env node_modules/electron/cli.js ./dist-electron/main.js",
     "lint": "eslint .",
-    "check:boundaries": "knip --no-progress && node scripts/checkRetiredEntries.mjs",
+    "check:boundaries": "node --env-file=scripts/knip.env node_modules/knip/bin/knip.js --no-progress && node scripts/checkRetiredEntries.mjs",
     "prepare": "husky",
     "preview": "vite preview"
   },

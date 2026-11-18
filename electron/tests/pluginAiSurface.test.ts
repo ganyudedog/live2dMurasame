@@ -34,7 +34,10 @@ it('keeps model selection owned by the host rather than plugin channels', () => 
   const channel = api.match(/export interface ConversationChannelOptions \{([\s\S]*?)\n\}/)?.[1];
   expect(channel).toBeDefined();
   expect(channel).not.toMatch(/model|reasoningEffort/);
-  expect(read('plugins/astrbot/settings.ts')).not.toMatch(/readonly model|readonly reasoningEffort/);
+  expect(read('plugins/astrbot/settings.ts')).not.toMatch(/readonly model\b/);
+  const request = api.match(/export interface ConversationRequest \{([\s\S]*?)\n\}/)?.[1];
+  expect(request).toContain('readonly reasoningEffort?: string');
+  expect(request).not.toMatch(/readonly model\b/);
 });
 
 it('exposes command dispatch without a kernel task surface', () => {

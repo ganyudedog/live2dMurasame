@@ -38,7 +38,10 @@ export const createDefaultConversationExecutor = (
     };
     const archive = request.memoryArchive ? { ...request.memoryArchive } : undefined;
     const memory = new LlmMemoryRepository();
-    const { model, effort: reasoningEffort } = loadLlmSelection(global?.llmModels ?? [], 'chat');
+    const models = global?.llmModels ?? [];
+    const { model, effort } = loadLlmSelection(models, 'chat');
+    const override = request.reasoningEffort;
+    const reasoningEffort = override && models.find(entry => entry.id === model)?.efforts.includes(override) ? override : effort;
     const persona = buildPersonaPrompt({ ...normalizePersona(config.modelConfig?.persona), userAddress: '' });
     const scenePrompt = request.systemPrompt?.trim() || options.systemPrompt?.trim() || '';
     // The injected prompt owns relationship, address, and scene. Keep it non-empty so the

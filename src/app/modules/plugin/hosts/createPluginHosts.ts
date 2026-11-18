@@ -1,4 +1,5 @@
 import { reaction } from 'mobx';
+import { loadLlmSelection } from '@app/shared/state-bus/llmSelectionCache';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { ElectronService } from '@app/shared/electron/ElectronService';
 import type { LogService } from '@app/shared/logging/LogService';
@@ -31,8 +32,13 @@ export const createPluginHosts = (deps: PluginHostDependencies): InstalledPlugin
     : []);
   const ai = new AiHost(
     createDefaultConversationExecutor(deps.config, deps.log),
-    () => getLlmModels().map(({ id, efforts }) => ({ id, efforts })),
-    (listener) => reaction(() => JSON.stringify(getLlmModels()), () => listener()),
+    () => {
+      const models = getLlmModels();
+      const chat = loadLlmSelection(models, 'chat');
+      return models.map(({ id, efforts }) => ({ id, efforts: [...efforts], ...(id === chat.model ? { chatEffort: chat.effort } : {}) }));
+    },
+    (listener) => reaction(() => JSON.stringify([getLlmModels(), deps.controlPanel?.aiSettings.model,
+      deps.controlPanel?.aiSettings.reasoningEffort]), () => listener()),
     async () => {
       const modelPath = deps.config.activeModelPath;
       if (!modelPath) return null;

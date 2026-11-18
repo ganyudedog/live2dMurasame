@@ -1,8 +1,8 @@
-export interface BoundaryHop {
+export function exportBoundaryCall(call: {
   traceId: string;
   boundary: string;
-  hop: string;
-  side: 'renderer' | 'backend';
-}
-
-export function exportBoundaryHop(hop: BoundaryHop): void;
+  startedAt: number;
+  endedAt: number;
+  failed: boolean;
+  events: Array<{ event: string; at: number }>;
+}): void;

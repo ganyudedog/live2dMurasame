@@ -5,6 +5,7 @@
     "lib": ["ES2023"],
     "module": "ESNext",
     "types": ["node"],
+    "allowJs": true,
     "skipLibCheck": true,
 
     /* Bundler mode */
@@ -22,5 +23,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "scripts/**/*.mjs", "electron/tests/**/*.mjs", "infra/jaeger/*.mjs", "shared/logging/exportBoundaryTrace.js"]
 }

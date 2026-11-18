@@ -4,8 +4,8 @@ import { operationText } from '../domain/toolConversation.js';
 import type { CommandClaim } from '../../../../shared/cli/contracts.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { TaskStore } from '../infrastructure/TaskStore.js';
-import type { AgentTaskQuery, CliCommand, CommandCatalogEntry, CommandContext, CommandSkill, TaskEvent } from './commandTypes.js';
+import type { CallStore } from '../infrastructure/CallStore.js';
+import type { CliCommand, CommandCatalogEntry, CommandContext, CommandSkill } from './commandTypes.js';
 
 const envelope = z.object({
   invocationId: z.string().min(1).max(240),
@@ -41,7 +41,6 @@ const jsonSchemaOf = (schema: { parse: (input: unknown) => unknown }): Record<st
 
 /**
  * Command registration, authorization, runtime validation, and idempotent dispatch.
- * Task queries go through this type so IPC and HTTP never touch the ledger or AgentTaskService.
  */
 const COMMAND_NAME = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/;
 const COMMAND_SKILL = /^[a-z][a-z0-9-]{0,32}$/;
@@ -53,14 +52,12 @@ export class CliService {
   private readonly pending = new Map<string, Promise<unknown>>();
 
   private readonly grants?: PluginCliGrantStore;
-  private readonly store: TaskStore;
-  private readonly tasks?: AgentTaskQuery;
+  private readonly store: CallStore;
   private readonly conversations?: ToolConversationService;
 
-  constructor(store: TaskStore, tasks?: AgentTaskQuery, grants?: PluginCliGrantStore, conversations?: ToolConversationService) {
+  constructor(store: CallStore, grants?: PluginCliGrantStore, conversations?: ToolConversationService) {
     this.store = store;
     this.grants = grants;
-    this.tasks = tasks;
     this.conversations = conversations;
   }
 
@@ -99,7 +96,7 @@ export class CliService {
   }
 
   isAvailable(context: CommandContext): boolean {
-    return context.local || (this.grants?.read() ?? this.store.data.settings.remoteSources).includes(context.source);
+    return context.local || (this.grants?.read() ?? []).includes(context.source);
   }
 
   authorize(context: CommandContext): void {
@@ -162,21 +159,6 @@ export class CliService {
       parameters: definition.toJsonSchema(),
       ...(definition.instructions ? { instructions: definition.instructions } : {}),
     }));
-  }
-
-  listTasks(owner: string) {
-    if (!this.tasks) throw new Error('Agent tasks are unavailable');
-    return this.tasks.list(owner);
-  }
-
-  getTask(taskId: string, owner: string) {
-    if (!this.tasks) throw new Error('Agent tasks are unavailable');
-    return this.tasks.get(taskId, owner);
-  }
-
-  subscribeTasks(listener: (event: TaskEvent, owner: string) => void): () => void {
-    if (!this.tasks) throw new Error('Agent tasks are unavailable');
-    return this.tasks.subscribe(listener);
   }
 
   async invoke(input: unknown, context: CommandContext): Promise<unknown> {

@@ -31,9 +31,6 @@ export class AstrBotBridgeClient {
   private socket: WebSocket | null = null;
   private channel: ConversationChannel | null = null;
   private stopChannel: (() => void) | null = null;
-  private stopTasks: (() => void) | null = null;
-  private readonly taskSequences = new Map<string, number>();
-  private readonly taskScopes = new Map<string, { conversationId: string; senderId: string }>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectDelayMs = 1000;
@@ -42,8 +39,6 @@ export class AstrBotBridgeClient {
   /** Bumped on disconnect, reconnect, and dispose. In-flight work captures the value it started with. */
   private generation = 0;
   private readonly admissions = new Map<string, Admission>();
-  private readonly notificationOrigins = new Map<string, string>();
-  private readonly sentNotifications = new Set<string>();
   private readonly stickerChoices = new Map<string, StickerChoice[]>();
   private readonly dedup = new MessageDedup(256);
   private readonly lanes = new ConversationLanes();
@@ -67,8 +62,6 @@ export class AstrBotBridgeClient {
       || settings.interactionMode !== this.settings.interactionMode
       || settings.maxConcurrent !== this.settings.maxConcurrent
       || settings.maxQueued !== this.settings.maxQueued
-      || settings.model !== this.settings.model
-      || settings.reasoningEffort !== this.settings.reasoningEffort
       || settings.displayLang !== this.settings.displayLang
       || settings.speakLang !== this.settings.speakLang;
     const wakeChanged = JSON.stringify(settings.wakeWords) !== JSON.stringify(this.settings.wakeWords);
@@ -97,7 +90,6 @@ export class AstrBotBridgeClient {
   }
 
   dispose(): void {
-    this.stopTasks?.(); this.stopTasks = null;
     this.disposed = true;
     this.releaseAll();
     if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
@@ -137,7 +129,6 @@ export class AstrBotBridgeClient {
       if (this.socket !== socket) return;
       this.socket = null; this.handshakeAccepted = false;
       this.releaseAll();
-      this.stopTasks?.(); this.stopTasks = null;
       this.channel?.dispose(); this.channel = null; this.stopChannel?.(); this.stopChannel = null;
       if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -148,7 +139,6 @@ export class AstrBotBridgeClient {
   }
 
   private reconnect(reason: string): void {
-    this.stopTasks?.(); this.stopTasks = null;
     this.releaseAll();
     const socket = this.socket; this.socket = null;
     this.channel?.dispose(); this.channel = null; this.stopChannel?.(); this.stopChannel = null;
@@ -199,7 +189,6 @@ export class AstrBotBridgeClient {
       const generation = this.generation;
       const channel = this.options.ai.openChannel({
         source: 'astrbot', conversationId: 'astrbot', interaction: requested,
-        model: this.settings.model, reasoningEffort: this.settings.reasoningEffort || undefined,
         displayLang: this.settings.displayLang, speakLang: this.settings.speakLang || null,
       });
       this.channel = channel;
@@ -207,25 +196,6 @@ export class AstrBotBridgeClient {
         if (this.generation !== generation || this.channel !== channel) return;
         this.handleAiResponse(response);
       });
-      this.stopTasks = channel.onTask?.(({ task, sequence }) => {
-        if (this.generation !== generation || this.channel !== channel) return;
-        if ((this.taskSequences.get(task.id) ?? -1) >= sequence) return;
-        if (this.socket?.readyState !== WebSocket.OPEN) return;
-        const failed = task.status === 'failed' || Boolean(task.error?.trim());
-        const diagnosticId = failed ? createDiagnosticId() : '';
-        if (failed) {
-          this.options.logger.warn('agent.task.failed', { taskId: task.id, requestId: task.requestId, diagnosticId, detail: sanitizeLogDetail(task.error || task.status) });
-          this.noteFailure(task.requestId, 'task_failed', diagnosticId);
-        }
-        this.send({
-          type: 'agent.task', version: ASTRBOT_PROTOCOL_VERSION, requestId: task.requestId, conversationId: task.conversationId,
-          taskId: task.id, status: task.status, sequence, text: failed ? '' : task.summary.trim().slice(0, 240),
-          ...(failed ? { error: { code: 'task_failed' as const, diagnosticId } } : {}),
-        });
-        this.taskSequences.set(task.id, sequence);
-        if (this.taskSequences.size > 256) this.taskSequences.delete(this.taskSequences.keys().next().value!);
-      }) ?? null;
-      this.taskScopes.forEach((scope) => this.channel?.watchTasks?.(scope));
       return;
     }
     if (message.type === 'ai.cancel') {
@@ -324,18 +294,11 @@ export class AstrBotBridgeClient {
         mentions,
         quote: toConversationQuote(message),
       });
-      if (sender) {
-        const scope = { conversationId: message.conversationId, senderId: sender.id };
-        this.taskScopes.set(JSON.stringify(scope), scope);
-        if (this.taskScopes.size > 64) this.taskScopes.delete(this.taskScopes.keys().next().value!);
-        channel.watchTasks?.(scope);
-      } else {
+      if (!sender) {
         this.options.logger.warn('message.sender.missing', { requestId: message.requestId });
       }
       if (!this.isCurrent(admission)) return;
       admission.submitted = true;
-      this.notificationOrigins.set(message.requestId, message.conversationId);
-      if (this.notificationOrigins.size > 256) this.notificationOrigins.delete(this.notificationOrigins.keys().next().value!);
       const done = this.waitTerminal(admission);
       let result: ReturnType<ConversationChannel['sendText']>;
       try {
@@ -377,16 +340,6 @@ export class AstrBotBridgeClient {
   }
 
   private handleAiResponse(response: ConversationResponse): void {
-    if (response.inReplyTo) {
-      if (response.status !== 'done' || !response.text.trim() || this.socket?.readyState !== WebSocket.OPEN
-        || this.notificationOrigins.get(response.inReplyTo) !== response.conversationId
-        || this.sentNotifications.has(response.requestId)) return;
-      this.send({ type: 'ai.notification', version: ASTRBOT_PROTOCOL_VERSION, notificationId: response.requestId,
-        inReplyTo: response.inReplyTo, conversationId: response.conversationId, text: response.text });
-      this.sentNotifications.add(response.requestId);
-      if (this.sentNotifications.size > 512) this.sentNotifications.delete(this.sentNotifications.values().next().value!);
-      return;
-    }
     const admission = this.admissions.get(response.requestId);
     if (!admission || !this.owns(admission) || !admission.submitted) return;
     if (response.status === 'streaming') return;
@@ -447,8 +400,6 @@ export class AstrBotBridgeClient {
   }
 
   private releaseAll(): void {
-    this.notificationOrigins.clear();
-    this.sentNotifications.clear();
     this.generation += 1;
     const stale = [...this.admissions.values()];
     this.admissions.clear();

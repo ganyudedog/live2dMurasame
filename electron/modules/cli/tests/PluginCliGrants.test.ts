@@ -1,18 +1,22 @@
+import { environmentFixture } from './environmentFixture.js';
 import { expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PluginCliGrants } from '../infrastructure/PluginCliGrants.js';
 
-it('migrates once, preserves other global fields and does not resurrect revoked grants', () => {
+it('persists through the environment without resurrecting revoked grants or losing unrelated settings', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-grants-'));
   try {
-    const file = path.join(dir, 'globalModelConfig.json');
-    fs.writeFileSync(file, JSON.stringify({ other: 'preserved' }));
-    const grants = new PluginCliGrants(file, ['plugin:astrbot']);
+    const file = path.join(dir, 'live2denv.json');
+    fs.writeFileSync(file, JSON.stringify({ settings: { apiKey: 'preserved' } }));
+    const environment = environmentFixture(file);
+    const grants = new PluginCliGrants(environment);
+    grants.write(['plugin:astrbot']);
     expect(grants.read()).toEqual(['plugin:astrbot']);
     grants.write([]);
-    expect(new PluginCliGrants(file, ['plugin:astrbot']).read()).toEqual([]);
-    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ other: 'preserved', pluginCliWhitelist: [] });
+    expect(new PluginCliGrants(environmentFixture(file)).read()).toEqual([]);
+    environment.updateSettings({ displayLang: 'en' });
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).settings).toMatchObject({ apiKey: 'preserved', pluginCliWhitelist: [], displayLang: 'en' });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

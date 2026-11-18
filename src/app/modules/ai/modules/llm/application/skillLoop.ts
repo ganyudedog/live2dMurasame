@@ -1,12 +1,12 @@
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions/completions';
-import type { AgentTask, CommandDefinition, CommandSession } from '../../../../../../../shared/cli/contracts';
+import type { CommandDefinition, CommandSession } from '../../../../../../../shared/cli/contracts';
 import type { Stage2LLMConfig } from '../domain/types';
 import { boundedToolText, toolOutcomeFacts } from '../domain/toolContext';
 
 const builtinSkillInstructions: Record<string, string> = {
   settings: '先 config.get 读取目标配置与 revision，再提交最小 patch；不要修改凭据。明确目标模型；冲突时重新读取。保存成功不代表外部服务预热成功。',
-  development: '先列出 workspaces。用户用桌面、文档或文件夹名字指目录时，在 Windows 上用 shell.run 执行一条 PowerShell 查出绝对路径，并确认是已有目录；多个相近文件夹时列出路径并向用户求证，确认前不要登记。不保留 shell 会话，不猜目录。已经登记的标识或用户给出的绝对路径用 agent.workspace.add 后 agent.run。shell.run 读文件正文只能在本机已配置的可读目录下进行；被拒绝就告诉用户这个目录还不能读，不要换一条命令再试。续接先查 agent.list 并选明确 taskId。用户明确取消才调用 agent.cancel。提交成功只表示任务已接受，不代表开发完成。同时最多执行三个任务，其余排队。不连续轮询，结果由任务事件发送。',
+  development: '先用 shell.run 确认已有目录，不要猜路径。项目目录由对应插件技能登记和管理。读文件只能在已配置的 shellReadRoots 内，被拒绝不要换命令再试。要执行任务时加载对应的插件技能。',
 };
 const skillLabel = (name: string): string => {
   if (name === 'settings') return 'settings=桌宠配置';
@@ -22,7 +22,7 @@ const skillText = (name: string, commands: CommandDefinition[]): string => {
 };
 const observation = (value: unknown, max = 6000): string => {
   const serialized = JSON.stringify(value) ?? 'null';
-  return serialized.length <= max ? serialized : JSON.stringify({ ...toolOutcomeFacts(value), truncated: true, preview: serialized.slice(0, max), note: 'Use a specific task/config query if additional details are needed.' });
+  return serialized.length <= max ? serialized : JSON.stringify({ ...toolOutcomeFacts(value), truncated: true, preview: serialized.slice(0, max), note: 'Use an available command to query additional details if needed.' });
 };
 interface LoopObservation { command: string; args?: unknown; result?: string; error?: string; facts?: Record<string, string | number | boolean> }
 /** Preserve every operation's identity and the final error before shortening verbose output. */
@@ -53,7 +53,6 @@ export interface SkillLoopOptions {
   requestId: string;
   signal?: AbortSignal;
   session: CommandSession;
-  onTaskCreated?: (task: AgentTask) => void;
   historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   summarize?: (system: string, user: string, signal: AbortSignal) => Promise<string>;
   /** Injectable model transport for behavioral tests, not a second execution path. */
@@ -150,9 +149,6 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
             result = await session.invoke({ command: definition.name, args: args as Record<string, unknown>,
               invocationId: `${options.requestId}:${round}:${index}`, requestId: options.requestId, issuedAt });
             results.push({ command: definition.name, args, result: observation(result), facts: toolOutcomeFacts(result) });
-            if ((definition.name === 'agent.run' || definition.name === 'agent.continue')
-              && result && typeof result === 'object' && 'id' in result && 'requestId' in result
-              && result.requestId === options.requestId) options.onTaskCreated?.(result as AgentTask);
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

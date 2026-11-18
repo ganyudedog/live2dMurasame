@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { resolveShellReadRoots } from '../../../../dao/globalConfig.js';
 import { updateModelConfiguration, type ModelCommandDependencies } from '../../../modelenv/application/updateModelConfiguration.js';
 import type { CliService } from '../../service/CliService.js';
 
@@ -23,6 +24,8 @@ const subtitle = z.object({
   holdMs: z.number().min(500).max(5000).optional(),
 }).strict();
 const globalPatch = z.object({
+  shellReadRoots: z.array(z.string().min(1).max(1024)).max(50).optional(),
+  pluginCliWhitelist: z.array(z.object({ pluginId: z.string().min(1).max(120), cliEnabled: z.boolean() }).strict()).max(50).optional(),
   scale: z.number().min(0.3).max(2).optional(),
   ignoreMouse: z.boolean().optional(),
   autoLaunch: z.boolean().optional(),
@@ -109,10 +112,14 @@ export const registerConfigCommands = (cli: CliService, dependencies: ModelComma
     skill: 'settings',
     description: 'Read config.get first, then submit a minimal patch with that revision. Saved does not imply TTS/ASR is ready.',
     schema: updateSchema,
-    execute: (args) => {
+    execute: (args, context) => {
       if (read(args).revision !== args.expectedRevision) throw new Error('Configuration revision conflict; read again');
       if (args.scope === 'global') {
         const patch = globalPatch.parse(args.patch);
+        if (patch.shellReadRoots !== undefined || patch.pluginCliWhitelist !== undefined) {
+          if (!context.local) throw new Error('Host policy requires local access');
+          if (patch.shellReadRoots) patch.shellReadRoots = resolveShellReadRoots(patch.shellReadRoots);
+        }
         if (patch.asr) {
           const current = isRecord(live.root.settings) ? live.root.settings.asr : undefined;
           patch.asr = { ...(isRecord(current) ? current : {}), ...patch.asr };

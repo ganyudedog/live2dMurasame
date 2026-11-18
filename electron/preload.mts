@@ -194,20 +194,11 @@ const PluginStorageAPI = {
 const CliAPI = {
   open: (scope: unknown) => ipcRenderer.invoke('cli:open', scope),
   invoke: (session: unknown, request: unknown) => ipcRenderer.invoke('cli:invoke', session, request),
-  tasks: (session: unknown) => ipcRenderer.invoke('cli:tasks', session),
   close: (session: unknown) => ipcRenderer.invoke('cli:close', session),
   claim: (session: unknown, requestId: unknown, text: unknown) => ipcRenderer.invoke('cli:claim', session, requestId, text),
   finish: (session: unknown, requestId: unknown, result: unknown) => ipcRenderer.invoke('cli:finish', session, requestId, result),
   reply: (session: unknown, requestId: unknown, text: unknown) => ipcRenderer.invoke('cli:reply', session, requestId, text),
   compact: (session: unknown, input: unknown) => ipcRenderer.invoke('cli:compact', session, input),
-  onTask: (session: unknown, callback: (event: { task: unknown; sequence: unknown }) => void) => {
-    const listener = (_event: unknown, payload: unknown) => {
-      const body = isRecord(payload) ? payload : {};
-      if (body.session === session) callback({ task: body.task, sequence: body.sequence });
-    };
-    ipcRenderer.on('cli:task', listener);
-    return () => ipcRenderer.removeListener('cli:task', listener);
-  },
 };
 
 ipcRenderer.on('ddd:live2denv:snapshot:changed', (_event, payload: unknown) => {

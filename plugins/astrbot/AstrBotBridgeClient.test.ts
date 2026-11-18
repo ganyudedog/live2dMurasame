@@ -64,9 +64,9 @@ const startClient = (overrides: {
         };
         channels.push(channel);
         return {
-          sendText: channel.sendText, cancel: channel.cancel, dispose: vi.fn(), watchTasks: vi.fn(),
+          sendText: channel.sendText, cancel: channel.cancel, dispose: vi.fn(),
           onResponse: (listener: (response: ConversationResponse) => void) => { channel.listener = listener; return () => { channel.listener = undefined; }; },
-          onTask: () => () => {},
+          
         };
       },
       getModels: () => [], subscribe: () => () => {},
@@ -82,31 +82,6 @@ const startClient = (overrides: {
 
 describe('AstrBot bridge client', () => {
   afterEach(() => { FakeSocket.instances = []; vi.unstubAllGlobals(); vi.useRealTimers(); });
-
-  it('delivers an unsolicited report once after the original response is settled', async () => {
-    const { client, channels } = startClient();
-    await flush();
-    const socket = FakeSocket.instances[0];
-    ackHello(socket);
-    socket.onmessage?.({ data: JSON.stringify(message('qq_origin')) });
-    await flush();
-    const channel = channels[0];
-    channel.listener?.(doneResponse('qq_origin'));
-    await flush();
-    const report: ConversationResponse = { ...doneResponse('report:task'), text: '检查完成', inReplyTo: 'qq_origin' };
-    channel.listener?.({ ...report, status: 'streaming' });
-    channel.listener?.({ ...report, inReplyTo: 'unknown' });
-    channel.listener?.({ ...report, conversationId: 'qq:group:wrong' });
-    expect(parsed(socket).filter((frame) => frame.type === 'ai.notification')).toHaveLength(0);
-    channel.listener?.(report);
-    channel.listener?.(report);
-    expect(parsed(socket).filter((frame) => frame.type === 'ai.notification')).toEqual([{
-      type: 'ai.notification', version: 3, notificationId: 'report:task', inReplyTo: 'qq_origin',
-      conversationId: 'qq:group:30003', text: '检查完成',
-    }]);
-    expect(channel.sendText).toHaveBeenCalledOnce();
-    client.dispose();
-  });
 
   it('syncs owner and explicit private users on connect and edits without reconnecting', async () => {
     const { client } = startClient();
@@ -126,14 +101,13 @@ describe('AstrBot bridge client', () => {
   it('deduplicates deliveries, keeps streams internal, and pushes wake words without reconnecting', async () => {
     vi.stubGlobal('WebSocket', FakeSocket);
     const responses: Array<(response: ConversationResponse) => void> = [];
-    let onTask: ((event: { task: { id: string; status: string; error?: string; summary: string; requestId: string; conversationId: string }; sequence: number }) => void) | undefined;
     const sendText = vi.fn(() => ({ requestId: 'qq_1', accepted: true as const }));
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const client = new AstrBotBridgeClient({
       url: 'ws://127.0.0.1:6198/ws', clientId: 'renderer', ai: {
         openChannel: () => ({
           sendText, onResponse: (listener: (response: ConversationResponse) => void) => { responses.push(listener); return () => {}; },
-          onTask: (listener: typeof onTask) => { onTask = listener; return () => {}; }, cancel: vi.fn(), dispose: vi.fn(), watchTasks: vi.fn(),
+          cancel: vi.fn(), dispose: vi.fn(),
         }),
         getModels: () => [], subscribe: () => () => {},
       getRelationship: async () => ({ line: '阶段：亲近。与桌面共用。', userAddress: '主人' }),
@@ -171,12 +145,6 @@ describe('AstrBot bridge client', () => {
     expect(failure.error).toEqual({ code: 'generation_failed', diagnosticId: 'diag_abcd1234ef' });
     expect(JSON.stringify(failure)).not.toContain(secret);
 
-    onTask?.({ task: { id: 'task', status: 'failed', error: secret, summary: secret, requestId: 'qq_1', conversationId: 'qq:group:30003' }, sequence: 1 });
-    const task = JSON.parse(socket.sent.at(-1)!) as { text: string; error?: { code: string; diagnosticId?: string } };
-    expect(task.text).toBe('');
-    expect(task.error?.code).toBe('task_failed');
-    expect(task.error?.diagnosticId).toMatch(/^diag_[a-z0-9]{8,32}$/);
-    expect(JSON.stringify(task)).not.toContain(secret);
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(secret);
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain(secret);
 
@@ -244,7 +212,7 @@ describe('AstrBot bridge client', () => {
     vi.stubGlobal('WebSocket', FakeSocket);
     const sendText = vi.fn((_request: ConversationRequest) => ({ requestId: 'qq_who', accepted: true as const }));
     const openChannel = vi.fn((_options: ConversationChannelOptions) => ({
-      sendText, onResponse: () => () => {}, onTask: () => () => {}, cancel: vi.fn(), dispose: vi.fn(), watchTasks: vi.fn(),
+      sendText, onResponse: () => () => {}, cancel: vi.fn(), dispose: vi.fn(),
     }));
     const directory = {
       ownerUserId: '2904725137',

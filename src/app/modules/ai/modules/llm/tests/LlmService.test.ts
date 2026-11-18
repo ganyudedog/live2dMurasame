@@ -5,42 +5,20 @@ import type { TraceScope } from '@app/shared/logging/LogService';
 import { shyAction } from '../../../../../../test/fixtures/actionCatalog';
 import { LogService } from '@app/shared/logging/LogService';
 import { runSkillLoop } from '../application/skillLoop';
-import { agentTask } from '../../../../../../test/fixtures/agentTask';
-import { TASK_REPORT_CUE, taskReportContext } from '../domain/taskReport';
 vi.mock('../application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 
 vi.mock('../infrastructure/llmClient', () => ({ requestStage2LLM: vi.fn(), requestStructuredLLM: vi.fn() }));
 
+const testModels = (): PetLlmModel[] => ['chat-model', 'first-model', 'memory-model', 'model', 'next-model', 'stale-model', 'user-alias']
+  .map((id) => ({ id, efforts: [], effortsSource: 'none', probedAt: 0 }));
+
 describe('LLM and RAG orchestration', () => {
-  it('reports task results through the persona and memory without re-entering the skill loop', async () => {
-    const appendConversation = vi.fn();
-    vi.stubGlobal('window', { MemoryAPI: { get: vi.fn(async () => ({ coreText: '共同开发这个项目' })), appendConversation } });
-    const commands = { invoke: vi.fn(), claim: vi.fn(), finish: vi.fn(), tasks: vi.fn(), close: vi.fn(async () => {}), reply: vi.fn(async () => {}), compact: vi.fn() };
-    const snapshot = { activeModelPath: '/character', globalModelConfig: { apiKey: 'key' }, modelConfig: { actions: [] } } as unknown as PetConfigSnapshot;
-    const service = new LlmService({ getConfigSnapshot: () => snapshot, openCommands: async () => commands });
-    const taskReport = { task: agentTask({ status: 'succeeded', summary: '修复导入错误，检查通过' }), userText: '修复项目' };
-    const toolContext = taskReportContext(taskReport);
-    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"主人，导入错误已经修好了。"}', usedModel: 'model' });
-    const response = await service.ask(TASK_REPORT_CUE, { model: 'model', requestId: 'report:task-1', cue: true, taskReport,
-      trace: { record: vi.fn() } as unknown as TraceScope });
-    expect(response.ok).toBe(true);
-    expect(runSkillLoop).not.toHaveBeenCalled();
-    expect(commands.invoke).not.toHaveBeenCalled();
-    expect(commands.claim).toHaveBeenCalledWith('report:task-1', expect.stringContaining('修复导入错误'));
-    expect(commands.reply).toHaveBeenCalledWith('report:task-1', '主人，导入错误已经修好了。');
-    expect(requestStage2LLM).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cue: true, toolContext,
-      memoryContext: expect.stringContaining('共同开发这个项目') }));
-    expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'report:task-1', toolContext,
-      assistantText: '主人，导入错误已经修好了。' }));
-    expect(commands.close).toHaveBeenCalledOnce();
-    service.dispose();
-  });
   it('combines memory with tool results and archives the actual displayed reply', async () => {
     const get = vi.fn(async () => ({ coreText: '主人喜欢这个项目' })); const appendConversation = vi.fn();
     vi.stubGlobal('window', { MemoryAPI: { get, appendConversation } });
-    const commands = { invoke: vi.fn(), claim: vi.fn(), finish: vi.fn(), tasks: vi.fn(), close: vi.fn(async () => {}), reply: vi.fn(async () => {}), compact: vi.fn() };
+    const commands = { invoke: vi.fn(), claim: vi.fn(), finish: vi.fn(), close: vi.fn(async () => {}), reply: vi.fn(async () => {}), compact: vi.fn() };
     vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: true, context: 'task-123 queued' });
-    const snapshot = { activeModelPath: '/character', globalModelConfig: { apiKey: 'key' }, modelConfig: { tts: { textLang: 'all_ja' }, actions: [] } } as unknown as PetConfigSnapshot;
+    const snapshot = { activeModelPath: '/character', globalModelConfig: { llmModels: testModels(), apiKey: 'key' }, modelConfig: { tts: { textLang: 'all_ja' }, actions: [] } } as unknown as PetConfigSnapshot;
     const service = new LlmService({ getConfigSnapshot: () => snapshot, openCommands: async () => commands });
     vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"任务已接收","speak_text":"受け付けました"}', usedModel: 'model' });
     const response = await service.ask('修复项目', { model: 'model', requestId: 'user-request', trace: { record: vi.fn() } as unknown as TraceScope });
@@ -62,7 +40,7 @@ describe('LLM and RAG orchestration', () => {
       state: { conversationCount: 1, lastConsolidatedCount: 0, lastConversationAt: Date.now() } };
     vi.stubGlobal('window', { MemoryAPI: { get: vi.fn().mockResolvedValue(memory),
       appendConversation: vi.fn().mockResolvedValue(memory), consolidate: vi.fn().mockResolvedValue(memory) } });
-    const service = new LlmService({ getConfigSnapshot: () => ({ activeModelPath: 'model-a', globalModelConfig: {
+    const service = new LlmService({ getConfigSnapshot: () => ({ activeModelPath: 'model-a', globalModelConfig: { llmModels: testModels(),
       apiKey: 'key', model: 'chat-model', memoryModel, memoryReasoningEffort: depth,
     }, modelConfig: { actions: [] } }) as unknown as PetConfigSnapshot });
     vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"你好"}', usedModel: 'chat-model' });
@@ -94,7 +72,7 @@ describe('LLM and RAG orchestration', () => {
   it('uses the injected live snapshot for both structured generation and dialogue', async () => {
     const remote = vi.fn(() => { throw new Error('global config must not be read'); });
     vi.stubGlobal('window', { SnapshotAPI: { getSnapshot: remote }, AIAPI: { getConfig: remote } });
-    let snapshot = { globalModelConfig: { apiKey: ' first-key ', baseURL: ' http://first ' },
+    let snapshot = { globalModelConfig: { llmModels: testModels(), apiKey: ' first-key ', baseURL: ' http://first ' },
       modelConfig: { actions: [] } } as unknown as PetConfigSnapshot;
     const service = new LlmService({ getConfigSnapshot: () => snapshot });
     // 模型由控制面板按前端选择下发；凭据仍然逐次读快照。
@@ -105,7 +83,7 @@ describe('LLM and RAG orchestration', () => {
       baseURL: 'http://first', temperature: 0.4 }, expect.anything());
 
     // Electron 后续下发新快照时，下一次请求读取新配置，不保留构造时的副本。
-    snapshot = { globalModelConfig: { apiKey: 'next-key', baseURL: 'http://next', displayLang: 'en' },
+    snapshot = { globalModelConfig: { llmModels: testModels(), apiKey: 'next-key', baseURL: 'http://next', displayLang: 'en' },
       modelConfig: { actions: [shyAction], tts: { textLang: 'all_en' } } } as unknown as PetConfigSnapshot;
     service.setConfig({ model: 'next-model' });
     vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"hello","speak_text":"hello"}', usedModel: 'next-model' });
@@ -119,7 +97,9 @@ describe('LLM and RAG orchestration', () => {
   });
 
   it('sends the action-table model and its own depth, and nothing when the model has no depth', async () => {
-    const service = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: {
+    const models = testModels();
+    models.find(({ id }) => id === 'user-alias')!.efforts = ['low', 'medium'];
+    const service = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: { llmModels: models,
       apiKey: 'key',
     }, modelConfig: { actions: [] } }) as unknown as PetConfigSnapshot });
     // 动作表的模型与深度同样来自前端缓存，由控制面板下发。
@@ -129,6 +109,7 @@ describe('LLM and RAG orchestration', () => {
     expect(requestStructuredLLM).toHaveBeenLastCalledWith(expect.anything(),
       expect.objectContaining({ stream: true, reasoningEffort: 'medium' }));
     // 模型不接受深度时（空串）请求体里没有这个字段。
+    models.find(({ id }) => id === 'user-alias')!.efforts = [];
     service.setConfig({ reasoningEffort: '' });
     await service.requestStructured('refine', 'curves');
     expect(vi.mocked(requestStructuredLLM).mock.lastCall![1]).not.toHaveProperty('reasoningEffort');
@@ -140,7 +121,7 @@ describe('LLM and RAG orchestration', () => {
   });
 
   it('refuses to generate actions without an explicit action model', async () => {
-    const service = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: {
+    const service = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: { llmModels: testModels(),
       apiKey: 'key',
     }, modelConfig: { actions: [] } }) as unknown as PetConfigSnapshot });
     // 删光模型后必须报错，而不是静默沿用上一次的模型或接口默认值。
@@ -171,7 +152,7 @@ describe('LLM and RAG orchestration', () => {
     vi.stubGlobal('window', { MemoryAPI: memory });
     const trace = { record: vi.fn(), traceId: 'trace' };
     let snapshot = { activeModelPath: 'pet', modelKey: 'pet-key', modelConfig: { actions: [], tts: { textLang: 'all_ja' } },
-      globalModelConfig: { displayLang: 'zh' } } as unknown as PetConfigSnapshot;
+      globalModelConfig: { llmModels: testModels(), displayLang: 'zh' } } as unknown as PetConfigSnapshot;
     const service = new LlmService({
       defaultConfig: { apiKey: 'key', model: 'model', baseURL: 'http://localhost' },
       getConfigSnapshot: () => snapshot,
@@ -189,7 +170,7 @@ describe('LLM and RAG orchestration', () => {
 
     const output = vi.spyOn(console, 'info').mockImplementation(() => {});
     try {
-      const structured = new LlmService({ getConfigSnapshot: () => null,
+      const structured = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: { llmModels: testModels() } }) as PetConfigSnapshot,
         defaultConfig: { apiKey: 'key', model: 'model' },
         log: new LogService({ windowKind: 'control-panel', startedAt: 0, configSnapshot: null }) });
       vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: '{"actions":[]}', usedModel: 'model', usage });
@@ -387,4 +368,21 @@ describe('LLM and RAG orchestration', () => {
     expect(memory.appendConversation).not.toHaveBeenCalled();
     service.dispose();
   });
+});
+
+it.each([undefined, [{ id: 'new-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }]])('keeps the caller model without substituting a registry default (%s)', async (models) => {
+  const snapshot = { globalModelConfig: { apiKey: 'new-key', baseURL: 'new-url', llmModels: models }, modelConfig: { actions: [] } } as unknown as PetConfigSnapshot;
+  const service = new LlmService({ getConfigSnapshot: () => snapshot });
+  vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"你好"}', usedModel: 'new-model' });
+  await service.ask('在吗', { model: 'removed-model', reasoningEffort: 'ultra', trace: { record: vi.fn() } as unknown as TraceScope });
+  expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'removed-model', apiKey: 'new-key' }), models ? expect.not.objectContaining({ reasoningEffort: 'ultra' }) : expect.objectContaining({ reasoningEffort: 'ultra' }));
+  service.dispose();
+});
+
+it('rejects an action-catalog model absent from the registry', async () => {
+  const service = new LlmService({ getConfigSnapshot: () => ({ globalModelConfig: { llmModels: [{ id: 'available', efforts: [] }] } } as unknown as PetConfigSnapshot) });
+  service.setConfig({ model: 'removed' });
+  await expect(service.requestStructured('system', 'user')).rejects.toThrow('动作表模型');
+  expect(requestStructuredLLM).not.toHaveBeenCalled();
+  service.dispose();
 });

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AudioLines, Eye, EyeOff, Languages, Link, MessageSquare, Mic } from 'lucide-react';
 import { Page } from '../components/common/Page';
 import { SegmentedTabs } from '../components/common/SegmentedTabs';
@@ -8,11 +8,11 @@ import AsrSettingsPage from './AsrSettingsPage';
 import { SubtitleSettings } from '../components/subtitle/SubtitleSettingsCard';
 import { Field, SettingsCard } from '../components/common/SettingsSection';
 import { ModelRegistryCard } from '../components/ai/ModelRegistryCard';
-import { keepFetchedModels } from '../components/ai/keepFetchedModels';
+import { detectModels } from '@app/modules/ai/modules/llm/infrastructure/detectModels';
 import { MemoryModelCard } from '../components/ai/MemoryModelCard';
-import { AgentCard } from '../components/ai/AgentCard';
+import { CliPolicyCard } from '../components/ai/CliPolicyCard';
 import { probeModelEfforts } from '@app/modules/ai/modules/llm/infrastructure/effortProbe';
-import { listRemoteModels, type RemoteModel } from '@app/modules/ai/modules/llm/infrastructure/modelCatalog';
+import { type RemoteModel } from '@app/modules/ai/modules/llm/infrastructure/modelCatalog';
 import type { ModelConfig, AsrConfig } from '../../domain/types';
 
 const CAPABILITIES = [
@@ -54,7 +54,7 @@ export default function AiSettingsPage({
   memoryModel: string;
   memoryReasoningEffort: PetReasoningEffort | '';
   onChange: (next: InterfacePatch) => void;
-  onLlmModelsChange: (next: PetLlmModel[]) => Promise<unknown>;
+  onLlmModelsChange: (next: PetLlmModel[], reset?: boolean) => Promise<unknown>;
   onMemoryChange: (patch: { memoryModel?: string; memoryReasoningEffort?: PetReasoningEffort | '' }) => void;
   modelConfig: ModelConfig;
   asrConfig: AsrConfig;
@@ -69,9 +69,19 @@ export default function AiSettingsPage({
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [available, setAvailable] = useState<RemoteModel[]>([]);
+  const [catalog, setCatalog] = useState<{ baseURL: string; apiKey: string; models: RemoteModel[] } | null>(null);
+  const available = catalog?.baseURL === apiBaseUrl && catalog.apiKey === apiKey ? catalog.models : [];
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const detection = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setFetching(false);
+    setBusyLabel(null);
+    setCatalog(null);
+    setFetchError(null);
+    return () => { detection.current?.abort(); detection.current = null; };
+  }, [apiBaseUrl, apiKey]);
 
   const status: Record<Capability, string> = {
     text: llmModels.length ? `${llmModels.length} 个模型` : '未启用模型',
@@ -82,33 +92,39 @@ export default function AiSettingsPage({
   const canFetch = Boolean(apiBaseUrl.trim());
 
   /**
-   * 拉取接口提供的全部模型。清单是权威来源：接口这次没返回的模型直接从后端清单里删掉，
-   * 不保留“以前选过但现在不存在”的残项。
+   * 拉取并启用接口返回的全部模型，逐档验证思考深度，默认选择第一个模型。
    */
   const fetchModels = async () => {
     if (!canFetch) {
       setFetchError('先填写 Base URL：模型清单是从这个地址的 /models 拉取的。');
       return;
     }
+    const controller = new AbortController();
+    detection.current?.abort();
+    detection.current = controller;
+    const isCurrent = () => detection.current === controller && !controller.signal.aborted;
     setFetching(true);
     setFetchError(null);
     setError(null);
     setNotice(null);
     try {
-      // 免鉴权的本地接口允许不带 API Key；需要鉴权时接口会返回 401，再让用户补 Key。
-      const fetched = await listRemoteModels({ apiKey, baseURL: apiBaseUrl });
-      setAvailable(fetched);
-      const { kept, dropped } = keepFetchedModels(llmModels, fetched);
-      if (dropped.length) {
-        await onLlmModelsChange(kept);
-        if (memoryModel && dropped.includes(memoryModel)) onMemoryChange({ memoryModel: '', memoryReasoningEffort: '' });
-        setNotice(`接口已不再返回：${dropped.join('、')}，已从模型清单移除`);
-      }
+      const result = await detectModels({ apiKey, baseURL: apiBaseUrl, signal: controller.signal },
+        (model) => { if (isCurrent()) setBusyLabel(`正在检测 ${model} 的思考深度…`); });
+      if (!isCurrent()) return;
+      await onLlmModelsChange(result.models, true);
+      if (!isCurrent()) return;
+      setCatalog({ baseURL: apiBaseUrl, apiKey, models: result.available });
+      setNotice(`已启用全部 ${result.models.length} 个模型，默认选择第一个模型。`);
+      if (result.unknown.length) setError(`以下模型的思考深度未检测完成，暂不发送深度参数：${result.unknown.join('、')}`);
     } catch (reason) {
-      setAvailable([]);
+      if (!isCurrent() || (reason instanceof Error && reason.name === 'AbortError')) return;
+      setCatalog(null);
       setFetchError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setFetching(false);
+      if (isCurrent()) {
+        setBusyLabel(null);
+        setFetching(false);
+      }
     }
   };
 
@@ -122,9 +138,13 @@ export default function AiSettingsPage({
       entry = { id, efforts: declared, effortsSource: 'catalog', probedAt: Date.now() };
     } else {
       setBusyLabel(`正在检测 ${id}：逐个档位验证中`);
-      const outcome = await probeModelEfforts({ apiKey, baseURL: apiBaseUrl, model: id },
+      const controller = new AbortController();
+      detection.current?.abort();
+      detection.current = controller;
+      const outcome = await probeModelEfforts({ apiKey, baseURL: apiBaseUrl, model: id, signal: controller.signal },
         (done, total) => setBusyLabel(`正在检测 ${id}：档位 ${done}/${total}`));
       setBusyLabel(null);
+      if (controller.signal.aborted) return;
       if (outcome.status === 'unknown') {
         setError(`已启用 ${id}，但思考深度未检测出：${outcome.message ?? '接口未返回可用结果'}。可稍后点「重新检测」。`);
       }
@@ -164,9 +184,13 @@ export default function AiSettingsPage({
     setError(null);
     setNotice(null);
     setBusyLabel(`正在检测 ${id}：逐个档位验证中`);
-    const outcome = await probeModelEfforts({ apiKey, baseURL: apiBaseUrl, model: id },
+    const controller = new AbortController();
+    detection.current?.abort();
+    detection.current = controller;
+    const outcome = await probeModelEfforts({ apiKey, baseURL: apiBaseUrl, model: id, signal: controller.signal },
       (done, total) => setBusyLabel(`正在检测 ${id}：档位 ${done}/${total}`));
     setBusyLabel(null);
+    if (controller.signal.aborted) return;
     if (outcome.status === 'unknown') {
       setError(`检测未完成：${outcome.message ?? '接口未返回可用结果'}。已保留原有档位。`);
       return;
@@ -177,7 +201,9 @@ export default function AiSettingsPage({
     try {
       await onLlmModelsChange(next);
       // 深度集合变了，记忆整理的选择也要跟着收敛到新的第一档。
-      if (memoryModel === id) onMemoryChange({ memoryReasoningEffort: outcome.efforts[0] ?? '' });
+      if (memoryModel === id && !outcome.efforts.includes(memoryReasoningEffort)) {
+        onMemoryChange({ memoryReasoningEffort: outcome.efforts[0] ?? '' });
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -245,7 +271,7 @@ export default function AiSettingsPage({
           </Field>
         </SettingsCard>
 
-        <AgentCard settings />
+        <CliPolicyCard />
       </>}
 
       {tab === 'asr' && <>

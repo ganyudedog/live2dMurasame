@@ -78,21 +78,21 @@ export function ModelRegistryCard({
         </Badge>
       )}
       <Button disabled={!canFetch || disabled}
-        title={canFetch ? '从接口重新拉取模型清单' : '先在上面填写 Base URL'}
+        title={canFetch ? '重新获取全部模型、检测思考深度并默认选择第一项' : '先在上面填写 Base URL'}
         onClick={onFetch}>
         <RefreshCw className={fetching ? 'animate-spin' : undefined} />
-        {fetching ? '获取中…' : '获取可用模型'}
+        {fetching ? '获取中…' : '重新检测模型'}
       </Button>
     </>}
   >
     {!canFetch && (
-      <Notice>先填写上面的 Base URL（接口地址决定模型清单从哪里拉），再点「获取可用模型」。</Notice>
+      <Notice>先填写上面的 Base URL（接口地址决定模型清单从哪里拉），再点「重新检测模型」。</Notice>
     )}
     {canFetch && !available.length && !fetching && !fetchError && (
       <Notice>
         {models.length
-          ? '点「获取可用模型」可以看到接口返回的全部模型，再勾选需要的。'
-          : '还没有模型。点「获取可用模型」拉取接口的模型清单，然后勾选要用的。'}
+          ? '点「重新检测模型」会重新启用接口返回的全部模型，并默认选择第一项。'
+          : '还没有模型。点「重新检测模型」会启用全部模型，之后可取消不需要的。'}
       </Notice>
     )}
 

@@ -110,3 +110,13 @@ describe('environment configuration updates', () => {
     expect(service.root).toBe(saved);
   });
 });
+
+it('invalidates capabilities on credential changes but keeps an explicitly re-detected registry', () => {
+  const { service } = setup();
+  service.updateSettings({ apiKey: 'old', baseURL: 'old-url', llmModels: [{ id: 'old-model' }] });
+  service.updateSettings({ apiKey: 'new' });
+  expect(service.root.settings.llmModels).toEqual([]);
+  expect(service.root.settings.memoryModel).toBe('');
+  service.updateSettings({ baseURL: 'new-url', llmModels: [{ id: 'new-model' }] });
+  expect(service.root.settings.llmModels).toEqual([{ id: 'new-model' }]);
+});

@@ -1,7 +1,17 @@
 import { pathToFileURL } from 'node:url';
+import type { BackendLogService } from '../logging/BackendLogService.js';
 import type { CliService } from '../cli/service/CliService.js';
 import { parseJsonSchemaArgs } from '../cli/service/jsonSchemaArgs.js';
 import { listRuntimeCliEntries } from './scanRuntimePlugins.js';
+import type { PluginStorageService } from './PluginStorageService.js';
+
+interface RuntimeCliHost {
+  storage: {
+    get: (key: string) => unknown;
+    set: (key: string, value: unknown) => void;
+    delete: (key: string) => boolean;
+  };
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -13,7 +23,7 @@ interface RuntimeCliCommand {
   instructions?: string;
   parameters: Record<string, unknown>;
   localOnly?: boolean;
-  execute: (args: Record<string, unknown>, context: unknown, invocationId: string) => unknown;
+  execute: (args: Record<string, unknown>, context: unknown, invocationId: string, host: RuntimeCliHost) => unknown;
 }
 
 const readCommands = (module: unknown): RuntimeCliCommand[] => {
@@ -35,11 +45,15 @@ const readCommands = (module: unknown): RuntimeCliCommand[] => {
 };
 
 /** 扫描插件目录并在主进程登记 CLI。执行函数来自插件自己的后端入口，不经过渲染进程。 */
-export const registerRuntimeCli = async (cli: CliService, pluginDir: string): Promise<() => void> => {
+export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log: Pick<BackendLogService, 'error'>, storage: PluginStorageService): Promise<() => void> => {
   const removers: Array<() => void> = [];
   for (const entry of listRuntimeCliEntries(pluginDir)) {
     try {
       const loaded: unknown = await import(pathToFileURL(entry.servicePath).href);
+      if (isRecord(loaded) && typeof loaded.dispose === 'function') {
+        const dispose = loaded.dispose as () => void;
+        removers.push(dispose);
+      }
       for (const command of readCommands(loaded)) {
         removers.push(cli.registerExternal(entry.id, command.name, {
           skill: command.skill,
@@ -48,10 +62,17 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string): Pr
           ...(command.localOnly ? { localOnly: true } : {}),
           parameters: command.parameters,
           schema: { parse: (value: unknown) => parseJsonSchemaArgs(command.parameters, value) },
-          execute: (args, context, invocationId) => command.execute(args, context, invocationId),
+          execute: (args, context, invocationId) => command.execute(args, context, invocationId, {
+            storage: {
+              get: (key) => storage.get(entry.id, key),
+              set: (key, value) => storage.set(entry.id, key, value),
+              delete: (key) => storage.delete(entry.id, key),
+            },
+          }),
         }));
       }
-    } catch {
+    } catch (error) {
+      log.error('plugins', 'runtimeCli.register.failed', { pluginId: entry.id, message: error instanceof Error ? error.message : String(error) });
       /* 单个插件入口失败不影响其余插件。 */
     }
   }

@@ -7,7 +7,6 @@ import type { Live2dService } from '@app/modules/live2d/service/Live2dService';
 import type { PluginHostApiMap, PluginWindowKind } from '../types';
 import { AiHost } from './ai/AiHost';
 import { createDefaultConversationExecutor } from './ai/createConversationExecutor';
-import { observeConversationTasks } from './ai/observeConversationTasks';
 import { createControlPanelHost } from './control-panel/ControlPanelHost';
 import { createDesktopNotificationsHost, createDesktopWindowHost } from './desktop/DesktopHost';
 import { createLive2dHost } from './live2d/Live2dHost';
@@ -34,7 +33,6 @@ export const createPluginHosts = (deps: PluginHostDependencies): InstalledPlugin
     createDefaultConversationExecutor(deps.config, deps.log),
     () => getLlmModels().map(({ id, efforts }) => ({ id, efforts })),
     (listener) => reaction(() => JSON.stringify(getLlmModels()), () => listener()),
-    observeConversationTasks,
     async () => {
       const modelPath = deps.config.activeModelPath;
       if (!modelPath) return null;

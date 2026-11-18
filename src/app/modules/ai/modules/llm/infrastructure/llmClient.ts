@@ -86,7 +86,7 @@ export const requestStage2LLM = async (
             personaPrompt: req.personaPrompt,
             relationshipStage: req.relationshipStage,
           })) + `\n\n${TOOL_RESULT_RULES}` + (req.toolsAvailable
-          ? '\n当前已授权工具协调器处理桌宠设置和本机 Codex 任务。可以自然说明这些能力；本轮没有执行结果时，不得声称已执行或承诺后台正在处理。' : ''),
+          ? '\n当前已授权工具协调器处理桌宠设置和本机 plugin 任务。可以自然说明这些能力；本轮没有执行结果时，不得声称已执行或承诺后台正在处理。' : ''),
       },
       // Archives store display text. Restore the wire format so prior assistant
       // turns demonstrate JSON Lines rather than teaching plain-text replies.

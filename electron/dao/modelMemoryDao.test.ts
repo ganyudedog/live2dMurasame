@@ -32,7 +32,7 @@ afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
 describe('Markdown model memory persistence', () => {
   it('round-trips execution data separately, recalls paths and deduplicates retried replies without relationship growth', () => {
-    const toolContext = JSON.stringify({ results: [{ command: 'agent.workspace.add', args: { path: 'C:\\code\\live2dMurasame' },
+    const toolContext = JSON.stringify({ results: [{ command: 'jobs.directory.add', args: { path: 'C:\\code\\live2dMurasame' },
       result: { workspaceId: 'project-live2d' } }] });
     const input = { requestId: 'same-request', userText: '请把刚找到的目录加到工作区', assistantText: '已登记这个项目。', toolContext, at: Date.now() };
     const first = appendModelMemoryConversation(modelPath, input);

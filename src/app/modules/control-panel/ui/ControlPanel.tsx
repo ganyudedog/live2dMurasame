@@ -145,8 +145,7 @@ const ControlPanel: React.FC = observer(() => {
             baseURL: next.apiBaseUrl,
             displayLang: next.displayLang,
           })}
-          onLlmModelsChange={(llmModels) => service.config.updateGlobalConfig({ llmModels })
-            .then(() => service.syncSelection())}
+          onLlmModelsChange={(llmModels, reset) => service.updateLlmModels(llmModels, reset)}
           onMemoryChange={(patch) => void service.config.updateGlobalConfig(patch).catch(reportError)}
           globalConfig={service.config.globalModelConfig ?? {}}
           onGlobalConfigChange={(patch) => service.config.updateGlobalConfig(patch)}

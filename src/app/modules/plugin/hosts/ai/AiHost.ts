@@ -1,6 +1,5 @@
 import type { AiHostApi, ConversationChannel, ConversationChannelOptions } from '../../types';
 import { ConversationScheduler, type PluginConversationExecutor } from './ConversationScheduler';
-import type { ConversationTaskObserver } from './observeConversationTasks';
 
 /** Conversations and the model catalog. */
 export class AiHost implements AiHostApi {
@@ -13,10 +12,9 @@ export class AiHost implements AiHostApi {
     execute: PluginConversationExecutor,
     readModels: AiHostApi['getModels'],
     listen: AiHostApi['subscribe'],
-    observeTasks?: ConversationTaskObserver,
     readRelationship?: AiHostApi['getRelationship'],
   ) {
-    this.conversations = new ConversationScheduler(execute, 4, observeTasks);
+    this.conversations = new ConversationScheduler(execute, 4);
     this.readModels = readModels;
     this.listen = listen;
     this.readRelationship = readRelationship;

@@ -24,6 +24,7 @@ declare global {
 
   // 全局设置，存在 live2denv.json 的 settings 里。
   interface PetGlobalModelConfigPayload {
+    pluginCliWhitelist?: Array<{ pluginId: string; cliEnabled: boolean }>;
     scale?: number;
     ignoreMouse?: boolean;
     showDragHandleOnHover?: boolean;

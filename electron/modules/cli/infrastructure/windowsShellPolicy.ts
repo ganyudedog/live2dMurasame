@@ -1,4 +1,3 @@
-/** Explicit capabilities for the host shell, independent of Codex workspace execution. */
 export const WINDOWS_SHELL_COMMANDS = [
   'Get-Location', 'Get-ChildItem', 'Get-Item', 'Get-Content', 'Test-Path', 'Resolve-Path',
   'Join-Path', 'Split-Path', 'Get-FileHash', 'Get-PSDrive', 'Get-Date', 'Get-Process',

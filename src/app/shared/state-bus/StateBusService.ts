@@ -49,6 +49,7 @@ export class StateBusService {
   private readonly windowKind: BootstrapContext['windowKind'];
   private unsubscribeWorker: (() => void) | null = null;
   private unsubscribeAsr: (() => void) | null = null;
+  private unsubscribeModels: (() => void) | null = null;
   private unsubscribeConfig: (() => void) | null = null;
   private pendingComposerDraft: string | null = null;
 
@@ -86,6 +87,11 @@ export class StateBusService {
     // Reopening the panel must not replace a live scale with persisted state.
     if (this.windowKind === 'pet' && this.revision === 0) this.seedFromPersistedConfig();
     if (this.windowKind === 'pet') {
+      this.unsubscribeModels = reaction(
+        () => [this.config.globalModelConfig?.llmModels, this.config.globalModelConfig?.apiKey, this.config.globalModelConfig?.baseURL],
+        () => this.seedChatFromPersistedConfig(),
+        { equals: (left, right) => left.every((value, index) => value === right[index]) },
+      );
       this.unsubscribeAsr = this.bridge.asrApi?.onEvent?.((event) => this.applyAsrEvent(event)) ?? null;
       // Backend configuration commands do not have the panel's live-preview callback.
       // Only the pet projects persisted scale changes into the worker; never write them back to disk.
@@ -143,6 +149,11 @@ export class StateBusService {
     if (typeof globalConfig?.scale === 'number' && Number.isFinite(globalConfig.scale)) {
       this.publishScale(globalConfig.scale);
     }
+    this.seedChatFromPersistedConfig();
+  }
+
+  private seedChatFromPersistedConfig(): void {
+    const globalConfig = this.config.globalModelConfig;
     // 模型与深度不落后端，但要在这里读一次：桌宠窗口可能先于控制面板发起请求。
     const selection = loadLlmSelection(Array.isArray(globalConfig?.llmModels) ? globalConfig.llmModels : [], 'chat');
     this.publishChatConfig({
@@ -269,6 +280,8 @@ export class StateBusService {
   dispose(): void {
     this.unsubscribeWorker?.();
     this.unsubscribeAsr?.();
+    this.unsubscribeModels?.();
+    this.unsubscribeModels = null;
     this.unsubscribeConfig?.();
     this.unsubscribeConfig = null;
     this.unsubscribeWorker = null;

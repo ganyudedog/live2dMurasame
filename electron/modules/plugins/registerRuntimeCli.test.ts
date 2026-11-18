@@ -1,9 +1,10 @@
+import { PluginStorageService } from './PluginStorageService.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { TaskStore } from '../cli/infrastructure/TaskStore.js';
+import { CallStore } from '../cli/infrastructure/CallStore.js';
 import { CliService } from '../cli/service/CliService.js';
 import type { CommandContext } from '../cli/service/commandTypes.js';
 import { registerRuntimeCli } from './registerRuntimeCli.js';
@@ -29,22 +30,47 @@ describe('runtime CLI registration', () => {
         description: 'Save a note',
         instructions: '先确认内容。',
         parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
-        execute: (args) => ({ saved: args.text }),
+        execute: (args, _context, _id, host) => { host.storage.set('note', args.text); return { saved: host.storage.get('note'), hostFields: Object.keys(host).sort() }; },
       }];
     `);
-    const cli = new CliService(new TaskStore(path.join(root, 'tasks.json')));
-    cli.register('agent.run', {
+    const cli = new CliService(new CallStore(path.join(root, 'tasks.json')));
+    cli.register('shell.run', {
       skill: 'development', description: 'builtin', schema: z.object({}).strict(), execute: () => ({ builtin: true }),
     });
-    const remove = await registerRuntimeCli(cli, root);
+    const storage = new PluginStorageService({ directory: path.join(root, 'storage') });
+    storage.set('other-plugin', 'note', 'private');
+    const remove = await registerRuntimeCli(cli, root, { error: () => {} }, storage);
     const listed = cli.list(context);
     expect(listed.find((item) => item.name === 'notes.add')).toMatchObject({ skill: 'notes', instructions: '先确认内容。' });
     await expect(cli.invoke({
       invocationId: 'notes-1', issuedAt: Date.now(), command: 'notes.add', args: { text: 'hello' },
-    }, context)).resolves.toEqual({ saved: 'hello' });
+    }, context)).resolves.toEqual({ saved: 'hello', hostFields: ['storage'] });
+    expect(storage.get('live2d.notes', 'note')).toBe('hello');
+    expect(storage.get('other-plugin', 'note')).toBe('private');
     remove();
     await expect(cli.invoke({
       invocationId: 'notes-2', issuedAt: Date.now(), command: 'notes.add', args: { text: 'again' },
     }, context)).rejects.toThrow('unavailable');
+  });
+
+  it('logs a broken plugin and still registers the next one', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'live2d-cli-plugin-'));
+    roots.push(root);
+    for (const [folder, body] of [
+      ['broken', 'throw new Error(\'cli exploded\');'],
+      ['notes', `export const commands = [{ name: 'notes.add', skill: 'notes', description: 'Save', parameters: { type: 'object', additionalProperties: false }, execute: () => ({ saved: true }) }];`],
+    ]) {
+      const dir = path.join(root, folder);
+      mkdirSync(dir);
+      writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ id: folder, permissions: ['commands.register'] }));
+      writeFileSync(path.join(dir, 'cli.js'), body);
+    }
+    const errors = [];
+    const cli = new CliService(new CallStore(path.join(root, 'tasks.json')));
+    await registerRuntimeCli(cli, root, { error: (_scope, _event, data) => { errors.push(data); } }, new PluginStorageService({ directory: path.join(root, 'storage') }));
+    expect(errors).toEqual([expect.objectContaining({ pluginId: 'broken', message: 'cli exploded' })]);
+    await expect(cli.invoke({
+      invocationId: 'notes-3', issuedAt: Date.now(), command: 'notes.add', args: {},
+    }, context)).resolves.toEqual({ saved: true });
   });
 });

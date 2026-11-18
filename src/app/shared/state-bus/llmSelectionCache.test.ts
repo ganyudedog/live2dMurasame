@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadLlmSelection, saveLlmSelection } from './llmSelectionCache';
+import { loadLlmSelection, saveLlmSelection, resetLlmSelections } from './llmSelectionCache';
 
 const store = new Map<string, string>();
 beforeEach(() => {
@@ -15,6 +15,15 @@ const model = (id: string, efforts: PetReasoningEffort[] = []): PetLlmModel =>
 const models = [model('gpt-a', ['low', 'medium']), model('gpt-b', [])];
 
 describe('frontend-owned chat and action model/depth selection', () => {
+  it('clamps cache hits without writing and clears selections for empty registries', () => {
+    saveLlmSelection(models, 'chat', { model: 'gpt-b' });
+    const write = vi.spyOn(window.localStorage, 'setItem');
+    expect(loadLlmSelection([model('gpt-b', ['low'])], 'chat')).toEqual({ model: 'gpt-b', effort: 'low' });
+    expect(write).not.toHaveBeenCalled();
+    loadLlmSelection([], 'chat');
+    expect(write).toHaveBeenCalled();
+    expect(loadLlmSelection(models, 'chat').model).toBe('gpt-a');
+  });
   it('seeds the first registered model once and then keeps the user choice', () => {
     // 首次没有缓存：落到列表第一项，并把深度落到该模型的第一档。
     expect(loadLlmSelection(models, 'chat')).toEqual({ model: 'gpt-a', effort: 'low' });
@@ -68,4 +77,12 @@ describe('frontend-owned chat and action model/depth selection', () => {
     store.set('pet:llm:selection', 'null');
     expect(loadLlmSelection(models, 'chat')).toEqual({ model: 'gpt-a', effort: 'low' });
   });
+});
+
+it('explicit re-detection resets both persisted selections even if the old model still exists', () => {
+  saveLlmSelection(models, 'chat', { model: 'gpt-b' });
+  saveLlmSelection(models, 'action', { model: 'gpt-b' });
+  resetLlmSelections(models);
+  expect(loadLlmSelection(models, 'chat')).toEqual({ model: 'gpt-a', effort: 'low' });
+  expect(loadLlmSelection(models, 'action')).toEqual({ model: 'gpt-a', effort: 'low' });
 });

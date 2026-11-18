@@ -1,6 +1,5 @@
 import type { Disposable } from './common';
 import type { ConversationErrorCode } from '../publicError';
-import type { TaskEvent } from '../../../../../shared/cli/contracts';
 
 export type InteractionPolicy =
   | { readonly mode: 'interrupt'; readonly maxConcurrent?: number; readonly maxQueued?: number }
@@ -14,8 +13,6 @@ export interface ConversationChannelOptions {
   readonly source: string;
   readonly conversationId: string;
   readonly interaction: InteractionPolicy;
-  readonly model?: string;
-  readonly reasoningEffort?: string;
   /** Plugin instructions for this channel. The host adds the character's own persona and the output protocol. */
   readonly systemPrompt?: string;
   readonly displayLang?: DisplayLanguage;
@@ -52,8 +49,6 @@ export interface ConversationRequest {
 export type ConversationResponseStatus = 'streaming' | 'done' | 'error' | 'cancelled';
 
 export interface ConversationResponse {
-  /** An unsolicited follow-up to this original request, with its own requestId. */
-  readonly inReplyTo?: string;
   readonly channelId: string;
   readonly requestId: string;
   readonly conversationId: string;
@@ -78,10 +73,6 @@ export interface ConversationChannel {
   sendText(request: ConversationRequest): ConversationRequestResult;
   cancel(requestId?: string): void;
   onResponse(listener: (response: ConversationResponse) => void): Disposable;
-  /** Independent from chat completion. Disposing this subscription does not cancel tasks. */
-  onTask?(listener: (event: TaskEvent) => void): Disposable;
-  /** Restore task observation after a transport reconnect without creating a chat request. */
-  watchTasks?(scope: { conversationId: string; senderId: string }): void;
   dispose(): void;
 }
 

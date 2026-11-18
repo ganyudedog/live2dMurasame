@@ -1,14 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AiHostApi, AstrBotUiContext } from '../types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AstrBotUiContext } from '../types';
 import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, type AstrBotBridgeSettings } from '../settings';
-
-const getModelsHost = (context: AstrBotUiContext): AiHostApi | null => {
-  const value = context.hostApi.ai;
-  return value
-    && typeof value.getModels === 'function'
-    && typeof value.subscribe === 'function'
-    ? value : null;
-};
 
 const toMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -17,8 +9,6 @@ const toMessage = (error: unknown): string => (error instanceof Error ? error.me
  * 页面各自持有输入草稿，只在提交时调用 update。
  */
 export function useBridgeSettings(context: AstrBotUiContext) {
-  const modelsHost = useMemo(() => getModelsHost(context), [context]);
-  const [models, setModels] = useState<readonly { id: string; efforts: readonly string[] }[]>([]);
   const [settings, setSettings] = useState<AstrBotBridgeSettings>(DEFAULT_ASTRBOT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -56,27 +46,6 @@ export function useBridgeSettings(context: AstrBotUiContext) {
     return () => { active = false; };
   }, [context.storage, context.logger]);
 
-  useEffect(() => {
-    if (!modelsHost) return undefined;
-    const refresh = () => {
-      const list = modelsHost.getModels();
-      setModels(list);
-      // 持久化的档位可能已经不属于当前模型（模型被重新检测过），顺手收敛到第一档。
-      const current = settingsRef.current;
-      const found = list.find((item) => item.id === current.model);
-      if (!found || found.efforts.includes(current.reasoningEffort)) return;
-      const next = normalizeSettings({ ...current, reasoningEffort: found.efforts[0] ?? '' });
-      settingsRef.current = next;
-      setSettings(next);
-      void context.storage.set('settings', next).catch((error: unknown) => {
-        context.logger.error('settings.save.failed', { error: String(error) });
-        setSaveError(toMessage(error));
-      });
-    };
-    refresh();
-    return modelsHost.subscribe(refresh);
-  }, [modelsHost, context.storage, context.logger]);
-
   /** 每次改动立即落盘；值没变就不写，避免无意义的重连与日志。 */
   const update = (patch: Partial<AstrBotBridgeSettings>) => {
     const current = settingsRef.current;
@@ -92,7 +61,7 @@ export function useBridgeSettings(context: AstrBotUiContext) {
       });
   };
 
-  return { modelsHost, models, settings, loaded, saveError, saved, update };
+  return { settings, loaded, saveError, saved, update };
 }
 
 export type BridgeSettingsStore = ReturnType<typeof useBridgeSettings>;

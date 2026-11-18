@@ -6,13 +6,13 @@ const call = (name: string, args: unknown) => ({ content: null, tool_calls: [{ i
 const setup = () => {
   const session: CommandSession = {
     reply: vi.fn(async () => {}), compact: vi.fn(async () => true),
-    claim: vi.fn(async () => ({})), finish: vi.fn(async () => {}), tasks: vi.fn(async () => []), close: vi.fn(async () => {}),
+    claim: vi.fn(async () => ({})), finish: vi.fn(async () => {}), close: vi.fn(async () => {}),
     invoke: vi.fn(async (request) => request.command === 'commands.list' ? [
-      { name: 'agent.workspaces', skill: 'development', description: 'projects', parameters: { type: 'object', properties: {} } },
-      { name: 'agent.run', skill: 'development', description: 'run', parameters: { type: 'object', properties: {} } },
+      { name: 'jobs.directories', skill: 'development', description: 'projects', parameters: { type: 'object', properties: {} } },
+      { name: 'jobs.run', skill: 'development', description: 'run', parameters: { type: 'object', properties: {} } },
       { name: 'config.get', skill: 'settings', description: 'get', parameters: { type: 'object', properties: {} } },
-      { name: 'agent.settings.update', skill: 'management', description: 'admin', parameters: {} },
-    ] : request.command === 'agent.workspaces' ? [{ id: 'project' }] : { id: 'task-1', status: 'queued', requestId: request.requestId }),
+      { name: 'config.update', skill: 'management', description: 'admin', parameters: {} },
+    ] : request.command === 'jobs.directories' ? [{ id: 'project' }] : { id: 'task-1', status: 'queued', requestId: request.requestId }),
   };
   return session;
 };
@@ -35,7 +35,7 @@ describe('progressive skill loop', () => {
   it('preserves completed operations when the next model request fails', async () => {
     const session = setup();
     const complete = vi.fn().mockResolvedValueOnce(call('loadSkill', { name: 'development' }))
-      .mockResolvedValueOnce(call('agent_run', { workspaceId: 'project', prompt: 'fix' }))
+      .mockResolvedValueOnce(call('jobs_run', { workspaceId: 'project', prompt: 'fix' }))
       .mockRejectedValueOnce(new Error('network offline'));
     const result = await runSkillLoop({ config: {}, text: '修复项目', requestId: 'partial', session, complete });
     expect(result.handled).toBe(true);
@@ -58,7 +58,7 @@ describe('progressive skill loop', () => {
       if (round === 1) return call('loadSkill', { name: 'development' });
       if (round === 5) throw new Error('network offline');
       return { content: null, tool_calls: Array.from({ length: 4 }, (_, index) => ({
-        ...call('agent_run', { workspaceId: 'project', prompt: '任务'.repeat(500) }).tool_calls[0], id: `call-${round}-${index}`,
+        ...call('jobs_run', { workspaceId: 'project', prompt: '任务'.repeat(500) }).tool_calls[0], id: `call-${round}-${index}`,
       })) };
     });
     const result = await runSkillLoop({ config: {}, text: '执行', requestId: 'large', session, complete });
@@ -103,30 +103,28 @@ describe('progressive skill loop', () => {
 
   it('loads tools, executes them and feeds observations back until the model finishes', async () => {
     const session = setup();
-    const onTaskCreated = vi.fn();
-    const replies = [call('loadSkill', { name: 'development' }), call('agent_workspaces', {}), call('agent_run', { workspaceId: 'project', prompt: 'fix' }), { content: '任务已接收' }];
+    const replies = [call('loadSkill', { name: 'development' }), call('jobs_directories', {}), call('jobs_run', { workspaceId: 'project', prompt: 'fix' }), { content: '任务已接收' }];
     const offered: string[][] = [];
     const complete = vi.fn<NonNullable<SkillLoopOptions['complete']>>(async (messages, tools) => {
       offered.push(tools.map((tool) => tool.type === 'function' ? tool.function.name : ''));
       if (offered.length === 4) expect(JSON.stringify(messages)).toContain('task-1');
       return replies.shift()!;
     });
-    const result = await runSkillLoop({ config: { model: 'model' }, text: '修复项目', requestId: 'message-1', session, complete, onTaskCreated });
-    expect(onTaskCreated).toHaveBeenCalledExactlyOnceWith({ id: 'task-1', status: 'queued', requestId: 'message-1' });
+    const result = await runSkillLoop({ config: { model: 'model' }, text: '修复项目', requestId: 'message-1', session, complete });
     expect(result.handled).toBe(true);
     expect(offered[0]).toEqual(['loadSkill']);
-    expect(offered[1]).toContain('agent_run'); expect(offered.flat()).not.toContain('config_get');
-    expect(offered.flat()).not.toContain('agent_settings_update');
-    expect(session.invoke).toHaveBeenCalledWith(expect.objectContaining({ command: 'agent.run', invocationId: 'message-1:2:0', requestId: 'message-1' }));
+    expect(offered[1]).toContain('jobs_run'); expect(offered.flat()).not.toContain('config_get');
+    expect(offered.flat()).not.toContain('config_update');
+    expect(session.invoke).toHaveBeenCalledWith(expect.objectContaining({ command: 'jobs.run', invocationId: 'message-1:2:0', requestId: 'message-1' }));
     expect(session.finish).toHaveBeenCalledWith('message-1', result);
   });
   it('does not execute unavailable tools bundled with a skill load', async () => {
     const session = setup();
     const complete = vi.fn().mockResolvedValueOnce({ content: null, tool_calls: [
-      ...call('loadSkill', { name: 'development' }).tool_calls, ...call('agent_run', { prompt: 'bad' }).tool_calls,
+      ...call('loadSkill', { name: 'development' }).tool_calls, ...call('jobs_run', { prompt: 'bad' }).tool_calls,
     ] }).mockResolvedValueOnce({ content: '需要重新调用工具' });
     await runSkillLoop({ config: {}, text: 'task', requestId: 'one', session, complete });
-    expect(vi.mocked(session.invoke).mock.calls.filter(([request]) => request.command === 'agent.run')).toHaveLength(0);
+    expect(vi.mocked(session.invoke).mock.calls.filter(([request]) => request.command === 'jobs.run')).toHaveLength(0);
   });
   it('returns ordinary chat to its existing memory path and reuses cached workflows', async () => {
     const session = setup();

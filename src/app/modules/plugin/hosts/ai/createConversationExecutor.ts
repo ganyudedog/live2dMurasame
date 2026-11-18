@@ -1,3 +1,4 @@
+import { loadLlmSelection } from '@app/shared/state-bus/llmSelectionCache';
 import { MemoryService } from '@app/modules/ai/modules/llm/service/MemoryService';
 import { buildRecentConversation, distinctRecallText, speakerText } from '@app/modules/ai/modules/llm/domain/memory/recentConversation';
 import type { PluginConversationExecutor } from './ConversationScheduler';
@@ -9,7 +10,6 @@ import { buildPersonaPrompt, normalizePersona } from '@app/modules/ai/modules/ll
 import { LlmMemoryRepository } from '@app/modules/ai/modules/llm/infrastructure/LlmMemoryRepository';
 import { resolveEpisodeQuery } from '@app/modules/ai/modules/llm/domain/memory/episodeQuery';
 import { runSkillLoop } from '@app/modules/ai/modules/llm/application/skillLoop';
-import { taskReportContext } from '@app/modules/ai/modules/llm/domain/taskReport';
 import type { CommandSession } from '../../../../../../shared/cli/contracts';
 import { openCommandSession } from '@app/shared/electron/commandSession';
 import { classifyConversationError, createDiagnosticId, sanitizeLogDetail } from '../../publicError';
@@ -38,7 +38,7 @@ export const createDefaultConversationExecutor = (
     };
     const archive = request.memoryArchive ? { ...request.memoryArchive } : undefined;
     const memory = new LlmMemoryRepository();
-    const model = options.model?.trim();
+    const { model, effort: reasoningEffort } = loadLlmSelection(global?.llmModels ?? [], 'chat');
     const persona = buildPersonaPrompt({ ...normalizePersona(config.modelConfig?.persona), userAddress: '' });
     const scenePrompt = request.systemPrompt?.trim() || options.systemPrompt?.trim() || '';
     // The injected prompt owns relationship, address, and scene. Keep it non-empty so the
@@ -51,7 +51,7 @@ export const createDefaultConversationExecutor = (
     let displayText = '';
     let speakText = '';
     let commands: CommandSession | null = null;
-    let toolContext = context.taskReport ? taskReportContext(context.taskReport) : '';
+    let toolContext = '';
     const parser = new SentenceStreamParser();
     const traceContext = log.contextRegistry.register('PluginConversation', {
       relation: 'conversation.request',
@@ -63,8 +63,7 @@ export const createDefaultConversationExecutor = (
     try {
       context.signal.throwIfAborted();
       ensureModelPath();
-      if (!model) throw new Error('请在插件设置中选择对话模型');
-      if (!global?.apiKey?.trim()) throw new Error('请先在 AI 设置中配置模型 API Key');
+      if (!global || !model) throw new Error('请先在 AI 设置中检测并启用对话模型');
       if (archive) {
         if (!modelPath) throw new Error('请先选择角色模型以保存对话归档');
         try {
@@ -90,14 +89,10 @@ export const createDefaultConversationExecutor = (
           return null;
         })
         : null;
-      if (commands && context.taskReport) {
-        await commands.claim(context.requestId, `${request.text}\n${toolContext}`);
-        await commands.finish(context.requestId, { handled: true, context: toolContext });
-      } else if (commands) {
+      if (commands) {
         try {
-          const tools = await runSkillLoop({ config: { apiKey: global.apiKey, baseURL: global.baseURL, model, reasoningEffort: options.reasoningEffort },
+          const tools = await runSkillLoop({ config: { apiKey: global.apiKey, baseURL: global.baseURL, model, reasoningEffort },
             text: request.text, requestId: context.requestId, signal: context.signal, session: commands,
-            onTaskCreated: context.onTaskCreated,
             historyMessages: buildRecentConversation(recent.turns.filter((turn) =>
               turn.sender?.id === request.sender?.id && turn.conversationId === context.conversationId)).historyMessages,
             summarize: global.memoryModel?.trim() ? async (systemPrompt, userPrompt, signal) => {
@@ -118,8 +113,8 @@ export const createDefaultConversationExecutor = (
         baseURL: global.baseURL,
         model,
       }, {
-        userText: context.taskReport ? request.text : speakerText(request.text, request.sender),
-        cue: Boolean(context.taskReport),
+        userText: speakerText(request.text, request.sender),
+        cue: false,
         historyMessages: recent.historyMessages,
         toolContext,
         toolsAvailable: Boolean(commands),
@@ -128,7 +123,7 @@ export const createDefaultConversationExecutor = (
         displayLang: request.displayLang ?? options.displayLang,
         speakLang,
         speechEnabled,
-        ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
         stream: true,
         signal: context.signal,
         onStreamDelta: ({ deltaText }) => {
@@ -181,7 +176,7 @@ export const createDefaultConversationExecutor = (
       ensureModelPath();
       if (request.personalMemory?.userText.trim() && modelPath && displayText.trim()) {
         const runtime = { contextText: '', modelPath, memoryState: null };
-        await personalMemory.persistConversation(runtime, context.taskReport ? request.text : request.personalMemory.userText, displayText, trace, {
+        await personalMemory.persistConversation(runtime, request.personalMemory.userText, displayText, trace, {
           requestId: context.requestId, toolContext, sender: request.sender,
           conversationId: JSON.stringify([options.source, context.conversationId]),
         });

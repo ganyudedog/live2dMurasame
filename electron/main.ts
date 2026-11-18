@@ -36,6 +36,9 @@ let mainWindow: BrowserWindow | null = null;
 let controlPanelWindow: BrowserWindow | null = null;
 let isQuitting = false;
 const backendLog = createBackendLogService();
+const pluginStorageService = new PluginStorageService({
+    directory: () => path.join(app.getPath('userData'), 'config', 'plugins'),
+});
 configureConfigDao(backendLog);
 registerTtsDiagnosticsIpc({ ipcMain });
 
@@ -54,6 +57,7 @@ protocol.registerSchemesAsPrivileged([
 
 // 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
 const enableGpu = process.env.VITE_ENABLE_GPU === '1';
+app.commandLine.appendSwitch('disable-breakpad');
 if (!enableGpu) {
     app.disableHardwareAcceleration();
     app.commandLine.appendSwitch('disable-gpu');
@@ -261,21 +265,12 @@ const applicationIpc = registerDomainIpc({
     scheduleAutoLaunchSetting: scheduleApplyAutoLaunchSetting,
     getMainWindow: () => mainWindow,
     logService: backendLog,
-    pluginStorageService: new PluginStorageService({
-        directory: () => path.join(app.getPath('userData'), 'config', 'plugins'),
-    }),
+    pluginStorageService,
 });
 const asrRuntime = applicationIpc.asrRuntime;
-const cliRuntime = createCliModule({
-    directory: path.join(app.getPath('userData'), 'cli'),
-    globalConfigPath: path.join(app.getPath('userData'), 'config', 'globalModelConfig.json'),
-    protectedRoot: app.getPath('userData'),
-    live2dEnvironmentService, modelEnvironmentService,
-    sendAll: applicationIpc.sendAll, publishSnapshot: applicationIpc.publishSnapshot,
-});
-const stopCliIpc = registerCliIpc({ ipcMain, cli: cliRuntime.cli });
-const commandServer = startCommandServer({ cli: cliRuntime.cli, directory: path.join(app.getPath('userData'), 'cli') })
-    .catch((error: unknown) => { backendLog.error('cli', 'server.start.failed', { message: errorMessage(error) }); return null; });
+let cliRuntime: ReturnType<typeof createCliModule> | null = null;
+let stopCliIpc: (() => void) | null = null;
+let commandServer: Promise<Awaited<ReturnType<typeof startCommandServer>> | null> | null = null;
 const unsubscribeSettings = live2dEnvironmentService.onSettingsChanged(({ settings }) => {
     const source = settings && typeof settings === 'object' ? settings as Record<string, unknown> : {};
     subtitleService?.configure(source.subtitle);
@@ -392,8 +387,8 @@ app.on('before-quit', (event) => {
         if (!cliShutdownStarted) {
             cliShutdownStarted = true;
             releaseRuntimeCli?.();
-            stopCliIpc();
-            void Promise.allSettled([cliRuntime.dispose(), commandServer.then((server) => server?.close())])
+            stopCliIpc?.();
+            void Promise.allSettled([cliRuntime?.dispose(), commandServer?.then((server) => server?.close())])
                 .finally(() => { cliShutdownComplete = true; app.quit(); });
         }
         return;
@@ -467,13 +462,37 @@ app.whenReady().then(async () => {
     }
 
     let loadedConfig: Record<string, unknown>;
+    let environmentInitialized = false;
     try {
         live2dEnvironmentService.initialize();
-        releaseRuntimeCli = await registerRuntimeCli(cliRuntime.cli, live2dEnvironmentService.root.pluginDir);
         loadedConfig = { ...live2dEnvironmentService.root.settings };
+        environmentInitialized = true;
     } catch (error: unknown) {
         backendLog.error('bootstrap', 'config.initialize.failed', { message: errorMessage(error) });
         loadedConfig = {};
+    }
+    if (environmentInitialized) try {
+        // CLI adapters read environment settings during construction; initialize only after app readiness.
+        cliRuntime = createCliModule({
+            directory: path.join(app.getPath('userData'), 'cli'),
+            protectedRoot: app.getPath('userData'),
+            live2dEnvironmentService, modelEnvironmentService,
+            sendAll: applicationIpc.sendAll, publishSnapshot: applicationIpc.publishSnapshot,
+        });
+        const releaseBundled = await registerRuntimeCli(cliRuntime.cli, path.join(app.getAppPath(), 'plugins'), backendLog, pluginStorageService);
+        const releaseConfigured = await registerRuntimeCli(cliRuntime.cli, live2dEnvironmentService.root.pluginDir, backendLog, pluginStorageService);
+        releaseRuntimeCli = () => { releaseConfigured(); releaseBundled(); };
+        stopCliIpc = registerCliIpc({ ipcMain, cli: cliRuntime.cli });
+        commandServer = startCommandServer({ cli: cliRuntime.cli, directory: path.join(app.getPath('userData'), 'cli') });
+        await commandServer;
+    } catch (error: unknown) {
+        stopCliIpc?.();
+        stopCliIpc = null;
+        releaseRuntimeCli?.();
+        cliRuntime?.dispose();
+        cliRuntime = null;
+        commandServer = null;
+        backendLog.error('cli', 'cli.start.failed', { message: errorMessage(error) });
     }
     backendLog.setDebugPolicy?.(loadedConfig?.debugModeEnabled);
     applyAutoLaunchSetting(loadedConfig.autoLaunch, backendLog);

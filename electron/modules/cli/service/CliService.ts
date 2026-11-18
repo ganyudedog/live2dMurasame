@@ -2,10 +2,12 @@ import type { PluginCliGrantStore } from './PluginCliGrantStore.js';
 import type { ToolConversationService } from './ToolConversationService.js';
 import { operationText } from '../domain/toolConversation.js';
 import type { CommandClaim } from '../../../../shared/cli/contracts.js';
+import { isBoundaryTrace } from '../../../../shared/logging/boundaryTrace.js';
+import type { BackendLogService } from '../../logging/BackendLogService.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { TaskStore } from '../infrastructure/TaskStore.js';
-import type { AgentTaskQuery, CliCommand, CommandCatalogEntry, CommandContext, CommandSkill, TaskEvent } from './commandTypes.js';
+import type { CallStore } from '../infrastructure/CallStore.js';
+import type { CliCommand, CommandCatalogEntry, CommandContext, CommandSkill } from './commandTypes.js';
 
 const envelope = z.object({
   invocationId: z.string().min(1).max(240),
@@ -13,12 +15,15 @@ const envelope = z.object({
   requestId: z.string().max(200).optional(),
   command: z.string().max(100),
   args: z.record(z.string(), z.unknown()),
+  traceId: z.string().min(1).max(200).optional(),
+  boundary: z.string().max(40).optional(),
 }).strict();
 
 interface StoredCommand {
   schema: { parse: (input: unknown) => unknown };
   description: string;
   skill: CommandSkill;
+  instructions?: string;
   localOnly: boolean;
   toJsonSchema: () => Record<string, unknown>;
   execute: (args: unknown, context: CommandContext, invocationId: string) => unknown | Promise<unknown>;
@@ -40,38 +45,64 @@ const jsonSchemaOf = (schema: { parse: (input: unknown) => unknown }): Record<st
 
 /**
  * Command registration, authorization, runtime validation, and idempotent dispatch.
- * Task queries go through this type so IPC and HTTP never touch the ledger or AgentTaskService.
  */
+const COMMAND_NAME = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/;
+const COMMAND_SKILL = /^[a-z][a-z0-9-]{0,32}$/;
+const COMMAND_OWNER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,80}$/;
+
 export class CliService {
   private readonly commands = new Map<string, StoredCommand>();
+  private readonly owners = new Map<string, string>();
   private readonly pending = new Map<string, Promise<unknown>>();
 
   private readonly grants?: PluginCliGrantStore;
-  private readonly store: TaskStore;
-  private readonly tasks?: AgentTaskQuery;
+  private readonly store: CallStore;
   private readonly conversations?: ToolConversationService;
+  private readonly log?: Pick<BackendLogService, 'lineage'>;
 
-  constructor(store: TaskStore, tasks?: AgentTaskQuery, grants?: PluginCliGrantStore, conversations?: ToolConversationService) {
+  constructor(store: CallStore, grants?: PluginCliGrantStore, conversations?: ToolConversationService, log?: Pick<BackendLogService, 'lineage'>) {
     this.store = store;
     this.grants = grants;
-    this.tasks = tasks;
     this.conversations = conversations;
+    this.log = log;
   }
 
   register<TArgs>(name: string, definition: CliCommand<TArgs>): void {
     if (this.commands.has(name)) throw new Error(`Duplicate command: ${name}`);
+    const instructions = definition.instructions?.trim();
     this.commands.set(name, {
       schema: definition.schema,
       description: definition.description,
       skill: definition.skill,
+      ...(instructions ? { instructions } : {}),
       localOnly: definition.localOnly ?? false,
-      toJsonSchema: () => jsonSchemaOf(definition.schema),
+      toJsonSchema: () => definition.parameters ?? jsonSchemaOf(definition.schema),
       execute: (args, context, invocationId) => definition.execute(definition.schema.parse(args), context, invocationId),
     });
   }
 
+  /**
+   * 启动后登记外部命令。下一次 agent loop 拉目录时就能调用。
+   * 不能覆盖已有命令。返回的函数会撤下该命令。
+   */
+  registerExternal<TArgs extends Record<string, unknown>>(owner: string, name: string, definition: CliCommand<TArgs>): () => void {
+    if (!COMMAND_OWNER.test(owner)) throw new Error('Invalid command owner');
+    if (!COMMAND_NAME.test(name) || name.length > 100 || name === 'commands.list') throw new Error('Invalid command name');
+    if (!COMMAND_SKILL.test(definition.skill)) throw new Error('Invalid command skill');
+    if (this.commands.has(name)) throw new Error(`Duplicate command: ${name}`);
+    this.owners.set(name, owner);
+    this.register(name, definition);
+    let removed = false;
+    return () => {
+      if (removed || this.owners.get(name) !== owner) return;
+      removed = true;
+      this.owners.delete(name);
+      this.commands.delete(name);
+    };
+  }
+
   isAvailable(context: CommandContext): boolean {
-    return context.local || (this.grants?.read() ?? this.store.data.settings.remoteSources).includes(context.source);
+    return context.local || (this.grants?.read() ?? []).includes(context.source);
   }
 
   authorize(context: CommandContext): void {
@@ -132,26 +163,14 @@ export class CliService {
       description: definition.description,
       skill: definition.skill,
       parameters: definition.toJsonSchema(),
+      ...(definition.instructions ? { instructions: definition.instructions } : {}),
     }));
-  }
-
-  listTasks(owner: string) {
-    if (!this.tasks) throw new Error('Agent tasks are unavailable');
-    return this.tasks.list(owner);
-  }
-
-  getTask(taskId: string, owner: string) {
-    if (!this.tasks) throw new Error('Agent tasks are unavailable');
-    return this.tasks.get(taskId, owner);
-  }
-
-  subscribeTasks(listener: (event: TaskEvent, owner: string) => void): () => void {
-    if (!this.tasks) throw new Error('Agent tasks are unavailable');
-    return this.tasks.subscribe(listener);
   }
 
   async invoke(input: unknown, context: CommandContext): Promise<unknown> {
     const request = envelope.parse(input);
+    const carried = { traceId: request.traceId, boundary: request.boundary };
+    if (isBoundaryTrace(carried)) this.log?.lineage(carried.traceId, carried.boundary, 'cli.execute');
     this.authorize(context);
     if (request.command === 'commands.list') return this.list(context);
     const definition = this.commands.get(request.command);

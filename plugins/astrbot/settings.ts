@@ -1,9 +1,8 @@
 export interface AstrBotBridgeSettings {
   readonly bridgeUrl: string;
   readonly token: string;
-  readonly systemPrompt: string;
-  readonly model: string;
   readonly reasoningEffort: string;
+  readonly systemPrompt: string;
   readonly interactionMode: 'interrupt' | 'queue' | 'concurrent';
   readonly maxConcurrent: number;
   readonly maxQueued: number;
@@ -15,7 +14,7 @@ export interface AstrBotBridgeSettings {
 }
 
 export const DEFAULT_ASTRBOT_SETTINGS: AstrBotBridgeSettings = {
-  bridgeUrl: 'ws://127.0.0.1:6198/ws', token: '', model: '', reasoningEffort: '',
+  bridgeUrl: 'ws://127.0.0.1:6198/ws', token: '', reasoningEffort: '',
   systemPrompt: '你是 QQ 群聊助手。结合收到的消息和对话上下文，自然、简洁地回复。',
   interactionMode: 'queue', maxConcurrent: 1, maxQueued: 16, displayLang: 'zh', speakLang: '',
   wakeWords: [],
@@ -35,9 +34,8 @@ export const normalizeSettings = (value: unknown, defaults = DEFAULT_ASTRBOT_SET
   return {
     bridgeUrl: typeof raw.bridgeUrl === 'string' ? raw.bridgeUrl.trim() : defaults.bridgeUrl,
     token: typeof raw.token === 'string' ? raw.token : defaults.token,
+    reasoningEffort: typeof raw.reasoningEffort === 'string' ? raw.reasoningEffort.trim() : defaults.reasoningEffort,
     systemPrompt: typeof raw.systemPrompt === 'string' ? raw.systemPrompt : defaults.systemPrompt,
-    model: typeof raw.model === 'string' ? raw.model : defaults.model,
-    reasoningEffort: typeof raw.reasoningEffort === 'string' ? raw.reasoningEffort : defaults.reasoningEffort,
     interactionMode: modes.includes(raw.interactionMode as typeof modes[number]) ? raw.interactionMode as typeof modes[number] : defaults.interactionMode,
     maxConcurrent: clamp(Number(raw.maxConcurrent ?? defaults.maxConcurrent), 1, 8),
     maxQueued: clamp(Number(raw.maxQueued ?? defaults.maxQueued), 0, 100),

@@ -13,7 +13,7 @@ import { KNOWN_REASONING_EFFORTS, normalizeEfforts } from '../../../../../../../
 export interface EffortProbeOutcome {
   status: 'ok' | 'unknown';
   efforts: PetReasoningEffort[];
-  source: 'error' | 'probe';
+  source: 'probe';
   message?: string;
 }
 
@@ -70,6 +70,7 @@ const sendProbe = async (args: {
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   const onAbort = () => controller.abort();
   args.signal?.addEventListener('abort', onAbort);
+  if (args.signal?.aborted) controller.abort();
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   // 本地免鉴权接口允许留空凭据，这时不带 Authorization。
   if (args.apiKey.trim()) headers.authorization = `Bearer ${args.apiKey.trim()}`;
@@ -109,7 +110,7 @@ const sendWithTokenFallback = async (args: Parameters<typeof sendProbe>[0]): Pro
 const mentionsEffort = (message: string): boolean => /reasoning[._\s-]?effort|reasoning/i.test(message);
 
 const mentionsUnsupported = (message: string): boolean => (
-  /unrecognized|unsupported|unknown|not supported|does not support|not available|extra inputs|invalid parameter|invalid option/i.test(message)
+  /unrecognized request argument|unsupported parameter|unknown parameter|not supported|does not support|not available|extra inputs/i.test(message)
 );
 
 /** 枚举引导词之后的那一段，例如 “expected one of `none`, `low`, ..., `max`”。 */
@@ -182,26 +183,27 @@ export const probeModelEfforts = async (
 ): Promise<EffortProbeOutcome> => {
   const base = { apiKey: options.apiKey, baseURL: options.baseURL, model: options.model, signal: options.signal };
 
-  // A：非法值探针，一次请求就能拿到枚举或"不支持"的结论。
+  // 枚举可能只是网关的协议校验范围，必须对当前模型逐档验证。
+  let candidates = [...KNOWN_REASONING_EFFORTS];
   const invalid = await sendWithTokenFallback({ ...base, effort: PROBE_VALUE, tokenParam: 'max_completion_tokens' });
   if (!invalid.ok) {
     // 先找枚举：网关常把上游的 400 包成 4xx/5xx 再返回，状态码本身不决定正文有没有答案。
-    const enumerated = readEnumeratedEfforts(invalid.message);
-    if (enumerated.length) return { status: 'ok', efforts: enumerated, source: 'error' };
-    if (mentionsUnsupported(invalid.message) && mentionsEffort(invalid.message)) {
-      return { status: 'ok', efforts: [], source: 'error' };
-    }
-    if (isRateLimitedOrBroken(invalid.status) || isUnusableEndpoint(invalid.status)) {
+    const enumerated = mentionsEffort(invalid.message) ? readEnumeratedEfforts(invalid.message) : [];
+    if (enumerated.length) candidates = enumerated;
+    if (!enumerated.length && (isRateLimitedOrBroken(invalid.status) || isUnusableEndpoint(invalid.status))) {
       return { status: 'unknown', efforts: [], source: 'probe', message: invalid.message };
+    }
+    if (!enumerated.length && mentionsUnsupported(invalid.message) && mentionsEffort(invalid.message)) {
+      return { status: 'ok', efforts: [], source: 'probe' };
     }
   }
 
   // B：逐档验证。只有「4xx 且确实在抱怨 reasoning_effort」才算这一档不支持。
   const supported: PetReasoningEffort[] = [];
-  for (const [index, effort] of KNOWN_REASONING_EFFORTS.entries()) {
+  for (const [index, effort] of candidates.entries()) {
     if (options.signal?.aborted) return { status: 'unknown', efforts: [], source: 'probe', message: '探测已取消' };
     const reply = await sendWithTokenFallback({ ...base, effort, tokenParam: 'max_completion_tokens' });
-    onProgress?.(index + 1, KNOWN_REASONING_EFFORTS.length);
+    onProgress?.(index + 1, candidates.length);
     if (reply.ok) { supported.push(effort); continue; }
     if (!isValidationRejection(reply)) {
       // 限流、鉴权、余额、模型名错误都与档位无关，不能据此把能力写死。

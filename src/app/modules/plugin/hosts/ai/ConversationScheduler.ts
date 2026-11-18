@@ -6,15 +6,9 @@ import type {
   ConversationResponse,
   Disposable,
 } from '../../types';
-import type { AgentTask, TaskEvent } from '../../../../../../shared/cli/contracts';
-import { TaskReportCoordinator } from '@app/modules/ai/service/TaskReportCoordinator';
-import { TASK_REPORT_CUE, taskReportId, type TaskReport } from '@app/modules/ai/modules/llm/domain/taskReport';
-import type { ConversationTaskObserver } from './observeConversationTasks';
 import { classifyConversationError, toPublicError } from '../../publicError';
 
 export interface PluginConversationExecutionContext {
-  readonly taskReport?: TaskReport;
-  readonly onTaskCreated?: (task: AgentTask) => void;
   readonly channelId: string;
   readonly requestId: string;
   readonly conversationId: string;
@@ -52,22 +46,19 @@ export class ConversationScheduler implements ConversationPool {
   private readonly running = new Set<string>();
   private disposed = false;
 
-  private readonly observeTasks?: ConversationTaskObserver;
 
   constructor(
     execute: PluginConversationExecutor,
     maxConcurrent = 4,
-    observeTasks?: ConversationTaskObserver,
   ) {
     this.execute = execute;
-    this.observeTasks = observeTasks;
     this.maxConcurrent = clamp(maxConcurrent, 1, 16);
   }
 
   openChannel(options: ConversationChannelOptions): ConversationChannel {
     if (this.disposed) throw new Error('Conversation host is disposed');
     const channel = new PluginConversationChannel(
-      options, this.execute, this, () => this.channels.delete(channel), this.observeTasks,
+      options, this.execute, this, () => this.channels.delete(channel),
     );
     this.channels.add(channel);
     return channel;
@@ -120,15 +111,9 @@ export class ConversationScheduler implements ConversationPool {
 }
 
 class PluginConversationChannel implements ConversationChannel {
-  private readonly reports: TaskReportCoordinator<ConversationRequest>;
-  private readonly reportQueue: Array<{ task: AgentTask; origin: ConversationRequest }> = [];
-  private readonly followUps = new Map<string, string>();
   readonly id = makeId('channel');
   readonly options: ConversationChannelOptions;
   private readonly listeners = new Set<(response: ConversationResponse) => void>();
-  private readonly taskListeners = new Set<(event: TaskEvent) => void>();
-  private readonly taskSubscriptions = new Map<string, () => void>();
-  private readonly observeTasks?: ConversationTaskObserver;
   private readonly jobs: Job[] = [];
   private readonly controllers = new Map<string, AbortController>();
   private readonly conversations = new Map<string, string>();
@@ -150,34 +135,20 @@ class PluginConversationChannel implements ConversationChannel {
     execute: PluginConversationExecutor,
     scheduler: ConversationPool,
     onDisposed: () => void,
-    observeTasks?: ConversationTaskObserver,
   ) {
     this.execute = execute;
-    this.observeTasks = observeTasks;
     this.scheduler = scheduler;
     this.onDisposed = onDisposed;
     this.options = normalizeOptions(options);
     this.maxConcurrent = this.options.interaction.mode === 'queue' ? 1 : this.options.interaction.maxConcurrent ?? 1;
     this.maxQueued = this.options.interaction.maxQueued ?? 16;
-    this.reports = new TaskReportCoordinator(
-      (origin, listener) => this.observeTasks?.(this.options, origin, listener) ?? (() => {}),
-      (task, origin) => { this.reportQueue.push({ task, origin }); this.drainReports(); },
-    );
   }
 
   sendText(request: ConversationRequest): ConversationRequestResult {
     return this.enqueue(request);
   }
 
-  private drainReports(): void {
-    if (this.disposed || this.closing || this.scheduled.size || this.jobs.length) return;
-    const next = this.reportQueue.shift();
-    if (!next) return;
-    const { task, origin } = next;
-    this.enqueue({ ...origin, requestId: taskReportId(task), text: TASK_REPORT_CUE }, { task, userText: origin.text });
-  }
-
-  private enqueue(request: ConversationRequest, taskReport?: TaskReport): ConversationRequestResult {
+  private enqueue(request: ConversationRequest): ConversationRequestResult {
     const requestId = request.requestId?.trim() || makeId('request');
     const text = request.text.trim();
     if (!text) return { requestId, accepted: false, reason: 'invalid' };
@@ -187,15 +158,13 @@ class PluginConversationChannel implements ConversationChannel {
     if (this.controllers.has(requestId)) return { requestId, accepted: false, reason: 'duplicate' };
 
     const conversationId = request.conversationId?.trim() || this.options.conversationId;
-    if (!taskReport && request.sender?.id) this.watchTasks({ conversationId, senderId: request.sender.id });
     const interactionKey = request.interactionKey?.trim() || conversationId;
-    if (!taskReport && this.options.interaction.mode === 'interrupt') this.cancelInteraction(interactionKey);
+    if (this.options.interaction.mode === 'interrupt') this.cancelInteraction(interactionKey);
 
     const controller = new AbortController();
     this.controllers.set(requestId, controller);
     this.conversations.set(requestId, conversationId);
     this.interactionKeys.set(requestId, interactionKey);
-    if (taskReport) this.followUps.set(requestId, taskReport.task.requestId);
     const queuedCount = this.jobs.length + this.scheduled.size - this.active.size;
     const waitingForSlot = this.scheduled.size >= this.maxConcurrent;
     if (waitingForSlot && queuedCount >= this.maxQueued) {
@@ -205,7 +174,7 @@ class PluginConversationChannel implements ConversationChannel {
     this.jobs.push({
       id: requestId,
       controller,
-      run: () => this.run(requestId, { ...request, requestId, text }, controller, taskReport),
+      run: () => this.run(requestId, { ...request, requestId, text }, controller),
     });
     this.pump();
     return {
@@ -213,24 +182,6 @@ class PluginConversationChannel implements ConversationChannel {
       accepted: true,
       ...(this.active.has(requestId) ? {} : { reason: 'queued' as const }),
     };
-  }
-
-  watchTasks(scope: { conversationId: string; senderId: string }): void {
-    if (this.disposed || this.closing) return;
-    const taskScope = JSON.stringify([scope.conversationId, scope.senderId]);
-    // Refresh the lease on new input: a previously denied source may have been granted locally.
-    this.taskSubscriptions.get(taskScope)?.();
-    this.taskSubscriptions.delete(taskScope);
-    if (this.observeTasks && !this.taskSubscriptions.has(taskScope)) {
-      // Bound resources per channel; an evicted scope can subscribe again on its next message.
-      if (this.taskSubscriptions.size >= 64) {
-        const oldest = this.taskSubscriptions.keys().next().value!;
-        this.taskSubscriptions.get(oldest)?.(); this.taskSubscriptions.delete(oldest);
-      }
-      this.taskSubscriptions.set(taskScope, this.observeTasks(this.options, { text: '', conversationId: scope.conversationId, sender: { id: scope.senderId } }, (event) => {
-        if (!this.disposed) for (const listener of this.taskListeners) { try { listener(event); } catch { /* Consumer isolation. */ } }
-      }));
-    }
   }
 
   cancel(requestId?: string): void {
@@ -254,23 +205,13 @@ class PluginConversationChannel implements ConversationChannel {
     return () => this.listeners.delete(listener);
   }
 
-  onTask(listener: (event: TaskEvent) => void): Disposable {
-    this.taskListeners.add(listener);
-    return () => this.taskListeners.delete(listener);
-  }
-
   dispose(): void {
     if (this.disposed || this.closing) return;
     this.closing = true;
     this.cancel();
     this.disposed = true;
-    this.reports.dispose();
-    this.reportQueue.splice(0);
     this.jobs.splice(0);
     this.listeners.clear();
-    this.taskSubscriptions.forEach((stop) => stop());
-    this.taskSubscriptions.clear();
-    this.taskListeners.clear();
     this.onDisposed();
   }
 
@@ -294,7 +235,6 @@ class PluginConversationChannel implements ConversationChannel {
           this.scheduled.delete(job.id);
           this.removeRequest(job.id);
           this.pump();
-          this.drainReports();
         },
       });
       if (status === 'disposed') {
@@ -309,23 +249,16 @@ class PluginConversationChannel implements ConversationChannel {
     requestId: string,
     request: ConversationRequest,
     controller: AbortController,
-    taskReport?: TaskReport,
   ): Promise<void> {
     if (controller.signal.aborted) return;
     const conversationId = this.conversations.get(requestId) ?? this.options.conversationId;
-    try {
-      await this.execute(this.options, request, {
-        taskReport,
-        onTaskCreated: (task) => this.reports.track(task, { ...request, conversationId }),
-        channelId: this.id,
-        requestId,
-        conversationId,
-        signal: controller.signal,
-        emit: (response) => this.emit(requestId, response, controller),
-      });
-    } finally {
-      this.reports.release(requestId);
-    }
+    await this.execute(this.options, request, {
+      channelId: this.id,
+      requestId,
+      conversationId,
+      signal: controller.signal,
+      emit: (response) => this.emit(requestId, response, controller),
+    });
   }
 
   private cancelInteraction(key: string): void {
@@ -344,7 +277,6 @@ class PluginConversationChannel implements ConversationChannel {
     this.conversations.delete(id);
     this.interactionKeys.delete(id);
     this.terminal.delete(id);
-    this.followUps.delete(id);
   }
 
   private poolKey(id: string): string { return `${this.id}/${id}`; }
@@ -361,7 +293,6 @@ class PluginConversationChannel implements ConversationChannel {
       requestId: id,
       conversationId: this.conversations.get(id) ?? this.options.conversationId,
       ...response,
-      ...(this.followUps.has(id) ? { inReplyTo: this.followUps.get(id) } : {}),
     };
     this.listeners.forEach((listener) => {
       try { listener(full); } catch (error) { console.error('[PluginConversation] response listener failed', error); }

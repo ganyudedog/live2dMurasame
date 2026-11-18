@@ -18,7 +18,9 @@ const aiFields = (config: unknown) => {
 const snapshotStore = createLive2dSnapshotStore({ ipcRenderer });
 const eventBridge = createIpcEventBridge({ ipcRenderer });
 const getLive2denvConfigImpl = () => ipcRenderer.invoke('ddd:live2denv:get');
-const updateLive2denvConfigImpl = (patch: unknown) => ipcRenderer.invoke('ddd:live2denv:update', patch);
+const updateLive2denvConfigImpl = (patch: unknown, trace?: unknown) => ipcRenderer.invoke(
+  'ddd:live2denv:update', trace ? { patch, trace } : patch,
+);
 
 const WindowAPI = {
   sendWindowIntent: (intent: unknown) => ipcRenderer.invoke('ddd:window:intent', intent),
@@ -173,6 +175,10 @@ const TtsDiagnosticsAPI = {
   saveArtifacts: (artifacts: unknown) => ipcRenderer.invoke('ddd:tts:save-artifacts', { artifacts }),
 };
 
+const PluginAPI = {
+  list: () => ipcRenderer.invoke('ddd:plugins:list'),
+};
+
 const PluginStorageAPI = {
   get: (pluginId: unknown, key: unknown) => ipcRenderer.invoke('ddd:plugin:storage:get', { pluginId, key }),
   set: (pluginId: unknown, key: unknown, value: unknown) => ipcRenderer.invoke('ddd:plugin:storage:set', { pluginId, key, value }),
@@ -190,20 +196,11 @@ const PluginStorageAPI = {
 const CliAPI = {
   open: (scope: unknown) => ipcRenderer.invoke('cli:open', scope),
   invoke: (session: unknown, request: unknown) => ipcRenderer.invoke('cli:invoke', session, request),
-  tasks: (session: unknown) => ipcRenderer.invoke('cli:tasks', session),
   close: (session: unknown) => ipcRenderer.invoke('cli:close', session),
   claim: (session: unknown, requestId: unknown, text: unknown) => ipcRenderer.invoke('cli:claim', session, requestId, text),
   finish: (session: unknown, requestId: unknown, result: unknown) => ipcRenderer.invoke('cli:finish', session, requestId, result),
   reply: (session: unknown, requestId: unknown, text: unknown) => ipcRenderer.invoke('cli:reply', session, requestId, text),
   compact: (session: unknown, input: unknown) => ipcRenderer.invoke('cli:compact', session, input),
-  onTask: (session: unknown, callback: (event: { task: unknown; sequence: unknown }) => void) => {
-    const listener = (_event: unknown, payload: unknown) => {
-      const body = isRecord(payload) ? payload : {};
-      if (body.session === session) callback({ task: body.task, sequence: body.sequence });
-    };
-    ipcRenderer.on('cli:task', listener);
-    return () => ipcRenderer.removeListener('cli:task', listener);
-  },
 };
 
 ipcRenderer.on('ddd:live2denv:snapshot:changed', (_event, payload: unknown) => {
@@ -229,5 +226,6 @@ contextBridge.exposeInMainWorld('AsrAPI', AsrAPI);
 contextBridge.exposeInMainWorld('SubtitleAPI', SubtitleAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);
 contextBridge.exposeInMainWorld('TtsDiagnosticsAPI', TtsDiagnosticsAPI);
+contextBridge.exposeInMainWorld('PluginAPI', PluginAPI);
 contextBridge.exposeInMainWorld('PluginStorageAPI', PluginStorageAPI);
 contextBridge.exposeInMainWorld('CliAPI', CliAPI);

@@ -2,7 +2,7 @@ import { toChatConfig, buildPersonaConfig, createId, createMessage } from '../do
 import { actionBound, computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import { DEFAULT_GLOBAL_UI_SETTINGS, DEFAULT_MODEL_CONFIG } from '../domain/defaults';
 import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '../modules/chat/infrastructure/chatSessionCache';
-import { loadLlmSelection, saveLlmSelection } from '@app/shared/state-bus/llmSelectionCache';
+import { loadLlmSelection, saveLlmSelection, resetLlmSelections } from '@app/shared/state-bus/llmSelectionCache';
 import { InteractionSettingsService } from '../modules/interaction/service/InteractionSettingsService';
 import type { InteractionCommit } from '../modules/interaction/domain/interaction';
 import type {
@@ -278,6 +278,22 @@ export class ControlPanelService {
     this.logTrace('action', 'reasoningEffort.changed', { effort: next.effort }).end({ effort: next.effort });
   }
 
+  async updateLlmModels(llmModels: PetLlmModel[], reset = false): Promise<void> {
+    if (this.aiPersistTimer !== null) {
+      window.clearTimeout(this.aiPersistTimer);
+      this.aiPersistTimer = null;
+    }
+    // Commit credentials with their registry; a pending debounce must not clear it afterwards.
+    if (reset) resetLlmSelections(llmModels);
+    await this.config.updateGlobalConfig({
+      apiKey: this.aiSettings.apiKey, baseURL: this.aiSettings.baseURL,
+      displayLang: this.aiSettings.displayLang, llmModels,
+      ...(reset ? { memoryModel: llmModels[0]?.id ?? '', memoryReasoningEffort: llmModels[0]?.efforts[0] ?? '' } : {}),
+    });
+    runInAction(() => { this.aiSettingsPending = false; });
+    this.syncSelection();
+  }
+
   /** 模型注册表变更后同步两份前端选择，避免缓存指向已删除的模型。 */
   syncSelection(): void {
     const chat = loadLlmSelection(this.llmModels, 'chat');
@@ -510,7 +526,7 @@ export class ControlPanelService {
     }
     runInAction(() => {
       const messages = this.chatMessages.filter((message) => message.requestId === request.id);
-      if (request.source !== 'presence' && request.source !== 'task-report' && !messages.some((message) => message.role === 'user')) {
+      if (request.source !== 'presence' && !messages.some((message) => message.role === 'user')) {
         this.chatMessages = [...this.chatMessages,
           createMessage('user', request.text, request.id, request.createdAt, request.source, 'done')];
       }

@@ -84,8 +84,16 @@ export class Live2dEnvironmentService {
       if (!selected || !current.modelPaths.includes(selected)) throw new Error('Model path is not registered');
       next = { ...current, currentModelPath: selected };
     }
+    if (typeof input.pluginDir === 'string') next = { ...next, pluginDir: input.pluginDir.trim() };
     if (isRecord(input.settings)) {
-      const patch = input.settings;
+      const patch = { ...input.settings };
+      const endpointChanged = (typeof patch.baseURL === 'string' && patch.baseURL.trim() !== next.settings.baseURL.trim())
+        || (typeof patch.apiKey === 'string' && patch.apiKey.trim() !== next.settings.apiKey.trim());
+      if (endpointChanged && !Array.isArray(patch.llmModels)) {
+        patch.llmModels = [];
+        patch.memoryModel = '';
+        patch.memoryReasoningEffort = '';
+      }
       next = { ...next, settings: {
         ...next.settings, ...patch,
         asr: { ...next.settings.asr, ...(isRecord(patch.asr) ? patch.asr : {}) },

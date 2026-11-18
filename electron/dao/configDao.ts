@@ -110,10 +110,32 @@ const ensureModelStorageStructure = (modelDir: string): {
 export const loadLive2denvConfig = () => {
   ensureConfigDirectories();
   const configPath = getGlobalConfigPath();
-  const raw = readJsonFile(configPath, DEFAULT_LIVE2DENV_CONFIG);
-  const normalized = normalizeLive2denvConfig(raw);
-  if (!fs.existsSync(configPath)) {
-    writeJsonFile(configPath, normalized);
+  const raw: unknown = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid live2denv configuration');
+  const legacyPath = path.join(getBaseConfigDir(), 'globalModelConfig.json');
+  let merged = raw;
+  let legacyImported = false;
+  if (fs.existsSync(legacyPath)) {
+    try {
+      const legacy: unknown = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+      if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)) throw new Error('Invalid legacy global configuration');
+      const root = raw as Record<string, unknown>;
+      const currentSettings = root.settings ?? root.globalModelConfig;
+      const settings = currentSettings && typeof currentSettings === 'object' && !Array.isArray(currentSettings) ? currentSettings : {};
+      merged = { ...root, settings: { ...legacy, ...settings } };
+      legacyImported = true;
+    } catch (error) {
+      reportError('json.read.failed', { filePath: legacyPath, message: errorMessage(error) });
+    }
+  }
+  const normalized = normalizeLive2denvConfig(merged);
+  try {
+    if (!fs.existsSync(configPath) || legacyImported || JSON.stringify(raw) !== JSON.stringify(normalized)) {
+      writeJsonFile(configPath, normalized);
+    }
+    if (legacyImported) fs.unlinkSync(legacyPath);
+  } catch (error) {
+    reportError('environment.migration.failed', { filePath: configPath, message: errorMessage(error) });
   }
   return normalized;
 };

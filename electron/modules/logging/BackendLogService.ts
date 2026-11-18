@@ -1,4 +1,14 @@
+import { isBoundaryName, type BoundaryName } from '../../../shared/logging/boundaryTrace.js';
+import { exportBoundaryCall } from '../../../shared/logging/exportBoundaryTrace.js';
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export type LineageEntry = {
+  traceId: string;
+  boundary: BoundaryName;
+  event: string;
+  scope: string;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -9,6 +19,21 @@ const normalizeLevel = (value: unknown): LogLevel =>
 export class BackendLogService {
   rendererEntries = 0;
   backendEntries = 0;
+  /** 测试或诊断时接走血缘。生产路径只转发，不在进程里累积。 */
+  onLineage?: (entry: LineageEntry) => void;
+
+  /** 单个事件只用于进程内血缘；没有调用区间，不生成 span。 */
+  lineage(traceId: string, boundary: string, event: string, scope = 'backend'): void {
+    if (!traceId || !isBoundaryName(boundary)) return;
+    const entry: LineageEntry = { traceId, boundary, event, scope };
+    this.onLineage?.(entry);
+  }
+
+  /** 主进程自己发起的边界。traceId 由这里生成，再交给后续日志。 */
+  open(scope: string, boundary: BoundaryName): { traceId: string; event: (name: string) => void } {
+    const traceId = crypto.randomUUID().replaceAll('-', '');
+    return { traceId, event: (name: string) => this.lineage(traceId, boundary, name, scope) };
+  }
 
   error(scope: string, event: string, data: Record<string, unknown> = {}, context: Record<string, unknown> = {}): void {
     this.backendEntries += 1;
@@ -17,6 +42,19 @@ export class BackendLogService {
 
   mirrorRenderer(event: { sender?: { id?: number } } | null | undefined, payload: Record<string, unknown> = {}): void {
     if (!isRecord(payload) || payload.kind === 'policy.patch') return;
+    if (payload.kind === 'boundary' && typeof payload.traceId === 'string' && isBoundaryName(payload.boundary) && Array.isArray(payload.events)) {
+      const events: Array<{ event: string; at: number }> = [];
+      for (const item of payload.events) {
+        if (!isRecord(item) || typeof item.event !== 'string') continue;
+        this.lineage(payload.traceId, payload.boundary, item.event, 'renderer');
+        if (typeof item.at === 'number' && Number.isFinite(item.at)) events.push({ event: item.event, at: item.at });
+      }
+      const { startedAt, endedAt } = payload;
+      if (typeof startedAt === 'number' && Number.isFinite(startedAt) && typeof endedAt === 'number' && Number.isFinite(endedAt) && endedAt >= startedAt) {
+        exportBoundaryCall({ traceId: payload.traceId, boundary: payload.boundary, startedAt, endedAt, events, failed: payload.failed === true });
+      }
+      return;
+    }
     const level = normalizeLevel(payload.level);
     const renderer = isRecord(payload.renderer)
       ? { ...payload.renderer, webContentsId: event?.sender?.id }

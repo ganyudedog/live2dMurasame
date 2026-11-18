@@ -418,6 +418,7 @@ describe('desktop relationship persistence', () => {
   });
 
   it('requires a prior user revisit inside the cursor and does not replay that evidence', () => {
+    Date.now = () => at('2026-11-07');
     updateModelMemoryCore(modelPath, '# 核心记忆\n\n## 经历\n- 一起看过西湖\n- 一起修过灯\n');
     appendModelMemoryConversation(modelPath, {
       conversationId: 'assist-only', userText: '今天认真聊了安排', assistantText: '你说过一起看过西湖', at: at('2026-11-07'),
@@ -429,8 +430,9 @@ describe('desktop relationship persistence', () => {
     });
     expect(assistantOnly.relationship?.progress.experiences).toEqual([]);
 
+    Date.now = () => at('2026-11-08');
     appendModelMemoryConversation(modelPath, {
-      conversationId: 'future-turn', userText: '今天又聊起一起看过西湖', assistantText: '那次很安静。', at: at('2026-11-08'),
+      conversationId: 'future-turn', userText: '今天又聊起一起看过西湖', assistantText: '那次很安静。', at: Date.now(),
     });
     const beyondCursor = saveModelMemoryConsolidation(modelPath, {
       content: '# 核心记忆\n\n## 经历\n- 一起看过西湖\n- 一起修过灯\n',
@@ -448,8 +450,9 @@ describe('desktop relationship persistence', () => {
     expect(accepted.relationship?.knownExperiences[0]?.excerpt).toContain('一起看过西湖');
     expect(accepted.relationship?.progress.experiences[0]?.id).not.toBe('lake');
 
+    Date.now = () => at('2026-11-09');
     appendModelMemoryConversation(modelPath, {
-      conversationId: 'lamp-turn', userText: '今天又聊起一起修过灯', assistantText: '灯修好了。', at: at('2026-11-09'),
+      conversationId: 'lamp-turn', userText: '今天又聊起一起修过灯', assistantText: '灯修好了。', at: Date.now(),
     });
     const beforeReset = loadModelMemoryDocuments(modelPath);
     adjustModelMemoryRelationship(modelPath, {
@@ -463,8 +466,9 @@ describe('desktop relationship persistence', () => {
     expect(stale.relationship?.stage).toBe('疏远');
     expect(stale.relationship?.progress.experiences).toEqual([]);
 
+    Date.now = () => at('2026-11-10');
     appendModelMemoryConversation(modelPath, {
-      conversationId: 'lake-again', userText: '后来又说起看过西湖', assistantText: '记得。', at: at('2026-11-10'),
+      conversationId: 'lake-again', userText: '后来又说起看过西湖', assistantText: '记得。', at: Date.now(),
     });
     const replayed = saveModelMemoryConsolidation(modelPath, {
       content: '# 核心记忆\n\n## 经历\n- 一起看过西湖\n- 一起修过灯\n',

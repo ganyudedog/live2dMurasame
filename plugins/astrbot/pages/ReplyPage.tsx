@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { BotMessageSquare, RotateCcw, ScrollText } from 'lucide-react';
 import type { AstrBotUiContext } from '../types';
 import { StickerSection } from '../stickers/StickerSection';
-import { ERROR_NOTICE, GHOST_BUTTON_XS, SELECT, TEXTAREA } from '../styles';
+import { GHOST_BUTTON_XS, SELECT, TEXTAREA } from '../styles';
 import { DEFAULT_ASTRBOT_SETTINGS, type AstrBotBridgeSettings } from '../settings';
 import { Field, LoadingCard, SaveFeedback, Section } from '../ui/layout';
 import { useBridgeSettings, type BridgeSettingsStore } from '../ui/useBridgeSettings';
@@ -24,54 +24,39 @@ const SPEAK_LANGS = [
   { value: 'auto', label: '自动' },
 ] as const;
 
-/** 回复方式：用哪个模型、什么语言、在 QQ 场景里怎么说话，以及可以发的收藏表情。 */
+/** 回复方式：什么语言、在 QQ 场景里怎么说话，以及可以发的收藏表情。 */
 export function AstrBotReplyPage(context: AstrBotUiContext) {
   const store = useBridgeSettings(context);
-  if (!store.modelsHost) return <p className={ERROR_NOTICE}>模型目录服务不可用，无法读取可用模型。</p>;
   if (!store.loaded) return <LoadingCard>正在读取插件配置…</LoadingCard>;
   return <ReplyForm store={store} context={context} />;
 }
 
 function ReplyForm({ store, context }: { store: BridgeSettingsStore; context: AstrBotUiContext }) {
-  const { settings, models, update } = store;
+  const { settings, update } = store;
+  const ai = context.hostApi.ai;
+  const readChat = useCallback(() => ai?.getModels().find(model => model.chatEffort !== undefined), [ai]);
+  const [chat, setChat] = useState(readChat);
+  useEffect(() => {
+    const refresh = () => setChat(readChat());
+    refresh();
+    return ai?.subscribe(refresh);
+  }, [ai, readChat]);
   const [promptDraft, setPromptDraft] = useState(settings.systemPrompt);
-  const selectedModel = useMemo(() => models.find(({ id }) => id === settings.model), [models, settings.model]);
-  const efforts = selectedModel?.efforts ?? [];
-  // 展示也用收敛后的值：持久化的档位可能已经不在这个模型的支持集合里。
-  const shownEffort = efforts.includes(settings.reasoningEffort) ? settings.reasoningEffort : (efforts[0] ?? '');
   const promptDirty = promptDraft !== settings.systemPrompt;
 
-  const updateModel = (modelId: string) => {
-    const nextModel = models.find((item) => item.id === modelId);
-    // 换模型后深度收敛到新模型的第一档，不保留上一个模型的值。
-    const keep = nextModel?.efforts.includes(settings.reasoningEffort) ? settings.reasoningEffort : '';
-    update({ model: modelId, reasoningEffort: keep || (nextModel?.efforts[0] ?? '') });
-  };
-
   return <div className="space-y-4">
-    <Section icon={<BotMessageSquare />} title="回复生成" description="QQ 里的回复用这里的模型生成，可以同时附带一段朗读文本。">
+    <Section icon={<BotMessageSquare />} title="回复生成" description="QQ 回复使用宿主当前的对话模型。">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="对话模型" tone="warn"
-          hint={settings.model && selectedModel
-            ? undefined
-            : (!settings.model ? '未选择时 AstrBot 的请求会失败' : '该模型已不在清单里，请重新选择')}>
-          <select className={`${SELECT} w-full font-mono`} value={settings.model}
-            onChange={(event) => updateModel(event.target.value)}>
-            <option value="">请选择模型</option>
-            {models.map(({ id }) => <option key={id} value={id}>{id}</option>)}
-          </select>
-        </Field>
-
         <Field label="思考深度">
-          <select className={`${SELECT} w-full font-mono`} value={shownEffort}
-            disabled={!efforts.length}
+          <select aria-label="思考深度" className={`${SELECT} w-full`}
+            value={settings.reasoningEffort}
             onChange={(event) => update({ reasoningEffort: event.target.value })}>
-            {efforts.length
-              ? efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)
-              : <option value="">{settings.model ? '不支持' : '先选择模型'}</option>}
+            <option value="">跟随内核{chat?.chatEffort ? `（${chat.chatEffort}）` : ''}</option>
+            {settings.reasoningEffort && !chat?.efforts.includes(settings.reasoningEffort) &&
+              <option value={settings.reasoningEffort} disabled>{settings.reasoningEffort}（当前不可用，跟随内核）</option>}
+            {chat?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}
           </select>
         </Field>
-
         <Field label="展示语言">
           <select className={`${SELECT} w-full`} value={settings.displayLang}
             onChange={(event) => update({ displayLang: event.target.value as AstrBotBridgeSettings['displayLang'] })}>

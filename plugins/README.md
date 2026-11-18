@@ -30,16 +30,21 @@ AI 模块在回复成功后，复用桌面的 `MemoryService.persistConversation
 
 此选项只存在于 AI 请求入口，不传到 Electron。Electron 不识别插件身份、不读取插件设置、不验证主人绑定，也不自动复制归档。删除插件不影响桌面原有的记忆与成长流程。
 
-### CLI 插件白名单存储
+### CLI host policy
 
-控制面板按已注册插件勾选授权，保存到 Electron 用户数据目录的 `config/globalModelConfig.json`：
+The control panel reads and updates host policy through `config.get` and `config.update` with `scope: 'global'`. Electron stores it in `config/live2denv.json`:
 
 ```json
 {
-  "pluginCliWhitelist": [
-    { "pluginId": "live2d.astrbot-bridge", "cliEnabled": true }
-  ]
+  "settings": {
+    "shellReadRoots": [],
+    "pluginCliWhitelist": [
+      { "pluginId": "live2d.astrbot-bridge", "cliEnabled": true }
+    ]
+  }
 }
 ```
 
-界面读取和后端鉴权都以此文件为准。未勾选的插件从数组移除；空数组表示禁止所有插件调用 CLI。首次升级会迁移旧 `cli/tasks.json` 中的授权，已有全局白名单（包括空数组）不被旧值覆盖。项目和任务记录仍保存在 CLI 任务文件中。
+An empty whitelist disables remote CLI calls; it does not disable plugin chat. Only local callers may change host policy. Empty shell read roots deny file-content reads.
+
+The main process dispatches commands and persists idempotency records, not agent tasks. Runtime CLI hosts expose plugin storage, not task publication or task queries. Command results are opaque data: the pet window does not turn task-shaped results into subscriptions or follow-up turns. There are no kernel task IPC or HTTP endpoints. The historical `cli/tasks.json` path retains only call records for retry safety; legacy task records and grants are not loaded into the kernel.

@@ -70,14 +70,19 @@ export const loadLlmSelection = (
   const raw = readRaw();
   const entry = readScope(raw, scope);
   const stored = findModel(models, entry.model);
-  if (stored) return { model: stored.id, effort: resolveEffort(stored, entry.effort) };
+  if (stored) {
+    const selection = { model: stored.id, effort: resolveEffort(stored, entry.effort) };
+    return selection;
+  }
   if (models.length) {
     const first = models[0];
     const seeded: LlmSelection = { model: first.id, effort: resolveEffort(first, '') };
     writeRaw({ ...raw, [scope]: seeded });
     return seeded;
   }
-  return { model: '', effort: '' };
+  const empty: LlmSelection = { model: '', effort: '' };
+  writeRaw({ ...raw, [scope]: empty });
+  return empty;
 };
 
 export const saveLlmSelection = (
@@ -94,4 +99,11 @@ export const saveLlmSelection = (
   };
   writeRaw({ ...raw, [scope]: next });
   return next;
+};
+
+/** Explicit re-detection starts both desktop consumers at the first discovered model. */
+export const resetLlmSelections = (models: readonly PetLlmModel[]): void => {
+  for (const scope of ['chat', 'action'] as const) {
+    saveLlmSelection(models, scope, { model: models[0]?.id ?? '', effort: '' });
+  }
 };

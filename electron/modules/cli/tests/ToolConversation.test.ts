@@ -7,7 +7,7 @@ import { CliService } from '../service/CliService.js';
 import type { CommandContext } from '../service/commandTypes.js';
 import { ToolConversationService } from '../service/ToolConversationService.js';
 import { JsonToolConversationRepository } from '../infrastructure/JsonToolConversationRepository.js';
-import { TaskStore } from '../infrastructure/TaskStore.js';
+import { CallStore } from '../infrastructure/CallStore.js';
 
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
@@ -16,7 +16,7 @@ const setup = () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-conversation-'));
   roots.push(root);
   const conversations = () => new ToolConversationService(new JsonToolConversationRepository(path.join(root, 'conversations')));
-  const cli = () => new CliService(new TaskStore(path.join(root, 'tasks.json')), undefined, undefined, conversations());
+  const cli = () => new CliService(new CallStore(path.join(root, 'tasks.json')), undefined, conversations());
   return { root, conversations, cli };
 };
 

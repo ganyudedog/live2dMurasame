@@ -39,37 +39,10 @@ export interface AsrConfig {
   silenceWithoutText: number;
 }
 
-const WORKSPACE_ID = /^[a-zA-Z0-9_-]{1,80}$/;
-
-/** 工作目录登记表：标识到绝对路径。非法条目丢弃。 */
-export const normalizeWorkspaces = (value: unknown): Record<string, string> => {
-  const entries: Array<[string, string]> = Array.isArray(value)
-    ? value.flatMap((item) => isRecord(item) ? [[String(item.id ?? ''), String(item.path ?? '')]] : [])
-    : isRecord(value) ? Object.entries(value).map(([id, path]) => [id, typeof path === 'string' ? path : '']) : [];
-  const next: Record<string, string> = Object.create(null);
-  for (const [id, rawPath] of entries) {
-    const key = id.trim();
-    const directory = rawPath.trim();
-    if (!WORKSPACE_ID.test(key) || !directory || Object.hasOwn(next, key)) continue;
-    next[key] = directory;
-  }
-  return next;
-};
-
-/** 保存前确认每个路径都是已有目录，并收成规范绝对路径。 */
-export const resolveWorkspaceDirectories = (workspaces: Record<string, string>): Record<string, string> => {
-  const next: Record<string, string> = Object.create(null);
-  for (const [id, rawPath] of Object.entries(workspaces)) {
-    const directory = fs.realpathSync(rawPath);
-    if (!fs.statSync(directory).isDirectory()) throw new Error('Workspace must be a directory');
-    next[id] = directory;
-  }
-  return next;
-};
-
 export type DisplayLang = 'zh' | 'en' | 'ja' | 'ko';
 
 export interface GlobalModelConfig {
+  pluginCliWhitelist?: Array<{ pluginId: string; cliEnabled: boolean }>;
   scale: number;
   ignoreMouse: boolean;
   autoLaunch: boolean;
@@ -85,6 +58,8 @@ export interface GlobalModelConfig {
   memoryModel: string;
   memoryReasoningEffort: string;
   asr: AsrConfig;
+  /** shell.run 可以读取文件正文的目录。空数组表示不能读任何文件内容。 */
+  shellReadRoots: string[];
 }
 
 export interface BubbleConfig {
@@ -153,6 +128,8 @@ export interface PersistedWindowState {
 export interface Live2denvConfig {
   modelPaths: string[];
   currentModelPath: string | null;
+  /** 运行时插件目录。每个子目录包含 manifest.json 和 index.js。空字符串表示不扫描。 */
+  pluginDir: string;
   settings: GlobalModelConfig;
   touchPriority?: string[];
   eyeMaxUp?: unknown;
@@ -162,6 +139,7 @@ export interface Live2denvConfig {
 }
 
 export const DEFAULT_GLOBAL_MODEL_CONFIG: GlobalModelConfig = {
+  pluginCliWhitelist: [],
   scale: 1.0,
   ignoreMouse: false,
   autoLaunch: false,
@@ -192,11 +170,13 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG: GlobalModelConfig = {
     silenceAfterText: 1.2,
     silenceWithoutText: 0.7,
   },
+  shellReadRoots: [],
 };
 
 export const DEFAULT_LIVE2DENV_CONFIG: Live2denvConfig = {
   modelPaths: [],
   currentModelPath: null,
+  pluginDir: '',
   settings: { ...DEFAULT_GLOBAL_MODEL_CONFIG },
   windowState: { bounds: null, updatedAt: 0 },
 };
@@ -358,6 +338,10 @@ export const normalizeGlobalModelConfig = (settings: unknown = {}): GlobalModelC
     subtitle: normalizeSubtitleSettings(isRecord(source.subtitle) ? source.subtitle as Partial<SubtitleSettings> : undefined),
     pushToTalk: normalizePushToTalk(isRecord(source.pushToTalk) ? source.pushToTalk as Partial<PushToTalkSettings> : undefined),
   };
+  next.pluginCliWhitelist = Array.isArray(source.pluginCliWhitelist)
+    ? source.pluginCliWhitelist.flatMap((entry) => isRecord(entry) && typeof entry.pluginId === 'string' && entry.pluginId.trim()
+      ? [{ pluginId: entry.pluginId.trim(), cliEnabled: entry.cliEnabled === true }] : []) : [];
+  if (!Object.hasOwn(source, 'pluginCliWhitelist')) delete next.pluginCliWhitelist;
   if (finiteNumber(source.scale)) next.scale = source.scale;
   if (typeof source.ignoreMouse === 'boolean') next.ignoreMouse = source.ignoreMouse;
   if (typeof source.autoLaunch === 'boolean') next.autoLaunch = source.autoLaunch;
@@ -407,6 +391,35 @@ export const normalizeGlobalModelConfig = (settings: unknown = {}): GlobalModelC
     silenceAfterText: Math.max(0.5, silenceAfter),
     silenceWithoutText: Math.max(0.2, silenceWithout),
   };
+  next.shellReadRoots = normalizeShellReadRoots(source.shellReadRoots);
+  return next;
+};
+
+/** 可读目录：去掉空白和重复项。加载时不访问磁盘。 */
+export const normalizeShellReadRoots = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const next: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const directory = item.trim();
+    if (!directory || directory.length > 1024 || next.some((existing) => existing.toLowerCase() === directory.toLowerCase())) continue;
+    next.push(directory);
+    if (next.length >= 50) break;
+  }
+  return next;
+};
+
+/** 保存前确认每一项都是已有目录，并收成真实绝对路径。 */
+export const resolveShellReadRoots = (value: unknown): string[] => {
+  const next: string[] = [];
+  for (const raw of normalizeShellReadRoots(value)) {
+    let directory: string;
+    try { directory = fs.realpathSync(raw); }
+    catch { throw new Error('Readable directory must be an existing directory'); }
+    if (!fs.statSync(directory).isDirectory()) throw new Error('Readable directory must be an existing directory');
+    if (next.some((existing) => existing.toLowerCase() === directory.toLowerCase())) continue;
+    next.push(directory);
+  }
   return next;
 };
 
@@ -425,9 +438,11 @@ export const normalizeLive2denvConfig = (input: unknown = {}): Live2denvConfig =
     .map((value) => value.trim());
   const currentRaw = source.currentModelPath ?? source.CURRENT_PATH ?? null;
   let currentModelPath = trimmedStringOrNull(currentRaw);
-  if (!currentModelPath || !modelPaths.includes(currentModelPath)) currentModelPath = modelPaths[0] ?? null;
+  if (currentModelPath && !modelPaths.includes(currentModelPath)) modelPaths.push(currentModelPath);
+  if (!currentModelPath) currentModelPath = modelPaths[0] ?? null;
   next.modelPaths = [...new Set(modelPaths)];
   next.currentModelPath = currentModelPath;
+  next.pluginDir = typeof source.pluginDir === 'string' ? source.pluginDir.trim() : '';
   next.touchPriority = Array.isArray(source.touchPriority)
     ? stringList(source.touchPriority)
     : (Array.isArray(source.VITE_TOUCH_PRIORITY) ? stringList(source.VITE_TOUCH_PRIORITY) : undefined);
@@ -454,5 +469,6 @@ export const normalizeLive2denvConfig = (input: unknown = {}): Live2denvConfig =
     updatedAt: finiteNumber(rawWindowState.updatedAt) ? Math.max(0, Math.floor(rawWindowState.updatedAt)) : 0,
   };
   next.settings = normalizeGlobalModelConfig(source.settings ?? source.globalModelConfig ?? {});
+  delete next.globalModelConfig;
   return next as Live2denvConfig;
 };

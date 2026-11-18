@@ -38,6 +38,13 @@ describe('environment settings application events', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it('stores the runtime plugin directory on the environment config', () => {
+    const { service, readPersisted } = setup();
+    service.update({ pluginDir: ' D:\\plugins ' });
+    expect(readPersisted().pluginDir).toBe('D:\\plugins');
+    expect(service.root.pluginDir).toBe('D:\\plugins');
+  });
+
   it('does not notify when persistence fails', () => {
     const { service, repository } = setup();
     const listener = vi.fn();
@@ -102,4 +109,14 @@ describe('environment configuration updates', () => {
     expect(repository.save).not.toHaveBeenCalled();
     expect(service.root).toBe(saved);
   });
+});
+
+it('invalidates capabilities on credential changes but keeps an explicitly re-detected registry', () => {
+  const { service } = setup();
+  service.updateSettings({ apiKey: 'old', baseURL: 'old-url', llmModels: [{ id: 'old-model' }] });
+  service.updateSettings({ apiKey: 'new' });
+  expect(service.root.settings.llmModels).toEqual([]);
+  expect(service.root.settings.memoryModel).toBe('');
+  service.updateSettings({ baseURL: 'new-url', llmModels: [{ id: 'new-model' }] });
+  expect(service.root.settings.llmModels).toEqual([{ id: 'new-model' }]);
 });

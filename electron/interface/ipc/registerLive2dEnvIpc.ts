@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron';
+import { readConfigUpdate } from '../../../shared/logging/boundaryTrace.js';
 import type { Live2dEnvironmentService } from '../../modules/live2denv/application/Live2dEnvironmentService.js';
 import { createDependencyAwareRegistrar } from './composeIpcRegistrar.js';
 
@@ -8,7 +9,10 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 const registerLive2dEnvIpcImpl = ({ live2dEnvironmentService, pickModelFile, logService, scheduleAutoLaunchSetting }: {
   live2dEnvironmentService: Live2dEnvironmentService;
   pickModelFile: () => Promise<string | null>;
-  logService?: { setDebugPolicy?: (enabled: unknown) => void };
+  logService?: {
+    setDebugPolicy?: (enabled: unknown) => void;
+    lineage?: (traceId: string, boundary: string, event: string) => void;
+  };
   scheduleAutoLaunchSetting?: (enabled: unknown) => void;
 }) => {
   const sendAll = (channel: string, payload: unknown): void => {
@@ -23,8 +27,9 @@ const registerLive2dEnvIpcImpl = ({ live2dEnvironmentService, pickModelFile, log
   const publish = (snapshot: unknown): void => publishSnapshot(snapshot, 'ddd:live2denv:snapshot:changed');
 
   ipcMain.handle('ddd:live2denv:get', () => live2dEnvironmentService.root);
-  ipcMain.handle('ddd:live2denv:update', (_event, patch: unknown = {}) => {
-    const changes = isObject(patch) ? patch : {};
+  ipcMain.handle('ddd:live2denv:update', (_event, input: unknown = {}) => {
+    const { patch: changes, trace } = readConfigUpdate(input);
+    if (trace) logService?.lineage?.(trace.traceId, trace.boundary, 'live2denv.update');
     const snapshot = live2dEnvironmentService.update(changes);
     // Settings changes have already published through the service subscription.
     if (!isObject(changes.settings)) publish(snapshot);

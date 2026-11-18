@@ -4,7 +4,6 @@ import { Page } from '../components/common/Page';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
 import { Range } from '../components/common/FormControls';
-import { AgentCard } from '../components/ai/AgentCard';
 import { useScaleControl } from '../hooks/useScaleControl';
 import { useModelRelationship } from '../hooks/useModelRelationship';
 import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';
@@ -117,7 +116,6 @@ export default function HomePage({
         </Button>
       </div>
 
-      <AgentCard />
       <ChatPanel
         fill
         showHeader={false}

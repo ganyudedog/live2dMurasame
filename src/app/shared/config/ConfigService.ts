@@ -217,18 +217,27 @@ export class ConfigService {
       this.log.warn('config.service', 'live2denv.update.missingApi');
       return null;
     }
+    const context = this.log.contextRegistry.register('ConfigService', {
+      relation: 'live2denv.update',
+      params: { keys: Object.keys(patch) },
+      behavior: '提交桌宠配置，由主进程落盘',
+    });
+    const trace = context.beginTrace('live2denv.update', { keys: Object.keys(patch) }, 'config.update');
     try {
-      const next = await update(patch);
+      const next = await update(patch, { traceId: trace.traceId, boundary: 'config.update' });
       runInAction(() => {
         this.live2denvConfig = next ?? this.live2denvConfig;
         this.activeModelPath = next?.currentModelPath ?? this.activeModelPath;
         this.lastError = null;
       });
-      this.log.info('config.service', 'live2denv.update.ok', { keys: Object.keys(patch) });
+      trace.end({ keys: Object.keys(patch) });
       return next ?? null;
     } catch (error) {
+      trace.fail(toErrorMessage(error));
       this.captureError('live2denv.update.failed', error);
       throw error;
+    } finally {
+      context.dispose();
     }
   }
 

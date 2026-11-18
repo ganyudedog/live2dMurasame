@@ -30,20 +30,20 @@ afterEach(() => vi.unstubAllGlobals());
 const options = { apiKey: 'key', baseURL: 'https://api.example.com/v1', model: 'gpt-x' };
 
 describe('reasoning-effort probing against unknown OpenAI-compatible gateways', () => {
-  it('adopts the values enumerated in a single 400 for an illegal value', async () => {
+  it('verifies candidates enumerated in a 400 for the actual model', async () => {
     const calls = stubFetch((body) => (body.reasoning_effort === '__probe_effort__'
       ? badRequest("Invalid value for 'reasoning_effort': '__probe_effort__'. Supported values are: 'low', 'medium', 'high'.")
       : ok()));
     const outcome = await probeModelEfforts(options);
-    expect(outcome).toEqual({ status: 'ok', efforts: ['low', 'medium', 'high'], source: 'error' });
-    // A 已给出结论，不再逐档消耗请求。
-    expect(calls).toHaveLength(1);
+    expect(outcome).toEqual({ status: 'ok', efforts: ['low', 'medium', 'high'], source: 'probe' });
+    // 网关枚举只是候选，每个档位必须由当前模型接受。
+    expect(calls).toHaveLength(4);
     expect(calls[0]).toMatchObject({ model: 'gpt-x', max_completion_tokens: 16, reasoning_effort: '__probe_effort__' });
   });
 
   it('keeps extension tiers from a 422 enumeration instead of trimming them to the known six', async () => {
     // 实际网关的响应：422 + error.message，枚举里带 ultra、max 这类协议外档位。
-    const calls = stubFetch(() => reply(422), {
+    const calls = stubFetch((body) => body.reasoning_effort === '__probe_effort__' ? reply(422) : ok(), {
       error: {
         message: 'Failed to deserialize the JSON body into the target type: reasoning_effort: unknown variant '
           + '`__probe_effort__`, expected one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `ultra`, `max` '
@@ -55,15 +55,15 @@ describe('reasoning-effort probing against unknown OpenAI-compatible gateways', 
     });
     const outcome = await probeModelEfforts(options);
     expect(outcome).toEqual({ status: 'ok',
-      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max'], source: 'error' });
-    expect(calls).toHaveLength(1);
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max'], source: 'probe' });
+    expect(calls).toHaveLength(9);
   });
 
   it('reads FastAPI-style detail arrays as the probe message', async () => {
-    stubFetch(() => reply(422), { detail: [{ loc: ['body', 'reasoning_effort'],
+    stubFetch((body) => body.reasoning_effort === '__probe_effort__' ? reply(422) : ok(), { detail: [{ loc: ['body', 'reasoning_effort'],
       msg: "value is not a valid enumeration member; permitted: 'low', 'high'", type: 'type_error.enum' }] });
     const outcome = await probeModelEfforts(options);
-    expect(outcome).toEqual({ status: 'ok', efforts: ['low', 'high'], source: 'error' });
+    expect(outcome).toEqual({ status: 'ok', efforts: ['low', 'high'], source: 'probe' });
   });
 
   it('reads the enumeration from a 502 that wraps the upstream 400 as an escaped JSON string', async () => {
@@ -77,7 +77,7 @@ describe('reasoning-effort probing against unknown OpenAI-compatible gateways', 
         code: 'invalid_request_error',
       },
     });
-    const calls = stubFetch(() => reply(502), {
+    const calls = stubFetch((body) => body.reasoning_effort === '__probe_effort__' ? reply(502) : ok(), {
       error: {
         message: "inference request failed: failed to invoke model 'deepseek/deepseek-v4.1-flash-1017' from Vercel: "
           + `request failed with status 400: ${upstream}`,
@@ -87,8 +87,8 @@ describe('reasoning-effort probing against unknown OpenAI-compatible gateways', 
     });
     const outcome = await probeModelEfforts(options);
     expect(outcome).toEqual({ status: 'ok',
-      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], source: 'error' });
-    expect(calls).toHaveLength(1);
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], source: 'probe' });
+    expect(calls).toHaveLength(8);
   });
 
   it('still reports unknown for a 5xx that says nothing about tiers', async () => {
@@ -102,7 +102,7 @@ describe('reasoning-effort probing against unknown OpenAI-compatible gateways', 
   it('concludes "no depth" when the gateway says the parameter is unsupported', async () => {
     const calls = stubFetch(() => badRequest('Unrecognized request argument supplied: reasoning_effort'));
     const outcome = await probeModelEfforts(options);
-    expect(outcome).toEqual({ status: 'ok', efforts: [], source: 'error' });
+    expect(outcome).toEqual({ status: 'ok', efforts: [], source: 'probe' });
     expect(calls).toHaveLength(1);
   });
 
@@ -114,9 +114,9 @@ describe('reasoning-effort probing against unknown OpenAI-compatible gateways', 
     });
     const outcome = await probeModelEfforts(options);
     // 第一次是参数名问题，换 max_tokens 后 A 才真正给出结论。
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(4);
     expect(calls[1]).toHaveProperty('max_tokens');
-    expect(outcome).toEqual({ status: 'ok', efforts: ['low', 'high'], source: 'error' });
+    expect(outcome).toEqual({ status: 'ok', efforts: ['low', 'high'], source: 'probe' });
   });
 
   it('verifies each tier when the gateway silently accepts an illegal value', async () => {
@@ -192,4 +192,13 @@ describe('reviewing an enumeration message', () => {
   it('returns nothing when the message is not an enumeration', () => {
     expect(readEnumeratedEfforts('模型 gpt-x 不存在')).toEqual([]);
   });
+});
+
+it('does not confuse gateway-wide enumeration with this model support', async () => {
+  const calls = stubFetch((body) => {
+    if (body.reasoning_effort === '__probe_effort__') return badRequest("reasoning_effort: expected one of 'none', 'low', 'high'");
+    return body.reasoning_effort === 'low' ? ok() : badRequest('Unsupported reasoning_effort for this model');
+  });
+  expect(await probeModelEfforts(options)).toEqual({ status: 'ok', efforts: ['low'], source: 'probe' });
+  expect(calls.every((call) => call.model === options.model)).toBe(true);
 });

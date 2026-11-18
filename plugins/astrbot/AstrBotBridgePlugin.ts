@@ -36,6 +36,7 @@ export const astrBotBridgePlugin: AstrBotPluginDefinition = {
     if (!ai) { context.logger.warn('activation.skipped', { reason: 'AI conversation host is unavailable' }); return; }
     const saved = await context.storage.get<AstrBotBridgeSettings>('settings', DEFAULT_ASTRBOT_SETTINGS);
     const settings = normalizeSettings(saved, DEFAULT_ASTRBOT_SETTINGS);
+    if (JSON.stringify(saved) !== JSON.stringify(settings)) await context.storage.set('settings', settings);
     const directory = normalizeDirectory(await context.storage.get('directory', EMPTY_DIRECTORY));
     const client = new AstrBotBridgeClient({
       url: settings.bridgeUrl, token: settings.token, clientId: `live2d-${crypto.randomUUID()}`, ai, logger: context.logger, settings,

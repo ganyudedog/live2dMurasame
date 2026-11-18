@@ -1,11 +1,10 @@
+import { saveLlmSelection } from '@app/shared/state-bus/llmSelectionCache';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigService } from '@app/shared/config/ConfigService';
 import type { LogService } from '@app/shared/logging/LogService';
 import { requestStage2LLM, requestStructuredLLM } from '@app/modules/ai/modules/llm/infrastructure/llmClient';
 import { createDefaultConversationExecutor } from './createConversationExecutor';
 import { runSkillLoop } from '@app/modules/ai/modules/llm/application/skillLoop';
-import { agentTask } from '../../../../../test/fixtures/agentTask';
-import { TASK_REPORT_CUE, taskReportContext } from '@app/modules/ai/modules/llm/domain/taskReport';
 vi.mock('@app/modules/ai/modules/llm/application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 
 vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
@@ -14,40 +13,15 @@ vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
 }));
 
 describe('plugin conversation persona injection', () => {
-  it('injects and archives remote task results without calling tools again', async () => {
-    vi.mocked(runSkillLoop).mockClear();
-    const appendConversation = vi.fn(async () => ({ state: {} }));
-    const cli = { open: vi.fn(async () => 'session'), close: vi.fn(async () => {}), claim: vi.fn(async () => ({})),
-      finish: vi.fn(async () => {}), reply: vi.fn(async () => {}), invoke: vi.fn() };
-    vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns: vi.fn() }, CliAPI: cli });
-    const config = { activeModelPath: '/model', globalModelConfig: { apiKey: 'key' } } as unknown as ConfigService;
-    const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ record: vi.fn(), end: vi.fn(), fail: vi.fn() }), dispose: vi.fn() }) } } as unknown as LogService;
-    const execute = createDefaultConversationExecutor(config, log);
-    const taskReport = { task: agentTask({ status: 'failed', error: '检查未通过', conversationId: 'private' }), userText: '检查项目' };
-    const toolContext = taskReportContext(taskReport);
-    const emit = vi.fn();
-    await execute({ source: 'plugin:astrbot', conversationId: 'private', interaction: { mode: 'queue' }, model: 'model' },
-      { text: TASK_REPORT_CUE, sender: { id: 'owner' }, memoryArchive: { platform: 'qq', scope: 'private', id: 'owner' } },
-      { taskReport, requestId: 'report:task-1', channelId: 'channel', conversationId: 'private', signal: new AbortController().signal, emit });
-    expect(runSkillLoop).not.toHaveBeenCalled();
-    expect(cli.invoke).not.toHaveBeenCalled();
-    expect(cli.open).toHaveBeenCalledWith({ source: 'plugin:astrbot', conversationId: 'private', senderId: 'owner' });
-    expect(cli.claim).toHaveBeenCalledWith('session', 'report:task-1', expect.stringContaining('检查未通过'));
-    expect(cli.reply).toHaveBeenCalledWith('session', 'report:task-1', '你好');
-    expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ cue: true, toolContext }));
-    expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'report:task-1', toolContext,
-      sender: { id: 'owner' }, conversationId: 'private', assistantText: '你好' }));
-    expect(emit).toHaveBeenLastCalledWith({ text: '你好', status: 'done' });
-  });
   it('keeps remote tool results in both the reply and conversation archive', async () => {
     const appendConversation = vi.fn(); const loadRecentTurns = vi.fn();
     const open = vi.fn(async () => 'session'); const close = vi.fn(async () => {});
     vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns }, CliAPI: { open, close, reply: vi.fn(async () => {}) } });
     vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: true, context: 'accepted task-remote' });
-    const config = { activeModelPath: '/model', globalModelConfig: { apiKey: 'key' } } as unknown as ConfigService;
+    const config = { activeModelPath: '/model', globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'key' } } as unknown as ConfigService;
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ record: vi.fn(), end: vi.fn(), fail: vi.fn() }), dispose: vi.fn() }) } } as unknown as LogService;
     const execute = createDefaultConversationExecutor(config, log);
-    await execute({ source: 'plugin:another-platform', conversationId: 'private', interaction: { mode: 'queue' }, model: 'model' },
+    await execute({ source: 'plugin:another-platform', conversationId: 'private', interaction: { mode: 'queue' } },
       { text: '开发任务', sender: { id: 'user' }, memoryArchive: { platform: 'other', scope: 'private', id: 'user' } },
       { requestId: 'request-remote', channelId: 'channel', conversationId: 'private', signal: new AbortController().signal, emit: vi.fn() });
     expect(open).toHaveBeenCalledWith({ source: 'plugin:another-platform', conversationId: 'private', senderId: 'user' });
@@ -63,7 +37,7 @@ describe('plugin conversation persona injection', () => {
     const recallEpisodes = vi.fn(async () => ({ text: '上次讨论了杭州旅游' }));
     const loadRecentTurns = vi.fn(async () => ({ turns: [{ date: '2026-10-23', time: '12:00', conversationCount: 1, userText: '能说喜欢我吗', assistantText: '有些不好意思', sender: { id: '123' } }] }));
     vi.stubGlobal('window', { MemoryAPI: { appendConversation, recallEpisodes, loadRecentTurns } });
-    const config = { activeModelPath: '/character', globalModelConfig: { apiKey: 'test' } };
+    const config = { activeModelPath: '/character', globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test' } };
     const log = { contextRegistry: { register: () => ({
       beginTrace: () => ({ end: vi.fn(), fail: vi.fn(), record: vi.fn() }), dispose: vi.fn(),
     }) } };
@@ -71,7 +45,7 @@ describe('plugin conversation persona injection', () => {
     const archive = { platform: 'qq', scope: 'group' as const, id: '12345' };
     const controller = new AbortController();
     const context = { channelId: 'c', requestId: 'r', conversationId: 'g', signal: controller.signal, emit: vi.fn() };
-    const options = { source: 'example', conversationId: 'g', interaction: { mode: 'queue' as const }, model: 'test' };
+    const options = { source: 'example', conversationId: 'g', interaction: { mode: 'queue' as const } };
     await execute(options, { text: '杭州旅游', memoryArchive: archive, sender: { id: '456' } }, context);
     expect(loadRecentTurns).toHaveBeenCalledWith({ modelPath: '/character', archive });
     expect(vi.mocked(requestStage2LLM).mock.lastCall![1].historyMessages).toHaveLength(2);
@@ -94,10 +68,10 @@ describe('plugin conversation persona injection', () => {
     const get = vi.fn();
     const consolidate = vi.fn(async () => ({}));
     vi.stubGlobal('window', { MemoryAPI: { appendConversation, get, consolidate } });
-    const config = { activeModelPath: '/character', globalModelConfig: { apiKey: 'test', memoryModel: 'memory' } };
+    const config = { activeModelPath: '/character', globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test', memoryModel: 'memory' } };
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ end: vi.fn(), fail: vi.fn(), record: vi.fn() }), dispose: vi.fn() }) } };
     const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log as unknown as LogService);
-    const options = { source: 'example', conversationId: 'room', interaction: { mode: 'queue' as const }, model: 'chat' };
+    const options = { source: 'example', conversationId: 'room', interaction: { mode: 'queue' as const } };
     const context = { channelId: 'c', requestId: 'r', conversationId: 'room', signal: new AbortController().signal, emit: vi.fn() };
     const request = { text: '本人原文\n引用内容', ...(withArchive ? { memoryArchive: { platform: 'example', scope: 'group' as const, id: '30003' } } : {}) };
     await execute(options, request, context);
@@ -120,14 +94,14 @@ describe('plugin conversation persona injection', () => {
 
   it('injects the character persona and the plugin prompt without a desktop address or relationship', async () => {
     const config = {
-      globalModelConfig: { apiKey: 'test' },
+      globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test' },
       modelConfig: { persona: { name: '丛雨', userAddress: '主人', voice: '温柔\n简洁', examples: '示例一句', boundaries: '不编造经历', notes: '现代' } },
     };
     const log = { contextRegistry: { register: () => ({
       beginTrace: () => ({ end: vi.fn(), fail: vi.fn() }), dispose: vi.fn(),
     }) } };
     const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log as unknown as LogService);
-    const options = { source: 'example', conversationId: 'group', interaction: { mode: 'queue' as const }, model: 'test', systemPrompt: '群聊场景' };
+    const options = { source: 'example', conversationId: 'group', interaction: { mode: 'queue' as const }, systemPrompt: '群聊场景' };
     const context = { channelId: 'channel', requestId: 'request', conversationId: 'group', signal: new AbortController().signal, emit: vi.fn() };
     await execute(options, { text: '你好' }, context);
     const first = vi.mocked(requestStage2LLM).mock.lastCall![1];
@@ -161,13 +135,13 @@ describe('plugin conversation persona injection', () => {
     const recallEpisodes = vi.fn(async () => ({ text: '', matches: [] }));
     const get = vi.fn(async () => ({ coreText: '## 当前关系\n- 阶段：信赖。直接叫名字。' }));
     vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns, recallEpisodes, get } });
-    const config = { activeModelPath: '/character', globalModelConfig: { apiKey: 'test' }, modelConfig: { persona: { userAddress: '主人' } } };
+    const config = { activeModelPath: '/character', globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test' }, modelConfig: { persona: { userAddress: '主人' } } };
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ end: vi.fn(), fail: vi.fn(), record: vi.fn() }), dispose: vi.fn() }) } };
     const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log as unknown as LogService);
     const archive = { platform: 'qq', scope: 'group' as const, id: '30003' };
     const privateArchive = { platform: 'qq', scope: 'private' as const, id: '10001' };
     const context = { channelId: 'c', requestId: 'r', conversationId: 'qq:group:30003', signal: new AbortController().signal, emit: vi.fn() };
-    const options = { source: 'astrbot', conversationId: 'qq:group:30003', interaction: { mode: 'queue' as const }, model: 'test' };
+    const options = { source: 'astrbot', conversationId: 'qq:group:30003', interaction: { mode: 'queue' as const } };
     await execute(options, {
       text: '群里说一句', sender: { id: '10001', displayName: '主人号' }, memoryArchive: archive,
       systemPrompt: '[当前关系]\n阶段：信赖。',
@@ -191,7 +165,7 @@ describe('plugin conversation persona injection', () => {
   it('drops a stale reply when the character changes and hides provider errors', async () => {
     const appendConversation = vi.fn(async () => ({ state: {} }));
     vi.stubGlobal('window', { MemoryAPI: { appendConversation } });
-    const config = { activeModelPath: '/character-a' as string | null, globalModelConfig: { apiKey: 'test' } };
+    const config = { activeModelPath: '/character-a' as string | null, globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test' } };
     const fail = vi.fn();
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ end: vi.fn(), fail, record: vi.fn() }), dispose: vi.fn() }) } };
     const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log as unknown as LogService);
@@ -201,7 +175,7 @@ describe('plugin conversation persona injection', () => {
     }));
     const emit = vi.fn();
     const pending = execute(
-      { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const }, model: 'test' },
+      { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const } },
       { text: '迟到的回复', memoryArchive: { platform: 'qq', scope: 'group', id: '30003' } },
       { channelId: 'c', requestId: 'r', conversationId: 'g', signal: new AbortController().signal, emit },
     );
@@ -216,7 +190,7 @@ describe('plugin conversation persona injection', () => {
     vi.mocked(requestStage2LLM).mockRejectedValueOnce(new Error(`provider ${secret} https://api.example.com/v1`));
     const leaked = vi.fn();
     await execute(
-      { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const }, model: 'test' },
+      { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const } },
       { text: '失败' },
       { channelId: 'c', requestId: 'r3', conversationId: 'g', signal: new AbortController().signal, emit: leaked },
     );
@@ -232,11 +206,11 @@ describe('plugin conversation persona injection', () => {
     const loadRecentTurns = vi.fn(async () => ({ turns: [] }));
     const recallEpisodes = vi.fn(async () => ({ text: '', matches: [] }));
     vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns, recallEpisodes } });
-    const config = { activeModelPath: '/character-a' as string | null, globalModelConfig: { apiKey: 'test' } };
+    const config = { activeModelPath: '/character-a' as string | null, globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test' } };
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ end: vi.fn(), fail: vi.fn(), record: vi.fn() }), dispose: vi.fn() }) } };
     const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log as unknown as LogService);
     const archive = { platform: 'qq', scope: 'group' as const, id: '30003' };
-    const options = { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const }, model: 'test' };
+    const options = { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const } };
     const emit = vi.fn();
     let finish: () => void = () => {};
     vi.mocked(requestStage2LLM).mockImplementationOnce(() => new Promise((resolve) => {
@@ -267,11 +241,11 @@ describe('plugin conversation persona injection', () => {
 
   it('does not invent the desktop relationship when the plugin prompt is empty', async () => {
     vi.stubGlobal('window', { MemoryAPI: {} });
-    const config = { activeModelPath: '/character', globalModelConfig: { apiKey: 'test' }, modelConfig: { persona: { userAddress: '主人' } } };
+    const config = { activeModelPath: '/character', globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test' }, modelConfig: { persona: { userAddress: '主人' } } };
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ end: vi.fn(), fail: vi.fn(), record: vi.fn() }), dispose: vi.fn() }) } };
     const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log as unknown as LogService);
     await execute(
-      { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const }, model: 'test' },
+      { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const } },
       { text: '你好' },
       { channelId: 'c', requestId: 'r', conversationId: 'g', signal: new AbortController().signal, emit: vi.fn() },
     );
@@ -285,7 +259,7 @@ describe('plugin conversation persona injection', () => {
   it('logs a parse failure without the response body', async () => {
     const secret = 'sk-supersecretkey';
     vi.stubGlobal('window', { MemoryAPI: {} });
-    const config = { activeModelPath: '/character', globalModelConfig: { apiKey: 'test' } };
+    const config = { activeModelPath: '/character', globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test' } };
     const record = vi.fn();
     const fail = vi.fn();
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ end: vi.fn(), fail, record }), dispose: vi.fn() }) } };
@@ -293,7 +267,7 @@ describe('plugin conversation persona injection', () => {
     const emit = vi.fn();
     vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: `{${secret} "token":"${secret}"}`, usedModel: 'test' });
     await execute(
-      { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const }, model: 'test' },
+      { source: 'astrbot', conversationId: 'g', interaction: { mode: 'queue' as const } },
       { text: '坏回复' },
       { channelId: 'c', requestId: 'r', conversationId: 'g', signal: new AbortController().signal, emit },
     );
@@ -309,12 +283,12 @@ describe('plugin conversation persona injection', () => {
     const close = vi.fn(async () => {});
     vi.stubGlobal('window', {
       MemoryAPI: { appendConversation, loadRecentTurns: vi.fn(async () => ({ turns: [] })), recallEpisodes: vi.fn(async () => ({ text: '' })) },
-      CliAPI: { open, close, invoke: vi.fn(), tasks: vi.fn(), claim: vi.fn(), finish: vi.fn(), reply: vi.fn(async () => {}), compact: vi.fn() },
+      CliAPI: { open, close, invoke: vi.fn(), claim: vi.fn(), finish: vi.fn(), reply: vi.fn(async () => {}), compact: vi.fn() },
     });
     vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: false, context: '' });
     const config = {
       activeModelPath: '/character',
-      globalModelConfig: { apiKey: 'test' },
+      globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'test' },
       modelConfig: { persona: { name: '丛雨', userAddress: '主人' } },
     };
     const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ end: vi.fn(), fail: vi.fn(), record: vi.fn() }), dispose: vi.fn() }) } };
@@ -326,7 +300,7 @@ describe('plugin conversation persona injection', () => {
     ].join('\n\n');
     vi.mocked(requestStage2LLM).mockClear();
     await execute(
-      { source: 'astrbot', conversationId: 'qq:group:30003', interaction: { mode: 'queue' as const }, model: 'test' },
+      { source: 'astrbot', conversationId: 'qq:group:30003', interaction: { mode: 'queue' as const } },
       {
         text: composed,
         sender: { id: '2655314552', displayName: '南柯一梦' },
@@ -361,4 +335,24 @@ describe('plugin conversation persona injection', () => {
       archive: { platform: 'qq', scope: 'group', id: '30003' },
     }));
   });
+});
+
+it('an existing channel follows host selection and supports an unauthenticated endpoint on its next request', async () => {
+  const storage = new Map<string, string>();
+  vi.stubGlobal('window', { localStorage: { getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value) } });
+  const models: PetLlmModel[] = ['first', 'second'].map((id) => ({ id, efforts: ['low', 'high'], effortsSource: 'probe', probedAt: 1 }));
+  const config = { activeModelPath: '/character', globalModelConfig: { apiKey: 'key', baseURL: 'old-url', llmModels: models } };
+  const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ record: vi.fn(), end: vi.fn(), fail: vi.fn() }), dispose: vi.fn() }) } } as unknown as LogService;
+  const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log);
+  const options = { source: 'test', conversationId: 'room', interaction: { mode: 'queue' as const } };
+  const context = { channelId: 'channel', requestId: 'first-request', conversationId: 'room', signal: new AbortController().signal, emit: vi.fn() };
+  saveLlmSelection(models, 'chat', { model: 'second', effort: 'high' });
+  await execute(options, { text: '单次覆盖', reasoningEffort: 'low' }, { ...context, requestId: 'override' });
+  expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'second' }), expect.objectContaining({ reasoningEffort: 'low' }));
+  await execute(options, { text: '你好' }, context);
+  expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'second' }), expect.objectContaining({ reasoningEffort: 'high' }));
+  config.globalModelConfig = { apiKey: '', baseURL: 'new-url', llmModels: [{ id: 'new-first', efforts: ['none'], effortsSource: 'probe', probedAt: 2 }] };
+  await execute(options, { text: '换接口后的下一轮', reasoningEffort: 'low' }, { ...context, requestId: 'second-request' });
+  expect(requestStage2LLM).toHaveBeenLastCalledWith({ apiKey: '', baseURL: 'new-url', model: 'new-first' }, expect.objectContaining({ reasoningEffort: 'none' }));
 });

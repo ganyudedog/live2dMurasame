@@ -1,3 +1,4 @@
+import { findLlmModel, resolveChatEffort } from '../../../../../../../shared/ai/llmModels.js';
 import { ActionCatalogService } from './ActionCatalogService';
 import { MemoryService } from './MemoryService';
 import { isString, normalizeReplyText, normalizeDisplayLang, normalizeSpeakLang } from '../domain/config';
@@ -8,14 +9,11 @@ import type { ActionCapability } from '../../../../live2d/modules/actions/domain
 import type { ReasoningEffort, ReasoningSummaryEvent, Stage2AskResult, Stage2LLMConfig } from '../domain/types';
 import type { GenerationProgress } from '../domain/action-catalog/generation';
 import { runSkillLoop } from '../application/skillLoop';
-import { taskReportContext, type TaskReport } from '../domain/taskReport';
 import { createPresenceRuntime, type PresenceRuntimeOptions } from '../infrastructure/presenceRuntime';
-import type { AgentTask, CommandSession } from '../../../../../../../shared/cli/contracts';
+import type { CommandSession } from '../../../../../../../shared/cli/contracts';
 
 interface Stage2AskOptions {
   requestId?: string;
-  taskReport?: TaskReport;
-  onTaskCreated?: (task: AgentTask) => void;
   signal?: AbortSignal;
   trace: TraceScope;
   model?: string;
@@ -116,7 +114,9 @@ export class LlmService {
   }): Promise<string> {
     const model = this.config.model?.trim() ?? '';
     if (!model) throw new Error('未选择动作表模型，请先在动作设置里选择');
-    const reasoningEffort = this.config.reasoningEffort ?? '';
+    const models = this.getConfigSnapshot()?.globalModelConfig?.llmModels;
+    if (!findLlmModel(models, model)) throw new Error('动作表模型不在已启用的模型清单中');
+    const reasoningEffort = resolveChatEffort(models, model, this.config.reasoningEffort);
     const config = this.resolveConfig({ model });
     const context = this.log?.contextRegistry.register('LlmService', {
       relation: 'actionCatalog.request', params: { model: config.model, reasoningEffort, ...requestOptions?.task },
@@ -202,22 +202,20 @@ export class LlmService {
     });
     try {
       assertCurrentModel();
+      const models = snapshot?.globalModelConfig?.llmModels;
+      if (models) options = { ...options, reasoningEffort: resolveChatEffort(models, options.model ?? this.getConfig().model, options.reasoningEffort) };
       const resolved = this.resolveConfig(options);
       assertCurrentModel();
       const memoryRuntime = await this.memory.resolve(cleanText, options.trace, snapshot);
-      commandSession = options.cue && !options.taskReport ? null : await this.openCommands?.().catch((error) => {
+      commandSession = options.cue ? null : await this.openCommands?.().catch((error) => {
         options.trace.record('tool.session.unavailable', { error: String(error) });
         return null;
       });
-      let toolContext = options.taskReport ? taskReportContext(options.taskReport) : '';
-      if (commandSession && options.taskReport) {
-        await commandSession.claim(requestId, `${cleanText}\n${toolContext}`);
-        await commandSession.finish(requestId, { handled: true, context: toolContext });
-      } else if (commandSession) {
+      let toolContext = '';
+      if (commandSession) {
         try {
           const tools = await runSkillLoop({ config: { ...resolved, reasoningEffort: options.reasoningEffort },
-            text: cleanText, requestId, signal: options.signal, session: commandSession,
-            onTaskCreated: options.onTaskCreated,
+            text: cleanText, requestId, signal: options.signal, session: commandSession, log: this.log,
             historyMessages: memoryRuntime.historyMessages,
             summarize: snapshot?.globalModelConfig?.memoryModel?.trim()
               ? (system, user, signal) => this.requestMemoryStructured(system, user, signal) : undefined });

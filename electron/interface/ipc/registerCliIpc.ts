@@ -53,7 +53,6 @@ export const registerCliIpc = ({ ipcMain, cli }: { ipcMain: IpcMain; cli: CliSer
     return id;
   });
   ipcMain.handle('cli:invoke', (event, session: unknown, request: unknown) => cli.invoke(request, requireSession(event, session).context));
-  ipcMain.handle('cli:tasks', (event, id: unknown) => cli.listTasks(requireSession(event, id).context.owner));
   ipcMain.handle('cli:claim', (event, id: unknown, requestId: unknown, text: unknown) => cli.claim(requireSession(event, id).context, requestId, text));
   ipcMain.handle('cli:finish', (event, id: unknown, requestId: unknown, result: unknown) => {
     cli.finish(requireSession(event, id).context, requestId, result);
@@ -63,16 +62,8 @@ export const registerCliIpc = ({ ipcMain, cli }: { ipcMain: IpcMain; cli: CliSer
   });
   ipcMain.handle('cli:reply', (event, id: unknown, requestId: unknown, text: unknown) => cli.reply(requireSession(event, id).context, requestId, text));
   ipcMain.handle('cli:compact', (event, id: unknown, input: unknown) => cli.compact(requireSession(event, id).context, input));
-  const off = cli.subscribeTasks((update, owner) => {
-    for (const [id, session] of sessions) {
-      try { cli.authorize(session.context); }
-      catch { continue; }
-      if (session.context.owner === owner && !session.sender.isDestroyed()) session.sender.send('cli:task', { session: id, ...update });
-    }
-  });
   return () => {
-    off();
     sessions.clear();
-    for (const channel of ['cli:open', 'cli:invoke', 'cli:tasks', 'cli:close', 'cli:claim', 'cli:finish', 'cli:reply', 'cli:compact']) ipcMain.removeHandler(channel);
+    for (const channel of ['cli:open', 'cli:invoke', 'cli:close', 'cli:claim', 'cli:finish', 'cli:reply', 'cli:compact']) ipcMain.removeHandler(channel);
   };
 };

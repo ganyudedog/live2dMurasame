@@ -10,37 +10,18 @@ export interface CommandRequest {
   requestId?: string;
   command: string;
   args: Record<string, unknown>;
+  traceId?: string;
+  boundary?: string;
 }
 export interface CommandDefinition {
   name: string;
   description: string;
-  skill: 'settings' | 'development' | 'management';
+  skill: string;
   parameters: Record<string, unknown>;
-}
-export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
-export interface AgentTask {
-  id: string;
-  workspaceId: string;
-  provider: 'codex';
-  providerSessionId?: string;
-  parentTaskId?: string;
-  requestId: string;
-  conversationId: string;
-  status: TaskStatus;
-  createdAt: number;
-  updatedAt: number;
-  summary: string;
-  error?: string;
-  sequence: number;
-}
-export interface TaskEvent { task: AgentTask; sequence: number }
-export interface AgentSettings {
-  workspaces: Array<{ id: string; path: string }>;
-  remoteSources: string[];
+  instructions?: string;
 }
 export interface CommandSession {
   invoke(request: CommandRequest): Promise<unknown>;
-  tasks(): Promise<AgentTask[]>;
   close(): Promise<void>;
   claim(requestId: string, text: string): Promise<CommandClaim>;
   finish(requestId: string, result: unknown): Promise<void>;
@@ -56,11 +37,9 @@ export interface CommandClaim {
 export interface CliBridgeApi {
   open(scope: CommandScope): Promise<string | null>;
   invoke(session: string, request: CommandRequest): Promise<unknown>;
-  tasks(session: string): Promise<AgentTask[]>;
   close(session: string): Promise<void>;
   claim(session: string, requestId: string, text: string): Promise<CommandClaim>;
   finish(session: string, requestId: string, result: unknown): Promise<void>;
   reply(session: string, requestId: string, text: string): Promise<void>;
   compact(session: string, input: ContextCompaction & { summary: string }): Promise<boolean>;
-  onTask(session: string, listener: (event: TaskEvent) => void): () => void;
 }

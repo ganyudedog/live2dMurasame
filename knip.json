@@ -1,0 +1,33 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "index.html",
+    "electron/main.ts",
+    "electron/preload.mts",
+    "electron/tests/preloadSmoke.mjs",
+    "scripts/**/*.mjs",
+    "plugins/**/index.ts"
+  ],
+  "project": ["src/**", "electron/**", "plugins/**", "shared/**", "scripts/**"],
+  "ignore": [
+    "shared/**/*.d.ts",
+    "src/app/modules/ai/modules/asr/domain/audio.ts",
+    "src/app/modules/ai/modules/llm/domain/rag/retriever.ts",
+    "src/app/modules/ai/modules/tts/index.ts",
+    "src/app/modules/live2d/modules/interaction/domain/dragHandle/dragHandleEngine.ts"
+  ],
+  "ignoreDependencies": [
+    "electron-store",
+    "electron-updater"
+  ],
+  "rules": {
+    "files": "error",
+    "dependencies": "error",
+    "exports": "off",
+    "types": "off",
+    "nsExports": "off",
+    "nsTypes": "off",
+    "duplicates": "off",
+    "enumMembers": "off"
+  }
+}

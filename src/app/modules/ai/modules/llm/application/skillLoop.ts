@@ -3,6 +3,7 @@ import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/reso
 import type { CommandDefinition, CommandSession } from '../../../../../../../shared/cli/contracts';
 import type { Stage2LLMConfig } from '../domain/types';
 import { boundedToolText, toolOutcomeFacts } from '../domain/toolContext';
+import type { LogService } from '@app/shared/logging/LogService';
 
 const builtinSkillInstructions: Record<string, string> = {
   settings: '先 config.get 读取目标配置与 revision，再提交最小 patch；不要修改凭据。明确目标模型；冲突时重新读取。保存成功不代表外部服务预热成功。',
@@ -53,6 +54,7 @@ export interface SkillLoopOptions {
   requestId: string;
   signal?: AbortSignal;
   session: CommandSession;
+  log?: LogService;
   historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   summarize?: (system: string, user: string, signal: AbortSignal) => Promise<string>;
   /** Injectable model transport for behavioral tests, not a second execution path. */
@@ -146,8 +148,23 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
             // Snapshot of the tools actually offered in this model request.
             const definition = names.get(call.function.name);
             if (!definition) throw new Error('Load the corresponding skill before calling its tools');
-            result = await session.invoke({ command: definition.name, args: args as Record<string, unknown>,
-              invocationId: `${options.requestId}:${round}:${index}`, requestId: options.requestId, issuedAt });
+            const registration = options.log?.contextRegistry.register('skillLoop', {
+              relation: 'cli.invoke',
+              params: { command: definition.name, requestId: options.requestId },
+              behavior: '把工具调用交给主进程执行',
+            });
+            const trace = registration?.beginTrace(definition.name, { command: definition.name }, 'cli.invoke');
+            try {
+              result = await session.invoke({ command: definition.name, args: args as Record<string, unknown>,
+                invocationId: `${options.requestId}:${round}:${index}`, requestId: options.requestId, issuedAt,
+                ...(trace ? { traceId: trace.traceId, boundary: 'cli.invoke' as const } : {}) });
+              trace?.end({ command: definition.name });
+            } catch (error) {
+              trace?.fail(error instanceof Error ? error.message : String(error));
+              throw error;
+            } finally {
+              registration?.dispose();
+            }
             results.push({ command: definition.name, args, result: observation(result), facts: toolOutcomeFacts(result) });
           }
         } catch (error) {

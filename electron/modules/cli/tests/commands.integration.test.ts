@@ -44,6 +44,7 @@ const setup = async () => {
   const runtime = createCliModule({
     directory: dir,
     protectedRoot: path.join(dir, 'appdata'),
+    log: { lineage() {} },
     live2dEnvironmentService: live,
     modelEnvironmentService: { updateConfiguration: () => ({}), getConfiguration: () => ({}), getInteractionView: () => null },
     publishSnapshot,

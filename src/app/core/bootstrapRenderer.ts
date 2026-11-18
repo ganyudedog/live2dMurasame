@@ -28,6 +28,8 @@ export const bootstrapRenderer = async (
 
   const eagerTokens = registerServiceModules(container, windowKind);
   const logger = container.resolve(TOKENS.shared.log);
+  const electron = container.resolve(TOKENS.shared.electron);
+  logger.forwardBoundary = (payload) => electron.bridge.mirrorLog(payload);
   bindLogService(logger);
   for (const token of eagerTokens) container.resolve(token);
   await container.startServices();

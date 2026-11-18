@@ -45,7 +45,9 @@ const readCommands = (module: unknown): RuntimeCliCommand[] => {
 };
 
 /** 扫描插件目录并在主进程登记 CLI。执行函数来自插件自己的后端入口，不经过渲染进程。 */
-export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log: Pick<BackendLogService, 'error'>, storage: PluginStorageService): Promise<() => void> => {
+export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log: Pick<BackendLogService, 'error' | 'open'>, storage: PluginStorageService): Promise<() => void> => {
+  const trace = log.open('plugins', 'plugin.cli.register');
+  trace.event('plugin.scan');
   const removers: Array<() => void> = [];
   for (const entry of listRuntimeCliEntries(pluginDir)) {
     try {
@@ -70,11 +72,12 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
             },
           }),
         }));
+        trace.event('plugin.register');
       }
     } catch (error) {
       log.error('plugins', 'runtimeCli.register.failed', { pluginId: entry.id, message: error instanceof Error ? error.message : String(error) });
       /* 单个插件入口失败不影响其余插件。 */
     }
   }
-  return () => { removers.splice(0).forEach((remove) => remove()); };
+  return () => { removers.splice(0).forEach((dispose) => dispose()); };
 };

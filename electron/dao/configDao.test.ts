@@ -33,7 +33,7 @@ it.each([false, true])('does not import host grants from an obsolete task ledger
   const environment = new Live2dEnvironmentService({ repository: { load: loadLive2denvConfig, save: saveLive2denvConfig } });
   environment.initialize();
   fs.writeFileSync(path.join(runtime.directory, 'tasks.json'), JSON.stringify({ version: 1, calls: {}, tasks: {}, settings: { remoteSources: ['plugin:test'] } }));
-  const cli = createCliModule({ directory: runtime.directory, protectedRoot: runtime.directory, live2dEnvironmentService: environment,
+  const cli = createCliModule({ directory: runtime.directory, protectedRoot: runtime.directory, log: { lineage() {} }, live2dEnvironmentService: environment,
     modelEnvironmentService: { updateConfiguration: () => ({}), getConfiguration: () => ({}), getInteractionView: () => null },
     sendAll: vi.fn(), publishSnapshot: vi.fn(),
   });

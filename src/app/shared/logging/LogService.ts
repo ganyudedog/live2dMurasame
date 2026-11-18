@@ -1,5 +1,6 @@
 import { makeObservable, observable, runInAction } from 'mobx';
 import type { BootstrapContext } from '@app/core/bootstrapContext';
+import type { BoundaryName } from '../../../../shared/logging/boundaryTrace.js';
 import { nowMs } from './compat/time';
 import type {
   ContextRelation,
@@ -24,7 +25,7 @@ export type CaptureExceptionOptions = {
 };
 
 export type ContextRegistration = {
-  beginTrace(operation: string, data?: Record<string, unknown>): TraceScope;
+  beginTrace(operation: string, data?: Record<string, unknown>, boundary?: BoundaryName): TraceScope;
   snapshot(): ContextSnapshot;
   update(params: Record<string, unknown>): void;
   dispose(): void;
@@ -35,6 +36,7 @@ type TraceState = {
   service: string;
   relation: string;
   operation: string;
+  boundary?: BoundaryName;
   context: ContextSnapshot;
   startedAt: number;
   status: TraceStatus;
@@ -62,9 +64,19 @@ const TOKEN_USAGE_KEYS = new Set(['promptTokens', 'cachedTokens', 'uncachedToken
  * TraceScope.fail() write to the console. This keeps normal rendering quiet
  * while preserving the complete operation context when a terminal event fires.
  */
+export type BoundaryForward = (payload: {
+  kind: 'boundary';
+  level: 'info';
+  traceId: string;
+  boundary: BoundaryName;
+  events: Array<{ event: string }>;
+}) => void;
+
 export class LogService {
   readonly contextRegistry: ContextRegistry;
   debugModeEnabled: boolean;
+  /** 渲染进程不导出追踪。边界完成后从这里交给主进程。 */
+  forwardBoundary?: BoundaryForward;
 
   private readonly traces = new Map<string, TraceState>();
   private traceSequence = 0;
@@ -126,8 +138,13 @@ export class LogService {
     context.dispose();
   }
 
+  /** 按调用方传入的 boundary 取出追踪。这是渲染侧血缘的读取口。 */
+  readBoundary(boundary: BoundaryName): TraceSnapshot[] {
+    return [...this.traces.values()].filter((trace) => trace.boundary === boundary).map((trace) => this.snapshotTrace(trace));
+  }
+
   /** Called by ContextRegistrationHandle. */
-  createTrace(state: RegistrationState, operation: string, data?: Record<string, unknown>): TraceScope {
+  createTrace(state: RegistrationState, operation: string, data?: Record<string, unknown>, boundary?: BoundaryName): TraceScope {
     const context: ContextSnapshot = {
       service: state.service,
       relation: state.relation.relation,
@@ -135,10 +152,11 @@ export class LogService {
       behavior: state.relation.behavior,
     };
     const trace: TraceState = {
-      traceId: `${state.service}:${operation}:${++this.traceSequence}`,
+      traceId: boundary ? crypto.randomUUID().replaceAll('-', '') : `${state.service}:${operation}:${++this.traceSequence}`,
       service: state.service,
       relation: state.relation.relation,
       operation,
+      ...(boundary ? { boundary } : {}),
       context,
       startedAt: nowMs(),
       status: 'active',
@@ -180,6 +198,7 @@ export class LogService {
     trace.endedAt = nowMs();
     trace.terminalMessage = 'completed';
     this.appendEvent(trace, 'info', 'trace.end', data);
+    this.publishBoundary(trace);
     this.emitTrace(trace);
   }
 
@@ -194,6 +213,7 @@ export class LogService {
       ...data,
       error: serializeValue(cause ?? error),
     });
+    this.publishBoundary(trace);
     this.emitTrace(trace);
     return error;
   }
@@ -204,6 +224,7 @@ export class LogService {
       service: trace.service,
       relation: trace.relation,
       operation: trace.operation,
+      ...(trace.boundary ? { boundary: trace.boundary } : {}),
       status: trace.status,
       startedAt: trace.startedAt,
       endedAt: trace.endedAt,
@@ -237,6 +258,7 @@ export class LogService {
       service: snapshot.service,
       relation: snapshot.relation,
       operation: snapshot.operation,
+      ...(snapshot.boundary ? { boundary: snapshot.boundary } : {}),
       status: snapshot.status,
       source: snapshot.events.at(-1)?.source,
       context: snapshot.context,
@@ -245,6 +267,18 @@ export class LogService {
     };
     if (trace.status === 'failed') console.error(summary, payload);
     else console.info(summary, payload);
+  }
+
+  private publishBoundary(trace: TraceState): void {
+    const boundary = trace.boundary;
+    if (!boundary) return;
+    this.forwardBoundary?.({
+      kind: 'boundary',
+      level: 'info',
+      traceId: trace.traceId,
+      boundary,
+      events: trace.events.map((event) => ({ event: event.event })),
+    });
   }
 
   private trimTraces(): void {
@@ -293,8 +327,8 @@ class ContextRegistrationHandle implements ContextRegistration {
     this.id = state.id;
   }
 
-  beginTrace(operation: string, data?: Record<string, unknown>): TraceScope {
-    return this.logService.createTrace(this.state, operation, data);
+  beginTrace(operation: string, data?: Record<string, unknown>, boundary?: BoundaryName): TraceScope {
+    return this.logService.createTrace(this.state, operation, data, boundary);
   }
 
   snapshot(): ContextSnapshot {

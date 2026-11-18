@@ -2,6 +2,8 @@ import type { PluginCliGrantStore } from './PluginCliGrantStore.js';
 import type { ToolConversationService } from './ToolConversationService.js';
 import { operationText } from '../domain/toolConversation.js';
 import type { CommandClaim } from '../../../../shared/cli/contracts.js';
+import { isBoundaryTrace } from '../../../../shared/logging/boundaryTrace.js';
+import type { BackendLogService } from '../../logging/BackendLogService.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { CallStore } from '../infrastructure/CallStore.js';
@@ -13,6 +15,8 @@ const envelope = z.object({
   requestId: z.string().max(200).optional(),
   command: z.string().max(100),
   args: z.record(z.string(), z.unknown()),
+  traceId: z.string().min(1).max(200).optional(),
+  boundary: z.string().max(40).optional(),
 }).strict();
 
 interface StoredCommand {
@@ -54,11 +58,13 @@ export class CliService {
   private readonly grants?: PluginCliGrantStore;
   private readonly store: CallStore;
   private readonly conversations?: ToolConversationService;
+  private readonly log?: Pick<BackendLogService, 'lineage'>;
 
-  constructor(store: CallStore, grants?: PluginCliGrantStore, conversations?: ToolConversationService) {
+  constructor(store: CallStore, grants?: PluginCliGrantStore, conversations?: ToolConversationService, log?: Pick<BackendLogService, 'lineage'>) {
     this.store = store;
     this.grants = grants;
     this.conversations = conversations;
+    this.log = log;
   }
 
   register<TArgs>(name: string, definition: CliCommand<TArgs>): void {
@@ -163,6 +169,8 @@ export class CliService {
 
   async invoke(input: unknown, context: CommandContext): Promise<unknown> {
     const request = envelope.parse(input);
+    const carried = { traceId: request.traceId, boundary: request.boundary };
+    if (isBoundaryTrace(carried)) this.log?.lineage(carried.traceId, carried.boundary, 'cli.execute');
     this.authorize(context);
     if (request.command === 'commands.list') return this.list(context);
     const definition = this.commands.get(request.command);

@@ -53,6 +53,7 @@ export type TraceSnapshot = {
   service: string;
   relation: string;
   operation: string;
+  boundary?: string;
   status: TraceStatus;
   startedAt: number;
   endedAt?: number;

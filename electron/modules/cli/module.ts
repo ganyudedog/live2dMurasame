@@ -9,11 +9,13 @@ import { CliService } from './service/CliService.js';
 import { registerShellCommands } from './infrastructure/commands/registerShellCommands.js';
 import { registerConfigCommands } from './infrastructure/commands/registerConfigCommands.js';
 import type { ModelCommandDependencies } from '../modelenv/application/updateModelConfiguration.js';
+import type { BackendLogService } from '../logging/BackendLogService.js';
 
 export interface CliModuleDependencies extends ModelCommandDependencies {
   directory: string;
   /** Electron userData。shell.run 即使配了更大的可读目录，也不能读取这里。 */
   protectedRoot: string;
+  log: Pick<BackendLogService, 'lineage'>;
 }
 
 const existingDirectories = (paths: string[]): string[] => {
@@ -30,14 +32,14 @@ const existingDirectories = (paths: string[]): string[] => {
 const shellReadRootsOf = (settings: unknown): unknown =>
   settings && typeof settings === 'object' ? (settings as { shellReadRoots?: unknown }).shellReadRoots : undefined;
 
-export const createCliModule = ({ directory, protectedRoot, ...dependencies }: CliModuleDependencies) => {
+export const createCliModule = ({ directory, protectedRoot, log, ...dependencies }: CliModuleDependencies) => {
   const store = new CallStore(path.join(directory, 'tasks.json'));
   const environment = dependencies.live2dEnvironmentService;
   const grants = new PluginCliGrants(environment);
   const readShellRoots = () => normalizeShellReadRoots(shellReadRootsOf(dependencies.live2dEnvironmentService.root.settings));
   const shellAccess = () => ({ roots: existingDirectories(readShellRoots()), denied: existingDirectories([protectedRoot]) });
   const conversations = new ToolConversationService(new JsonToolConversationRepository(path.join(directory, 'conversations')));
-  const cli = new CliService(store, grants, conversations);
+  const cli = new CliService(store, grants, conversations, log);
   registerShellCommands(cli, shellAccess);
   registerConfigCommands(cli, dependencies);
   return { cli, dispose: () => store.collect() };

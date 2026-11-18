@@ -215,7 +215,7 @@ export class LlmService {
       if (commandSession) {
         try {
           const tools = await runSkillLoop({ config: { ...resolved, reasoningEffort: options.reasoningEffort },
-            text: cleanText, requestId, signal: options.signal, session: commandSession,
+            text: cleanText, requestId, signal: options.signal, session: commandSession, log: this.log,
             historyMessages: memoryRuntime.historyMessages,
             summarize: snapshot?.globalModelConfig?.memoryModel?.trim()
               ? (system, user, signal) => this.requestMemoryStructured(system, user, signal) : undefined });

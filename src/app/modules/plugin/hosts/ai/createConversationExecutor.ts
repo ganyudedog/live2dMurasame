@@ -92,7 +92,7 @@ export const createDefaultConversationExecutor = (
       if (commands) {
         try {
           const tools = await runSkillLoop({ config: { apiKey: global.apiKey, baseURL: global.baseURL, model, reasoningEffort },
-            text: request.text, requestId: context.requestId, signal: context.signal, session: commands,
+            text: request.text, requestId: context.requestId, signal: context.signal, session: commands, log,
             historyMessages: buildRecentConversation(recent.turns.filter((turn) =>
               turn.sender?.id === request.sender?.id && turn.conversationId === context.conversationId)).historyMessages,
             summarize: global.memoryModel?.trim() ? async (systemPrompt, userPrompt, signal) => {

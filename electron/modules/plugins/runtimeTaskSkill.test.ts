@@ -25,7 +25,7 @@ it('returns task-shaped plugin results as ordinary command results', async () =>
   `);
   const store = new CallStore(path.join(root, 'tasks.json'));
   const cli = new CliService(store);
-  const remove = await registerRuntimeCli(cli, root, { error: () => {} }, new PluginStorageService({ directory: path.join(root, 'storage') }));
+  const remove = await registerRuntimeCli(cli, root, { error: () => {}, open: () => ({ traceId: '', event() {} }) }, new PluginStorageService({ directory: path.join(root, 'storage') }));
   const context = { owner: 'local', local: true, source: 'local', conversationId: 'desktop' };
   try {
     const session: CommandSession = {

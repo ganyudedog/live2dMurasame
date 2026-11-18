@@ -476,6 +476,7 @@ app.whenReady().then(async () => {
         cliRuntime = createCliModule({
             directory: path.join(app.getPath('userData'), 'cli'),
             protectedRoot: app.getPath('userData'),
+            log: backendLog,
             live2dEnvironmentService, modelEnvironmentService,
             sendAll: applicationIpc.sendAll, publishSnapshot: applicationIpc.publishSnapshot,
         });

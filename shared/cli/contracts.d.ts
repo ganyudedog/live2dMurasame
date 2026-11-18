@@ -10,6 +10,8 @@ export interface CommandRequest {
   requestId?: string;
   command: string;
   args: Record<string, unknown>;
+  traceId?: string;
+  boundary?: string;
 }
 export interface CommandDefinition {
   name: string;

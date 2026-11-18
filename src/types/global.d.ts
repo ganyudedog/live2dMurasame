@@ -372,7 +372,7 @@ declare global {
 
   interface PetLive2dEnvAPI {
     getLive2denvConfig?: () => Promise<PetLive2denvConfig | undefined>;
-    updateLive2denvConfig?: (patch: Partial<PetLive2denvConfig>) => Promise<PetLive2denvConfig | undefined>;
+    updateLive2denvConfig?: (patch: Partial<PetLive2denvConfig>, trace?: { traceId: string; boundary: string }) => Promise<PetLive2denvConfig | undefined>;
   }
 
   interface PetGlobalAPI {

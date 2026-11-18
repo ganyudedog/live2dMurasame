@@ -162,9 +162,10 @@ export class AiService {
       source: request.source,
       textLength: request.text.trim().length,
       reasoningEffort,
-    });
+    }, 'conversation.turn');
 
     let accumulatedDisplay = '';
+    if (request.source === 'asr') trace.record('asr.final', { source: request.source });
     const consumer = this.tts.createDispatcher(request.id);
     this.stopChatSpeech = consumer.stop;
     this.emitDialogue({ type: 'started', conversationId: request.id });
@@ -174,6 +175,7 @@ export class AiService {
     const displayedSentences = new Set<number>();
     const submitSpeech = (sentenceIndex: number, speakText: string, displayText = '') => {
       if (!isCurrent() || !speakText || submittedSpeech.has(sentenceIndex)) return;
+      if (submittedSpeech.size === 0) trace.record('tts.dispatch', { requestId: request.id });
       submittedSpeech.add(sentenceIndex);
       consumer.submit(speakText, displayText, sentenceIndex);
     };
@@ -195,6 +197,7 @@ export class AiService {
 
     try {
       const presence = request.source === 'presence';
+      trace.record('llm.ask', { requestId: request.id });
       const result = await this.llm.ask(request.text.trim(), {
         requestId: request.id,
         trace,

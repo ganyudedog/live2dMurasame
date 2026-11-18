@@ -39,7 +39,7 @@ describe('runtime CLI registration', () => {
     });
     const storage = new PluginStorageService({ directory: path.join(root, 'storage') });
     storage.set('other-plugin', 'note', 'private');
-    const remove = await registerRuntimeCli(cli, root, { error: () => {} }, storage);
+    const remove = await registerRuntimeCli(cli, root, { error: () => {}, open: () => ({ traceId: '', event() {} }) }, storage);
     const listed = cli.list(context);
     expect(listed.find((item) => item.name === 'notes.add')).toMatchObject({ skill: 'notes', instructions: '先确认内容。' });
     await expect(cli.invoke({
@@ -67,7 +67,7 @@ describe('runtime CLI registration', () => {
     }
     const errors = [];
     const cli = new CliService(new CallStore(path.join(root, 'tasks.json')));
-    await registerRuntimeCli(cli, root, { error: (_scope, _event, data) => { errors.push(data); } }, new PluginStorageService({ directory: path.join(root, 'storage') }));
+    await registerRuntimeCli(cli, root, { error: (_scope, _event, data) => { errors.push(data); }, open: () => ({ traceId: '', event() {} }) }, new PluginStorageService({ directory: path.join(root, 'storage') }));
     expect(errors).toEqual([expect.objectContaining({ pluginId: 'broken', message: 'cli exploded' })]);
     await expect(cli.invoke({
       invocationId: 'notes-3', issuedAt: Date.now(), command: 'notes.add', args: {},

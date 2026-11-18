@@ -18,7 +18,9 @@ const aiFields = (config: unknown) => {
 const snapshotStore = createLive2dSnapshotStore({ ipcRenderer });
 const eventBridge = createIpcEventBridge({ ipcRenderer });
 const getLive2denvConfigImpl = () => ipcRenderer.invoke('ddd:live2denv:get');
-const updateLive2denvConfigImpl = (patch: unknown) => ipcRenderer.invoke('ddd:live2denv:update', patch);
+const updateLive2denvConfigImpl = (patch: unknown, trace?: unknown) => ipcRenderer.invoke(
+  'ddd:live2denv:update', trace ? { patch, trace } : patch,
+);
 
 const WindowAPI = {
   sendWindowIntent: (intent: unknown) => ipcRenderer.invoke('ddd:window:intent', intent),

@@ -18,6 +18,7 @@ export const serviceModule: ServiceModule = {
         electron: scope.resolve(TOKENS.shared.electron),
         live2d: windowKind === 'pet' ? scope.resolve(TOKENS.live2d) : undefined,
         controlPanel: windowKind === 'control-panel' ? scope.resolve(TOKENS.controlPanel) : undefined,
+        ai: windowKind === 'pet' ? scope.resolve(TOKENS.ai) : undefined,
       });
       return new PluginRuntime({
         log,

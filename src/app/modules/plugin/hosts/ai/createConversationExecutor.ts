@@ -9,15 +9,20 @@ import { requestStage2LLM, requestStructuredLLM } from '@app/modules/ai/modules/
 import { buildPersonaPrompt, normalizePersona } from '@app/modules/ai/modules/llm/domain/memory/memoryContext';
 import { LlmMemoryRepository } from '@app/modules/ai/modules/llm/infrastructure/LlmMemoryRepository';
 import { resolveEpisodeQuery } from '@app/modules/ai/modules/llm/domain/memory/episodeQuery';
-import { runSkillLoop } from '@app/modules/ai/modules/llm/application/skillLoop';
+import { runSkillLoop, type ReminderToolRequest } from '@app/modules/ai/modules/llm/application/skillLoop';
 import type { CommandSession } from '../../../../../../shared/cli/contracts';
 import { openCommandSession } from '@app/shared/electron/commandSession';
 import { classifyConversationError, createDiagnosticId, sanitizeLogDetail } from '../../publicError';
+
+export interface ConversationExecutorOptions {
+  readonly onReminder?: (request: ReminderToolRequest, context: Parameters<PluginConversationExecutor>[2], options: Parameters<PluginConversationExecutor>[0], origin: Parameters<PluginConversationExecutor>[1]) => Promise<unknown> | unknown;
+}
 
 /** Default host implementation. Plugins only see the public channel contract. */
 export const createDefaultConversationExecutor = (
   config: ConfigService,
   log: LogService,
+  executorOptions: ConversationExecutorOptions = {},
 ): PluginConversationExecutor => {
   const personalMemory = new MemoryService(
     () => ({ activeModelPath: config.activeModelPath, globalModelConfig: config.globalModelConfig } as PetConfigSnapshot),
@@ -98,6 +103,8 @@ export const createDefaultConversationExecutor = (
             text: request.text, requestId: context.requestId, signal: context.signal, session: commands, log,
             historyMessages: buildRecentConversation(recent.turns.filter((turn) =>
               turn.sender?.id === request.sender?.id && turn.conversationId === context.conversationId)).historyMessages,
+            reminderSpeakLang: speakLang,
+            onReminder: executorOptions.onReminder ? (reminder) => executorOptions.onReminder?.(reminder, context, options, request) : undefined,
             summarize: global.memoryModel?.trim() ? async (systemPrompt, userPrompt, signal) => {
               const result = await requestStructuredLLM({ apiKey: global.apiKey, baseURL: global.baseURL, model: global.memoryModel }, {
                 systemPrompt, userPrompt, signal, stream: false, cachePurpose: 'memory',

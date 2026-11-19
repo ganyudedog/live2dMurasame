@@ -44,7 +44,7 @@ describe('runtime CLI registration', () => {
     expect(listed.find((item) => item.name === 'notes.add')).toMatchObject({ skill: 'notes', instructions: '先确认内容。' });
     await expect(cli.invoke({
       invocationId: 'notes-1', issuedAt: Date.now(), command: 'notes.add', args: { text: 'hello' },
-    }, context)).resolves.toEqual({ saved: 'hello', hostFields: ['storage'] });
+    }, context)).resolves.toEqual({ saved: 'hello', hostFields: ['invoke', 'storage'] });
     expect(storage.get('live2d.notes', 'note')).toBe('hello');
     expect(storage.get('other-plugin', 'note')).toBe('private');
     remove();

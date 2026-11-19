@@ -37,6 +37,10 @@ export class ElectronBridgeService {
     return window.AIAPI;
   }
 
+  get systemApi(): PetSystemAPI | undefined {
+    return window.SystemAPI;
+  }
+
   sendWindowDrag(payload: PetWindowDragPayload): void {
     window.WindowAPI?.sendWindowDrag?.(payload);
   }
@@ -47,6 +51,6 @@ export class ElectronBridgeService {
   }
 
   mirrorLog(payload: PetDebugTracePayload): void {
-    window.SystemAPI?.debugTrace?.(payload);
+    this.systemApi?.debugTrace?.(payload);
   }
 }

@@ -10,7 +10,7 @@ import type { LogService } from './shared/logging/LogService';
 import { TOKENS } from './core/serviceTokens';
 import { bindBubbleMeasurementRoot } from './modules/live2d/modules/bubble/ui/imperative/bindBubbleMeasurementRoot';
 import { rendererPlugins } from '../../plugins';
-import { loadRuntimePlugins } from './modules/plugin/loadRuntimePlugins';
+import { loadRuntimePluginManifests, loadRuntimePlugins } from './modules/plugin/loadRuntimePlugins';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -46,8 +46,10 @@ const installGlobalErrorLogging = (log: LogService): void => {
 
 export const mountApplication = async (): Promise<void> => {
   const windowKind = resolveWindowKind(window.location.search);
-  const runtimePlugins = await loadRuntimePlugins();
+  const [runtimeManifests, runtimePlugins] = await Promise.all([loadRuntimePluginManifests(), loadRuntimePlugins()]);
   const application = await bootstrapRenderer(windowKind, [...rendererPlugins, ...runtimePlugins]);
+  const pluginRuntime = application.container.resolve(TOKENS.plugin);
+  for (const manifest of runtimeManifests) pluginRuntime.registerExternalManifest(manifest);
   const log = application.container.resolve(TOKENS.shared.log);
   installGlobalErrorLogging(log);
   const mountContext = log.contextRegistry.register('renderer', {

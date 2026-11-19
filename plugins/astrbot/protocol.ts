@@ -69,12 +69,14 @@ export interface AstrBotAiResponse {
 }
 
 export type AstrBotInbound = AstrBotQqMessage
+  | { readonly type: 'ai.notification.ack'; readonly version: number; readonly notificationId: string; readonly delivered: boolean }
   | { readonly type: 'stickers.catalog'; readonly accountId: string; readonly items: unknown[] }
   | { readonly type: 'ai.cancel'; readonly version: number; readonly requestId: string }
   | { readonly type: 'hello.ack'; readonly version: number; readonly accepted?: boolean; readonly clientId?: string; readonly interaction?: AstrBotInteraction; readonly wakeWords?: readonly string[] }
   | { readonly type: 'ping'; readonly timestamp?: number; readonly ts?: number };
 
 export type AstrBotOutbound = AstrBotHello | AstrBotAiResponse
+  | { readonly type: 'ai.notification'; readonly version: 3; readonly notificationId: string; readonly inReplyTo: string; readonly conversationId: string; readonly text: string; readonly speakText?: string }
   | { readonly type: 'config.update'; readonly version: 3; readonly wakeWords: readonly string[]; readonly allowedPrivateUsers: readonly string[] }
   | { readonly type: 'ping'; readonly ts?: number } | { readonly type: 'pong'; readonly timestamp?: number };
 

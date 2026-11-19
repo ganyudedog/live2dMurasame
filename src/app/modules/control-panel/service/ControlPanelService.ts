@@ -34,6 +34,7 @@ export class ControlPanelService {
   aiSettingsPending = false;
   /** 动作表生成的模型与思考强度；与对话一样只存前端缓存。 */
   actionSelection: { model: string; effort: PetReasoningEffort | '' };
+  scanPlugins = {};
 
   readonly config: ConfigService;
   readonly stateBus: StateBusService;
@@ -90,6 +91,7 @@ export class ControlPanelService {
       setActionReasoningEffort: actionBound,
       clearChat: actionBound,
       setAiSettings: actionBound,
+      scanPlugins: observable,
     });
   }
 
@@ -491,6 +493,9 @@ export class ControlPanelService {
           this.chatMessages = recent.turns.flatMap((turn) => {
             const id = `episode_${turn.date}_${turn.conversationCount}`;
             const at = new Date(`${turn.date}T${turn.time}`).getTime();
+            if (turn.requestId?.startsWith('reminder_') || turn.requestId?.startsWith('presence_')) {
+              return [createMessage('assistant', turn.assistantText, turn.requestId, at, 'assistant', 'done')];
+            }
             return [createMessage('user', turn.userText, id, at, 'text', 'done'),
               createMessage('assistant', turn.assistantText, id, at + 1, 'assistant', 'done')];
           });

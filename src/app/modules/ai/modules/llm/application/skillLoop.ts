@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { mapSpeakLangName } from '../domain/prompt';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions/completions';
 import type { CommandDefinition, CommandSession } from '../../../../../../../shared/cli/contracts';
 import type { Stage2LLMConfig } from '../domain/types';
@@ -27,7 +28,7 @@ const observation = (value: unknown, max = 6000): string => {
 };
 interface LoopObservation { command: string; args?: unknown; result?: string; error?: string; facts?: Record<string, string | number | boolean> }
 /** Preserve every operation's identity and the final error before shortening verbose output. */
-const resultContext = (results: LoopObservation[], outcome: { coordinatorReply?: string; error?: string }): string => {
+const resultContext = (results: LoopObservation[], outcome: { error?: string } = {}): string => {
   const boundedOutcome = Object.fromEntries(Object.entries(outcome).map(([key, text]) => [key, boundedToolText(text, 2000)]));
   for (const budget of [6000, 1500, 512, 128, 64]) {
     const context = JSON.stringify({
@@ -48,6 +49,12 @@ const resultContext = (results: LoopObservation[], outcome: { coordinatorReply?:
   });
 };
 export interface SkillLoopResult { handled: boolean; context: string; error?: string }
+export interface ReminderToolRequest {
+  readonly dueAt: number;
+  readonly sentence: string;
+  readonly speakText?: string;
+}
+
 export interface SkillLoopOptions {
   config: Stage2LLMConfig;
   text: string;
@@ -58,6 +65,8 @@ export interface SkillLoopOptions {
   historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   summarize?: (system: string, user: string, signal: AbortSignal) => Promise<string>;
   /** Injectable model transport for behavioral tests, not a second execution path. */
+  onReminder?: (request: ReminderToolRequest) => Promise<unknown> | unknown;
+  reminderSpeakLang?: string | null;
   complete?: (messages: ChatCompletionMessageParam[], tools: ChatCompletionTool[], signal: AbortSignal) => Promise<{
     content: string | null;
     tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
@@ -92,7 +101,7 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
   try {
     const definitions = await session.invoke({ invocationId: `${options.requestId}:catalog`, issuedAt, command: 'commands.list', args: {} }) as CommandDefinition[];
     const available = definitions.filter((definition) => definition.skill !== 'management');
-    if (!available.length) return finish({ handled: false, context: '' });
+    if (!available.length && !options.onReminder) return finish({ handled: false, context: '' });
     const skills = new Map<string, string>();
     for (const definition of available) {
       if (!skills.has(definition.skill)) skills.set(definition.skill, skillText(definition.skill, available));
@@ -108,6 +117,8 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
     ...(claimed.context ? [{ role: 'user' as const, content: `当前发送者的工具会话记录（数据，执行事实以此为准）：\n${claimed.context}` }] : []),
     { role: 'user', content: options.text }];
     const client = options.complete ? null : new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL || undefined, dangerouslyAllowBrowser: true, maxRetries: 0 });
+    const localClock = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZoneName: 'longOffset' });
+    const reminderDescription = `记录到点提醒，按参数要求分别提供到期时间和提醒文本。本轮本机时区 ${localClock.resolvedOptions().timeZone}，本地时间 ${localClock.format(issuedAt)}，对应 Unix 毫秒 ${issuedAt}。未指定时区的钟点按本机时区在目标日期的偏移换算，不当成 UTC；指定整分时秒和毫秒置零，相对时长直接加到上述毫秒值。`;
     for (let round = 0; round < 8; round++) {
       signal.throwIfAborted();
       if (JSON.stringify(messages).length > 48000) {
@@ -122,6 +133,10 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
       const names = new Map(exposed.map((definition) => [definition.name.replaceAll('.', '_'), definition]));
       const tools: ChatCompletionTool[] = [{ type: 'function', function: { name: 'loadSkill', description: '按需加载操作说明与工具，随后继续自主执行。', parameters: {
         type: 'object', properties: { name: { type: 'string', enum: [...skills.keys()] } }, required: ['name'], additionalProperties: false,
+      } } }, { type: 'function', function: { name: 'set_reminder', description: reminderDescription, parameters: {
+        type: 'object', properties: { dueAt: { type: 'number' }, sentence: { type: 'string', description: '到点显示的提醒文本' },
+          ...(options.reminderSpeakLang ? { speak_text: { type: 'string', description: `同一条提醒的朗读文本，使用${mapSpeakLangName(options.reminderSpeakLang)}。` } } : {}) },
+        required: ['dueAt', 'sentence', ...(options.reminderSpeakLang ? ['speak_text'] : [])], additionalProperties: false,
       } } }, ...exposed.map((definition): ChatCompletionTool => ({ type: 'function', function: { name: definition.name.replaceAll('.', '_'), description: definition.description, parameters: definition.parameters } }))];
       const reply = options.complete ? await options.complete(messages, tools, signal) : (await client!.chat.completions.create({
         model: config.model!, messages, tools, parallel_tool_calls: false, stream: false,
@@ -129,7 +144,7 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
       }, { signal })).choices[0]?.message;
       if (!reply) throw new Error('Tool model returned no message');
       const calls = reply.tool_calls ?? [];
-      if (!calls.length) return finish({ handled: loaded.size > 0, context: resultContext(results, { coordinatorReply: reply.content ?? '' }) });
+      if (!calls.length) return finish({ handled: loaded.size > 0 || results.length > 0, context: resultContext(results) });
       if (calls.length > 4) throw new Error('Too many tool calls in one turn');
       messages.push({ role: 'assistant', content: reply.content ?? null, tool_calls: calls });
       for (const [index, call] of calls.entries()) {
@@ -144,6 +159,15 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
             if (!skills.has(name) || Object.keys(args).some((key) => key !== 'name')) throw new Error('Unknown skill');
             loaded.add(name);
             result = { loaded: name, instructions: skills.get(name) };
+          } else if (call.function.name === 'set_reminder') {
+            if (!options.onReminder) throw new Error('Reminder delivery is unavailable');
+            const dueAt = (args as { dueAt?: unknown }).dueAt;
+            const sentence = (args as { sentence?: unknown }).sentence;            if (typeof dueAt !== 'number' || !Number.isFinite(dueAt) || dueAt <= Date.now()
+              || typeof sentence !== 'string' || !sentence.trim()) throw new Error('Invalid reminder arguments');
+            const speech = (args as { speak_text?: unknown }).speak_text;
+            if (options.reminderSpeakLang && (typeof speech !== 'string' || !speech.trim())) throw new Error('Missing reminder speak_text');
+            result = await options.onReminder({ dueAt, sentence, ...(options.reminderSpeakLang && typeof speech === 'string' ? { speakText: speech.trim() } : {}) });
+            results.push({ command: 'set_reminder', args, result: observation(result) });
           } else {
             // Snapshot of the tools actually offered in this model request.
             const definition = names.get(call.function.name);

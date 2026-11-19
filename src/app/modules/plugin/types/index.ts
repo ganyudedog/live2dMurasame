@@ -26,6 +26,7 @@ export type { Live2dHostApi } from './live2d';
 export type { ControlPanelHostApi } from './control-panel';
 export type { DesktopNotificationsHostApi, DesktopWindowHostApi } from './desktop';
 export type { PluginHostApiMap } from './host';
+export type { ReminderHostApi, ReminderRecord } from './reminders';
 export { hostMethodEffects, hostPermissions } from './host';
 export type { HostMethodEffect } from './host';
 export type {

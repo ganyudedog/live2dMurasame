@@ -112,7 +112,7 @@ describe('progressive skill loop', () => {
     });
     const result = await runSkillLoop({ config: { model: 'model' }, text: '修复项目', requestId: 'message-1', session, complete });
     expect(result.handled).toBe(true);
-    expect(offered[0]).toEqual(['loadSkill']);
+    expect(offered[0]).toEqual(['loadSkill', 'set_reminder']);
     expect(offered[1]).toContain('jobs_run'); expect(offered.flat()).not.toContain('config_get');
     expect(offered.flat()).not.toContain('config_update');
     expect(session.invoke).toHaveBeenCalledWith(expect.objectContaining({ command: 'jobs.run', invocationId: 'message-1:2:0', requestId: 'message-1' }));

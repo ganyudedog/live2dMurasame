@@ -24,7 +24,7 @@ import { createSubtitleModule } from './modules/subtitle/module.js';
 import { createCliModule } from './modules/cli/module.js';
 import { registerCliIpc } from './interface/ipc/registerCliIpc.js';
 import { registerRuntimeCli } from './modules/plugins/registerRuntimeCli.js';
-import { resolveRuntimePluginFile, scanRuntimePlugins } from './modules/plugins/scanRuntimePlugins.js';
+import { resolveRuntimePluginFile, scanRuntimePluginManifests } from './modules/plugins/scanRuntimePlugins.js';
 import { startCommandServer } from './modules/cli/infrastructure/commandServer.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -417,8 +417,7 @@ app.whenReady().then(async () => {
             return new Response('Not Found', { status: 404 });
         }
     });
-    ipcMain.handle('ddd:plugins:list', () => scanRuntimePlugins(live2dEnvironmentService.root.pluginDir)
-        .map(({ id, url }) => ({ id, url })));
+    ipcMain.handle('ddd:system:plugins:list', () => scanRuntimePluginManifests(live2dEnvironmentService.root.pluginDir));
     if (!isDevServerMode) {
         protocol.handle('app', (request) => {
             try {

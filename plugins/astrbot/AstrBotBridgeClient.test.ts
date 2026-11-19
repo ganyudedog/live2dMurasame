@@ -50,6 +50,7 @@ interface TestChannel {
 const startClient = (overrides: {
   settings?: Partial<typeof DEFAULT_ASTRBOT_SETTINGS>;
   get?: () => Promise<unknown>;
+  onReminderReceipt?: (id: string, delivered: boolean) => void;
   onSendText?: (request: ConversationRequest) => { requestId: string; accepted: true };
 } = {}) => {
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -73,6 +74,7 @@ const startClient = (overrides: {
       getRelationship: async () => ({ line: '阶段：亲近。与桌面共用。', userAddress: '主人' }),
     },
     logger,
+    onReminderReceipt: overrides.onReminderReceipt,
     settings: { ...DEFAULT_ASTRBOT_SETTINGS, ...overrides.settings },
     storage: { get: overrides.get ?? vi.fn(async () => ({ ownerUserId: '', users: {} })), set: vi.fn(), delete: vi.fn(), subscribe: () => () => {} },
   } as unknown as ConstructorParameters<typeof AstrBotBridgeClient>[0]);
@@ -82,6 +84,28 @@ const startClient = (overrides: {
 
 describe('AstrBot bridge client', () => {
   afterEach(() => { FakeSocket.instances = []; vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it('sends proactive reminders only when idle and uses a fresh request id', async () => {
+    const onReminderReceipt = vi.fn();
+    const { client, channels } = startClient({ onReminderReceipt });
+    await pump();
+    const socket = FakeSocket.instances[0];
+    ackHello(socket);
+    expect(client.sendReminder('开会', 'reminder-3', 'qq:group:30003', 'qq_original')).toBe('submitted');
+    expect(onReminderReceipt).not.toHaveBeenCalled();
+    expect(parsed(socket).at(-1)).toEqual({ type: 'ai.notification', version: 3, notificationId: 'reminder-3', conversationId: 'qq:group:30003', inReplyTo: 'qq_original', text: '开会' });
+    socket.onmessage?.({ data: JSON.stringify({ type: 'ai.notification.ack', version: 3, notificationId: 'reminder-3', delivered: true }) });
+    expect(onReminderReceipt).toHaveBeenCalledWith('reminder-3', true);
+    expect(client.sendProactive('去洗澡', 'reminder-1', 'qq:group:30003')).toBe(true);
+    expect(parsed(socket).at(-1)).toMatchObject({ type: 'ai.response', requestId: 'reminder-1', conversationId: 'qq:group:30003', status: 'done', text: '去洗澡' });
+    vi.spyOn(socket, 'send').mockImplementationOnce(() => { throw new Error('socket closed'); });
+    expect(client.sendProactive('提交失败', 'reminder-failed', 'qq:group:30003')).toBe(false);
+    socket.onmessage?.({ data: JSON.stringify(message('busy', '1')) });
+    await pump();
+    expect(client.sendProactive('稍后提醒', 'reminder-2', 'qq:group:30003')).toBe(false);
+    expect(channels[0].sendText).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'busy' }));
+    client.dispose();
+  });
 
   it('syncs owner and explicit private users on connect and edits without reconnecting', async () => {
     const { client } = startClient();

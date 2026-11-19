@@ -5,11 +5,13 @@ export interface RuntimePluginRecord {
   id: string;
   filePath: string;
   url: string;
+  manifest: Record<string, unknown>;
 }
 
 export interface RuntimeCliEntry {
   id: string;
   servicePath: string;
+  manifest: Record<string, unknown>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -41,6 +43,19 @@ export const resolveRuntimeCliFile = (folder: string, manifest: Record<string, u
 };
 
 /** 每个子目录一份界面插件：manifest.json 的 id，加上同目录的 index.js。 */
+export const scanRuntimePluginManifests = (pluginDir: string): Record<string, unknown>[] => {
+  const root = pluginDir.trim();
+  if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [];
+  const found: Record<string, unknown>[] = [];
+  for (const name of fs.readdirSync(root)) {
+    const folder = path.join(root, name);
+    if (!fs.statSync(folder).isDirectory()) continue;
+    const manifest = readManifest(folder);
+    const id = manifest && typeof manifest.id === 'string' ? manifest.id.trim() : '';
+    if (id && manifest) found.push(manifest);
+  }
+  return found;
+};
 export const scanRuntimePlugins = (pluginDir: string): RuntimePluginRecord[] => {
   const root = pluginDir.trim();
   if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [];
@@ -51,8 +66,8 @@ export const scanRuntimePlugins = (pluginDir: string): RuntimePluginRecord[] => 
     const manifest = readManifest(folder);
     const filePath = path.join(folder, 'index.js');
     const id = manifest && typeof manifest.id === 'string' ? manifest.id.trim() : '';
-    if (!id || !fs.existsSync(filePath)) continue;
-    found.push({ id, filePath, url: `plugin://runtime/${encodeURIComponent(id)}/index.js` });
+    if (!id || !manifest || !fs.existsSync(filePath)) continue;
+    found.push({ id, filePath, url: `plugin://runtime/${encodeURIComponent(id)}/index.js`, manifest });
   }
   return found;
 };
@@ -70,7 +85,7 @@ export const listRuntimeCliEntries = (pluginDir: string): RuntimeCliEntry[] => {
     const permissions = manifest && Array.isArray(manifest.permissions) ? manifest.permissions : [];
     if (!manifest || !id || !permissions.includes('commands.register')) continue;
     const servicePath = resolveRuntimeCliFile(folder, manifest);
-    if (servicePath) found.push({ id, servicePath });
+    if (servicePath) found.push({ id, servicePath, manifest });
   }
   return found;
 };

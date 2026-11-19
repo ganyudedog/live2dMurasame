@@ -154,6 +154,7 @@ const AsrAPI = {
 
 const SystemAPI = {
   debugTrace: (payload: unknown) => ipcRenderer.send('ddd:system:renderer-trace', payload),
+  listPlugins: () => ipcRenderer.invoke('ddd:system:plugins:list'),
 };
 
 const SubtitleAPI = {
@@ -173,10 +174,6 @@ const SubtitleAPI = {
 
 const TtsDiagnosticsAPI = {
   saveArtifacts: (artifacts: unknown) => ipcRenderer.invoke('ddd:tts:save-artifacts', { artifacts }),
-};
-
-const PluginAPI = {
-  list: () => ipcRenderer.invoke('ddd:plugins:list'),
 };
 
 const PluginStorageAPI = {
@@ -226,6 +223,5 @@ contextBridge.exposeInMainWorld('AsrAPI', AsrAPI);
 contextBridge.exposeInMainWorld('SubtitleAPI', SubtitleAPI);
 contextBridge.exposeInMainWorld('SystemAPI', SystemAPI);
 contextBridge.exposeInMainWorld('TtsDiagnosticsAPI', TtsDiagnosticsAPI);
-contextBridge.exposeInMainWorld('PluginAPI', PluginAPI);
 contextBridge.exposeInMainWorld('PluginStorageAPI', PluginStorageAPI);
 contextBridge.exposeInMainWorld('CliAPI', CliAPI);

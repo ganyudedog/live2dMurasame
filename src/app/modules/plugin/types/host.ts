@@ -2,6 +2,7 @@ import type { AiHostApi } from './ai';
 import type { ControlPanelHostApi } from './control-panel';
 import type { DesktopNotificationsHostApi, DesktopWindowHostApi } from './desktop';
 import type { Live2dHostApi } from './live2d';
+import type { ReminderHostApi } from './reminders';
 import type { PluginPermission } from './manifest';
 
 export interface PluginHostApiMap {
@@ -10,6 +11,7 @@ export interface PluginHostApiMap {
   controlPanel: ControlPanelHostApi;
   desktopNotifications: DesktopNotificationsHostApi;
   desktopWindow: DesktopWindowHostApi;
+  reminders: ReminderHostApi;
 }
 
 export const hostPermissions = {
@@ -18,6 +20,7 @@ export const hostPermissions = {
   controlPanel: 'control-panel.navigation',
   desktopNotifications: 'desktop.notifications',
   desktopWindow: 'desktop.window',
+  reminders: 'ai',
 } as const satisfies Record<keyof PluginHostApiMap, PluginPermission>;
 
 /** Explicit public methods and their resource ownership policy. */
@@ -36,4 +39,5 @@ export const hostMethodEffects = {
   controlPanel: { getActiveTab: 'none', openTab: 'none' },
   desktopNotifications: { showNotification: 'none' },
   desktopWindow: { getWindowGeometry: 'none' },
+  reminders: { add: 'none', registerChannel: 'disposable', retryDue: 'none', confirmDelivery: 'none' },
 } as const satisfies HostMethodPolicies;

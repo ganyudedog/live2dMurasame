@@ -83,6 +83,17 @@ export class PluginRuntime {
     this.bump();
   }
 
+  registerExternalManifest(manifest: PluginManifest): void {
+    const validatedManifest = parsePluginManifest(manifest);
+    if (this.plugins.has(validatedManifest.id)) return;
+    this.plugins.set(validatedManifest.id, {
+      manifest: validatedManifest,
+      activate: () => undefined,
+      state: 'active',
+      error: null,
+    });
+    this.bump();
+  }
   async activateAll(): Promise<void> {
     for (const pluginId of this.plugins.keys()) {
       try {
@@ -289,7 +300,8 @@ export class PluginRuntime {
             const member: unknown = Reflect.get(value, property, value);
             if (typeof member !== 'function') throw new Error(`Host method unavailable: ${id}.${property}`);
             const scopedArgs = id === 'ai' && property === 'openChannel'
-              ? [{ ...(args[0] as object), source: `plugin:${pluginId}` }] : args;
+              ? [{ ...(args[0] as object), source: `plugin:${pluginId}` }]
+              : id === 'reminders' && property === 'confirmDelivery' ? [args[0], args[1], `plugin:${pluginId}`] : args;
             const result = Reflect.apply(member, value, scopedArgs) as unknown;
             const effect = policies[property as keyof typeof policies];
             if (effect === 'disposable' && typeof result === 'function') cleanups.push(result as Disposable);

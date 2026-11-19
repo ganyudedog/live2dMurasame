@@ -147,11 +147,11 @@ describe('LLM and RAG orchestration', () => {
     service.dispose();
   });
 
-  const setup = () => {
+  const setup = (ttsEnabled = true) => {
     const memory = { get: vi.fn().mockResolvedValue(null), appendConversation: vi.fn().mockResolvedValue(undefined) };
     vi.stubGlobal('window', { MemoryAPI: memory });
     const trace = { record: vi.fn(), traceId: 'trace' };
-    let snapshot = { activeModelPath: 'pet', modelKey: 'pet-key', modelConfig: { actions: [], tts: { textLang: 'all_ja' } },
+    let snapshot = { activeModelPath: 'pet', modelKey: 'pet-key', modelConfig: { actions: [], tts: { enabled: ttsEnabled, textLang: 'all_ja' } },
       globalModelConfig: { llmModels: testModels(), displayLang: 'zh' } } as unknown as PetConfigSnapshot;
     const service = new LlmService({
       defaultConfig: { apiKey: 'key', model: 'model', baseURL: 'http://localhost' },
@@ -159,6 +159,19 @@ describe('LLM and RAG orchestration', () => {
     });
     return { service, trace, memory, snapshot, setSnapshot: (next: PetConfigSnapshot) => { snapshot = next; } };
   };
+
+  it('does not dispatch unexpected speech on a text-only desktop turn', async () => {
+    const { service, trace } = setup(false);
+    const speech = vi.fn();
+    const sentence = vi.fn();
+    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"speak_text":"voice","display_text":"字幕"}', usedModel: 'model' });
+    const result = await service.ask('你好', { trace: trace as unknown as TraceScope, onSentenceSpeechReady: speech, onSentenceStreaming: sentence });
+    expect(requestStage2LLM).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ speechEnabled: false }));
+    expect(speech).not.toHaveBeenCalled();
+    expect(sentence).toHaveBeenCalledWith(expect.objectContaining({ speakText: '', displayText: '字幕' }));
+    expect(result.reply).toMatchObject({ speak_text: '', display_text: '字幕' });
+    service.dispose();
+  });
 
   it('records actual usage on dialogue and structured-request traces', async () => {
     const { service, trace } = setup();

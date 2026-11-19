@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { toast } from 'react-hot-toast';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useService } from '@app/core/useService';
 import { TOKENS } from '@app/core/serviceTokens';
 import ControlPanelLayout from './ControlPanelLayout';
@@ -19,7 +19,35 @@ import { Page } from './components/common/Page';
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);
   const pluginRuntime = useService(TOKENS.plugin);
+  const electron = useService(TOKENS.shared.electron);
+  const [scannedPlugins, setScannedPlugins] = useState<RuntimePluginEntry[]>([]);
+  useEffect(() => {
+    let disposed = false;
+    const load = async () => {
+      try {
+        const list = await electron.bridge.systemApi?.listPlugins?.();
+        if (!disposed) setScannedPlugins(list ?? []);
+      } catch (error) {
+        if (!disposed) toast.error(String(error instanceof Error ? error.message : error));
+      }
+    };
+    void load();
+    return () => { disposed = true; };
+  }, [electron]);
   void pluginRuntime.revision;
+  const displayedPlugins = useMemo(() => {
+    const records = new Map(pluginRuntime.plugins);
+    for (const plugin of scannedPlugins) {
+      if (records.has(plugin.id)) continue;
+      records.set(plugin.id, {
+        manifest: plugin,
+        activate: () => undefined,
+        state: 'active',
+        error: null,
+      });
+    }
+    return records.values();
+  }, [pluginRuntime.plugins, scannedPlugins]);
   const pages = pluginRuntime.getControlPanelPages();
   const toNavPage = ({ tabId, contribution }: (typeof pages)[number]) => ({
     tabId, title: contribution.title, icon: contribution.icon,
@@ -163,7 +191,7 @@ const ControlPanel: React.FC = observer(() => {
       {activeTab === 'plugins' && (
         <PluginsPage
           pluginDir={service.config.live2denvConfig?.pluginDir ?? ''}
-          plugins={pluginRuntime.plugins.values()}
+          plugins={displayedPlugins}
           pages={pages}
           onSavePluginDir={(pluginDir) => void service.config.updateLive2denvConfig({ pluginDir }).catch(reportError)}
           onOpenPage={service.setActiveTab}

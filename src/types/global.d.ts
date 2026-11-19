@@ -452,6 +452,7 @@ declare global {
 
   interface PetSystemAPI {
     debugTrace?: (payload: PetDebugTracePayload) => void;
+    listPlugins?: () => Promise<RuntimePluginEntry[]>;
   }
 
   interface PetTtsDiagnosticsAPI {
@@ -553,7 +554,12 @@ declare global {
 
   interface RuntimePluginEntry {
     id: string;
-    url: string;
+    name: string;
+    version: string;
+    apiVersion: string;
+    permissions?: Array<'ai' | 'control-panel.navigation' | 'control-panel.cards' | 'desktop.notifications' | 'desktop.window' | 'live2d.runtime' | 'commands.register' | 'settings.storage'>;
+    entry?: { service?: string; ui?: string };
+    contributes?: Record<string, unknown>;
   }
 
   interface PluginAPI {

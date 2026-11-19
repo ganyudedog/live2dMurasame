@@ -13,6 +13,13 @@ const actions: Pick<ActionCapability, 'actions'> = { actions: [
 const response = { choices: [{ message: { content: '{"display_text":"hello"}' } }] };
 
 describe('provider prompt cache and streaming usage', () => {
+  it.each([true, false])('keeps the current speech mode after tool execution (%s)', async (speechEnabled) => {
+    network.create.mockResolvedValue(response);
+    await requestStage2LLM(config, { userText: '提醒我吃饭', toolContext: '{"results":[]}', systemPrompt: '角色', speechEnabled });
+    const body = network.create.mock.lastCall![0];
+    expect(body.tools).toBeUndefined();
+    expect(body.messages.at(-1).content.includes('先写非空 speak_text')).toBe(speechEnabled);
+  });
   it.each([undefined, '插件注入的人设和关系'])('combines memory and execution data with both system prompt paths (%s)', async (systemPrompt) => {
     network.create.mockResolvedValue(response);
     await requestStage2LLM(config, { userText: '现在结果呢', systemPrompt,
@@ -29,16 +36,24 @@ describe('provider prompt cache and streaming usage', () => {
       { role: 'assistant' as const, content: '有些不好意思' }];
     await requestStage2LLM(config, { userText: '可是我想听嘛', historyMessages });
     const messages = network.create.mock.lastCall![0].messages;
-    expect(messages).toHaveLength(4);
+    expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe('system');
     const systemPrompt = messages[0].content;
     expect(systemPrompt).toContain('每行必须同时包含非空字符串 speak_text 和 display_text');
     expect(systemPrompt).toContain('不得因为历史只有 display_text 而省略本轮 speak_text');
     expect(systemPrompt).toContain('历史未保存动作字段不代表本轮禁止使用动作');
     expect(systemPrompt.indexOf('每行必须同时包含')).toBeLessThan(systemPrompt.indexOf('日常场景：'));
-    expect(messages[1]).toEqual(historyMessages[0]);
-    expect(messages[2]).toEqual({ role: 'assistant', content: JSON.stringify({ display_text: '有些不好意思' }) });
-    expect(messages[3]).toMatchObject({ role: 'user', content: expect.stringContaining('可是我想听嘛') });
+    expect(messages[1]).toMatchObject({ role: 'user', content: expect.stringContaining(JSON.stringify(historyMessages)) });
+    expect(messages[1].content).toContain('用户输入：可是我想听嘛');
+    expect(messages[1].content).toMatch(/先写非空 speak_text（日语）.*display_text（中文）。$/);
+  });
+
+  it('selects text-only desktop examples and instructions when TTS is disabled', async () => {
+    network.create.mockResolvedValue(response);
+    await requestStage2LLM(config, { userText: '你好', speechEnabled: false });
+    const [system, user] = network.create.mock.lastCall![0].messages;
+    expect(system.content).not.toContain('"speak_text":');
+    expect(user.content).toMatch(/每行写非空 display_text（中文），不输出 speak_text。$/);
   });
 
   it.each([

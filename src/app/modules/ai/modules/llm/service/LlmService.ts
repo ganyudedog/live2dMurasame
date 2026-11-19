@@ -30,6 +30,13 @@ interface Stage2AskOptions {
   presenceLine?: string;
   /** 主动开口的提示，不冠以「用户输入」。 */
   cue?: boolean;
+  reminderChannel?: { kind: 'desktop'; onReminder: (dueAt: number, sentence: string, speakText?: string) => Promise<unknown> | unknown } | {
+    kind: 'channel';
+    channelId: string;
+    source: string;
+    conversationId: string;
+    onReminder: (dueAt: number, sentence: string, speakText?: string) => Promise<unknown> | unknown;
+  };
 }
 
 interface LlmServiceOptions {
@@ -217,6 +224,8 @@ export class LlmService {
           const tools = await runSkillLoop({ config: { ...resolved, reasoningEffort: options.reasoningEffort },
             text: cleanText, requestId, signal: options.signal, session: commandSession, log: this.log,
             historyMessages: memoryRuntime.historyMessages,
+            reminderSpeakLang: snapshot?.modelConfig?.tts?.enabled ? this.resolveLanguageProfile(snapshot).speakLang : null,
+            onReminder: options.reminderChannel ? (request) => options.reminderChannel?.onReminder(request.dueAt, request.sentence, request.speakText) : undefined,
             summarize: snapshot?.globalModelConfig?.memoryModel?.trim()
               ? (system, user, signal) => this.requestMemoryStructured(system, user, signal) : undefined });
           toolsHandled = tools.handled;
@@ -227,7 +236,9 @@ export class LlmService {
         }
       }
       assertCurrentModel();
-      const languageProfile = this.resolveLanguageProfile(toolsHandled ? this.getConfigSnapshot() : snapshot);
+      const turnSnapshot = toolsHandled ? this.getConfigSnapshot() : snapshot;
+      const languageProfile = this.resolveLanguageProfile(turnSnapshot);
+      const speechEnabled = Boolean(turnSnapshot?.modelConfig?.tts?.enabled);
       const start = performance.now();
       let firstDeltaLatencyMs = -1;
       let streamedRawText = '';
@@ -246,11 +257,11 @@ export class LlmService {
           if (options.signal?.aborted) return;
           assertCurrentModel();
           if (event.type === 'speech-ready') {
-            options.onSentenceSpeechReady?.({ sentenceIndex: event.sentenceIndex, speakText: event.speakText });
+            if (speechEnabled) options.onSentenceSpeechReady?.({ sentenceIndex: event.sentenceIndex, speakText: event.speakText });
           } else if (event.type === 'display-ready') {
             options.onSentenceDisplayReady?.({ sentenceIndex: event.sentenceIndex, displayText: event.displayText });
           } else {
-            options.onSentenceStreaming?.(event.sentence);
+            options.onSentenceStreaming?.(speechEnabled ? event.sentence : { ...event.sentence, speakText: '' });
           }
         }
       };
@@ -277,6 +288,7 @@ export class LlmService {
           historyMessages: memoryRuntime?.historyMessages,
           actionCapability: toolsHandled ? undefined : actionCapability,
           displayLang: languageProfile.displayLang,
+          speechEnabled,
           speakLang: languageProfile.speakLang,
           // 未选择深度时不携带该字段，避免把 undefined 交给请求适配器。
           ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
@@ -320,7 +332,7 @@ export class LlmService {
 
       // 双文本协议：display_text 用于前端展示，speak_text 用于 TTS。
       const displayText = normalizeReplyText(reply.display_text);
-      const speakText = normalizeReplyText(reply.speak_text);
+      const speakText = speechEnabled ? normalizeReplyText(reply.speak_text) : '';
       reply.display_text = displayText;
       reply.speak_text = speakText;
       assertCurrentModel();

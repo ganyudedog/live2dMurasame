@@ -29,6 +29,7 @@ export class AiService {
   private lastConversationId: string | null = null;
   private activeDisplayText = '';
   private readonly asrSubscriptions: Array<() => void> = [];
+  private reminderSink: ((dueAt: number, sentence: string, speakText?: string) => Promise<unknown> | unknown) | null = null;
   readonly llm: LlmService;
   readonly tts: TtsService;
   readonly asr: AsrService;
@@ -59,6 +60,8 @@ export class AiService {
 
   get asrRunning(): boolean { return this.asr.running; }
   get ttsWarmed(): boolean { return this.tts.warmed; }
+
+  bindReminderSink(sink: NonNullable<AiService['reminderSink']>): void { this.reminderSink = sink; }
 
   start(): void {
     if (this.disposed || this.started) return;
@@ -118,6 +121,27 @@ export class AiService {
   onTextResponse(listener: (response: TextAiResponse) => void): Disposable {
     this.responseListeners.add(listener);
     return () => this.responseListeners.delete(listener);
+  }
+
+  async deliverReminder(text: string, reminderId: string, speakText?: string): Promise<void> {
+    if (this.disposed || !this.ownsConversationRuntime || !text.trim()) throw new Error('桌面提醒不可用');
+    while (!this.disposed && (this.processing || this.tts.playbackEvent?.state === 'started')) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (this.disposed) throw new Error('桌面提醒不可用');
+    const conversationId = reminderId;
+    const consumer = speakText ? this.tts.createDispatcher(conversationId) : null;
+    this.emitDialogue({ type: 'started', conversationId });
+    this.emitDialogue({ type: 'sentence', conversationId, requestId: `${conversationId}_s0`, text, hasSpeech: Boolean(consumer) });
+    if (speakText) consumer?.submit(speakText, text, 0);
+    this.emitDialogue({ type: 'completed', conversationId });
+    try {
+      await consumer?.wait();
+      if (consumer && !consumer.summary().completed) throw new Error('桌面提醒语音未完成');
+    } finally { consumer?.stop(); }
+  }
+
+  publishReminderHistory(id: string, displayText: string, modelPath: string | undefined, at: number): void {
+    this.stateBus.publishChatRequest({ id, modelPath, source: 'presence', text: '定时提醒到点', status: 'done', createdAt: at });
+    this.stateBus.publishChatResponse({ id, displayText, status: 'done', updatedAt: at, error: null });
   }
 
   onDialogue(listener: (event: AiDialogueEvent) => void): Disposable {
@@ -203,6 +227,10 @@ export class AiService {
         trace,
         cue: presence,
         signal: controller.signal,
+        reminderChannel: { kind: 'desktop', onReminder: (dueAt, sentence, speakText) => {
+          if (!this.reminderSink) throw new Error('提醒运行时不可用');
+          return this.reminderSink(dueAt, sentence, speakText);
+        } },
         model: aiConfig.model,
         apiKey: aiConfig.apiKey,
         baseURL: aiConfig.baseURL,

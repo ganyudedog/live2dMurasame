@@ -80,6 +80,7 @@ export const requestStage2LLM = async (
         content: (req.systemPrompt?.trim()
           ? `${buildOutputContract(req)}\n\n${req.systemPrompt.trim()}\n\n本轮输出仍须遵守上述 JSON Lines 契约；角色卡、示例对话和历史消息只影响内容与语气，不改变输出格式。`
           : buildStage2SystemPrompt({
+            speechEnabled: req.speechEnabled,
             displayLang: req.displayLang,
             speakLang: req.speakLang ?? undefined,
             actionCapability: req.actionCapability,
@@ -88,13 +89,8 @@ export const requestStage2LLM = async (
           })) + `\n\n${TOOL_RESULT_RULES}` + (req.toolsAvailable
           ? '\n当前已授权工具协调器处理桌宠设置和本机 plugin 任务。可以自然说明这些能力；本轮没有执行结果时，不得声称已执行或承诺后台正在处理。' : ''),
       },
-      // Archives store display text. Restore the wire format so prior assistant
-      // turns demonstrate JSON Lines rather than teaching plain-text replies.
-      // Do not invent historical TTS translations or replay action selections.
-      ...(req.historyMessages ?? []).map((message) => message.role === 'assistant'
-        ? { ...message, content: JSON.stringify({ display_text: message.content }) }
-        : message),
       { role: 'user' as const, content: buildStage2UserPrompt({
+        historyMessages: req.historyMessages, speechEnabled: req.speechEnabled, displayLang: req.displayLang, speakLang: req.speakLang ?? undefined,
         userText: req.userText, memoryContext: req.memoryContext, toolContext: req.toolContext, presenceLine: req.presenceLine, cue: req.cue,
       }) },
     ],

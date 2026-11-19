@@ -59,6 +59,9 @@ export default function PluginsPage({
                 </StatusDot>
               </div>
               {error && <Notice tone="danger">{error}</Notice>}
+              {ownedPages.length === 0 && state === 'active' && (
+                <p className="text-xs text-muted-foreground">仅提供后台能力，无控制面板界面</p>
+              )}
               {ownedPages.length > 0 && (
                 <div className="flex flex-wrap gap-2 border-t border-border pt-3">
                   {ownedPages.map((page) => (

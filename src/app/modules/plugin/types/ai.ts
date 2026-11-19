@@ -18,6 +18,8 @@ export interface ConversationChannelOptions {
   readonly displayLang?: DisplayLanguage;
   /** Omit for a text-only response. Supplying a language enables speech text generation. */
   readonly speakLang?: SpeakLanguage | null;
+  /** Optional renderer-owned route for reminders or other unsolicited channel messages. */
+  readonly proactiveSender?: (text: string, requestId: string, conversationId: string) => boolean;
 }
 
 /** Logical archive identity, never a filesystem path. Omit to disable archival. */
@@ -73,6 +75,7 @@ export interface ConversationChannel {
   readonly id: string;
   readonly options: ConversationChannelOptions;
   sendText(request: ConversationRequest): ConversationRequestResult;
+  sendProactive?(text: string, requestId?: string, conversationId?: string): boolean;
   cancel(requestId?: string): void;
   onResponse(listener: (response: ConversationResponse) => void): Disposable;
   dispose(): void;

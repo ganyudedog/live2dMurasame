@@ -33,19 +33,28 @@ export const astrBotBridgePlugin: AstrBotPluginDefinition = {
     }
     if (context.windowKind !== 'pet') return;
     const ai = context.host.ai;
-    if (!ai) { context.logger.warn('activation.skipped', { reason: 'AI conversation host is unavailable' }); return; }
+    const reminders = context.host.reminders;
+    if (!ai || !reminders) { context.logger.warn('activation.skipped', { reason: 'AI conversation host is unavailable' }); return; }
     const saved = await context.storage.get<AstrBotBridgeSettings>('settings', DEFAULT_ASTRBOT_SETTINGS);
     const settings = normalizeSettings(saved, DEFAULT_ASTRBOT_SETTINGS);
     if (JSON.stringify(saved) !== JSON.stringify(settings)) await context.storage.set('settings', settings);
     const directory = normalizeDirectory(await context.storage.get('directory', EMPTY_DIRECTORY));
+    let unregisterChannel: (() => void) | null = null;
+    let registerWhenReady: () => void = () => undefined;
     const client = new AstrBotBridgeClient({
       url: settings.bridgeUrl, token: settings.token, clientId: `live2d-${crypto.randomUUID()}`, ai, logger: context.logger, settings,
       storage: context.storage,
+      onReminderAvailable: () => { registerWhenReady(); reminders.retryDue(); },
+      onReminderReceipt: (id, delivered) => reminders.confirmDelivery(id, delivered),
       directory,
       onStatus: (status) => {
         void context.storage.set('status', status).catch((error: unknown) => context.logger.error('status.persist.failed', { error: sanitizeLogDetail(error) }));
       },
     });
+    const registerChannel = () => reminders.registerChannel(client.channelId, (record) => record.channel.kind === 'channel' && record.channel.requestId
+      ? client.sendReminder(record.sentence, record.id, record.channel.conversationId, record.channel.requestId, record.speakText) : false);
+    registerWhenReady = () => { unregisterChannel?.(); unregisterChannel = registerChannel(); };
+    context.subscriptions.add(() => unregisterChannel?.());
     context.subscriptions.add(() => client.dispose());
     context.subscriptions.add(context.storage.subscribe((key) => {
       if (key === 'directory') {

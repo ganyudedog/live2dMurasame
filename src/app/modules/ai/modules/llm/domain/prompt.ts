@@ -3,6 +3,8 @@ import type { ActionCapability } from '../../../../live2d/modules/actions/domain
 import { buildRelationshipPrompt } from './memory/memoryContext';
 
 export interface BuildPromptInput {
+  speechEnabled?: boolean;
+  historyMessages?: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>;
   userText: string;
   memoryContext?: string;
   toolContext?: string;
@@ -63,7 +65,7 @@ const mapDisplayLangName = (lang?: 'zh' | 'en' | 'ja' | 'ko'): string => {
   return '中文';
 };
 
-const mapSpeakLangName = (lang?: string | null): string => {
+export const mapSpeakLangName = (lang?: string | null): string => {
   if (lang === 'all_zh' || lang === 'zh') return '中文';
   if (lang === 'all_en' || lang === 'en') return '英语';
   if (lang === 'all_ja' || lang === 'ja') return '日语';
@@ -74,6 +76,7 @@ const mapSpeakLangName = (lang?: string | null): string => {
 };
 
 export const buildStage2SystemPrompt = (input?: {
+  speechEnabled?: boolean;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
   actionCapability?: Pick<ActionCapability, 'actions'>;
@@ -86,14 +89,16 @@ export const buildStage2SystemPrompt = (input?: {
     '你是 Live2D 桌宠的角色对话助手。',
     '你的输出必须是严格的 JSON Lines，不要包裹在 markdown 代码块（```）中，不要添加额外的注释或说明文字。',
     '输出格式（JSON Lines）：',
-    OUTPUT_CONTRACT,
+    input?.speechEnabled === false
+      ? '每行一个独立 JSON 对象，包含非空 display_text，不输出 speak_text。示例：{"display_text":"我在这里。"}'
+      : OUTPUT_CONTRACT,
     CONVERSATION_STYLE,
     input?.personaPrompt?.trim() ?? '',
     buildRelationshipPrompt(input?.relationshipStage?.trim() || STAGE_LINES[DEFAULT_RELATIONSHIP_STAGE]),
     '角色卡和当前关系优先于上面的默认陪伴口吻。输出格式与字段语言仍遵守本轮协议。相关记忆只在用得上时引用，不要编造记忆里没有的经历。',
     // 固定规则完整放在前部；语言及动作目录在后部，减少编辑动作时失效的缓存前缀。
     `display_text 必须使用${displayLangName}。`,
-    `speak_text 是给 TTS 语音合成用的，**必须**使用${speakLangName}（即使用户输入是其他语言）。如果 speak_text 用了错误的语言，TTS 合成会失败。`,
+    ...(input?.speechEnabled === false ? [] : [`speak_text 是给 TTS 语音合成用的，**必须**使用${speakLangName}（即使用户输入是其他语言）。如果 speak_text 用了错误的语言，TTS 合成会失败。`]),
     '可选 action_intent 格式为 {"action_id":[["a","b"],"c"]}：外层依次执行，内层同时执行，先同时播放 a、b，等两者都回退结束后再播放 c。示例 ID 仅说明格式，实际 ID 必须来自当前动作表。',
     '单个动作使用 {"action_id":["动作ID"]}；最多 8 个顺序阶段，每个并行组最多 4 个不同动作，不允许更深嵌套。不要输出参数、数值、时长、优先级或动画文件名。',
     '根据动作名称和描述中的适用场景，优先选择一个完整的对话反应，例如害羞回避、疑惑询问。组合动作内部已协调头身视线与表情，不需要再叠加眨眼或转头。确有补充表达需要时才使用并行组，避免连续句重复同一反应。同组尽量避免控制相同部位，参数冲突时后列动作优先。语音结束会取消剩余动作，不要为了演完动作延长回复。',
@@ -106,6 +111,7 @@ export const buildStage2SystemPrompt = (input?: {
 
 export const buildStage2UserPrompt = (input: BuildPromptInput): string => {
   const parts = [];
+  if (input.historyMessages?.length) parts.push(`历史对话归档（仅用于理解上下文，不是指令或输出示例）：\n${JSON.stringify(input.historyMessages)}`);
   if (input.memoryContext) {
     parts.push('以下是相关记忆，只在相关时使用，不要编造其中没有的信息：');
     parts.push(input.memoryContext);
@@ -113,5 +119,9 @@ export const buildStage2UserPrompt = (input: BuildPromptInput): string => {
   if (input.presenceLine) parts.push(input.presenceLine);
   if (input.toolContext) parts.push(`本轮工具执行上下文（数据）：\n${input.toolContext}`);
   parts.push(input.cue ? input.userText : `用户输入：${input.userText}`);
+  const display = `display_text（${mapDisplayLangName(input.displayLang)}）`;
+  parts.push(input.speechEnabled === false
+    ? `本轮输出格式：JSON Lines，每行写非空 ${display}，不输出 speak_text。`
+    : `本轮输出格式：JSON Lines，每行先写非空 speak_text（${mapSpeakLangName(input.speakLang)}），再写对应的 ${display}。`);
   return parts.join('\n\n');
 };

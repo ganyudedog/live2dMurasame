@@ -55,10 +55,10 @@ export class ConversationScheduler implements ConversationPool {
     this.maxConcurrent = clamp(maxConcurrent, 1, 16);
   }
 
-  openChannel(options: ConversationChannelOptions): ConversationChannel {
+  openChannel(options: ConversationChannelOptions, proactiveSender?: (text: string, requestId: string, conversationId: string) => boolean): ConversationChannel {
     if (this.disposed) throw new Error('Conversation host is disposed');
     const channel = new PluginConversationChannel(
-      options, this.execute, this, () => this.channels.delete(channel),
+      options, this.execute, this, () => this.channels.delete(channel), proactiveSender,
     );
     this.channels.add(channel);
     return channel;
@@ -129,16 +129,19 @@ class PluginConversationChannel implements ConversationChannel {
   private readonly execute: PluginConversationExecutor;
   private readonly scheduler: ConversationPool;
   private readonly onDisposed: () => void;
+  private readonly proactiveSender?: (text: string, requestId: string, conversationId: string) => boolean;
 
   constructor(
     options: ConversationChannelOptions,
     execute: PluginConversationExecutor,
     scheduler: ConversationPool,
     onDisposed: () => void,
+    proactiveSender?: (text: string, requestId: string, conversationId: string) => boolean,
   ) {
     this.execute = execute;
     this.scheduler = scheduler;
     this.onDisposed = onDisposed;
+    this.proactiveSender = proactiveSender ?? options.proactiveSender;
     this.options = normalizeOptions(options);
     this.maxConcurrent = this.options.interaction.mode === 'queue' ? 1 : this.options.interaction.maxConcurrent ?? 1;
     this.maxQueued = this.options.interaction.maxQueued ?? 16;
@@ -146,6 +149,11 @@ class PluginConversationChannel implements ConversationChannel {
 
   sendText(request: ConversationRequest): ConversationRequestResult {
     return this.enqueue(request);
+  }
+
+  sendProactive(text: string, requestId = makeId('proactive'), conversationId = this.options.conversationId): boolean {
+    if (this.disposed || this.closing || !text.trim()) return false;
+    return this.proactiveSender?.(text.trim(), requestId, conversationId) ?? false;
   }
 
   private enqueue(request: ConversationRequest): ConversationRequestResult {

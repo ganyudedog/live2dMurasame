@@ -25,6 +25,7 @@ describe('runtime plugin directory scan', () => {
       id: 'live2d.feishu',
       filePath: path.join(root, 'feishu', 'index.js'),
       url: 'plugin://runtime/live2d.feishu/index.js',
+      manifest: { id: 'live2d.feishu', name: 'live2d.feishu', version: '1.0.0' },
     }]);
     expect(resolveRuntimePluginFile(root, 'live2d.feishu')).toBe(path.join(root, 'feishu', 'index.js'));
     expect(resolveRuntimePluginFile(root, '../feishu')).toBeNull();
@@ -43,6 +44,6 @@ describe('runtime plugin directory scan', () => {
     mkdirSync(silent);
     writeFileSync(path.join(silent, 'manifest.json'), JSON.stringify({ id: 'live2d.silent', name: 'Silent', version: '1.0.0' }));
     writeFileSync(path.join(silent, 'cli.js'), 'export const commands = [];\n');
-    expect(listRuntimeCliEntries(root)).toEqual([{ id: 'live2d.notes', servicePath: path.join(folder, 'cli.js') }]);
+    expect(listRuntimeCliEntries(root)).toEqual([{ id: 'live2d.notes', servicePath: path.join(folder, 'cli.js'), manifest: { id: 'live2d.notes', name: 'Notes', version: '1.0.0', permissions: ['commands.register'], entry: { service: 'cli.js' } } }]);
   });
 });

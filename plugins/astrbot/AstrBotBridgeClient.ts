@@ -19,6 +19,8 @@ export interface AstrBotBridgeClientOptions {
   readonly storage: PluginStorage;
   readonly directory?: BridgeDirectory;
   readonly onStatus?: (status: BridgeRuntimeStatus) => void;
+  readonly onReminderAvailable?: () => void;
+  readonly onReminderReceipt?: (id: string, delivered: boolean) => void;
 }
 
 /** Pet-window WebSocket adapter. User-directory edits do not reconnect this socket. */
@@ -30,6 +32,7 @@ export class AstrBotBridgeClient {
   private token: string;
   private socket: WebSocket | null = null;
   private channel: ConversationChannel | null = null;
+  get channelId(): string { return this.channel?.id ?? 'astrbot'; }
   private stopChannel: (() => void) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -163,6 +166,12 @@ export class AstrBotBridgeClient {
       this.options.logger.warn('message.invalid-shape');
       return;
     }
+    if (message.type === 'ai.notification.ack' && this.handshakeAccepted && message.version === ASTRBOT_PROTOCOL_VERSION) {
+      if (typeof message.notificationId === 'string' && typeof message.delivered === 'boolean') {
+        this.options.onReminderReceipt?.(message.notificationId, message.delivered);
+      }
+      return;
+    }
     if (message.type === 'stickers.catalog' && this.handshakeAccepted) {
       if (!/^[1-9][0-9]{4,19}$/.test(message.accountId) || !Array.isArray(message.items)) return;
       const items = message.items as StickerRule[];
@@ -190,8 +199,10 @@ export class AstrBotBridgeClient {
       const channel = this.options.ai.openChannel({
         source: 'astrbot', conversationId: 'astrbot', interaction: requested,
         displayLang: this.settings.displayLang, speakLang: this.settings.speakLang || null,
+        proactiveSender: (text, requestId, conversationId) => this.sendProactive(text, requestId, conversationId),
       });
       this.channel = channel;
+      this.options.onReminderAvailable?.();
       this.stopChannel = channel.onResponse((response) => {
         if (this.generation !== generation || this.channel !== channel) return;
         this.handleAiResponse(response);
@@ -398,6 +409,7 @@ export class AstrBotBridgeClient {
     const release = admission.release;
     admission.release = null;
     release?.();
+    this.options.onReminderAvailable?.();
   }
 
   private releaseAll(): void {
@@ -436,12 +448,25 @@ export class AstrBotBridgeClient {
     this.publish({ lastRequestId: requestId, lastError: { code, diagnosticId, requestId, at: Date.now() } });
   }
 
-  private send(payload: AstrBotOutbound): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-    try { this.socket.send(JSON.stringify(payload)); }
-    catch (error) { this.options.logger.error('message.send.failed', { type: payload.type, error: sanitizeLogDetail(error) }); }
+  public sendReminder(text: string, notificationId: string, conversationId: string, inReplyTo: string, speakText?: string): false | 'submitted' {
+    if (this.admissions.size > 0 || !this.handshakeAccepted) return false;
+    const submitted = this.send({ type: 'ai.notification', version: ASTRBOT_PROTOCOL_VERSION, notificationId, conversationId, inReplyTo, text, ...(speakText ? { speakText } : {}) });
+    if (!submitted) return false;
+    this.options.logger.info('proactive.socket.submitted', { notificationId, conversationId, inReplyTo });
+    return 'submitted';
+  }
+
+  public sendProactive(text: string, requestId: string, conversationId: string): boolean {
+    if (this.admissions.size > 0 || !this.socket || this.socket.readyState !== WebSocket.OPEN || !this.handshakeAccepted) return false;
+    return this.send({ type: 'ai.response', version: ASTRBOT_PROTOCOL_VERSION, requestId, conversationId, status: 'done', text });
+  }
+  private send(payload: AstrBotOutbound): boolean {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return false;
+    try { this.socket.send(JSON.stringify(payload)); return true; }
+    catch (error) { this.options.logger.error('message.send.failed', { type: payload.type, error: sanitizeLogDetail(error) }); return false; }
   }
 }
+
 
 interface Admission {
   readonly id: string;

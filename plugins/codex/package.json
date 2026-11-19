@@ -1,0 +1,8 @@
+{
+  "name": "@live2d/codex-plugin",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@openai/codex": "0.165.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "live2d.codex",
+  "name": "Codex",
+  "version": "1.0.0",
+  "apiVersion": "1.0.0",
+  "hosts": ["cli"],
+  "permissions": ["commands.register"],
+  "entry": { "service": "./service.mjs" }
+}

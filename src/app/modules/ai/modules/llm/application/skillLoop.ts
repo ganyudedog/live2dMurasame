@@ -8,7 +8,7 @@ import type { LogService } from '@app/shared/logging/LogService';
 
 const builtinSkillInstructions: Record<string, string> = {
   settings: '先 config.get 读取目标配置与 revision，再提交最小 patch；不要修改凭据。明确目标模型；冲突时重新读取。保存成功不代表外部服务预热成功。',
-  development: '先用 shell.run 确认已有目录，不要猜路径。项目目录由对应插件技能登记和管理。读文件只能在已配置的 shellReadRoots 内，被拒绝不要换命令再试。要执行任务时加载对应的插件技能。',
+  development: '用 shell.run 查路径时不要猜路径。shellReadRoots 限制 shell.run 的读取范围，不授予插件工作目录权限。shell.run 被拒绝时不要换命令绕过。执行插件任务时加载对应技能，由插件登记和管理工作目录。',
 };
 const skillLabel = (name: string): string => {
   if (name === 'settings') return 'settings=桌宠配置';
@@ -194,7 +194,8 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           result = { error: message };
-          results.push({ command: call.type === 'function' ? call.function.name : 'unknown', error: message });
+          const command = call.type === 'function' ? (names.get(call.function.name)?.name ?? call.function.name) : 'unknown';
+          results.push({ command, error: message });
         }
         messages.push({ role: 'tool', tool_call_id: call.id, content: observation(result) });
       }

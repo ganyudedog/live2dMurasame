@@ -1,14 +1,18 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": [
-    "index.html",
-    "electron/main.ts",
-    "electron/preload.mts",
-    "electron/tests/preloadSmoke.mjs",
-    "scripts/**/*.mjs",
-    "plugins/**/index.ts"
-  ],
-  "project": ["src/**", "electron/**", "plugins/**", "shared/**", "scripts/**"],
+  "ignoreWorkspaces": ["plugins/**"],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "index.html",
+        "electron/main.ts",
+        "electron/preload.mts",
+        "electron/tests/preloadSmoke.mjs",
+        "scripts/**/*.mjs"
+      ],
+      "project": ["src/**", "electron/**", "shared/**", "scripts/**"]
+    }
+  },
   "ignore": [
     "shared/**/*.d.ts",
     "src/app/modules/ai/modules/asr/domain/audio.ts",

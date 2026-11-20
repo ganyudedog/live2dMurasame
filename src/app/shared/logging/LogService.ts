@@ -1,6 +1,7 @@
 import { makeObservable, observable, runInAction } from 'mobx';
 import type { BootstrapContext } from '@app/core/bootstrapContext';
 import type { BoundaryName } from '../../../../shared/logging/boundaryTrace.js';
+import { createSpanId, isSpanContext, type SpanContext } from '../../../../shared/logging/spanContext.js';
 import { nowMs } from './compat/time';
 import type {
   ContextRelation,
@@ -25,7 +26,7 @@ export type CaptureExceptionOptions = {
 };
 
 export type ContextRegistration = {
-  beginTrace(operation: string, data?: Record<string, unknown>, boundary?: BoundaryName): TraceScope;
+  beginTrace(operation: string, data?: Record<string, unknown>, boundary?: BoundaryName, parent?: SpanContext): TraceScope;
   snapshot(): ContextSnapshot;
   update(params: Record<string, unknown>): void;
   dispose(): void;
@@ -37,6 +38,8 @@ type TraceState = {
   relation: string;
   operation: string;
   boundary?: BoundaryName;
+  spanId?: string;
+  parentSpanId?: string;
   context: ContextSnapshot;
   startedAt: number;
   status: TraceStatus;
@@ -69,6 +72,8 @@ export type BoundaryForward = (payload: {
   level: 'info';
   traceId: string;
   boundary: BoundaryName;
+  spanId: string;
+  parentSpanId?: string;
   startedAt: number;
   endedAt: number;
   failed: boolean;
@@ -121,7 +126,7 @@ export class LogService {
 
   captureException(error: unknown, options: CaptureExceptionOptions = {}): void {
     if (error instanceof TracedError) {
-      const existing = this.traces.get(error.traceId);
+      const existing = (error.spanId ? this.traces.get(error.spanId) : undefined) ?? this.traces.get(error.traceId);
       if (existing?.status === 'failed' || existing?.status === 'completed') return;
       if (existing) {
         new TraceScope(this, existing).fail(error.message, options.data, error);
@@ -147,25 +152,26 @@ export class LogService {
   }
 
   /** Called by ContextRegistrationHandle. */
-  createTrace(state: RegistrationState, operation: string, data?: Record<string, unknown>, boundary?: BoundaryName): TraceScope {
+  createTrace(state: RegistrationState, operation: string, data?: Record<string, unknown>, boundary?: BoundaryName, parent?: SpanContext): TraceScope {
     const context: ContextSnapshot = {
       service: state.service,
       relation: state.relation.relation,
       params: cloneRecord(state.relation.params),
       behavior: state.relation.behavior,
     };
+    const linked = parent && isSpanContext(parent) ? parent : undefined;
     const trace: TraceState = {
-      traceId: boundary ? crypto.randomUUID().replaceAll('-', '') : `${state.service}:${operation}:${++this.traceSequence}`,
+      traceId: linked ? linked.traceId : boundary ? crypto.randomUUID().replaceAll('-', '') : `${state.service}:${operation}:${++this.traceSequence}`,
       service: state.service,
       relation: state.relation.relation,
       operation,
-      ...(boundary ? { boundary } : {}),
+      ...(boundary ? { boundary, spanId: createSpanId(), ...(linked ? { parentSpanId: linked.spanId } : {}) } : {}),
       context,
       startedAt: nowMs(),
       status: 'active',
       events: [],
     };
-    this.traces.set(trace.traceId, trace);
+    this.traces.set(trace.spanId ?? trace.traceId, trace);
     this.trimTraces();
     const scope = new TraceScope(this, trace);
     if (data) scope.record('trace.started', data);
@@ -207,7 +213,7 @@ export class LogService {
 
   failTrace(trace: TraceState, message: string, data?: TraceFailData, cause?: unknown): TracedError {
     if (trace.status === 'failed' && trace.terminalError) return trace.terminalError;
-    const error = new TracedError(message, trace.traceId, snapshotContext(trace.context), cause, captureSource());
+    const error = new TracedError(message, trace.traceId, snapshotContext(trace.context), cause, captureSource(), trace.spanId);
     trace.status = 'failed';
     trace.endedAt = nowMs();
     trace.terminalMessage = message;
@@ -273,14 +279,16 @@ export class LogService {
   }
 
   private publishBoundary(trace: TraceState): void {
-    const { boundary, endedAt } = trace;
-    if (!boundary || endedAt === undefined) return;
+    const { boundary, endedAt, spanId } = trace;
+    if (!boundary || !spanId || endedAt === undefined) return;
     const origin = typeof performance === 'undefined' ? 0 : performance.timeOrigin;
     this.forwardBoundary?.({
       kind: 'boundary',
       level: 'info',
       traceId: trace.traceId,
       boundary,
+      spanId,
+      ...(trace.parentSpanId ? { parentSpanId: trace.parentSpanId } : {}),
       startedAt: origin + trace.startedAt,
       endedAt: origin + endedAt,
       failed: trace.status === 'failed',
@@ -334,8 +342,8 @@ class ContextRegistrationHandle implements ContextRegistration {
     this.id = state.id;
   }
 
-  beginTrace(operation: string, data?: Record<string, unknown>, boundary?: BoundaryName): TraceScope {
-    return this.logService.createTrace(this.state, operation, data, boundary);
+  beginTrace(operation: string, data?: Record<string, unknown>, boundary?: BoundaryName, parent?: SpanContext): TraceScope {
+    return this.logService.createTrace(this.state, operation, data, boundary, parent);
   }
 
   snapshot(): ContextSnapshot {
@@ -358,6 +366,7 @@ class ContextRegistrationHandle implements ContextRegistration {
 
 export class TraceScope {
   readonly traceId: string;
+  readonly spanId: string | undefined;
   private readonly logService: LogService;
   private readonly state: TraceState;
 
@@ -365,6 +374,7 @@ export class TraceScope {
     this.logService = logService;
     this.state = state;
     this.traceId = state.traceId;
+    this.spanId = state.spanId;
   }
 
   record(event: string, data?: Record<string, unknown>): void {
@@ -383,6 +393,7 @@ export class TraceScope {
 
 export class TracedError extends Error {
   readonly traceId: string;
+  readonly spanId?: string;
   readonly contextSnapshot: ContextSnapshot;
   readonly source?: SourceLocation;
 
@@ -392,10 +403,12 @@ export class TracedError extends Error {
     contextSnapshot: ContextSnapshot,
     cause?: unknown,
     source?: SourceLocation,
+    spanId?: string,
   ) {
     super(message, { cause });
     this.name = 'TracedError';
     this.traceId = traceId;
+    this.spanId = spanId;
     this.contextSnapshot = contextSnapshot;
     this.source = source;
   }

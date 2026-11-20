@@ -118,6 +118,8 @@ export function createService(connect = openServer, sleep = delay) {
           if (job.approval) return finish(null, new Error('Overlapping approval requests'));
           const token = randomUUID();
           job.approval = { id, token, requestId: job.requestId };
+          job.traceLink = job.span?.context();
+          job.span?.event('approval.requested');
           job.reply.resolve({ ...facts(job, 'needs_approval'), approvalId: token, operation: bounded(params.command || job.currentOperation || method), reason: bounded(params.reason) });
         } else server.send({ id, error: { code: -32601, message: 'Unsupported server request' } });
       } else if (method === 'item/started' || method === 'item/completed') {
@@ -155,6 +157,7 @@ export function createService(connect = openServer, sleep = delay) {
       try { return await attempt(job); }
       catch (error) {
         if (i >= 2 || stopped || job.startedWork || !(error.rateLimited || error.code === 429 || /\b429\b/.test(error.message))) throw error;
+        job.span?.event('retry.scheduled', { attempt: i + 1 });
         await sleep(500 * (2 ** i));
       }
     }
@@ -169,20 +172,31 @@ export function createService(connect = openServer, sleep = delay) {
     }
     const scope = 'thread.' + createHash('sha256').update(JSON.stringify([context.source, context.conversationId, context.senderId ?? ''])).digest('hex');
     const requestId = context.requestId ?? invocationId;
-    if (action === 'answer') {
-      const job = active.get(scope), approval = job?.approval;
-      if (!approval || approval.token !== args.approvalId || job.cwd !== cwd || !['accept', 'decline'].includes(args.decision) || requestId === approval.requestId) throw new Error('No matching approval from a previous turn');
-      job.reply = deferred(); job.approval = null; job.requestId = requestId;
-      job.server.send({ id: approval.id, result: { decision: args.decision } });
-      return job.reply.promise;
-    }
-    if (action !== 'run' || typeof args.task !== 'string' || !args.task.trim() || args.task.length > 32000) throw new Error('A non-empty task of at most 32000 characters is required');
-    requireTrustedDirectory(dirs, cwd);
-    if (active.get(scope)?.approval) throw new Error('Answer the pending approval first');
-    const reply = deferred();
-    queue.push({ reply, scope, storage, requestId, cwd, task: args.task, newTask: args.newTask, actions: new Set(), paths: new Set(), final: '' });
-    pump();
-    return reply.promise;
+    const observed = context.observability;
+    const runObserved = (span) => {
+      if (action === 'answer') {
+        const job = active.get(scope), approval = job?.approval;
+        if (!approval || approval.token !== args.approvalId || job.cwd !== cwd || !['accept', 'decline'].includes(args.decision) || requestId === approval.requestId) throw new Error('No matching approval from a previous turn');
+        const continueAnswer = () => {
+          job.reply = deferred(); job.approval = null; job.requestId = requestId;
+          job.server.send({ id: approval.id, result: { decision: args.decision } });
+          return job.reply.promise;
+        };
+        return span?.withSpan ? span.withSpan('approval.continue', { links: job.traceLink ? [job.traceLink] : [], attributes: { taskId: scope } }, () => continueAnswer()) : continueAnswer();
+      }
+      if (action !== 'run' || typeof args.task !== 'string' || !args.task.trim() || args.task.length > 32000) throw new Error('A non-empty task of at most 32000 characters is required');
+      requireTrustedDirectory(dirs, cwd);
+      if (active.get(scope)?.approval) throw new Error('Answer the pending approval first');
+      const start = (attempt) => {
+        const reply = deferred();
+        queue.push({ reply, scope, storage, requestId, cwd, task: args.task, newTask: args.newTask, actions: new Set(), paths: new Set(), final: '', span: attempt });
+        pump();
+        return reply.promise;
+      };
+      return span?.withSpan ? span.withSpan('executor.attempt', { attributes: { taskId: scope } }, start) : start();
+    };
+    if (!observed?.withSpan) return runObserved();
+    return observed.withSpan('codex.task', { attributes: { taskId: scope } }, runObserved);
   }
   return { execute, dispose() {
     stopped = true;

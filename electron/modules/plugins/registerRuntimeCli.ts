@@ -5,6 +5,7 @@ import { parseJsonSchemaArgs } from '../cli/service/jsonSchemaArgs.js';
 import { listRuntimeCliEntries } from './scanRuntimePlugins.js';
 import type { PluginStorageService } from './PluginStorageService.js';
 import type { CommandContext } from '../cli/service/commandTypes.js';
+import { createObservability, isSpanContext } from '../../../shared/logging/spanContext.js';
 
 interface RuntimeCliHost {
   storage: {
@@ -47,7 +48,7 @@ const readCommands = (module: unknown): RuntimeCliCommand[] => {
 };
 
 /** 扫描插件目录并在主进程登记 CLI。执行函数来自插件自己的后端入口，不经过渲染进程。 */
-export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log: Pick<BackendLogService, 'error' | 'open'>, storage: PluginStorageService, hostContext: CommandContext = { owner: 'local', local: true, source: 'local', conversationId: 'desktop' }): Promise<() => void> => {
+export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log: Pick<BackendLogService, 'error' | 'open'> & Partial<Pick<BackendLogService, 'recordSpan' | 'flush'>>, storage: PluginStorageService, hostContext: CommandContext = { owner: 'local', local: true, source: 'local', conversationId: 'desktop' }): Promise<() => void> => {
   const trace = log.open('plugins', 'plugin.cli.register');
   trace.event('plugin.scan');
   const removers: Array<() => void> = [];
@@ -66,6 +67,7 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
         const dispose = loaded.dispose as () => void;
         removers.push(dispose);
       }
+      const known = new Set<string>();
       for (const command of readCommands(loaded)) {
         removers.push(cli.registerExternal(entry.id, command.name, {
           skill: command.skill,
@@ -74,7 +76,14 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
           ...(command.localOnly ? { localOnly: true } : {}),
           parameters: command.parameters,
           schema: { parse: (value: unknown) => parseJsonSchemaArgs(command.parameters, value) },
-          execute: (args, context, invocationId) => command.execute(args, context, invocationId, runtimeHost),
+          execute: (args, context, invocationId) => {
+            const parent = isSpanContext(context.trace) ? context.trace : undefined;
+            const observability = parent ? createObservability({
+              traceId: parent.traceId, parentSpanId: parent.spanId, pluginId: entry.id, command: command.name,
+              sink: (span) => log.recordSpan?.(span), known,
+            }) : undefined;
+            return command.execute(args, observability ? { ...context, observability } : context, invocationId, runtimeHost);
+          },
         }));
         trace.event('plugin.register');
       }
@@ -86,5 +95,8 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
       /* 单个插件入口失败不影响其余插件。 */
     }
   }
-  return () => { removers.splice(0).forEach((dispose) => dispose()); };
+  return () => {
+    removers.splice(0).forEach((dispose) => dispose());
+    void log.flush?.();
+  };
 };

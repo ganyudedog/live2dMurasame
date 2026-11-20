@@ -1,5 +1,6 @@
 import { isBoundaryName, type BoundaryName } from '../../../shared/logging/boundaryTrace.js';
-import { exportBoundaryCall } from '../../../shared/logging/exportBoundaryTrace.js';
+import { exportBoundaryCall, exportSpan, flushSpans } from '../../../shared/logging/exportBoundaryTrace.js';
+import type { SpanRecord } from '../../../shared/logging/spanContext.js';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -21,6 +22,16 @@ export class BackendLogService {
   backendEntries = 0;
   /** 测试或诊断时接走血缘。生产路径只转发，不在进程里累积。 */
   onLineage?: (entry: LineageEntry) => void;
+  onSpan?: (span: SpanRecord) => void;
+
+  recordSpan(span: SpanRecord): void {
+    this.onSpan?.(span);
+    exportSpan(span);
+  }
+
+  flush(): Promise<void> | undefined {
+    return flushSpans();
+  }
 
   /** 单个事件只用于进程内血缘；没有调用区间，不生成 span。 */
   lineage(traceId: string, boundary: string, event: string, scope = 'backend'): void {
@@ -49,9 +60,18 @@ export class BackendLogService {
         this.lineage(payload.traceId, payload.boundary, item.event, 'renderer');
         if (typeof item.at === 'number' && Number.isFinite(item.at)) events.push({ event: item.event, at: item.at });
       }
-      const { startedAt, endedAt } = payload;
+      const { startedAt, endedAt, spanId } = payload;
       if (typeof startedAt === 'number' && Number.isFinite(startedAt) && typeof endedAt === 'number' && Number.isFinite(endedAt) && endedAt >= startedAt) {
-        exportBoundaryCall({ traceId: payload.traceId, boundary: payload.boundary, startedAt, endedAt, events, failed: payload.failed === true });
+        if (typeof spanId === 'string') {
+          this.recordSpan({
+            traceId: payload.traceId, spanId, name: payload.boundary, startedAt, endedAt,
+            ...(typeof payload.parentSpanId === 'string' ? { parentSpanId: payload.parentSpanId } : {}),
+            status: payload.failed === true ? 'error' : 'ok',
+            events: events.map((item) => ({ name: item.event, at: item.at })),
+          });
+        } else {
+          exportBoundaryCall({ traceId: payload.traceId, boundary: payload.boundary, startedAt, endedAt, events, failed: payload.failed === true });
+        }
       }
       return;
     }

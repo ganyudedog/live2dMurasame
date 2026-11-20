@@ -1,3 +1,5 @@
+import type { Observability } from '../../../../shared/logging/spanContext.js';
+
 /**
  * Identity and correlation ids. Command bodies cannot declare the caller.
  *
@@ -26,6 +28,9 @@ export interface CommandContext {
   local: boolean;
   owner: string;
   requestId?: string;
+  /** 这一次宿主 span。插件的子 span 接在它下面，不能从共享 host 上读取。 */
+  trace?: { traceId: string; spanId: string };
+  observability?: Observability;
 }
 
 export interface CommandCatalogEntry {

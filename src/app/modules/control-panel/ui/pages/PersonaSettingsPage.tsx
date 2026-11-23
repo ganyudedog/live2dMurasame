@@ -101,7 +101,7 @@ export function RelationshipCard({
   const unchanged = Boolean(view && form && !view.needsSelection && form.stage === view.stage);
 
   return <SettingsCard title="当前关系" icon={<Heart />}
-    description="关系会随相处自然发展，也可以手动修改。"
+    description="关系会随相处自然发展，也可以手动修改阶段。分支由对话形成，这里只展示。"
     actions={<Button variant="ghost" size="xs" onClick={onReload} disabled={loading || busy}>
       <RefreshCw className={loading ? 'animate-spin' : undefined} />
       {loading ? '读取中' : '刷新'}
@@ -119,6 +119,13 @@ export function RelationshipCard({
         <StageTrack stage={view.needsSelection ? '' : view.stage} />
       </div>
       {view.needsSelection ? null : <p className="text-xs leading-relaxed text-foreground/85">{view.line}</p>}
+      {view.branches?.length ? <ul aria-label="同时成立的关系" className="space-y-2">
+        {view.branches.map((branch) => <li key={branch.quote} className="space-y-1">
+          <p className="text-sm font-medium">{branch.title}</p>
+          <p className="text-xs leading-relaxed text-foreground/85">{branch.text}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{branch.quote}</p>
+        </li>)}
+      </ul> : null}
       <div className="space-y-2 border-t border-border pt-4">
         <Field label="调整阶段">
           <Select aria-label="关系阶段" value={form.stage} disabled={busy}

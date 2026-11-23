@@ -2,9 +2,19 @@ import {
   DEFAULT_RELATIONSHIP_STAGE, STAGE_LINES, extractRelationship, stageFromLine, selectionLine,
 } from '../../../../../../../../shared/memory/relationship.js';
 
+interface RelationshipBranchLine {
+  title?: string;
+  text?: string;
+}
+
 interface RelationshipMemory {
   coreText?: string;
-  relationship?: { needsSelection?: boolean; legacyText?: string; line?: string } | null;
+  relationship?: {
+    needsSelection?: boolean;
+    legacyText?: string;
+    line?: string;
+    branches?: RelationshipBranchLine[];
+  } | null;
 }
 
 const currentRelationshipLine = (coreText: string) => {
@@ -22,6 +32,23 @@ export const promptLineFromMemory = (memory: RelationshipMemory | null | undefin
   }
   const coreText = memory && typeof memory === 'object' && typeof memory.coreText === 'string' ? memory.coreText : '';
   return currentRelationshipLine(coreText);
+};
+
+export const relationshipPromptBody = (memory: RelationshipMemory | null | undefined) => {
+  const line = promptLineFromMemory(memory);
+  const branches = (memory?.relationship?.branches ?? [])
+    .map((branch) => ({
+      title: String(branch?.title ?? '').trim(),
+      text: String(branch?.text ?? '').trim(),
+    }))
+    .filter((branch) => branch.title && branch.text);
+  if (!branches.length) return line;
+  return [
+    line,
+    '同时成立：',
+    ...branches.map((branch) => `- ${branch.title}：${branch.text}`),
+    '这些分支不改变上面的阶段。',
+  ].join('\n');
 };
 
 export const buildRelationshipPrompt = (stageLine?: string) => {

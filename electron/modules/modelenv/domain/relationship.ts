@@ -1,13 +1,12 @@
 import {
   DEFAULT_RELATIONSHIP_STAGE, RELATIONSHIP_STAGES, STAGE_LINES,
   extractRelationship, isKnownStage, stageFromLine, selectionLine,
-  type PublicRelationship, type RelationshipStage, type RelationshipProgress, type KnownExperience,
+  type PublicRelationship, type RelationshipStage, type RelationshipProgress, type KnownExperience, type RelationshipBranch,
 } from '../../../../shared/memory/relationship.js';
 
 export type StoredRelationship = PublicRelationship;
 export interface GrowthThreshold {
   minInteractionDays: number;
-  minExperiences: number;
   minStageAgeDays: number;
 }
 interface RelationshipEvidenceTurn {
@@ -32,12 +31,12 @@ const asRecord = (value: unknown): Record<string, unknown> => (
 // growth days follow that clock so a conversation and its counted day stay together.
 const MEMORY_TIME_ZONE = 'Asia/Shanghai';
 
-/** Central thresholds. A stage moves only when all three are met, and only one step. */
+/** Central thresholds. A stage moves when days and age are both met, and only one step. */
 const RELATIONSHIP_GROWTH_THRESHOLDS: Readonly<Record<RelationshipStage, GrowthThreshold | null>> = Object.freeze({
-  疏远: Object.freeze({ minInteractionDays: 1, minExperiences: 1, minStageAgeDays: 1 }),
-  认识: Object.freeze({ minInteractionDays: 3, minExperiences: 2, minStageAgeDays: 2 }),
-  亲近: Object.freeze({ minInteractionDays: 5, minExperiences: 3, minStageAgeDays: 3 }),
-  信赖: Object.freeze({ minInteractionDays: 7, minExperiences: 4, minStageAgeDays: 4 }),
+  疏远: Object.freeze({ minInteractionDays: 1, minStageAgeDays: 1 }),
+  认识: Object.freeze({ minInteractionDays: 3, minStageAgeDays: 2 }),
+  亲近: Object.freeze({ minInteractionDays: 5, minStageAgeDays: 3 }),
+  信赖: Object.freeze({ minInteractionDays: 7, minStageAgeDays: 4 }),
   亲密: null,
 });
 
@@ -49,7 +48,9 @@ const GREETING = /^(?:你好|您好|嗨|hi|hello|hey|在吗|早安|晚安|早上
 
 const MAX_DAYS = 60;
 const MAX_EXPERIENCES = 32;
+const MAX_BRANCHES = 8;
 const MAX_PROPOSALS = 8;
+const STAGE_MARK = /阶段[:：]/u;
 
 class RelationshipRevisionConflict extends Error {
   constructor() {
@@ -117,6 +118,49 @@ const shapeProgress = (value: unknown): RelationshipProgress => {
   return { interactionDays: days, experiences };
 };
 
+const boundedText = (value: unknown, min: number, max: number, rejectStage = false) => {
+  if (typeof value !== 'string') return '';
+  const text = value.trim();
+  if (text.length < min || text.length > max) return '';
+  if (rejectStage && STAGE_MARK.test(text)) return '';
+  return text;
+};
+
+const stableBranchId = (quote: string) => {
+  let hash = 2166136261;
+  for (const char of quote) {
+    hash ^= char.codePointAt(0)!;
+    hash = Math.imul(hash, 16777619);
+  }
+  return `b${(hash >>> 0).toString(16).padStart(8, '0')}`;
+};
+
+const shapeBranches = (value: unknown): RelationshipBranch[] => {
+  const items: RelationshipBranch[] = [];
+  const seen = new Set<string>();
+  for (const item of Array.isArray(value) ? value : []) {
+    const record = asRecord(item);
+    if (!Object.keys(record).length || record.active === false) continue;
+    const title = boundedText(record.title, 1, 16, true);
+    const text = boundedText(record.text, 4, 80, true);
+    const quote = boundedText(record.quote, 4, 80);
+    const conversationCount = typeof record.conversationCount === 'number' && Number.isInteger(record.conversationCount) && record.conversationCount > 0
+      ? record.conversationCount : 0;
+    if (!title || !text || !quote || !conversationCount || seen.has(quote)) continue;
+    seen.add(quote);
+    items.push({
+      id: stableBranchId(quote),
+      title,
+      text,
+      quote,
+      conversationCount,
+      updatedAt: Math.max(0, finite(record.updatedAt, 0)),
+    });
+    if (items.length >= MAX_BRANCHES) break;
+  }
+  return items;
+};
+
 const shapeKnownExperiences = (value: unknown): KnownExperience[] => {
   const items: KnownExperience[] = [];
   const seen = new Set();
@@ -134,7 +178,7 @@ const shapeKnownExperiences = (value: unknown): KnownExperience[] => {
 
 const shapeRelationship = ({
   stage, revision, stageChangedAt, needsSelection, legacyText, line, progress,
-  evidenceAfterCount, knownExperiences,
+  evidenceAfterCount, knownExperiences, branches,
 }: Omit<StoredRelationship, 'version'>): StoredRelationship => ({
   version: 1,
   stage,
@@ -146,6 +190,7 @@ const shapeRelationship = ({
   progress,
   evidenceAfterCount: nonNegativeInteger(evidenceAfterCount),
   knownExperiences: shapeKnownExperiences(knownExperiences),
+  branches: shapeBranches(branches),
 });
 
 const cloneProgress = (progress: RelationshipProgress) => shapeProgress(progress);
@@ -154,6 +199,7 @@ const cloneRelationship = (relationship: StoredRelationship) => shapeRelationshi
   ...relationship,
   progress: cloneProgress(relationship.progress),
   knownExperiences: shapeKnownExperiences(relationship.knownExperiences),
+  branches: shapeBranches(relationship.branches),
 });
 
 export const normalizeStoredRelationship = (input: unknown): StoredRelationship | null => {
@@ -181,6 +227,7 @@ export const normalizeStoredRelationship = (input: unknown): StoredRelationship 
         .filter((event) => event?.kind === 'shared-experience')
         .map((event) => ({ id: event.experienceId, excerpt: event.excerpt })),
     ]),
+    branches: shapeBranches(value.branches),
   });
 };
 
@@ -192,6 +239,7 @@ export const migrateRelationship = (coreText: string, now = Date.now()): StoredR
     progress: emptyProgress(),
     evidenceAfterCount: 0,
     knownExperiences: [],
+    branches: [],
   };
   if (!stageLine) {
     return shapeRelationship({
@@ -260,6 +308,7 @@ export const toPublicRelationship = (value: unknown): PublicRelationship | null 
     progress: cloneProgress(relationship.progress),
     evidenceAfterCount: relationship.evidenceAfterCount,
     knownExperiences: shapeKnownExperiences(relationship.knownExperiences),
+    branches: shapeBranches(relationship.branches),
   };
 };
 
@@ -353,12 +402,92 @@ const locateExperience = (relationship: StoredRelationship, summary: string, evi
   return null;
 };
 
-export const acceptRelationshipProposals = (relationship: StoredRelationship, proposals: unknown, evidence: RelationshipEvidence = {}): StoredRelationship => {
+const candidateTurns = (evidence: RelationshipEvidence) => (
+  (Array.isArray(evidence?.candidateTurns) ? evidence.candidateTurns : [])
+    .map(asEvidenceTurn)
+    .filter((turn): turn is RelationshipEvidenceTurn => turn !== null)
+    .sort((left, right) => left.conversationCount - right.conversationCount)
+);
+
+const turnContaining = (evidence: RelationshipEvidence, quote: string) => (
+  candidateTurns(evidence).find((turn) => turn.userText.includes(quote)) ?? null
+);
+
+const blockedProposal = (proposal: object) => (
+  'stage' in proposal || 'mode' in proposal || 'permission' in proposal
+  || 'permissions' in proposal || 'shellReadRoots' in proposal
+);
+
+const commitBranches = (relationship: StoredRelationship, branches: RelationshipBranch[]) => {
+  const next = cloneRelationship(relationship);
+  next.branches = shapeBranches(branches);
+  next.revision += 1;
+  return next;
+};
+
+/** Adds or rewrites one branch when its quote appears in a new user turn. */
+const applyBranchNote = (relationship: StoredRelationship, proposal: Record<string, unknown>, evidence: RelationshipEvidence, now: number) => {
+  const title = boundedText(proposal.title, 1, 16, true);
+  const text = boundedText(proposal.text, 4, 80, true);
+  const quote = boundedText(proposal.quote, 4, 80);
+  const turn = title && text && quote ? turnContaining(evidence, quote) : null;
+  if (!turn) return relationship;
+  const current = relationship.branches.find((branch) => branch.quote === quote);
+  if (current?.title === title && current.text === text) return relationship;
+  if (!current && relationship.branches.length >= MAX_BRANCHES) return relationship;
+  const branches = current
+    ? relationship.branches.map((branch) => branch.quote === quote
+      ? { ...branch, title, text, conversationCount: turn.conversationCount, updatedAt: finite(now) }
+      : branch)
+    : [...relationship.branches, {
+      id: stableBranchId(quote), title, text, quote, conversationCount: turn.conversationCount, updatedAt: finite(now),
+    }];
+  return commitBranches(relationship, branches);
+};
+
+/** Rewrites an existing branch. The new wording must be grounded in a fresh user quote. */
+const applyBranchUpdate = (relationship: StoredRelationship, proposal: Record<string, unknown>, evidence: RelationshipEvidence, now: number) => {
+  const quote = boundedText(proposal.quote, 4, 80);
+  const basis = boundedText(proposal.basis, 4, 80);
+  const title = boundedText(proposal.title, 1, 16, true);
+  const text = boundedText(proposal.text, 4, 80, true);
+  const turn = quote && basis && title && text ? turnContaining(evidence, basis) : null;
+  const current = turn ? relationship.branches.find((branch) => branch.quote === quote) : undefined;
+  if (!turn || !current || (current.title === title && current.text === text)) return relationship;
+  return commitBranches(relationship, relationship.branches.map((branch) => branch.quote === quote
+    ? { ...branch, title, text, conversationCount: turn.conversationCount, updatedAt: finite(now) }
+    : branch));
+};
+
+/** Removes an existing branch. Deletion also needs a fresh user quote. */
+const applyBranchDelete = (relationship: StoredRelationship, proposal: Record<string, unknown>, evidence: RelationshipEvidence) => {
+  const quote = boundedText(proposal.quote, 4, 80);
+  const basis = boundedText(proposal.basis, 4, 80);
+  if (!quote || !basis || !turnContaining(evidence, basis)) return relationship;
+  if (!relationship.branches.some((branch) => branch.quote === quote)) return relationship;
+  return commitBranches(relationship, relationship.branches.filter((branch) => branch.quote !== quote));
+};
+
+export const acceptRelationshipProposals = (relationship: StoredRelationship, proposals: unknown, evidence: RelationshipEvidence = {}, now = Date.now()): StoredRelationship => {
   if (!relationship || relationship.needsSelection || !isKnownStage(relationship.stage)) return relationship;
   let next = relationship;
   for (const proposal of Array.isArray(proposals) ? proposals.slice(0, MAX_PROPOSALS) : []) {
-    if (!proposal || proposal.kind !== 'shared-experience' || 'stage' in proposal || 'mode' in proposal) continue;
-    const summary = typeof proposal.summary === 'string' ? proposal.summary.trim() : '';
+    if (!proposal || typeof proposal !== 'object' || blockedProposal(proposal)) continue;
+    const record = proposal as Record<string, unknown>;
+    if (record.kind === 'note') {
+      next = applyBranchNote(next, record, evidence, now);
+      continue;
+    }
+    if (record.kind === 'update') {
+      next = applyBranchUpdate(next, record, evidence, now);
+      continue;
+    }
+    if (record.kind === 'delete') {
+      next = applyBranchDelete(next, record, evidence);
+      continue;
+    }
+    if (record.kind !== 'shared-experience') continue;
+    const summary = typeof record.summary === 'string' ? record.summary.trim() : '';
     if (summary.length < 4 || summary.length > 80) continue;
     const located = locateExperience(next, summary, evidence);
     if (!located) continue;
@@ -378,7 +507,6 @@ export const evaluateRelationshipGrowth = (relationship: StoredRelationship, now
   if (!rule) return relationship;
   const age = stageAgeDays(relationship.stageChangedAt, now);
   if (relationship.progress.interactionDays.length < rule.minInteractionDays) return relationship;
-  if (relationship.progress.experiences.length < rule.minExperiences) return relationship;
   if (age < rule.minStageAgeDays) return relationship;
   const stage = nextStage(relationship.stage);
   if (!stage) return relationship;

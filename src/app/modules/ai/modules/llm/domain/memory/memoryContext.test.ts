@@ -6,6 +6,7 @@ import {
   buildRelationshipPrompt,
   normalizePersona,
   promptLineFromMemory,
+  relationshipPromptBody,
 } from './memoryContext';
 
 describe('character card and relationship stage', () => {
@@ -56,5 +57,18 @@ describe('character card and relationship stage', () => {
       coreText: '## 当前关系\n- 阶段：亲密。我们在一起。',
       relationship: { needsSelection: false, line: '阶段：信赖。可以提起一起经历过的事。' },
     })).toContain('信赖');
+    const withBranch = relationshipPromptBody({
+      relationship: {
+        needsSelection: false,
+        line: '阶段：亲近。可以开玩笑。',
+        branches: [{ title: '亲近表达', text: '用户接受更亲近的说法' }],
+      },
+    });
+    expect(withBranch).toContain('阶段：亲近');
+    expect(withBranch).toContain('同时成立：\n- 亲近表达：用户接受更亲近的说法');
+    expect(withBranch).toContain('这些分支不改变上面的阶段');
+    expect(relationshipPromptBody({
+      relationship: { needsSelection: false, line: '阶段：亲近。可以开玩笑。', branches: [] },
+    })).toBe('阶段：亲近。可以开玩笑。');
   });
 });

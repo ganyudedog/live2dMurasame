@@ -19,6 +19,16 @@ export interface KnownExperience {
   excerpt: string;
 }
 
+/** Agent-authored side relationship. The kernel stores the quote and does not name the aspect. */
+export interface RelationshipBranch {
+  id: string;
+  title: string;
+  text: string;
+  quote: string;
+  conversationCount: number;
+  updatedAt: number;
+}
+
 export interface PublicRelationship {
   version: 1;
   stage: RelationshipStage | '';
@@ -30,6 +40,7 @@ export interface PublicRelationship {
   progress: RelationshipProgress;
   evidenceAfterCount: number;
   knownExperiences: KnownExperience[];
+  branches: RelationshipBranch[];
 }
 
 export function isKnownStage(stage: unknown): stage is RelationshipStage;

@@ -10,7 +10,7 @@ export {
 } from '../../../../../../../../shared/memory/relationship.js';
 export type { PublicRelationship, RelationshipStage } from '../../../../../../../../shared/memory/relationship.js';
 
-export { buildRelationshipPrompt, promptLineFromMemory } from './relationshipPrompt';
+export { buildRelationshipPrompt, promptLineFromMemory, relationshipPromptBody } from './relationshipPrompt';
 
 export interface Persona {
   name: string;

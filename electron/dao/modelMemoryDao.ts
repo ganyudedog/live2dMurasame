@@ -669,8 +669,7 @@ export const saveModelMemoryConsolidation = (modelPath: string, input: unknown =
     priorMemory: extractRelationship(readText(paths.corePath, DEFAULT_CORE)).memoryText,
     ...(Array.isArray(source.relationshipEvents) && source.relationshipEvents.length
       ? relationshipEvidence(paths, rememberedCount, processedThroughCount) : {}),
-  });
-  relationship = evaluateRelationshipGrowth(relationship, now, undefined, processedThroughCount);
+  }, now);
   atomicWrite(paths.corePath, strictRelationshipCore(source.content, relationship));
   state.lastConsolidatedCount = Math.min(state.conversationCount, Math.max(state.lastConsolidatedCount, Math.floor(source.processedThroughCount)));
   state.lastDecayDate = safeDate(now);

@@ -27,14 +27,14 @@ vi.mock('electron', () => ({ app: { isReady: () => true, getPath: () => runtime.
 
 const at = (day: string) => Date.parse(`${day}T04:00:00.000Z`);
 const shift = (day: string, count: number) => new Date(at(day) + count * 86400000).toISOString().slice(0, 10);
-const rule = (minInteractionDays: number, minExperiences: number, minStageAgeDays: number): GrowthThreshold => ({
-  minInteractionDays, minExperiences, minStageAgeDays,
+const rule = (minInteractionDays: number, minStageAgeDays: number): GrowthThreshold => ({
+  minInteractionDays, minStageAgeDays,
 });
 const easy = {
-  疏远: rule(1, 1, 0), 认识: rule(1, 1, 0), 亲近: rule(1, 1, 0), 信赖: rule(1, 1, 0), 亲密: null,
+  疏远: rule(1, 0), 认识: rule(1, 0), 亲近: rule(1, 0), 信赖: rule(1, 0), 亲密: null,
 };
 const zero = {
-  疏远: rule(0, 0, 0), 认识: rule(0, 0, 0), 亲近: rule(0, 0, 0), 信赖: rule(0, 0, 0), 亲密: null,
+  疏远: rule(0, 0), 认识: rule(0, 0), 亲近: rule(0, 0), 信赖: rule(0, 0), 亲密: null,
 };
 
 let root!: string;
@@ -138,7 +138,7 @@ describe('relationship growth rules', () => {
     let state = migrateRelationship('## 当前关系\n- 阶段：信赖。可以提起那次。', at('2026-11-01'));
     state = recordInteractionDay(state, at('2026-11-01'));
     const gated = {
-      疏远: rule(1, 0, 2), 认识: rule(1, 0, 2), 亲近: rule(1, 0, 2), 信赖: rule(1, 0, 2), 亲密: null,
+      疏远: rule(1, 2), 认识: rule(1, 2), 亲近: rule(1, 2), 信赖: rule(1, 2), 亲密: null,
     };
     expect(evaluateRelationshipGrowth(state, at('2026-11-02'), gated).stage).toBe('信赖');
     expect(evaluateRelationshipGrowth(state, at('2026-11-03'), gated).stage).toBe('亲密');
@@ -203,6 +203,77 @@ describe('relationship growth rules', () => {
     expect(legacy).not.toHaveProperty('mode');
     expect(legacy).not.toHaveProperty('manualCheckpoint');
     expect(evaluateRelationshipGrowth(legacy!, at('2026-12-01'), easy).stage).toBe('亲密');
+  });
+
+  it('advances one stage from days and age without shared experiences', () => {
+    let state = migrateRelationship('## 当前关系\n- 阶段：疏远。保持一点距离。', at('2026-11-01'));
+    state = recordInteractionDay(state, at('2026-11-01'));
+    expect(evaluateRelationshipGrowth(state, at('2026-11-01')).stage).toBe('疏远');
+    const next = evaluateRelationshipGrowth(state, at('2026-11-02'));
+    expect(next.stage).toBe('认识');
+    expect(next.progress.experiences).toEqual([]);
+    expect(next.progress.interactionDays).toEqual([]);
+    const capped = evaluateRelationshipGrowth(
+      migrateRelationship('## 当前关系\n- 阶段：亲密。可以更亲近地说话。', at('2026-11-01')),
+      at('2026-12-01'),
+      zero,
+    );
+    expect(capped.stage).toBe('亲密');
+  });
+
+  it('lets the agent add, rewrite and delete branches without moving the stage', () => {
+    const evidence = {
+      candidateTurns: [{ conversationCount: 3, userText: '我喜欢你，以后这样说就好' }],
+    };
+    const added = acceptRelationshipProposals(migrateRelationship('', at('2026-11-01')), [
+      { kind: 'note', title: '亲近表达', text: '用户接受更亲近的说法', quote: '我喜欢你' },
+      { kind: 'note', title: '阶段：亲密', text: '这不该写进去', quote: '我喜欢你' },
+      { kind: 'note', title: '关照', text: '用户会主动问近况', quote: '助手自己说的' },
+      { kind: 'stage-change', stage: '亲密' },
+    ], evidence, at('2026-11-02'));
+    expect(added.stage).toBe('亲近');
+    expect(added.branches).toEqual([expect.objectContaining({
+      title: '亲近表达', text: '用户接受更亲近的说法', quote: '我喜欢你', conversationCount: 3,
+    })]);
+
+    const same = acceptRelationshipProposals(added, [
+      { kind: 'note', title: '亲近表达', text: '用户接受更亲近的说法', quote: '我喜欢你' },
+    ], evidence, at('2026-11-03'));
+    expect(same.revision).toBe(added.revision);
+
+    const rewritten = acceptRelationshipProposals(added, [
+      { kind: 'update', quote: '我喜欢你', title: '亲近表达', text: '用户希望保留这个说法', basis: '还是这样说吧' },
+    ], {
+      candidateTurns: [{ conversationCount: 4, userText: '还是这样说吧，我喜欢现在这样' }],
+    }, at('2026-11-04'));
+    expect(rewritten.stage).toBe('亲近');
+    expect(rewritten.branches[0]?.text).toBe('用户希望保留这个说法');
+    expect(rewritten.branches[0]?.quote).toBe('我喜欢你');
+
+    const kept = applyManualAdjustment(rewritten, {
+      expectedRevision: rewritten.revision, stage: '疏远',
+    }, at('2026-11-05'));
+    expect(kept.relationship.stage).toBe('疏远');
+    expect(kept.relationship.branches).toEqual(rewritten.branches);
+    const counted = recordInteractionDay(kept.relationship, at('2026-11-06'));
+    const grown = evaluateRelationshipGrowth(counted, at('2026-11-08'), easy);
+    expect(grown.stage).toBe('认识');
+    expect(grown.branches).toEqual(rewritten.branches);
+
+    const ignored = acceptRelationshipProposals(grown, [
+      { kind: 'delete', quote: '我喜欢你' },
+      { kind: 'delete', quote: '我喜欢你', basis: '没有出现过的话' },
+    ], {
+      candidateTurns: [{ conversationCount: 5, userText: '今天只是随便聊聊近况' }],
+    }, at('2026-11-08'));
+    expect(ignored.branches).toHaveLength(1);
+    const removed = acceptRelationshipProposals(grown, [
+      { kind: 'delete', quote: '我喜欢你', basis: '普通一点就好' },
+    ], {
+      candidateTurns: [{ conversationCount: 6, userText: '我们还是普通一点就好' }],
+    }, at('2026-11-09'));
+    expect(removed.branches).toEqual([]);
+    expect(removed.stage).toBe('认识');
   });
 });
 
@@ -477,5 +548,63 @@ describe('desktop relationship persistence', () => {
     });
     expect(replayed.relationship?.progress.experiences).toEqual([]);
     expect(replayed.relationship?.knownExperiences.some((item) => item.excerpt.includes('一起看过西湖'))).toBe(true);
+  });
+
+  it('keeps the stage during consolidation and stores only quoted branch changes', () => {
+    Date.now = () => at('2026-11-01');
+    loadModelMemoryDocuments(modelPath);
+    const statePath = path.join(memoryDir(), 'state.json');
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8')) as Record<string, unknown>;
+    state.relationship = {
+      version: 1,
+      stage: '疏远',
+      revision: 2,
+      stageChangedAt: at('2026-11-01'),
+      needsSelection: false,
+      legacyText: '',
+      line: '阶段：疏远。保持一点距离，先把边界说清楚。',
+      progress: { interactionDays: [], experiences: [] },
+      evidenceAfterCount: 0,
+      knownExperiences: [],
+      branches: [],
+    };
+    fs.writeFileSync(statePath, JSON.stringify(state));
+    appendModelMemoryConversation(modelPath, {
+      userText: '我喜欢你，以后这样说就好', assistantText: '我记下了。', at: at('2026-11-01'),
+    });
+    const pending = loadModelMemoryDocuments(modelPath);
+    expect(pending.relationship?.stage).toBe('疏远');
+    Date.now = () => at('2026-11-03');
+    const consolidated = saveModelMemoryConsolidation(modelPath, {
+      content: '# 核心记忆\n- 喜欢直接一点\n',
+      processedThroughCount: pending.state.conversationCount,
+      relationshipEvents: [
+        { kind: 'note', title: '亲近表达', text: '用户接受更亲近的说法', quote: '我喜欢你' },
+        { kind: 'note', title: '关照', text: '这是助手总结', quote: '我记下了' },
+        { kind: 'shared-experience', summary: '我喜欢你' },
+      ],
+    });
+    expect(consolidated.relationship?.stage).toBe('疏远');
+    expect(consolidated.relationship?.branches).toEqual([expect.objectContaining({
+      title: '亲近表达', quote: '我喜欢你',
+    })]);
+    expect(consolidated.relationship?.progress.experiences).toEqual([]);
+
+    Date.now = () => at('2026-11-04');
+    appendModelMemoryConversation(modelPath, {
+      userText: '我们还是普通一点就好', assistantText: '好。', at: at('2026-11-04'),
+    });
+    const advanced = loadModelMemoryDocuments(modelPath);
+    expect(advanced.relationship?.stage).toBe('认识');
+    expect(advanced.relationship?.branches).toHaveLength(1);
+    const removed = saveModelMemoryConsolidation(modelPath, {
+      content: '# 核心记忆\n- 喜欢直接一点\n',
+      processedThroughCount: advanced.state.conversationCount,
+      relationshipEvents: [
+        { kind: 'delete', quote: '我喜欢你', basis: '普通一点就好' },
+      ],
+    });
+    expect(removed.relationship?.stage).toBe('认识');
+    expect(removed.relationship?.branches).toEqual([]);
   });
 });

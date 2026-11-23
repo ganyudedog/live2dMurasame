@@ -30,6 +30,7 @@ const loadedView = (patch: Partial<RelationshipView> = {}): RelationshipView => 
   line: '阶段：信赖。可以提起一起经历过的事，也会主动关心。',
   needsSelection: false,
   revision: 2,
+  branches: [],
   ...patch,
 });
 
@@ -39,6 +40,19 @@ it('关系卡片显示当前阶段，并只提供阶段选择', () => {
   expect(html).toContain('阶段：信赖');
   expect(html).toContain('应用这个阶段');
   expect(html).toContain('<select');
+  expect(html).not.toContain('同时成立的关系');
+});
+
+it('关系卡片只展示对话形成的分支，不提供分支编辑', () => {
+  const html = renderToStaticMarkup(<RelationshipCard view={loadedView({
+    branches: [{ title: '亲近表达', text: '用户接受更亲近的说法', quote: '我喜欢你' }],
+  })} loading={false} busy={false} error="" actionError="" onReload={() => {}} onApply={async () => true} />)
+    .replaceAll('<!-- -->', '');
+  expect(html).toContain('同时成立的关系');
+  expect(html).toContain('亲近表达');
+  expect(html).toContain('我喜欢你');
+  expect(html).not.toContain('删除分支');
+  expect(html).toContain('应用这个阶段');
 });
 
 it('迁移不了的旧说明会明确要求先选择，而不是显示成某个阶段', () => {

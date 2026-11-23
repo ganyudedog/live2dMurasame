@@ -28,10 +28,24 @@ const createTransport = (emit) => {
       status('connecting');
       if (previous) await previous.disconnect();
       if (channel !== next) return;
-      next.on('message', message => {
+      next.on('message', async message => {
         const text = message.content?.trim();
         if (channel !== next || !text || !message.chatId || !message.messageId || !message.senderId) return;
+        if (message.chatType !== 'p2p' && !message.mentionedBot) return;
+        let role;
+        if (message.senderId.startsWith('ou_')) {
+          try {
+            const roles = await next.rawClient.application.applicationCollaborators.get({
+              path: { app_id: appId }, params: { user_id_type: 'open_id' },
+            });
+            if (roles.code === 0) role = roles.data?.collaborators?.find(member => member.user_id === message.senderId)?.type;
+          } catch { /* Unverified roles use ordinary member permissions. */ }
+        }
+        if (channel !== next) return;
+        const isOwner = role === 'owner';
         emit('message', {
+          isOwner, isDeveloper: role === 'developer',
+          ...(isOwner && message.rawContentType === 'text' ? { userText: text } : {}),
           messageId: message.messageId,
           conversationId: message.chatId,
           conversationType: message.chatType === 'p2p' ? 'private' : 'group',

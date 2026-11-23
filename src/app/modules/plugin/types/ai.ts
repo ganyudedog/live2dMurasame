@@ -30,6 +30,9 @@ export interface ConversationMemoryArchive {
 }
 
 export interface ConversationRequest {
+  readonly isOwner?: boolean;
+  /** Source plugin commands this turn may offer to a non-owner. */
+  readonly memberCommands?: readonly string[];
   /** A supported effort for this turn only. Omit to inherit the current chat selection. */
   readonly reasoningEffort?: string;
   readonly sender?: { readonly id: string; readonly displayName?: string };

@@ -4,7 +4,7 @@ import type { ModelConfig } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
 import { useModelRelationship, type RelationshipView } from '../hooks/useModelRelationship';
 import {
-  ChevronRight, Heart, IdCard, MessageCircleHeart, MessagesSquare, NotebookPen, RefreshCw, ScrollText, ShieldCheck,
+  ChevronRight, GitBranch, Heart, IdCard, MessageCircleHeart, MessagesSquare, NotebookPen, RefreshCw, ScrollText, ShieldCheck,
 } from 'lucide-react';
 import { Field, SettingsCard } from '../components/common/SettingsSection';
 import { Page } from '../components/common/Page';
@@ -101,7 +101,7 @@ export function RelationshipCard({
   const unchanged = Boolean(view && form && !view.needsSelection && form.stage === view.stage);
 
   return <SettingsCard title="当前关系" icon={<Heart />}
-    description="关系会随相处自然发展，也可以手动修改阶段。分支由对话形成，这里只展示。"
+    description="情感阶梯随相处自然发展，也可以手动调整；关系特质由日常对话形成，这里只展示。"
     actions={<Button variant="ghost" size="xs" onClick={onReload} disabled={loading || busy}>
       <RefreshCw className={loading ? 'animate-spin' : undefined} />
       {loading ? '读取中' : '刷新'}
@@ -112,22 +112,35 @@ export function RelationshipCard({
     {view?.needsSelection ? <Notice tone="warning">{view.line}</Notice> : null}
     {view && form ? <div className="space-y-4">
       <div className="space-y-3">
-        <p className={cn('text-lg font-semibold tracking-tight',
-          view.needsSelection ? 'text-muted-foreground' : 'text-primary')}>
-          {view.needsSelection ? '待选择' : (view.stage || '未记录')}
-        </p>
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] font-medium tracking-wide text-muted-foreground">情感阶梯</span>
+          <p className={cn('text-lg font-semibold tracking-tight',
+            view.needsSelection ? 'text-muted-foreground' : 'text-primary')}>
+            {view.needsSelection ? '待选择' : (view.stage || '未记录')}
+          </p>
+        </div>
         <StageTrack stage={view.needsSelection ? '' : view.stage} />
       </div>
       {view.needsSelection ? null : <p className="text-xs leading-relaxed text-foreground/85">{view.line}</p>}
-      {view.branches?.length ? <ul aria-label="同时成立的关系" className="space-y-2">
-        {view.branches.map((branch) => <li key={branch.quote} className="space-y-1">
-          <p className="text-sm font-medium">{branch.title}</p>
-          <p className="text-xs leading-relaxed text-foreground/85">{branch.text}</p>
-          <p className="text-xs leading-relaxed text-muted-foreground">{branch.quote}</p>
-        </li>)}
-      </ul> : null}
+      <section aria-label="关系特质" className="space-y-2 border-t border-border pt-4">
+        <p className="flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-muted-foreground">
+          <GitBranch aria-hidden="true" className="size-3" />
+          关系特质
+          {view.branches.length ? <span className="tabular-nums text-muted-foreground/70">· {view.branches.length}</span> : null}
+        </p>
+        {view.branches.length
+          ? <ul className="flex flex-wrap gap-1.5">
+            {view.branches.map((branch) => <li key={branch.quote}
+              title={`「${branch.quote}」${branch.conversationCount ? ` · ${branch.conversationCount} 段对话` : ''}`}
+              className="max-w-full rounded-lg border border-primary/20 bg-primary/5 px-2 py-1">
+              <p className="truncate text-[11px] font-medium text-primary">{branch.title}</p>
+              {branch.text ? <p className="text-[10.5px] leading-snug text-foreground/75">{branch.text}</p> : null}
+            </li>)}
+          </ul>
+          : <p className="text-[11px] leading-relaxed text-muted-foreground">还没有形成关系特质，会在日常聊天里慢慢长出来。</p>}
+      </section>
       <div className="space-y-2 border-t border-border pt-4">
-        <Field label="调整阶段">
+        <Field label="调整阶梯">
           <Select aria-label="关系阶段" value={form.stage} disabled={busy}
             onChange={(event) => setDraft({ ...form, stage: event.target.value })}>
             {view.needsSelection ? <option value="">请选择阶段</option> : null}

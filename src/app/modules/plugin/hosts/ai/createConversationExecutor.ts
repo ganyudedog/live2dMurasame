@@ -102,6 +102,7 @@ export const createDefaultConversationExecutor = (
       if (commands) {
         try {
           const tools = await runSkillLoop({ config: { apiKey: global.apiKey, baseURL: global.baseURL, model, reasoningEffort },
+            allowedCommands: request.isOwner === true ? undefined : ['config.get', 'config.update', 'shell.run', ...(request.memberCommands ?? [])],
             text: request.text, requestId: context.requestId, signal: context.signal, session: commands, log,
             ...(trace.spanId ? { parent: { traceId: trace.traceId, spanId: trace.spanId } } : {}),
             historyMessages: buildRecentConversation(recent.turns.filter((turn) =>

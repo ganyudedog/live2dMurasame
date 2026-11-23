@@ -6,7 +6,8 @@ import { feishuPlugin } from './index';
 it('dispatches two adjacent raw private messages as distinct turns', async () => {
   let dispatcher;
   vi.spyOn(LarkChannel.prototype, 'fetchBotIdentity').mockResolvedValue({ openId: 'ou_bot', name: 'bot' });
-  vi.spyOn(LarkChannel.prototype, 'connectWebSocket').mockImplementation(async function () { dispatcher = this.dispatcher; });
+  vi.spyOn(LarkChannel.prototype, 'connectWebSocket').mockImplementation(async function () { dispatcher = this.dispatcher;
+    vi.spyOn(this.rawClient.application.applicationCollaborators, 'get').mockResolvedValue({ code: 0, data: { collaborators: [{ user_id: 'ou_sender', type: 'owner' }, { user_id: 'ou_dev', type: 'developer' }] } }); });
   const listeners = new Set();
   const values = new Map([['settings', { enabled: true, appId: 'app', appSecret: 'test' }]]);
   const storage = {
@@ -20,13 +21,17 @@ it('dispatches two adjacent raw private messages as distinct turns', async () =>
   try {
     await feishuPlugin.activate({ storage, windowKind: 'pet', subscriptions: { add: fn => disposers.push(fn) }, host: { ai: { openChannel: () => ({ sendText, dispose() {}, onResponse: () => () => {} }) } } });
     await vi.waitFor(() => expect(storage.get('connection')).toBe('connected'));
-    for (const id of ['one', 'two', 'two']) {
+    for (const id of ['one', 'two', 'two', 'three']) {
       await dispatcher.invoke({ schema: '2.0', header: { event_type: 'im.message.receive_v1', event_id: `event_${id}` }, event: {
-        sender: { sender_type: 'user', sender_id: { open_id: 'ou_sender' } },
+        sender: { sender_type: 'user', sender_id: { open_id: id === 'one' ? 'ou_sender' : id === 'three' ? 'ou_dev' : 'ou_guest' } },
         message: { message_id: `om_${id}`, chat_id: 'oc_chat', chat_type: 'p2p', message_type: 'text', create_time: String(Date.now()), content: JSON.stringify({ text: id }) },
       } }, { needCheck: false });
     }
-    await vi.waitFor(() => expect(sendText.mock.calls.map(([request]) => [request.requestId, request.text])).toEqual([['feishu:om_one', 'one'], ['feishu:om_two', 'two']]));
+    await vi.waitFor(() => expect(sendText.mock.calls.map(([request]) => [request.requestId, request.text])).toEqual([['feishu:om_one', 'one'], ['feishu:om_two', 'two'], ['feishu:om_three', 'three']]));
+    expect(sendText.mock.calls[0][0].personalMemory).toEqual({ userText: 'one' });
+    expect(sendText.mock.calls[1][0].personalMemory).toBeUndefined();
+    expect(sendText.mock.calls[2][0].personalMemory).toBeUndefined();
+    expect(sendText.mock.calls.map(([turn]) => turn.isOwner)).toEqual([true, false, false]);
   } finally {
     disposers.forEach(dispose => dispose()); stop(); vi.restoreAllMocks();
   }

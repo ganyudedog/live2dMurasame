@@ -63,18 +63,55 @@ const MENU_STRUCTURE: MenuGroup[] = [
   },
 ];
 
-function NavItem({ item, active, onSelect }: { item: MenuItem; active: boolean; onSelect: (key: string) => void }) {
+function NavItem({ item, active, onSelect, nested = false }: {
+  item: MenuItem;
+  active: boolean;
+  onSelect: (key: string) => void;
+  nested?: boolean;
+}) {
   return <li>
     <button type="button" aria-current={active ? 'page' : undefined} onClick={() => onSelect(item.key)}
-      className={cn(`group flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px]
-        transition-colors duration-150`,
-      active
-        ? 'bg-card font-medium text-foreground shadow-card dark:bg-primary/12 dark:shadow-none'
-        : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground')}>
-      <span aria-hidden="true" className={cn('shrink-0 [&_svg]:size-4',
+      className={cn(`group flex w-full cursor-pointer items-center rounded-lg text-left transition-colors duration-150`,
+        nested ? 'h-7 gap-2 px-2 text-[12.5px]' : 'h-8 gap-2.5 px-2.5 text-[13px]',
+        active
+          ? 'bg-card font-medium text-foreground shadow-card dark:bg-primary/12 dark:shadow-none'
+          : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground')}>
+      <span aria-hidden="true" className={cn('shrink-0', nested ? '[&_svg]:size-3.5' : '[&_svg]:size-4',
         active ? 'text-primary' : 'text-muted-foreground/80 group-hover:text-foreground')}>{item.icon}</span>
       <span className="truncate">{item.label}</span>
     </button>
+  </li>;
+}
+
+/** 插件列表下的一个插件：标题行可折叠，页面缩进挂在左侧细线上。 */
+function PluginNavBranch({ group, activeTab, expanded, onToggle, onSelect }: {
+  group: PluginNavGroup;
+  activeTab: string;
+  expanded: boolean;
+  onToggle: () => void;
+  onSelect: (key: string) => void;
+}) {
+  const containsActive = group.pages.some((page) => page.tabId === activeTab);
+  const initial = Array.from(group.title.trim())[0]?.toUpperCase() ?? '?';
+  return <li>
+    <button type="button" aria-expanded={expanded} onClick={onToggle}
+      className={cn(`group flex h-7 w-full cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-[12.5px]
+        transition-colors duration-150 hover:bg-foreground/5`,
+        containsActive && !expanded ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+      <span aria-hidden="true" className={cn(`grid size-4 shrink-0 place-items-center rounded-[5px] text-[9.5px]
+        font-bold leading-none`, containsActive ? 'bg-primary text-primary-foreground' : 'bg-foreground/10 text-foreground/70')}>
+        {initial}
+      </span>
+      <span className="flex-1 truncate">{group.title}</span>
+      <ChevronRight aria-hidden="true" className={cn('size-3.5 shrink-0 text-muted-foreground/70 transition-transform',
+        expanded && 'rotate-90')} />
+    </button>
+    {expanded && <ul aria-label={group.title} className="mt-0.5 mb-1 ml-3.75 space-y-0.5 border-l border-border pl-2">
+      {group.pages.map((page) => {
+        const item = toMenuItem(page);
+        return <NavItem key={item.key} item={item} nested active={item.key === activeTab} onSelect={onSelect} />;
+      })}
+    </ul>}
   </li>;
 }
 
@@ -90,9 +127,9 @@ export default function ControlPanelLayout({
 }: {
   activeTab: ControlPanelTabKey;
   onTabChange: (key: ControlPanelTabKey) => void;
-  /** 没有声明分组的插件页面，列在「插件」组里。 */
+  /** 没有声明分组的插件页面，直接挂在「插件列表」下面。 */
   pluginPages?: readonly PluginNavPage[];
-  /** 插件声明的分组，各自成为一个可折叠的导航组，排在内置分组之后。 */
+  /** 插件声明的分组，在「插件列表」下面各自折叠成一支。 */
   pluginGroups?: readonly PluginNavGroup[];
   /** 侧栏底部显示的当前模型；没有模型时不显示。 */
   currentModelName?: string;
@@ -117,27 +154,23 @@ export default function ControlPanelLayout({
 
   const groups: MenuGroup[] = [
     ...MENU_STRUCTURE,
-    ...pluginGroups.map((group) => ({
-      key: group.key, title: group.title, collapsible: true, items: group.pages.map(toMenuItem),
-    })),
     {
       key: 'plugins',
       title: '插件',
       collapsible: true,
-      items: [{ key: 'plugins', label: '插件列表', icon: <Puzzle /> }, ...pluginPages.map(toMenuItem)],
+      items: [{ key: 'plugins', label: '插件列表', icon: <Puzzle /> }],
     },
   ];
+  const hasPluginRoutes = pluginGroups.length > 0 || pluginPages.length > 0;
 
   return (
     <div className="grid h-full w-full grid-cols-[240px_minmax(0,1fr)] bg-background font-sans text-foreground antialiased">
       <aside className="flex h-full min-h-0 flex-col border-r border-border bg-sidebar">
         <div className="flex items-center gap-3 px-4 pt-5 pb-4">
-          <div aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary
-            text-[15px] font-bold text-primary-foreground shadow-sm">
-            丛
-          </div>
+          <img aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary
+            shadow-sm" src='/logo/love.jpg' />
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold tracking-tight">丛雨 Murasame</p>
+            <p className="truncate text-sm font-semibold tracking-tight">live2d 桌宠</p>
             <p className="truncate text-[11px] text-muted-foreground">桌面伙伴 · 控制面板</p>
           </div>
         </div>
@@ -164,6 +197,20 @@ export default function ControlPanelLayout({
                 {group.items.map((item) => (
                   <NavItem key={item.key} item={item} active={item.key === activeTab} onSelect={onTabChange} />
                 ))}
+                {group.key === 'plugins' && hasPluginRoutes && <li>
+                  <ul aria-label="插件页面" className="mt-1 ml-4.25 space-y-0.5 border-l border-border pl-2">
+                    {pluginGroups.map((branch) => (
+                      <PluginNavBranch key={branch.key} group={branch} activeTab={activeTab}
+                        expanded={!collapsedGroups.has(branch.key)} onToggle={() => toggleGroup(branch.key)}
+                        onSelect={onTabChange} />
+                    ))}
+                    {pluginPages.map((page) => {
+                      const item = toMenuItem(page);
+                      return <NavItem key={item.key} item={item} nested active={item.key === activeTab}
+                        onSelect={onTabChange} />;
+                    })}
+                  </ul>
+                </li>}
               </ul>}
             </div>;
           })}

@@ -56,6 +56,7 @@ export interface ReminderToolRequest {
 }
 
 export interface SkillLoopOptions {
+  allowedCommands?: readonly string[];
   config: Stage2LLMConfig;
   text: string;
   requestId: string;
@@ -102,7 +103,7 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
   const loaded = new Set<string>();
   try {
     const definitions = await session.invoke({ invocationId: `${options.requestId}:catalog`, issuedAt, command: 'commands.list', args: {} }) as CommandDefinition[];
-    const available = definitions.filter((definition) => definition.skill !== 'management');
+    const available = definitions.filter((definition) => definition.skill !== 'management' && (!options.allowedCommands || options.allowedCommands.includes(definition.name)));
     if (!available.length && !options.onReminder) return finish({ handled: false, context: '' });
     const skills = new Map<string, string>();
     for (const definition of available) {

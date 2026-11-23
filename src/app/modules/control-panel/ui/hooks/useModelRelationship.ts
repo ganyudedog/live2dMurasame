@@ -14,6 +14,8 @@ export interface RelationshipBranchView {
   title: string;
   text: string;
   quote: string;
+  /** 这条分支在多少段对话里被印证过；旧数据没有这个数时不显示。 */
+  conversationCount?: number;
 }
 
 export interface RelationshipView {
@@ -46,6 +48,7 @@ const viewFromRelationship = (relationship: PublicRelationship): RelationshipVie
       title: branch.title,
       text: branch.text,
       quote: branch.quote,
+      conversationCount: branch.conversationCount,
     })),
   };
 };

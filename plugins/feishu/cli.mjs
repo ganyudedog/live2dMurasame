@@ -26,6 +26,10 @@ const request = async (credentials, path, init = {}) => {
 };
 let registering = false;
 async function createApplication({ name, description }, _context, _invocationId, host) {
+  if (_context.source === 'plugin:live2d.feishu') {
+    const incoming = _context.requestId?.startsWith('feishu:') && host.storage.get(`message.${_context.requestId.slice(7)}`);
+    if (!(incoming?.isOwner || incoming?.isDeveloper) || incoming.senderId !== _context.senderId || incoming.conversationId !== _context.conversationId) throw new Error('创建应用需要开发者身份');
+  }
   if (registering) throw new Error('已有应用正在等待飞书授权');
   registering = true;
   try {

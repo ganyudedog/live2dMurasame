@@ -315,6 +315,7 @@ export class AstrBotBridgeClient {
       try {
         result = channel.sendText({
           text: turn.text,
+          isOwner: Boolean(sender?.id && sender.id === directory.ownerUserId),
           ...(this.settings.reasoningEffort ? { reasoningEffort: this.settings.reasoningEffort } : {}),
           ...(sender?.id && sender.id === directory.ownerUserId && message.text.trim()
             ? { personalMemory: { userText: message.text } } : {}),

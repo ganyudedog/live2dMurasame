@@ -24,6 +24,7 @@ const stored = (patch: Partial<PublicRelationship>): PublicRelationship => ({
   progress: { interactionDays: [], experiences: [] },
   evidenceAfterCount: 0,
   knownExperiences: [],
+  branches: [],
   ...patch,
 });
 

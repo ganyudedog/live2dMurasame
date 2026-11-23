@@ -428,7 +428,7 @@ declare global {
     appendConversation?: (payload: { modelPath?: string; archive?: PetMemoryArchive; sender?: { id: string; displayName?: string }; conversationId?: string; userText: string; assistantText: string; requestId?: string; toolContext?: string; at?: number }) => Promise<PetModelMemoryState | undefined>;
     updateCore?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
     replaceActionCatalogChat?: (payload: { modelPath?: string; content: string }) => Promise<PetModelMemoryState | undefined>;
-    consolidate?: (payload: { modelPath?: string; content: string; processedThroughCount: number; relationshipEvents?: Array<{ kind: string; experienceId?: string; summary?: string }> }) => Promise<PetModelMemoryState | undefined>;
+    consolidate?: (payload: { modelPath?: string; content: string; processedThroughCount: number; relationshipEvents?: Array<{ kind: string; experienceId?: string; summary?: string; title?: string; text?: string; quote?: string; basis?: string }> }) => Promise<PetModelMemoryState | undefined>;
     adjustRelationship?: (payload: { modelPath?: string; expectedRevision: number; stage: string }) => Promise<PetModelMemoryState | undefined>;
     onUpdated?: (callback: (payload: PetModelMemoryState) => void) => (() => void) | void;
   }

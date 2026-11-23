@@ -118,4 +118,47 @@ describe('LLM-backed memory consolidation', () => {
     expect(runtime.relationshipStage).toContain('信赖');
     expect(runtime.relationshipStage).not.toContain('亲密');
   });
+
+  it('asks the consolidator to add, change and delete quoted branches', async () => {
+    const consolidate = vi.fn().mockResolvedValue({ coreText: '# 核心记忆\n' });
+    vi.stubGlobal('window', { MemoryAPI: { consolidate } });
+    const request = vi.fn().mockResolvedValue(JSON.stringify({
+      coreText: '# 核心记忆\n- 喜欢直接一点\n',
+      processedThroughCount: 8,
+      relationshipEvents: [
+        { kind: 'note', title: '亲近表达', text: '用户接受更亲近的说法', quote: '我喜欢你', stage: '亲密' },
+        { kind: 'update', quote: '我喜欢你', title: '亲近表达', text: '改为普通相处', basis: '普通一点就好' },
+        { kind: 'delete', quote: '我喜欢你', basis: '普通一点就好', permission: 'shell' },
+        { kind: 'note', title: '关照', text: '用户会主动问近况', quote: '你今天还好吗' },
+      ],
+    }));
+    const service = new MemoryService(() => ({ globalModelConfig: { memoryModel: 'memory-model' } }) as unknown as PetConfigSnapshot, request);
+    const runtime = {
+      contextText: '', modelPath: 'model-a',
+      memoryState: {
+        modelPath: 'model-a', modelKey: 'model-a',
+        coreText: '# 核心记忆\n',
+        pendingEpisodeText: '用户：我喜欢你。\n角色：知道了。',
+        pendingThroughCount: 8,
+        relationship: {
+          stage: '亲近', revision: 1, line: '阶段：亲近。',
+          branches: [{ title: '亲近表达', text: '用户接受更亲近的说法', quote: '我喜欢你' }],
+        },
+        state: { version: 1, conversationCount: 8, lastConversationAt: Date.now() - 86400000, lastConsolidatedCount: 0, lastDecayDate: '' },
+      },
+    };
+    await service.consolidateIfNeeded(runtime as never);
+    const system = String(request.mock.calls[0]?.[0] ?? '');
+    const user = String(request.mock.calls[0]?.[1] ?? '');
+    expect(system).toContain('更改');
+    expect(system).toContain('删除');
+    expect(system).toContain('不能在事件里写阶段');
+    expect(user).toContain('quote：我喜欢你');
+    expect(consolidate).toHaveBeenCalledWith(expect.objectContaining({
+      relationshipEvents: [
+        { kind: 'update', quote: '我喜欢你', title: '亲近表达', text: '改为普通相处', basis: '普通一点就好' },
+        { kind: 'note', title: '关照', text: '用户会主动问近况', quote: '你今天还好吗' },
+      ],
+    }));
+  });
 });

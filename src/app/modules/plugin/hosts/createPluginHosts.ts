@@ -13,6 +13,7 @@ import { createDefaultConversationExecutor } from './ai/createConversationExecut
 import { createControlPanelHost } from './control-panel/ControlPanelHost';
 import { createDesktopNotificationsHost, createDesktopWindowHost } from './desktop/DesktopHost';
 import { createLive2dHost } from './live2d/Live2dHost';
+import { relationshipPromptBody } from '@app/modules/ai/modules/llm/domain/memory/relationshipPrompt';
 
 export interface PluginHostDependencies {
   readonly windowKind: PluginWindowKind;
@@ -79,7 +80,9 @@ export const createPluginHosts = (deps: PluginHostDependencies): InstalledPlugin
       const memory = await window.MemoryAPI?.get?.({ modelPath });
       if (deps.config.activeModelPath !== modelPath) return null;
       const userAddress = deps.config.modelConfig?.persona?.userAddress;
-      return { line: memory?.relationship?.line ?? '',
+      const relationship = memory?.relationship;
+      return {
+        line: relationship && !relationship.needsSelection ? relationshipPromptBody({ relationship }) : '',
         userAddress: typeof userAddress === 'string' ? userAddress.trim() : '' };
     },
   );

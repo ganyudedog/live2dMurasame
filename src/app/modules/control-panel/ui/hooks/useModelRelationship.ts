@@ -10,11 +10,18 @@ import { DEFAULT_RELATIONSHIP_STAGE, STAGE_LINES } from '../../../../../../share
 
 const STAGE_NAME = /阶段[:：]\s*([^\s。，,、；;]+)/u;
 
+export interface RelationshipBranchView {
+  title: string;
+  text: string;
+  quote: string;
+}
+
 export interface RelationshipView {
   stage: string;
   line: string;
   needsSelection: boolean;
   revision: number;
+  branches: RelationshipBranchView[];
 }
 
 interface RelationshipAdjustment {
@@ -26,6 +33,7 @@ const blankView = (): RelationshipView => ({
   line: STAGE_LINES[DEFAULT_RELATIONSHIP_STAGE],
   needsSelection: false,
   revision: 0,
+  branches: [],
 });
 
 const viewFromRelationship = (relationship: PublicRelationship): RelationshipView => {
@@ -34,6 +42,11 @@ const viewFromRelationship = (relationship: PublicRelationship): RelationshipVie
     line: promptLineFromMemory({ relationship })!,
     needsSelection: relationship.needsSelection,
     revision: relationship.revision,
+    branches: (relationship.branches ?? []).map((branch) => ({
+      title: branch.title,
+      text: branch.text,
+      quote: branch.quote,
+    })),
   };
 };
 
@@ -54,12 +67,14 @@ export const readRelationshipView = (
       stage: '',
       line: promptLineFromMemory({ relationship: { needsSelection: true, legacyText: stageLine } })!,
       needsSelection: true,
+      branches: [],
     };
   }
   return {
     ...blankView(),
     stage: name,
     line: stageLine,
+    branches: [],
   };
 };
 

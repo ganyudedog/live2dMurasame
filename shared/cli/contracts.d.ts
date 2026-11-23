@@ -11,6 +11,7 @@ export interface CommandRequest {
   command: string;
   args: Record<string, unknown>;
   traceId?: string;
+  spanId?: string;
   boundary?: string;
 }
 export interface CommandDefinition {

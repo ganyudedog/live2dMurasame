@@ -1,4 +1,4 @@
-export const boundaryNames: readonly ['config.update', 'conversation.turn', 'cli.invoke', 'plugin.cli.register'];
+export const boundaryNames: readonly ['config.update', 'conversation.turn', 'cli.invoke', 'plugin.cli.register', 'plugin.conversation'];
 
 export type BoundaryName = (typeof boundaryNames)[number];
 

@@ -66,7 +66,9 @@ export const createDefaultConversationExecutor = (
       params: { channelId: context.channelId, requestId: context.requestId, source: options.source, model, textLength: request.text.length },
       behavior: '通过插件独立通道执行文本模型请求',
     });
-    const trace = traceContext.beginTrace('request');
+    const trace = traceContext.beginTrace('plugin.conversation', {
+      channelId: context.channelId, requestId: context.requestId, source: options.source,
+    }, 'plugin.conversation');
 
     try {
       context.signal.throwIfAborted();
@@ -101,6 +103,7 @@ export const createDefaultConversationExecutor = (
         try {
           const tools = await runSkillLoop({ config: { apiKey: global.apiKey, baseURL: global.baseURL, model, reasoningEffort },
             text: request.text, requestId: context.requestId, signal: context.signal, session: commands, log,
+            ...(trace.spanId ? { parent: { traceId: trace.traceId, spanId: trace.spanId } } : {}),
             historyMessages: buildRecentConversation(recent.turns.filter((turn) =>
               turn.sender?.id === request.sender?.id && turn.conversationId === context.conversationId)).historyMessages,
             reminderSpeakLang: speakLang,

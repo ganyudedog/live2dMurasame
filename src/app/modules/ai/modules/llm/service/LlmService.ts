@@ -223,6 +223,7 @@ export class LlmService {
         try {
           const tools = await runSkillLoop({ config: { ...resolved, reasoningEffort: options.reasoningEffort },
             text: cleanText, requestId, signal: options.signal, session: commandSession, log: this.log,
+            ...(options.trace.spanId ? { parent: { traceId: options.trace.traceId, spanId: options.trace.spanId } } : {}),
             historyMessages: memoryRuntime.historyMessages,
             reminderSpeakLang: snapshot?.modelConfig?.tts?.enabled ? this.resolveLanguageProfile(snapshot).speakLang : null,
             onReminder: options.reminderChannel ? (request) => options.reminderChannel?.onReminder(request.dueAt, request.sentence, request.speakText) : undefined,

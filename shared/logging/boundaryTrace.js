@@ -1,4 +1,4 @@
-export const boundaryNames = ['config.update', 'conversation.turn', 'cli.invoke', 'plugin.cli.register'];
+export const boundaryNames = ['config.update', 'conversation.turn', 'cli.invoke', 'plugin.cli.register', 'plugin.conversation'];
 
 export const isBoundaryName = (value) => boundaryNames.includes(value);
 

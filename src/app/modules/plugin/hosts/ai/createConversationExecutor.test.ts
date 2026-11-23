@@ -19,13 +19,19 @@ describe('plugin conversation persona injection', () => {
     vi.stubGlobal('window', { MemoryAPI: { appendConversation, loadRecentTurns }, CliAPI: { open, close, reply: vi.fn(async () => {}) } });
     vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: true, context: 'accepted task-remote' });
     const config = { activeModelPath: '/model', globalModelConfig: { llmModels: [{ id: 'host-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }], apiKey: 'key' } } as unknown as ConfigService;
-    const log = { contextRegistry: { register: () => ({ beginTrace: () => ({ record: vi.fn(), end: vi.fn(), fail: vi.fn() }), dispose: vi.fn() }) } } as unknown as LogService;
+    const trace = { record: vi.fn(), end: vi.fn(), fail: vi.fn(), traceId: 'a'.repeat(32), spanId: 'b'.repeat(16) };
+    const beginTrace = vi.fn(() => trace);
+    const log = { contextRegistry: { register: () => ({ beginTrace, dispose: vi.fn() }) } } as unknown as LogService;
     const execute = createDefaultConversationExecutor(config, log);
     await execute({ source: 'plugin:another-platform', conversationId: 'private', interaction: { mode: 'queue' } },
       { text: '开发任务', sender: { id: 'user' }, memoryArchive: { platform: 'other', scope: 'private', id: 'user' } },
       { requestId: 'request-remote', channelId: 'channel', conversationId: 'private', signal: new AbortController().signal, emit: vi.fn() });
     expect(open).toHaveBeenCalledWith({ source: 'plugin:another-platform', conversationId: 'private', senderId: 'user' });
-    expect(runSkillLoop).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'request-remote' }));
+    expect(beginTrace).toHaveBeenCalledWith('plugin.conversation', expect.anything(), 'plugin.conversation');
+    expect(runSkillLoop).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'request-remote',
+      parent: { traceId: 'a'.repeat(32), spanId: 'b'.repeat(16) },
+    }));
     expect(loadRecentTurns).toHaveBeenCalled();
     expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ userText: '开发任务', assistantText: '你好', toolContext: 'accepted task-remote' }));
     expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ toolContext: 'accepted task-remote' }));

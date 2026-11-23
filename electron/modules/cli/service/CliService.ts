@@ -3,6 +3,7 @@ import type { ToolConversationService } from './ToolConversationService.js';
 import { operationText } from '../domain/toolConversation.js';
 import type { CommandClaim } from '../../../../shared/cli/contracts.js';
 import { isBoundaryTrace } from '../../../../shared/logging/boundaryTrace.js';
+import { createSpanId, isSpanContext } from '../../../../shared/logging/spanContext.js';
 import type { BackendLogService } from '../../logging/BackendLogService.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -16,6 +17,7 @@ const envelope = z.object({
   command: z.string().max(100),
   args: z.record(z.string(), z.unknown()),
   traceId: z.string().min(1).max(200).optional(),
+  spanId: z.string().regex(/^[0-9a-f]{16}$/).optional(),
   boundary: z.string().max(40).optional(),
 }).strict();
 
@@ -58,9 +60,9 @@ export class CliService {
   private readonly grants?: PluginCliGrantStore;
   private readonly store: CallStore;
   private readonly conversations?: ToolConversationService;
-  private readonly log?: Pick<BackendLogService, 'lineage'>;
+  private readonly log?: Pick<BackendLogService, 'lineage'> & Partial<Pick<BackendLogService, 'recordSpan'>>;
 
-  constructor(store: CallStore, grants?: PluginCliGrantStore, conversations?: ToolConversationService, log?: Pick<BackendLogService, 'lineage'>) {
+  constructor(store: CallStore, grants?: PluginCliGrantStore, conversations?: ToolConversationService, log?: Pick<BackendLogService, 'lineage'> & Partial<Pick<BackendLogService, 'recordSpan'>>) {
     this.store = store;
     this.grants = grants;
     this.conversations = conversations;
@@ -195,15 +197,31 @@ export class CliService {
     this.store.data.calls[key] = { hash, state: 'reserved', issuedAt: request.issuedAt };
     this.store.save();
     const operation = { invocationId: request.invocationId, command: request.command, args: operationText(args) };
-    if (request.requestId) this.conversations?.operation(context, request.requestId, { ...operation, status: 'pending' });
-    const run = Promise.resolve().then(() => definition.execute(args, {
+    const carriedSpan = { traceId: request.traceId, spanId: request.spanId };
+    const parent = isSpanContext(carriedSpan) ? carriedSpan : undefined;
+    const pluginId = parent ? this.owners.get(request.command) : undefined;
+    const spanId = parent && pluginId ? createSpanId() : undefined;
+    const startedAt = Date.now();
+    const traced = {
       ...context,
       requestId: request.requestId ?? request.invocationId,
-    }, request.invocationId)).then((result) => {
+      ...(parent && spanId ? { trace: { traceId: parent.traceId, spanId } } : {}),
+    };
+    const finishSpan = (status: 'ok' | 'error') => {
+      if (!parent || !spanId || !pluginId) return;
+      this.log?.recordSpan?.({
+        traceId: parent.traceId, spanId, parentSpanId: parent.spanId, name: 'plugin.command',
+        startedAt, endedAt: Date.now(), status,
+        attributes: { command: request.command, pluginId },
+      });
+    };
+    if (request.requestId) this.conversations?.operation(context, request.requestId, { ...operation, status: 'pending' });
+    const run = Promise.resolve().then(() => definition.execute(args, traced, request.invocationId)).then((result) => {
       this.store.data.calls[key] = { hash, state: 'done', issuedAt: request.issuedAt, result };
       this.store.save();
       if (request.requestId) this.conversations?.operation(context, request.requestId,
         { ...operation, status: 'succeeded', result: operationText(result) }, [args, result]);
+      finishSpan('ok');
       return structuredClone(result);
     }, (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -211,6 +229,7 @@ export class CliService {
       this.store.save();
       if (request.requestId) this.conversations?.operation(context, request.requestId,
         { ...operation, status: 'failed', result: operationText({ error: message }) });
+      finishSpan('error');
       throw error;
     }).finally(() => { this.pending.delete(key); });
     this.pending.set(key, run);

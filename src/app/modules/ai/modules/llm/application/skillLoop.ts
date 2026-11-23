@@ -62,6 +62,8 @@ export interface SkillLoopOptions {
   signal?: AbortSignal;
   session: CommandSession;
   log?: LogService;
+  /** 这一轮对话的 span。cli.invoke 挂在它下面，沿用同一个 traceId。 */
+  parent?: { traceId: string; spanId: string };
   historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
   summarize?: (system: string, user: string, signal: AbortSignal) => Promise<string>;
   /** Injectable model transport for behavioral tests, not a second execution path. */
@@ -177,11 +179,11 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
               params: { command: definition.name, requestId: options.requestId },
               behavior: '把工具调用交给主进程执行',
             });
-            const trace = registration?.beginTrace(definition.name, { command: definition.name }, 'cli.invoke');
+            const trace = registration?.beginTrace(definition.name, { command: definition.name }, 'cli.invoke', options.parent);
             try {
               result = await session.invoke({ command: definition.name, args: args as Record<string, unknown>,
                 invocationId: `${options.requestId}:${round}:${index}`, requestId: options.requestId, issuedAt,
-                ...(trace ? { traceId: trace.traceId, boundary: 'cli.invoke' as const } : {}) });
+                ...(trace?.spanId ? { traceId: trace.traceId, spanId: trace.spanId, boundary: 'cli.invoke' as const } : {}) });
               trace?.end({ command: definition.name });
             } catch (error) {
               trace?.fail(error instanceof Error ? error.message : String(error));

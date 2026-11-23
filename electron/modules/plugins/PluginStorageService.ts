@@ -17,6 +17,13 @@ export class PluginStorageService {
     this.directory = directory;
   }
 
+  private readonly listeners = new Set<(pluginId: string, key: string) => void>();
+
+  subscribe(listener: (pluginId: string, key: string) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
   #directory(): string {
     const directory = typeof this.directory === 'function' ? this.directory() : this.directory;
     if (!directory) throw new TypeError('Plugin storage directory is required');
@@ -40,6 +47,7 @@ export class PluginStorageService {
     const values = this.#read(pluginId);
     values[key] = JSON.parse(serialized) as unknown;
     this.#write(pluginId, values);
+    for (const listener of this.listeners) listener(pluginId, key);
   }
 
   delete(pluginId: string, key: string): boolean {
@@ -48,6 +56,7 @@ export class PluginStorageService {
     if (!Object.prototype.hasOwnProperty.call(values, key)) return false;
     delete values[key];
     this.#write(pluginId, values);
+    for (const listener of this.listeners) listener(pluginId, key);
     return true;
   }
 

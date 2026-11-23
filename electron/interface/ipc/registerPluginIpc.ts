@@ -19,6 +19,7 @@ const isTrustedRenderer = (event: { senderFrame?: { url?: string } | null }): bo
 };
 
 const registerPluginIpcImpl = ({ pluginStorageService }: { pluginStorageService: PluginStorageService }) => {
+  pluginStorageService.subscribe(broadcast);
   const invoke = (operation: (payload: Record<string, unknown>) => unknown) => async (event: IpcMainInvokeEvent, payload: unknown = {}) => {
     if (!isTrustedRenderer(event)) throw new Error('Plugin storage is only available to application renderers');
     return operation(isRecord(payload) ? payload : {});
@@ -29,13 +30,11 @@ const registerPluginIpcImpl = ({ pluginStorageService }: { pluginStorageService:
     const id = asText(pluginId);
     const storageKey = asText(key);
     pluginStorageService.set(id, storageKey, value);
-    broadcast(id, storageKey);
   }));
   ipcMain.handle('ddd:plugin:storage:delete', invoke(({ pluginId, key }) => {
     const id = asText(pluginId);
     const storageKey = asText(key);
     pluginStorageService.delete(id, storageKey);
-    broadcast(id, storageKey);
   }));
 };
 

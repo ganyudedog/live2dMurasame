@@ -10,6 +10,7 @@ interface RuntimeCliHost {
   storage: {
     get: (key: string) => unknown;
     set: (key: string, value: unknown) => void;
+    subscribe: (listener: (key: string) => void) => () => void;
     delete: (key: string) => boolean;
   };
   invoke: (request: { invocationId: string; issuedAt: number; command: string; args: Record<string, unknown> }) => Promise<unknown>;
@@ -58,6 +59,7 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
         storage: {
           get: (key) => storage.get(entry.id, key),
           set: (key, value) => storage.set(entry.id, key, value),
+          subscribe: (listener) => storage.subscribe((id, key) => { if (id === entry.id) listener(key); }),
           delete: (key) => storage.delete(entry.id, key),
         },
         invoke: (request) => cli.invoke(request, hostContext),

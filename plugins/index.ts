@@ -3,7 +3,7 @@
  * this directory at build time. The default export is typed as unknown because
  * the glob cannot see each module's type; bootstrap parses it into a plugin definition.
  */
-const discovered = import.meta.glob(['./*/index.ts', '!./api/**'], {
+const discovered = import.meta.glob(['./*/index.ts', './*/index.tsx', '!./api/**'], {
   eager: true,
   import: 'default',
 }) as Record<string, unknown>;

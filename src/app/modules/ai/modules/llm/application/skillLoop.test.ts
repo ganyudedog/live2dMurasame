@@ -7,6 +7,7 @@ const session = () => ({
   invoke: vi.fn(async (request: { command: string }) => request.command === 'commands.list' ? [] : undefined),
   finish: vi.fn(async () => undefined),
   reply: vi.fn(async () => undefined),
+  compact: vi.fn(async () => true),
   close: vi.fn(async () => undefined),
 });
 

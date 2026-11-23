@@ -4,7 +4,8 @@ import { registerMemoryIpc } from './registerMemoryIpc.js';
 import { registerWindowIpc } from './registerWindowIpc.js';
 import { registerAsrIpc } from './registerAsrIpc.js';
 import { registerPluginIpc } from './registerPluginIpc.js';
-import { ipcMain, type IpcMainEvent } from 'electron';
+import { ipcMain, shell, type IpcMainEvent } from 'electron';
+import { parseExternalUrl } from '../../infrastructure/system/externalUrl.js';
 import type { Live2dEnvironmentService } from '../../modules/live2denv/application/Live2dEnvironmentService.js';
 import type { ModelEnvironmentService } from '../../modules/modelenv/application/ModelEnvironmentService.js';
 import type { WindowApplicationService } from '../../modules/window/WindowApplicationService.js';
@@ -38,6 +39,12 @@ export const registerDomainIpc = (dependencies: DomainDependencies) => {
   ipcMain.on('ddd:system:renderer-trace', (event: IpcMainEvent, payload: unknown = {}) => {
     const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
     dependencies.logService.mirrorRenderer(event, body);
+  });
+  ipcMain.handle('ddd:system:open-external', async (_event, value: unknown) => {
+    const url = parseExternalUrl(value);
+    if (!url) return false;
+    await shell.openExternal(url);
+    return true;
   });
   return { ...live2denv, asrRuntime };
 };

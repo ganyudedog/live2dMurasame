@@ -453,6 +453,8 @@ declare global {
   interface PetSystemAPI {
     debugTrace?: (payload: PetDebugTracePayload) => void;
     listPlugins?: () => Promise<RuntimePluginEntry[]>;
+    /** 用系统默认浏览器打开 http(s) 链接；主进程拒绝其他协议时返回 false。 */
+    openExternal?: (url: string) => Promise<boolean>;
   }
 
   interface PetTtsDiagnosticsAPI {

@@ -155,6 +155,7 @@ const AsrAPI = {
 const SystemAPI = {
   debugTrace: (payload: unknown) => ipcRenderer.send('ddd:system:renderer-trace', payload),
   listPlugins: () => ipcRenderer.invoke('ddd:system:plugins:list'),
+  openExternal: (url: string) => ipcRenderer.invoke('ddd:system:open-external', url),
 };
 
 const SubtitleAPI = {

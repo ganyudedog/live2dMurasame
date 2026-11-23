@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { MARK, plainRichText, visibleLength, type RichLine, type TextRun } from '@app/shared/markdown/richText';
 import { resolveBubbleTypography } from '../../domain/constants';
-import { bubblePageDuration, layoutBubbleText } from '../../domain/textLayout';
+import { bubblePageDuration, layoutBubbleText, type BubbleTextMeasurer } from '../../domain/textLayout';
 
 type ChatBubbleProps = {
   text: string;
@@ -16,13 +17,66 @@ type ChatBubbleProps = {
   style?: React.CSSProperties;
 };
 
-const createTextMeasurer = (fontSize: number) => {
-  if (typeof document === 'undefined') return (text: string) => Array.from(text).length * fontSize;
+const BODY_FONT = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const CODE_FONT = 'ui-monospace, "Cascadia Mono", Consolas, monospace';
+const TEXT_COLOR = '#0f172a';
+const CODE_COLOR = '#be185d';
+const LINK_COLOR = '#db2777';
+
+/** 测量和绘制共用同一套样式，换行结果才与画出来的一致。 */
+const runStyle = (marks: number, fontSize: number) => ({
+  fontFamily: marks & MARK.code ? CODE_FONT : BODY_FONT,
+  fontSize: marks & MARK.code ? Math.round(fontSize * 0.92) : fontSize,
+  fontWeight: marks & MARK.strong ? 800 : 600,
+  fontStyle: marks & MARK.emphasis ? 'italic' as const : 'normal' as const,
+  color: marks & MARK.link ? LINK_COLOR : marks & MARK.code ? CODE_COLOR : TEXT_COLOR,
+  underline: Boolean(marks & MARK.link),
+});
+
+const createTextMeasurer = (fontSize: number): BubbleTextMeasurer => {
+  const fallback: BubbleTextMeasurer = (text) => Array.from(text).length * fontSize;
+  if (typeof document === 'undefined') return fallback;
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
-  if (!context) return (text: string) => Array.from(text).length * fontSize;
-  context.font = `600 ${fontSize}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-  return (text: string) => context.measureText(text).width;
+  if (!context) return fallback;
+  return (text, marks) => {
+    const style = runStyle(marks, fontSize);
+    context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize}px ${style.fontFamily}`;
+    return context.measureText(text).width;
+  };
+};
+
+/** 只保留前 count 个可见字符；之后的行不再渲染，和逐字打出的效果一致。 */
+const revealLines = (lines: readonly RichLine[], count: number): RichLine[] => {
+  const result: RichLine[] = [];
+  let remaining = count;
+  for (const line of lines) {
+    if (remaining <= 0 && result.length) break;
+    const visible: RichLine = [];
+    for (const run of line) {
+      if (remaining <= 0) break;
+      const characters = Array.from(run.text);
+      const shown = characters.slice(0, remaining);
+      remaining -= shown.length;
+      visible.push({ text: shown.join(''), marks: run.marks });
+    }
+    result.push(visible);
+  }
+  return result;
+};
+
+const svgRun = (run: TextRun, index: number, fontSize: number) => {
+  const style = runStyle(run.marks, fontSize);
+  return <tspan key={index} fill={style.color} fontFamily={style.fontFamily} fontSize={style.fontSize}
+    fontWeight={style.fontWeight} fontStyle={style.fontStyle}
+    textDecoration={style.underline ? 'underline' : undefined}>{run.text}</tspan>;
+};
+
+const htmlRun = (run: TextRun, index: number, fontSize: number) => {
+  const style = runStyle(run.marks, fontSize);
+  return <span key={index} style={{ color: style.color, fontFamily: style.fontFamily, fontSize: style.fontSize,
+    fontWeight: style.fontWeight, fontStyle: style.fontStyle,
+    textDecoration: style.underline ? 'underline' : undefined }}>{run.text}</span>;
 };
 
 const resolveMaxWidth = (value: number | string | undefined): number => {
@@ -73,9 +127,13 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ text, side, tail, maxWid
     const typography = resolveBubbleTypography(scale);
     return layoutBubbleText(text, resolveMaxWidth(maxWidth), typography, createTextMeasurer(typography.fontSize), maxLines);
   }, [maxLines, maxWidth, scale, text]);
-  const displayedLayout = useMemo(() => displayText === undefined ? layout
-    : layoutBubbleText(displayText, resolveMaxWidth(maxWidth), layout.typography, createTextMeasurer(layout.typography.fontSize), maxLines),
-  [displayText, layout, maxLines, maxWidth]);
+  // 打字机给的是整页编码串的前缀：沿用整页的换行，只按可见字数截断，不会露出半截标记。
+  const displayedLines = useMemo(() => {
+    if (displayText === undefined) return layout.lines;
+    if (text.startsWith(displayText)) return revealLines(layout.lines, visibleLength(displayText));
+    return layoutBubbleText(displayText, resolveMaxWidth(maxWidth), layout.typography,
+      createTextMeasurer(layout.typography.fontSize), maxLines).lines;
+  }, [displayText, layout, maxLines, maxWidth, text]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followScrollRef = useRef(true);
   useEffect(() => {
@@ -108,7 +166,7 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ text, side, tail, maxWid
       height={layout.bodyHeight}
       viewBox={`0 0 ${layout.width} ${layout.bodyHeight}`}
       role="status"
-      aria-label={displayText ?? text}
+      aria-label={plainRichText(displayText ?? text)}
       data-line-count={layout.lineCount}
       data-reading-duration-ms={layout.pages.reduce((total, lines) => total + bubblePageDuration(lines), 0)}
     >
@@ -129,25 +187,27 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ text, side, tail, maxWid
             const element = event.currentTarget;
             followScrollRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < typography.lineHeight;
           }} style={{ height: '100%', overflowY: scrollable ? 'auto' : 'hidden', overflowX: 'hidden',
-            pointerEvents: scrollable ? 'auto' : 'none', scrollbarWidth: 'thin', color: '#0f172a',
-            fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-            fontSize: typography.fontSize, lineHeight: `${typography.lineHeight}px`, fontWeight: 600 }}>
-            {displayedLayout.lines.map((line, index) => (
-              <div key={index} style={{ height: typography.lineHeight, whiteSpace: 'pre' }}>{line || ' '}</div>
+            pointerEvents: scrollable ? 'auto' : 'none', scrollbarWidth: 'thin', color: TEXT_COLOR,
+            fontFamily: BODY_FONT, fontSize: typography.fontSize, lineHeight: `${typography.lineHeight}px`, fontWeight: 600 }}>
+            {displayedLines.map((line, index) => (
+              <div key={index} style={{ height: typography.lineHeight, whiteSpace: 'pre' }}>
+                {line.length ? line.map((run, runIndex) => htmlRun(run, runIndex, typography.fontSize)) : ' '}
+              </div>
             ))}
           </div>
         </foreignObject>
       ) : <text
         x={bodyX + typography.horizontalInset}
         y={typography.verticalInset + typography.fontSize}
-        fill="#0f172a"
-        fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+        fill={TEXT_COLOR}
+        fontFamily={BODY_FONT}
         fontSize={typography.fontSize}
         fontWeight="600"
+        xmlSpace="preserve"
       >
         {lines.map((line, index) => (
-          <tspan key={`${index}-${line}`} x={bodyX + typography.horizontalInset} dy={index === 0 ? 0 : typography.lineHeight}>
-            {line || ' '}
+          <tspan key={index} x={bodyX + typography.horizontalInset} dy={index === 0 ? 0 : typography.lineHeight}>
+            {line.length ? line.map((run, runIndex) => svgRun(run, runIndex, typography.fontSize)) : ' '}
           </tspan>
         ))}
       </text>}

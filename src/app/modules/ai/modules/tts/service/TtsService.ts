@@ -14,6 +14,7 @@ import type { QwenTtsTriggerInput, TtsRunResult, TtsRuntimeConfig, TtsWarmupResu
 
 import { normalizeTtsConfig } from '../domain/config';
 import { trimText as normalizeText } from '../domain/requestPolicy';
+import { stripMarkdown } from '@app/shared/markdown/markdown';
 import { isAbortError } from '@app/shared/utils/errors';
 
 
@@ -212,7 +213,8 @@ export class TtsService {
 
   async speakFromQwenReply(input: QwenTtsTriggerInput): Promise<TtsRunResult> {
     const requestId = normalizeText(input.requestId) || `tts_${Date.now().toString(36)}`;
-    const speakText = normalizeText(input.speakText);
+    // 模型偶尔会在朗读文本里带 Markdown，合成前去掉；没有标记时文本保持原样。
+    const speakText = normalizeText(stripMarkdown(normalizeText(input.speakText)));
     const displayText = normalizeText(input.displayText) || speakText;
     const notify = (state: TtsPlaybackEvent['state'], transport: TtsPlaybackEvent['transport'], reason?: string) => {
       this.emitPlayback({ requestId, queueGroupId: input.queueGroupId, sentenceIndex: input.sentenceIndex, state, transport, ...(reason ? { reason } : {}) });

@@ -3,6 +3,7 @@ import type { DragEventHandler, KeyboardEvent, ReactNode, Ref, TextareaHTMLAttri
 import { ArrowUp, AudioLines, Check, ChevronUp, LoaderCircle, MessageSquare, Mic, MicOff, Sparkles } from 'lucide-react';
 import type { ActionCategory } from '../../../../../../../shared/live2d/actionCatalog.js';
 import { cn } from './cn';
+import { MarkdownText } from './MarkdownText';
 
 interface ChatMessageView {
   id: string;
@@ -408,7 +409,9 @@ export default function ChatPanel<T extends ChatMessageView>({ title, descriptio
                   : system ? 'rounded-bl-md bg-warning/12 text-foreground ring-1 ring-inset ring-warning/25'
                     : 'rounded-bl-md bg-muted text-foreground',
                 message.status === 'error' && 'ring-1 ring-inset ring-danger/40')}>
-                <div className="whitespace-pre-wrap wrap-break-word">{message.text}</div>
+                {mine
+                  ? <div className="whitespace-pre-wrap wrap-break-word">{message.text}</div>
+                  : <MarkdownText text={message.text} />}
                 {renderMessageDetails?.(message)}
                 {message.status === 'sending' && <TypingDots />}
                 {message.status === 'error' && <div className="mt-1 text-[11px] opacity-75">

@@ -1,7 +1,7 @@
 import { makeObservable, observable, observableRef, runInAction } from 'mobx';
 import { BUBBLE_MAX_LINES } from '../domain/constants';
 import type { DialogueMeasurement, DialogueMeasurementRequest, DialoguePlaybackState, DialogueSentence } from '../domain/dialogue';
-import { splitDialogueParagraph } from '../domain/dialogue';
+import { splitRichDialogue } from '../domain/dialogue';
 
 interface VisualSentence extends DialogueSentence {
   joinPrevious?: boolean;
@@ -144,8 +144,8 @@ export class BubbleDialogueService {
 
   prepare(sentence: DialogueSentence): void {
     if (!this.conversationId || !sentence.text || this.sourceSegments.has(sentence.requestId)) return;
-    const parts = sentence.text.split(/\r?\n/).map((part) => part.trim()).filter(Boolean)
-      .flatMap((paragraph, paragraphIndex) => splitDialogueParagraph(paragraph).map((text, index) => ({
+    const parts = splitRichDialogue(sentence.text)
+      .flatMap((paragraph, paragraphIndex) => paragraph.map((text, index) => ({
         text,
         joinPrevious: index > 0,
         pageBreakBefore: index === 0 && (paragraphIndex > 0 || sentence.pageBreakBefore),

@@ -1,7 +1,7 @@
 import { makeObservable, observable, runInAction } from 'mobx';
 import type { BootstrapContext } from '@app/core/bootstrapContext';
 import type { BoundaryName } from '../../../../shared/logging/boundaryTrace.js';
-import { createSpanId, isSpanContext, type SpanContext } from '../../../../shared/logging/spanContext.js';
+import { createSpanId, isSpanContext, SENSITIVE_KEY, spanAttributes, type SpanContext } from '../../../../shared/logging/spanContext.js';
 import { nowMs } from './compat/time';
 import type {
   ContextRelation,
@@ -57,7 +57,6 @@ type RegistrationState = {
 
 const MAX_TRACE_EVENTS = 128;
 const MAX_RETAINED_TRACES = 48;
-const SENSITIVE_KEY = /api.?key|access.?token|token|secret|password|authorization|cookie/i;
 const TOKEN_USAGE_KEYS = new Set(['promptTokens', 'cachedTokens', 'uncachedTokens', 'completionTokens']);
 
 /**
@@ -78,6 +77,7 @@ export type BoundaryForward = (payload: {
   endedAt: number;
   failed: boolean;
   events: Array<{ event: string; at: number }>;
+  attributes?: Record<string, string | number | boolean>;
 }) => void;
 
 export class LogService {
@@ -143,6 +143,19 @@ export class LogService {
     });
     const trace = context.beginTrace('renderer.unhandled');
     trace.fail(toErrorMessage(error), options.data, error);
+    context.dispose();
+  }
+
+  /** 插件运行异常。一次调用一个短 span，不把插件生命周期留在追踪上。 */
+  recordPluginRuntime(pluginId: string, level: 'warn' | 'error', event: string, data?: Record<string, unknown>): void {
+    const context = this.contextRegistry.register(`plugin.${pluginId}`, {
+      relation: 'plugin.runtime',
+      params: { pluginId },
+      behavior: '记录插件运行中的异常',
+    });
+    const detail = pluginRuntimeDetail(pluginId, level, event, data);
+    const trace = context.beginTrace(event, detail, 'plugin.runtime');
+    trace.fail(event, detail);
     context.dispose();
   }
 
@@ -293,6 +306,7 @@ export class LogService {
       endedAt: origin + endedAt,
       failed: trace.status === 'failed',
       events: trace.events.map(({ event, timestamp }) => ({ event, at: origin + Math.min(timestamp, endedAt) })),
+      ...boundaryAttributes(trace),
     });
   }
 
@@ -454,6 +468,21 @@ const parseStackLine = (line: string): SourceLocation | undefined => {
 };
 
 const isLoggingFrame = (file?: string): boolean => Boolean(file && /(?:shared[\\/]logging|LogService|compat[\\/]log)/i.test(file));
+
+const pluginRuntimeDetail = (pluginId: string, level: 'warn' | 'error', event: string, data?: Record<string, unknown>): Record<string, unknown> => {
+  const detail: Record<string, unknown> = { pluginId, level, event };
+  for (const [key, value] of Object.entries(data ?? {})) {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') detail[key] = value;
+    else if (value instanceof Error) detail[key] = value.message;
+  }
+  return detail;
+};
+
+const boundaryAttributes = (trace: TraceState): { attributes: Record<string, string | number | boolean> } | Record<string, never> => {
+  const data = trace.events.at(-1)?.data;
+  const attributes = spanAttributes(data);
+  return Object.keys(attributes).length ? { attributes } : {};
+};
 
 const serializeRecord = (value?: Record<string, unknown>): Record<string, unknown> | undefined => {
   if (!value) return undefined;

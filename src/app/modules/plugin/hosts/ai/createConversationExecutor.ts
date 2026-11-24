@@ -201,6 +201,7 @@ export const createDefaultConversationExecutor = (
       context.signal.throwIfAborted();
       ensureModelPath();
       context.emit({ text: displayText, ...(speakText ? { speakText } : {}), status: 'done' });
+      if (!displayText.trim()) trace.record('reply.empty', { source: options.source, requestId: context.requestId });
       trace.end({ status: 'done', model, responseLength: displayText.length, speechEnabled });
     } catch (error) {
       const cancelled = context.signal.aborted;

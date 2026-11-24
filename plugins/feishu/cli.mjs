@@ -2,7 +2,7 @@ import { registerApp } from '@larksuiteoapi/node-sdk';
 
 import { startService } from './main.mjs';
 let stopService;
-export function activate(host) { stopService?.(); stopService = startService(host.storage); }
+export function activate(host) { stopService?.(); stopService = startService(host.storage, host.report); }
 export function dispose() { stopService?.(); stopService = undefined; }
 
 const API = 'https://open.feishu.cn/open-apis';

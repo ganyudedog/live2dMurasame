@@ -29,6 +29,7 @@ export const feishuPlugin: PluginDefinition = {
         ...(relationship?.line ? { systemPrompt: relationship.line } : {}),
         sender: { id: message.senderId, displayName: message.senderName }, memoryArchive: { platform: 'feishu', scope: message.conversationType, id: message.conversationId } });
       if (!result.accepted && result.reason !== 'duplicate') {
+        context.logger?.error('message.rejected', { reason: result.reason ?? 'unavailable', conversationId: message.conversationId });
         await storage.set(`reply.${message.messageId}`, { messageId: message.messageId, conversationId: message.conversationId, text: '当前无法接收这轮对话，请稍后重试。' });
       }
     };

@@ -37,7 +37,9 @@ export interface Observability {
 export function isTraceId(value: unknown): value is string;
 export function isSpanId(value: unknown): value is string;
 export function isSpanContext(value: unknown): value is SpanContext;
+export const SENSITIVE_KEY: RegExp;
 export function createSpanId(): string;
+export function spanAttributes(value: unknown): Record<string, string | number | boolean>;
 export function traceparentOf(context: SpanContext): string;
 export function parseTraceparent(value: unknown): SpanContext | null;
 export function createObservability(options: {

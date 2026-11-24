@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { BootstrapContext } from '@app/core/bootstrapContext';
+import { LogService } from '@app/shared/logging/LogService';
 import type { AiHostApi, ConversationChannel } from '../types';
 import { PluginRuntime } from './PluginRuntime';
 
@@ -173,5 +175,42 @@ describe('PluginRuntime', () => {
     expect(models?.()).toEqual([{ id: 'model', efforts: [] }]);
     await runtime.stopPlugin('lifecycle.plugin');
     expect(() => models?.()).toThrow(/no longer active/);
+  });
+
+  it('turns a plugin error into a runtime span and leaves secrets out', async () => {
+    const forwarded: Array<{ boundary?: string; failed?: boolean; attributes?: Record<string, unknown> }> = [];
+    const log = new LogService({ windowKind: 'pet', startedAt: 0, configSnapshot: null } satisfies BootstrapContext);
+    log.forwardBoundary = (payload) => { forwarded.push(payload); };
+    const runtime = new PluginRuntime({ log });
+    runtime.registerPlugin({
+      manifest: { id: 'live2d.feishu', name: '飞书', version: '0.1.0', apiVersion: '1.0.0', permissions: [] },
+      activate: (context) => { context.logger.error('delivery.failed', { reason: 'connection lost', appSecret: 'hidden' }); },
+    });
+    await runtime.activatePlugin('live2d.feishu');
+    expect(forwarded.at(-1)).toMatchObject({
+      kind: 'boundary',
+      boundary: 'plugin.runtime',
+      failed: true,
+      attributes: { pluginId: 'live2d.feishu', event: 'delivery.failed', reason: 'connection lost' },
+    });
+    expect(JSON.stringify(forwarded.at(-1))).not.toContain('hidden');
+  });
+
+  it('records a plugin warning as a failed runtime span', async () => {
+    const forwarded: Array<{ boundary?: string; failed?: boolean; attributes?: Record<string, unknown> }> = [];
+    const log = new LogService({ windowKind: 'pet', startedAt: 0, configSnapshot: null } satisfies BootstrapContext);
+    log.forwardBoundary = (payload) => { forwarded.push(payload); };
+    const runtime = new PluginRuntime({ log });
+    runtime.registerPlugin({
+      manifest: { id: 'live2d.astrbot', name: 'QQ', version: '1.0.0', apiVersion: '1.0.0', permissions: [] },
+      activate: (context) => { context.logger.warn('websocket.closed', { code: 1006 }); },
+    });
+    await runtime.activatePlugin('live2d.astrbot');
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]).toMatchObject({
+      boundary: 'plugin.runtime',
+      failed: true,
+      attributes: { pluginId: 'live2d.astrbot', level: 'warn', event: 'websocket.closed', code: 1006 },
+    });
   });
 });

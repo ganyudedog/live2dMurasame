@@ -44,13 +44,42 @@ describe('runtime CLI registration', () => {
     expect(listed.find((item) => item.name === 'notes.add')).toMatchObject({ skill: 'notes', instructions: '先确认内容。' });
     await expect(cli.invoke({
       invocationId: 'notes-1', issuedAt: Date.now(), command: 'notes.add', args: { text: 'hello' },
-    }, context)).resolves.toEqual({ saved: 'hello', hostFields: ['invoke', 'storage'] });
+    }, context)).resolves.toEqual({ saved: 'hello', hostFields: ['invoke', 'report', 'storage'] });
     expect(storage.get('live2d.notes', 'note')).toBe('hello');
     expect(storage.get('other-plugin', 'note')).toBe('private');
     remove();
     await expect(cli.invoke({
       invocationId: 'notes-2', issuedAt: Date.now(), command: 'notes.add', args: { text: 'again' },
     }, context)).rejects.toThrow('unavailable');
+  });
+
+  it('records a reported runtime span with redaction and one truncation', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'live2d-cli-plugin-'));
+    roots.push(root);
+    const folder = path.join(root, 'reporter');
+    mkdirSync(folder);
+    writeFileSync(path.join(folder, 'manifest.json'), JSON.stringify({
+      id: 'live2d.reporter', name: 'Reporter', version: '1.0.0', permissions: ['commands.register'],
+    }));
+    writeFileSync(path.join(folder, 'cli.js'), `
+      export function activate(host) {
+        host.report(${JSON.stringify('e'.repeat(100))}, { appSecret: 'hidden', reason: ${JSON.stringify('y'.repeat(300))}, attempt: 2 }, false);
+      }
+    `);
+    const spans: Array<{ status: string; parentSpanId?: string; attributes?: Record<string, unknown>; events?: Array<{ name: string }> }> = [];
+    await registerRuntimeCli(new CliService(new CallStore(path.join(root, 'tasks.json'))), root, {
+      error: () => {},
+      open: () => ({ traceId: 'b'.repeat(32), event() {} }),
+      recordSpan: (span) => { spans.push(span); },
+    }, new PluginStorageService({ directory: path.join(root, 'storage') }));
+    const reported = spans.find((span) => span.attributes?.attempt === 2);
+    expect(reported?.status).toBe('ok');
+    expect(reported?.parentSpanId).toBeUndefined();
+    expect(reported?.attributes).toMatchObject({ pluginId: 'live2d.reporter', attempt: 2 });
+    expect(reported?.attributes?.event).toBe('e'.repeat(80));
+    expect(reported?.attributes?.reason).toBe('y'.repeat(160));
+    expect(reported?.events?.[0]?.name).toBe('e'.repeat(80));
+    expect(JSON.stringify(reported)).not.toContain('hidden');
   });
 
   it('logs a broken plugin and still registers the next one', async () => {
@@ -66,9 +95,25 @@ describe('runtime CLI registration', () => {
       writeFileSync(path.join(dir, 'cli.js'), body);
     }
     const errors: unknown[] = [];
+    const spans: Array<{ name: string; traceId: string; parentSpanId?: string; spanId: string; status: string; attributes?: Record<string, unknown>; events?: Array<{ name: string }> }> = [];
+    const traceId = 'a'.repeat(32);
     const cli = new CliService(new CallStore(path.join(root, 'tasks.json')));
-    await registerRuntimeCli(cli, root, { error: (_scope, _event, data) => { errors.push(data); }, open: () => ({ traceId: '', event() {} }) }, new PluginStorageService({ directory: path.join(root, 'storage') }));
+    await registerRuntimeCli(cli, root, {
+      error: (_scope, _event, data) => { errors.push(data); },
+      open: () => ({ traceId, event() {} }),
+      recordSpan: (span) => { spans.push(span); },
+    }, new PluginStorageService({ directory: path.join(root, 'storage') }));
     expect(errors).toEqual([expect.objectContaining({ pluginId: 'broken', message: 'cli exploded' })]);
+    const scan = spans.find((span) => span.name === 'plugin.cli.register');
+    const failure = spans.find((span) => span.attributes?.event === 'runtimeCli.register.failed');
+    expect(scan).toMatchObject({ traceId, status: 'error' });
+    expect(failure).toMatchObject({
+      traceId,
+      parentSpanId: scan?.spanId,
+      name: 'plugin.runtime',
+      status: 'error',
+      attributes: { pluginId: 'broken', event: 'runtimeCli.register.failed', message: 'cli exploded' },
+    });
     await expect(cli.invoke({
       invocationId: 'notes-3', issuedAt: Date.now(), command: 'notes.add', args: {},
     }, context)).resolves.toEqual({ saved: true });

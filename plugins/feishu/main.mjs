@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { LarkChannel } from '@larksuiteoapi/node-sdk';
 
-const createTransport = (emit) => {
+const createTransport = (emit, report) => {
   let channel;
   let state = 'idle';
   function status(next) {
@@ -56,8 +56,16 @@ const createTransport = (emit) => {
           mentionsBot: message.mentionedBot,
         });
       });
-      next.on('reconnecting', () => { if (channel === next) status('reconnecting'); });
-      next.on('reconnected', () => { if (channel === next) status('connected'); });
+      next.on('reconnecting', () => {
+        if (channel !== next) return;
+        status('reconnecting');
+        report('connection.reconnecting', {}, false);
+      });
+      next.on('reconnected', () => {
+        if (channel !== next) return;
+        status('connected');
+        report('connection.reconnected', {}, false);
+      });
       try {
         await next.connect();
         if (channel === next) status('connected');
@@ -82,8 +90,9 @@ const createTransport = (emit) => {
   };
 };
 
-export function startService(storage) {
+export function startService(storage, report = () => {}) {
   const sending = new Set();
+  const attempts = new Map();
   let disposed = false;
   let connectionGeneration = 0;
   let retryTimer;
@@ -116,7 +125,7 @@ export function startService(storage) {
         flush();
       }
     }
-  });
+  }, report);
   async function deliver(reply) {
     const startedOn = connectionGeneration;
     try {
@@ -124,6 +133,9 @@ export function startService(storage) {
       if (!storage.get(key)?.replyMessageId) {
         const receipt = await transport.send({ replyTo: reply.messageId, text: reply.text });
         storage.set(key, { replyMessageId: receipt.messageId });
+        const attempt = attempts.get(reply.messageId) ?? 0;
+        attempts.delete(reply.messageId);
+        report('delivery.succeeded', { messageId: reply.messageId, attempt }, false);
       }
       const remaining = (storage.get('pendingReplies') ?? []).filter(item => item.messageId !== reply.messageId);
       storage.set('pendingReplies', remaining);
@@ -136,6 +148,9 @@ export function startService(storage) {
       const reason = detail?.code && detail?.msg ? `飞书 ${detail.code} · ${detail.msg}` : error.message;
       if (!disposed) {
         storage.set('deliveryError', reason);
+        const attempt = (attempts.get(reply.messageId) ?? 0) + 1;
+        attempts.set(reply.messageId, attempt);
+        report(attempt === 1 ? 'delivery.failed' : 'delivery.retry', { messageId: reply.messageId, reason, attempt }, true);
         if (startedOn === connectionGeneration) scheduleRetry();
       }
     } finally {
@@ -155,7 +170,11 @@ export function startService(storage) {
   function configure() {
     const config = storage.get('settings');
     const changing = config?.enabled && storage.get('petActive') ? transport.start(config) : transport.stop();
-    void changing.catch(error => { if (!disposed) storage.set('connection', error.message); });
+    void changing.catch(error => {
+      if (disposed) return;
+      storage.set('connection', error.message);
+      report('connection.failed', { reason: error.message }, true);
+    });
   }
   storage.set('petActive', false);
   const unsubscribe = storage.subscribe(key => {

@@ -5,7 +5,7 @@ import { parseJsonSchemaArgs } from '../cli/service/jsonSchemaArgs.js';
 import { listRuntimeCliEntries } from './scanRuntimePlugins.js';
 import type { PluginStorageService } from './PluginStorageService.js';
 import type { CommandContext } from '../cli/service/commandTypes.js';
-import { createObservability, isSpanContext } from '../../../shared/logging/spanContext.js';
+import { createObservability, createSpanId, isSpanContext, spanAttributes } from '../../../shared/logging/spanContext.js';
 
 interface RuntimeCliHost {
   storage: {
@@ -15,6 +15,7 @@ interface RuntimeCliHost {
     delete: (key: string) => boolean;
   };
   invoke: (request: { invocationId: string; issuedAt: number; command: string; args: Record<string, unknown> }) => Promise<unknown>;
+  report: (event: string, data?: Record<string, unknown>, failed?: boolean) => void;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -29,6 +30,32 @@ interface RuntimeCliCommand {
   localOnly?: boolean;
   execute: (args: Record<string, unknown>, context: unknown, invocationId: string, host: RuntimeCliHost) => unknown;
 }
+
+const reportPluginRuntime = (
+  log: Partial<Pick<BackendLogService, 'recordSpan'>>,
+  pluginId: string,
+  event: string,
+  data: Record<string, unknown> = {},
+  failed = false,
+  parent?: { traceId: string; spanId: string },
+) => {
+  const at = Date.now();
+  const name = String(event).slice(0, 80);
+  const traceId = parent && /^(?!0{32}$)[0-9a-f]{32}$/.test(parent.traceId)
+    ? parent.traceId
+    : crypto.randomUUID().replaceAll('-', '');
+  log.recordSpan?.({
+    traceId,
+    spanId: createSpanId(),
+    ...(parent?.spanId ? { parentSpanId: parent.spanId } : {}),
+    name: 'plugin.runtime',
+    startedAt: at,
+    endedAt: at,
+    status: failed ? 'error' : 'ok',
+    attributes: spanAttributes({ pluginId, event: name, ...data }),
+    events: [{ name, at }],
+  });
+};
 
 const readCommands = (module: unknown): RuntimeCliCommand[] => {
   const source = isRecord(module) ? module.commands ?? (isRecord(module.default) ? module.default.commands : undefined) : undefined;
@@ -51,6 +78,9 @@ const readCommands = (module: unknown): RuntimeCliCommand[] => {
 /** 扫描插件目录并在主进程登记 CLI。执行函数来自插件自己的后端入口，不经过渲染进程。 */
 export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log: Pick<BackendLogService, 'error' | 'open'> & Partial<Pick<BackendLogService, 'recordSpan' | 'flush'>>, storage: PluginStorageService, hostContext: CommandContext = { owner: 'local', local: true, source: 'local', conversationId: 'desktop' }): Promise<() => void> => {
   const trace = log.open('plugins', 'plugin.cli.register');
+  const parentSpanId = createSpanId();
+  const startedAt = Date.now();
+  let scanFailed = false;
   trace.event('plugin.scan');
   const removers: Array<() => void> = [];
   for (const entry of listRuntimeCliEntries(pluginDir)) {
@@ -64,6 +94,7 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
           delete: (key) => storage.delete(entry.id, key),
         },
         invoke: (request) => cli.invoke(request, hostContext),
+        report: (event, data, failed = false) => reportPluginRuntime(log, entry.id, event, data, failed),
       };
       if (isRecord(loaded) && typeof loaded.dispose === 'function') {
         const dispose = loaded.dispose as () => void;
@@ -93,10 +124,23 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
         await (loaded.activate as (host: RuntimeCliHost) => void | Promise<void>)(runtimeHost);
       }
     } catch (error) {
-      log.error('plugins', 'runtimeCli.register.failed', { pluginId: entry.id, message: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      scanFailed = true;
+      log.error('plugins', 'runtimeCli.register.failed', { pluginId: entry.id, message });
+      trace.event('plugin.register.failed');
+      reportPluginRuntime(log, entry.id, 'runtimeCli.register.failed', { message }, true, { traceId: trace.traceId, spanId: parentSpanId });
       /* 单个插件入口失败不影响其余插件。 */
     }
   }
+  log.recordSpan?.({
+    traceId: trace.traceId,
+    spanId: parentSpanId,
+    name: 'plugin.cli.register',
+    startedAt,
+    endedAt: Date.now(),
+    status: scanFailed ? 'error' : 'ok',
+    attributes: spanAttributes({ boundary: 'plugin.cli.register' }),
+  });
   return () => {
     removers.splice(0).forEach((dispose) => dispose());
     void log.flush?.();

@@ -21,7 +21,8 @@ describe('Feishu channel', () => {
       delete(key) { values.delete(key); listeners.forEach(fn => fn(key)); },
       subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     };
-    const stopService = startService(storage);
+    const report = vi.fn();
+    const stopService = startService(storage, report);
     storage.set('settings', { enabled: true, appId: 'demo', appSecret: 'example' });
     const sendText = vi.fn(() => ({ accepted: true }));
     let respond;
@@ -40,6 +41,7 @@ describe('Feishu channel', () => {
       await vi.waitFor(() => expect(sendText).toHaveBeenCalledTimes(1));
       expect(sendText.mock.calls[0][0]).toMatchObject({ text: 'hello', conversationId: 'oc_chat', sender: { id: 'owner' } });
       sdk.handlers.get('reconnecting')();
+      expect(report).toHaveBeenCalledWith('connection.reconnecting', {}, false);
       respond({ requestId: 'feishu:om_in', status: 'done', text: 'done' });
       await vi.waitFor(async () => expect(await storage.get('pendingReplies')).toHaveLength(1));
       expect(sdk.reply).not.toHaveBeenCalled();
@@ -49,13 +51,16 @@ describe('Feishu channel', () => {
       sdk.reply.mockImplementationOnce(() => new Promise(resolve => { accept = resolve; }));
       sdk.handlers.get('reconnected')();
       sdk.handlers.get('reconnected')();
+      expect(report).toHaveBeenCalledWith('connection.reconnected', {}, false);
       expect(sdk.reply).toHaveBeenCalledTimes(1);
       expect(sdk.reply.mock.calls[0][0]).toMatchObject({ path: { message_id: 'om_in' }, data: { content: JSON.stringify({ text: 'done' }) } });
       rejectFirst(new Error('connection lost'));
       await vi.waitFor(() => expect(sdk.reply).toHaveBeenCalledTimes(2));
+      expect(report).toHaveBeenCalledWith('delivery.failed', expect.objectContaining({ messageId: 'om_in', reason: 'connection lost', attempt: 1 }), true);
       expect(sdk.reply.mock.calls[1][0].data.uuid).toBe(sdk.reply.mock.calls[0][0].data.uuid);
       accept({ code: 0, data: { message_id: 'om_out' } });
       await vi.waitFor(async () => expect(await storage.get('pendingReplies')).toEqual([]));
+      expect(report).toHaveBeenCalledWith('delivery.succeeded', expect.objectContaining({ messageId: 'om_in', attempt: 1 }), false);
       expect(storage.get('message.om_in')).toEqual({ replyMessageId: 'om_out' });
       storage.set('reply.om_in', { messageId: 'om_in', text: 'done' });
       sdk.handlers.get('reconnected')();

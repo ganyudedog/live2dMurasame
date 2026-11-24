@@ -1,6 +1,6 @@
 import { isBoundaryName, type BoundaryName } from '../../../shared/logging/boundaryTrace.js';
 import { exportBoundaryCall, exportSpan, flushSpans } from '../../../shared/logging/exportBoundaryTrace.js';
-import type { SpanRecord } from '../../../shared/logging/spanContext.js';
+import { spanAttributes, type SpanRecord } from '../../../shared/logging/spanContext.js';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -63,10 +63,12 @@ export class BackendLogService {
       const { startedAt, endedAt, spanId } = payload;
       if (typeof startedAt === 'number' && Number.isFinite(startedAt) && typeof endedAt === 'number' && Number.isFinite(endedAt) && endedAt >= startedAt) {
         if (typeof spanId === 'string') {
+          const attributes = spanAttributes(payload.attributes);
           this.recordSpan({
             traceId: payload.traceId, spanId, name: payload.boundary, startedAt, endedAt,
             ...(typeof payload.parentSpanId === 'string' ? { parentSpanId: payload.parentSpanId } : {}),
             status: payload.failed === true ? 'error' : 'ok',
+            ...(Object.keys(attributes).length ? { attributes } : {}),
             events: events.map((item) => ({ name: item.event, at: item.at })),
           });
         } else {

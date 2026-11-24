@@ -266,10 +266,18 @@ export class PluginRuntime {
   }
 
   private pluginLogger(pluginId: string): PluginLogger {
+    const write = (level: 'info' | 'warn' | 'error', message: string, data?: unknown) => {
+      const detail = toLogData(data);
+      if (level !== 'info' && this.log?.recordPluginRuntime) {
+        this.log.recordPluginRuntime(pluginId, level, message, detail);
+        return;
+      }
+      this.log?.[level](`plugin.${pluginId}`, message, detail);
+    };
     return {
-      info: (message, data) => this.log?.info(`plugin.${pluginId}`, message, toLogData(data)),
-      warn: (message, data) => this.log?.warn(`plugin.${pluginId}`, message, toLogData(data)),
-      error: (message, data) => this.log?.error(`plugin.${pluginId}`, message, toLogData(data)),
+      info: (message, data) => write('info', message, data),
+      warn: (message, data) => write('warn', message, data),
+      error: (message, data) => write('error', message, data),
     };
   }
 

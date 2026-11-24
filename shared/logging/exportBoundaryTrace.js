@@ -15,7 +15,10 @@ const loadTracer = async (url) => {
       generateSpanId: () => assigned.getStore()?.spanId ?? random.generateSpanId(),
     },
     resource: resources.defaultResource().merge(resources.detectResources({ detectors: [resources.serviceNameEnvDetector] })),
-    spanProcessors: [new sdk.SimpleSpanProcessor({ exporter: new exporter.OTLPTraceExporter({ url }) })],
+    spanProcessors: [new sdk.BatchSpanProcessor({
+      exporter: new exporter.OTLPTraceExporter({ url }),
+      scheduledDelayMillis: 1000,
+    })],
   });
   return { api, tracer: provider.getTracer('live2d'), provider };
 };

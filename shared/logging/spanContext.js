@@ -22,10 +22,13 @@ export const parseTraceparent = (value) => {
   return { traceId: match[1], spanId: match[2] };
 };
 
-const limitAttributes = (value) => {
+export const SENSITIVE_KEY = /api.?key|access.?token|token|secret|password|authorization|cookie/i;
+
+export const spanAttributes = (value) => {
   if (!value || typeof value !== 'object') return {};
   const output = {};
-  for (const [key, item] of Object.entries(value).slice(0, 12)) {
+  for (const [key, item] of Object.entries(value)) {
+    if (SENSITIVE_KEY.test(key) || Object.keys(output).length >= 12) continue;
     const name = key.slice(0, 40);
     if (typeof item === 'string') output[name] = item.slice(0, 160);
     else if (typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item))) output[name] = item;
@@ -48,7 +51,7 @@ export const createObservability = ({ traceId, parentSpanId, pluginId, command, 
       const span = {
         event(eventName, attributes) {
           if (events.length >= 8) return;
-          events.push({ name: String(eventName).slice(0, 80), at: Date.now(), attributes: limitAttributes(attributes) });
+          events.push({ name: String(eventName).slice(0, 80), at: Date.now(), attributes: spanAttributes(attributes) });
         },
         context: () => ({ traceId, spanId }),
         withSpan: open(spanId).withSpan,
@@ -56,7 +59,7 @@ export const createObservability = ({ traceId, parentSpanId, pluginId, command, 
       const finish = (status) => sink({
         traceId, spanId, parentSpanId: parent, name: String(name).slice(0, 80),
         startedAt, endedAt: Date.now(), status,
-        attributes: { ...limitAttributes(options.attributes), ...(pluginId ? { pluginId } : {}), ...(command ? { command } : {}) },
+        attributes: { ...spanAttributes(options.attributes), ...(pluginId ? { pluginId } : {}), ...(command ? { command } : {}) },
         events,
         links: (options.links ?? []).filter(allow).slice(0, 4).map((link) => ({ traceId: link.traceId, spanId: link.spanId })),
       });

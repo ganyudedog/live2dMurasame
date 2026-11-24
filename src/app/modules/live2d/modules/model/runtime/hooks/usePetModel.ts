@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, type RefObject } from 'react';
-import { Application, Ticker } from 'pixi.js';
+import { Application } from 'pixi.js';
 import { loadModel } from '../live2d/loader';
 import { attachMouseFollowRuntime } from '../live2d/attachMouseFollowRuntime';
-import { Live2DModel } from '../live2d/runtime';
 import type { Live2DModel as Live2DModelType } from '../live2d/runtime';
 import { useService } from '@app/core/useService';
 import { TOKENS } from '@app/core/serviceTokens';
@@ -110,8 +109,6 @@ export const usePetModel = ({
         rafId = window.requestAnimationFrame(initApp);
         return;
       }
-
-      (Live2DModel as unknown as { registerTicker: (t: unknown) => void }).registerTicker(Ticker as unknown as object);
 
       // Electron content bounds and Pixi screen share logical pixels; the renderer therefore
       // uses explicit dimensions and never needs a DOM rectangle conversion.
@@ -297,6 +294,7 @@ export const usePetModel = ({
         });
         setModelLoadStatus('loaded');
       } catch (err) {
+        if (disposed) return;
         const context = logService.contextRegistry.register('PetModel', {
           relation: 'model.load',
           params: { modelPath },

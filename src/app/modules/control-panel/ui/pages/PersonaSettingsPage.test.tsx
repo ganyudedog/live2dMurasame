@@ -36,7 +36,7 @@ const loadedView = (patch: Partial<RelationshipView> = {}): RelationshipView => 
 
 it('关系卡片显示当前阶段，并只提供阶段选择', () => {
   const html = renderToStaticMarkup(<RelationshipCard view={loadedView()} loading={false} busy={false}
-    error="" actionError="" onReload={() => {}} onApply={async () => true} />).replaceAll('<!-- -->', '');
+    error="" actionError="" onApply={async () => true} />).replaceAll('<!-- -->', '');
   expect(html).toContain('阶段：信赖');
   expect(html).toContain('应用这个阶段');
   expect(html).toContain('<select');
@@ -47,7 +47,7 @@ it('关系卡片显示当前阶段，并只提供阶段选择', () => {
 it('关系卡片只展示对话形成的分支，不提供分支编辑', () => {
   const html = renderToStaticMarkup(<RelationshipCard view={loadedView({
     branches: [{ title: '亲近表达', text: '用户接受更亲近的说法', quote: '我喜欢你' }],
-  })} loading={false} busy={false} error="" actionError="" onReload={() => {}} onApply={async () => true} />)
+  })} loading={false} busy={false} error="" actionError="" onApply={async () => true} />)
     .replaceAll('<!-- -->', '');
   expect(html).toContain('关系特质');
   expect(html).not.toContain('还没有形成关系特质');
@@ -62,7 +62,7 @@ it('迁移不了的旧说明会明确要求先选择，而不是显示成某个�
     stage: '', needsSelection: true,
     line: '阶段待选择。原先的说明仍保留，但不能当作已经确定的阶段：阶段：讨厌。别说话。',
   })} loading={false} busy={false} error="" actionError="关系刚刚在另一处更新了，请再看一眼现在的阶段，然后重新调整。"
-    onReload={() => {}} onApply={async () => false} />)
+    onApply={async () => false} />)
     .replaceAll('<!-- -->', '');
   expect(html).toContain('待选择');
   expect(html).toContain('别说话');

@@ -82,14 +82,13 @@ function StageTrack({ stage }: { stage: string }) {
 }
 
 export function RelationshipCard({
-  view, loading, busy, error, actionError, onReload, onApply,
+  view, loading, busy, error, actionError, onApply,
 }: {
   view: RelationshipView | null;
   loading: boolean;
   busy: boolean;
   error: string;
   actionError: string;
-  onReload: () => void;
   onApply: (input: { stage: string }) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState<{ revision: number; stage: string } | null>(null);
@@ -102,9 +101,9 @@ export function RelationshipCard({
 
   return <SettingsCard title="当前关系" icon={<Heart />}
     description="情感阶梯随相处自然发展，也可以手动调整；关系特质由日常对话形成，这里只展示。"
-    actions={<Button variant="ghost" size="xs" onClick={onReload} disabled={loading || busy}>
+    actions={<Button variant="ghost" size="xs" disabled={loading || busy} className={ loading ? '' : 'hidden' }>
       <RefreshCw className={loading ? 'animate-spin' : undefined} />
-      {loading ? '读取中' : '刷新'}
+      读取中
     </Button>}>
     {error ? <Notice tone="danger">读取记忆失败：{error}</Notice> : null}
     {actionError ? <Notice tone="danger">{actionError}</Notice> : null}
@@ -233,7 +232,7 @@ export default function PersonaSettingsPage({
         </section>
 
         <RelationshipCard view={relationship.view} loading={relationship.loading} busy={relationship.busy}
-          error={relationship.error} actionError={relationship.actionError} onReload={relationship.reload}
+          error={relationship.error} actionError={relationship.actionError}
           onApply={relationship.adjust} />
       </div>
 

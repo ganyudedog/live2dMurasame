@@ -1,11 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// 先导入 Cubism4 运行时，再导入主类，避免顺序问题导致回退到 Cubism2
-import { Live2DModel } from './runtime';
+import { Ticker } from 'pixi.js';
 
 import { debug, info, warn } from '@app/shared/logging/compat';
 
 declare global {
-  interface Window { Live2DCubismCore?: any }
+  interface Window { Live2DCubismCore?: unknown }
 }
 
 async function ensureCubismCore() {
@@ -18,19 +17,20 @@ async function ensureCubismCore() {
   ];
   for (const url of candidates) {
     try {
-      const head = await fetch(url, { method: 'HEAD' });
-      if (!head.ok) continue;
       await new Promise<void>((resolve, reject) => {
         const s = document.createElement('script');
         s.src = url;
-        s.onload = () => {
-          info('pet.live2d', 'cubismCore.loaded', { url });
-          resolve();
+        s.onload = () => resolve();
+        s.onerror = () => {
+          s.remove();
+          reject(new Error('failed loading ' + url));
         };
-        s.onerror = () => reject(new Error('failed loading ' + url));
         document.head.appendChild(s);
       });
-      if (window.Live2DCubismCore) return;
+      if (window.Live2DCubismCore) {
+        info('pet.live2d', 'cubismCore.loaded', { url });
+        return;
+      }
     } catch (e) {
       warn('pet.live2d', 'cubismCore.tryFailed', { url, err: String(e) });
     }
@@ -40,12 +40,22 @@ async function ensureCubismCore() {
   }
 }
 
+async function initializeRuntime() {
+  await ensureCubismCore();
+  const { Live2DModel } = await import('./runtime');
+  Live2DModel.registerTicker(Ticker);
+  return Live2DModel;
+}
+
+let runtime: ReturnType<typeof initializeRuntime> | undefined;
+
 export async function loadModel(modelPath: string) {
   info('pet.live2d', 'model.load.start', { modelPath, isFileUrl: /^file:/i.test(modelPath) });
-  await ensureCubismCore();
-  if (!(Live2DModel as any)) {
-    throw new Error('Live2DModel unavailable after runtime import');
-  }
+  runtime ??= initializeRuntime().catch((error) => {
+    runtime = undefined;
+    throw error;
+  });
+  const Live2DModel = await runtime;
   // 预检：确保资源存在。
   // 注意：file:// URL 在 Electron fetch 中不一定支持 HEAD，避免误判直接放行。
   const isFileUrl = /^file:/i.test(modelPath);

@@ -131,7 +131,7 @@ export const useModelRelationship = (modelPath: string | null) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
-  const [reloadToken, setReloadToken] = useState(0);
+
   if (screen.path !== modelPath) {
     setScreen({ path: modelPath, view: null });
     setLoading(true);
@@ -157,12 +157,7 @@ export const useModelRelationship = (modelPath: string | null) => {
       }
     })();
     return () => { cancelled = true; };
-  }, [modelPath, reloadToken]);
-
-  const reload = useCallback(() => {
-    setLoading(true);
-    setReloadToken((value) => value + 1);
-  }, []);
+  }, [modelPath]);
 
   useEffect(() => {
     const subscribe = window.MemoryAPI?.onUpdated;
@@ -202,5 +197,5 @@ export const useModelRelationship = (modelPath: string | null) => {
     } finally { setBusy(false); }
   }, [modelPath, screen]);
 
-  return { view, loading, busy, error, actionError, reload, adjust };
+  return { view, loading, busy, error, actionError, adjust };
 };

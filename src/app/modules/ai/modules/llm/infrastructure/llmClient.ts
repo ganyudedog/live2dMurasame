@@ -97,6 +97,11 @@ export const requestStage2LLM = async (
     ...reasoningOptions(req.reasoningEffort),
   };
 
+  const capture = (reference: string) => {
+    if (import.meta.env.VITE_CAPTURE_MODEL_BENCHMARK === '1' && req.captureBenchmark) {
+      req.captureBenchmark(JSON.stringify({ request: requestBody, question: req.userText, toolContext: req.toolContext ?? '', reference }));
+    }
+  };
   const timeoutSignal = withTimeoutSignal(timeoutMs);
   const signal = req.signal && timeoutSignal
     ? AbortSignal.any([req.signal, timeoutSignal])
@@ -142,6 +147,7 @@ export const requestStage2LLM = async (
       throw new Error('LLM 返回为空');
     }
 
+    capture(rawText);
     return {
       rawText: finalText,
       usedModel,
@@ -164,6 +170,7 @@ export const requestStage2LLM = async (
     throw new Error('LLM 返回为空');
   }
 
+  capture(message?.content ?? rawText);
   return {
     rawText,
     usedModel,

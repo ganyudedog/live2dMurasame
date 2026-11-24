@@ -127,6 +127,7 @@ export const createDefaultConversationExecutor = (
         baseURL: global.baseURL,
         model,
       }, {
+        captureBenchmark: payload => trace.captureModelBenchmark(payload),
         userText: speakerText(request.text, request.sender),
         cue: false,
         historyMessages: recent.historyMessages,

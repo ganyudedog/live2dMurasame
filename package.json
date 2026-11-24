@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "eval": "node eval/run.mjs",
+    "eval:benchmark": "node eval/run.mjs --benchmark",
+    "eval:draft": "node --experimental-strip-types eval/draft.ts",
     "live2d": "node scripts/live2d-cli.mjs",
     "build:cli:exe": "node scripts/build-cli-exe.mjs",
     "electron:compile": "tsc -p tsconfig.electron.json",
@@ -11,7 +14,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "pnpm electron:compile && tsc -p test/tsconfig.json --noEmit --pretty false && vitest run",
-    "electron:dev": "pnpm electron:compile && set VITE_DEV_SERVER_URL=http://localhost:5180&& node --env-file=infra/jaeger/dev.env node_modules/electron/cli.js ./dist-electron/main.js",
+    "electron:dev": "pnpm electron:compile && set VITE_DEV_SERVER_URL=http://localhost:5180&& node --env-file=.env.development --env-file=infra/jaeger/dev.env node_modules/electron/cli.js ./dist-electron/main.js",
     "lint": "eslint .",
     "check:boundaries": "node --env-file=scripts/knip.env node_modules/knip/bin/knip.js --no-progress && node scripts/checkRetiredEntries.mjs",
     "prepare": "husky",
@@ -65,6 +68,7 @@
     "husky": "^9.1.7",
     "knip": "^6.45.1",
     "postject": "1.0.0-alpha.6",
+    "promptfoo": "0.118.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.0",
     "vite": "^7.3.1",
@@ -80,6 +84,7 @@
     },
     "onlyBuiltDependencies": [
       "electron",
+      "better-sqlite3",
       "esbuild",
       "@esbuild/*"
     ]

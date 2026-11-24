@@ -26,3 +26,6 @@ release/cli/
 *.sw?
 infra/
 *.tsbuildinfo
+
+# Local trace captures await review before promotion
+/eval/benchmark/drafts/

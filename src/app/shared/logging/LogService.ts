@@ -33,6 +33,7 @@ export type ContextRegistration = {
 };
 
 type TraceState = {
+  modelBenchmark?: string;
   traceId: string;
   service: string;
   relation: string;
@@ -67,6 +68,7 @@ const TOKEN_USAGE_KEYS = new Set(['promptTokens', 'cachedTokens', 'uncachedToken
  * while preserving the complete operation context when a terminal event fires.
  */
 export type BoundaryForward = (payload: {
+  modelBenchmark?: string;
   kind: 'boundary';
   level: 'info';
   traceId: string;
@@ -306,6 +308,7 @@ export class LogService {
       endedAt: origin + endedAt,
       failed: trace.status === 'failed',
       events: trace.events.map(({ event, timestamp }) => ({ event, at: origin + Math.min(timestamp, endedAt) })),
+      ...(trace.modelBenchmark ? { modelBenchmark: trace.modelBenchmark } : {}),
       ...boundaryAttributes(trace),
     });
   }
@@ -389,6 +392,10 @@ export class TraceScope {
     this.state = state;
     this.traceId = state.traceId;
     this.spanId = state.spanId;
+  }
+
+  captureModelBenchmark(payload: string): void {
+    if (this.state.status === 'active' && this.state.boundary) this.state.modelBenchmark = payload;
   }
 
   record(event: string, data?: Record<string, unknown>): void {

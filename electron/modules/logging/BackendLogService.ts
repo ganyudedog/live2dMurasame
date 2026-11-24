@@ -63,7 +63,11 @@ export class BackendLogService {
       const { startedAt, endedAt, spanId } = payload;
       if (typeof startedAt === 'number' && Number.isFinite(startedAt) && typeof endedAt === 'number' && Number.isFinite(endedAt) && endedAt >= startedAt) {
         if (typeof spanId === 'string') {
-          const attributes = spanAttributes(payload.attributes);
+          const captureEnabled = process.env.CAPTURE_MODEL_BENCHMARK === '1' &&
+            (payload.boundary === 'conversation.turn' || payload.boundary === 'plugin.conversation');
+          const attributes = spanAttributes(payload.attributes, {
+            modelBenchmark: captureEnabled ? payload.modelBenchmark : undefined,
+          });
           this.recordSpan({
             traceId: payload.traceId, spanId, name: payload.boundary, startedAt, endedAt,
             ...(typeof payload.parentSpanId === 'string' ? { parentSpanId: payload.parentSpanId } : {}),

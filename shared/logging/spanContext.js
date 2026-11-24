@@ -24,11 +24,14 @@ export const parseTraceparent = (value) => {
 
 export const SENSITIVE_KEY = /api.?key|access.?token|token|secret|password|authorization|cookie/i;
 
-export const spanAttributes = (value) => {
-  if (!value || typeof value !== 'object') return {};
+export const spanAttributes = (value, { modelBenchmark } = {}) => {
+  // Only the opted-in conversation capture may supply the complete model request.
   const output = {};
+  if (typeof modelBenchmark === 'string') output['benchmark.stage2'] = modelBenchmark;
+  if (!value || typeof value !== 'object') return output;
   for (const [key, item] of Object.entries(value)) {
-    if (SENSITIVE_KEY.test(key) || Object.keys(output).length >= 12) continue;
+    if (Object.keys(output).length >= 12) break;
+    if (key === 'benchmark.stage2' || SENSITIVE_KEY.test(key)) continue;
     const name = key.slice(0, 40);
     if (typeof item === 'string') output[name] = item.slice(0, 160);
     else if (typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item))) output[name] = item;

@@ -39,7 +39,7 @@ export function isSpanId(value: unknown): value is string;
 export function isSpanContext(value: unknown): value is SpanContext;
 export const SENSITIVE_KEY: RegExp;
 export function createSpanId(): string;
-export function spanAttributes(value: unknown): Record<string, string | number | boolean>;
+export function spanAttributes(value: unknown, options?: { modelBenchmark?: unknown }): Record<string, string | number | boolean>;
 export function traceparentOf(context: SpanContext): string;
 export function parseTraceparent(value: unknown): SpanContext | null;
 export function createObservability(options: {

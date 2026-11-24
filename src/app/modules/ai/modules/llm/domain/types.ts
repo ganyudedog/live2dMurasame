@@ -21,6 +21,7 @@ export interface Stage2LLMConfig {
 }
 
 export interface Stage2LLMRequest {
+  captureBenchmark?: (payload: string) => void;
   signal?: AbortSignal;
   userText: string;
   /** Optional plugin/host-owned system instruction for isolated conversations. */

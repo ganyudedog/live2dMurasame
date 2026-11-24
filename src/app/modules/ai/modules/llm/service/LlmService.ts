@@ -276,6 +276,7 @@ export class LlmService {
           temperature: resolved.temperature,
         },
         {
+          captureBenchmark: payload => options.trace.captureModelBenchmark(payload),
           userText: cleanText,
           model: resolved.model,
           temperature: resolved.temperature,

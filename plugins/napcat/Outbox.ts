@@ -11,6 +11,8 @@ export interface Delivery {
   accepted?: boolean;
 }
 
+const seenKey = (id: string) => `onebot.seen.${id.replaceAll(':', '.')}`;
+
 /** A successful echo is persisted before notifying the reminder host. All mutations share one writer. */
 export class Outbox {
   private records = new Map<string, Delivery>();
@@ -37,6 +39,9 @@ export class Outbox {
   async restore() {
     const saved = await this.storage.get<Delivery[]>('onebot.outbox', []);
     this.records = new Map((saved ?? []).map((record) => [record.id, record]));
+  }
+  async hasReply(id: string) {
+    return this.records.has(id) || (await this.storage.get(seenKey(id), false));
   }
   private write(change: (records: Map<string, Delivery>) => void) {
     const write = this.writes.then(async () => {
@@ -93,6 +98,8 @@ export class Outbox {
     if (record.reminder) {
       if (this.closed) return;
       this.confirm(record.id);
+    } else {
+      await this.storage.set(seenKey(record.id), true);
     }
     await this.write((records) => records.delete(record.id));
   }

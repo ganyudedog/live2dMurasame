@@ -28,13 +28,12 @@ export const normalizeInteractionSettings = (settings: NapCatSettings) => {
 
 export const normalizeSettings = (value: unknown, defaults = DEFAULT_NAPCAT_SETTINGS): NapCatSettings => {
   const raw = value && typeof value === 'object' ? value as Partial<NapCatSettings> : {};
-  const oldEndpoint = raw.bridgeUrl === 'ws://127.0.0.1:6198/ws';
   const modes = ['interrupt', 'queue', 'concurrent'] as const;
   const displayLangs = ['zh', 'en', 'ja', 'ko'] as const;
   const speakLangs = ['', 'all_zh', 'all_en', 'all_ja', 'all_ko', 'all_yue', 'auto'] as const;
   return {
-    bridgeUrl: !oldEndpoint && typeof raw.bridgeUrl === 'string' ? raw.bridgeUrl.trim() : defaults.bridgeUrl,
-    token: !oldEndpoint && typeof raw.token === 'string' ? raw.token : defaults.token,
+    bridgeUrl: typeof raw.bridgeUrl === 'string' ? raw.bridgeUrl.trim() : defaults.bridgeUrl,
+    token: typeof raw.token === 'string' ? raw.token : defaults.token,
     reasoningEffort: typeof raw.reasoningEffort === 'string' ? raw.reasoningEffort.trim() : defaults.reasoningEffort,
     systemPrompt: typeof raw.systemPrompt === 'string' ? raw.systemPrompt : defaults.systemPrompt,
     interactionMode: modes.includes(raw.interactionMode as typeof modes[number]) ? raw.interactionMode as typeof modes[number] : defaults.interactionMode,

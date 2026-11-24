@@ -164,8 +164,7 @@ export class NapCatClient {
   }
   private async submit(admission: Admission) {
     const { message } = admission;
-    const seen = `onebot.seen.${message.requestId.replaceAll(':', '.')}`;
-    if (this.stopped || (await this.options.storage.get(seen, false))) return;
+    if (this.stopped || (await this.outbox.hasReply(message.requestId))) return;
     const labels = await loadStickerLabels(this.options.storage);
     admission.stickers = Object.entries(labels[message.self] ?? {})
       .map(([id, item]) => ({ id, ...item }))
@@ -195,8 +194,6 @@ export class NapCatClient {
         .join('\n\n'),
       quote: quoted ? readQuote(quoted.ok ? quoted.data : undefined, message.self) : undefined,
     });
-    await this.options.storage.set(seen, true);
-    if (this.stopped) return;
     const done = new Promise<void>((resolve) => {
       admission.release = resolve;
     });

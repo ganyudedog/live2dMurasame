@@ -3,13 +3,13 @@ import { NapCatClient } from '../plugins/napcat/NapCatClient';
 import { DEFAULT_NAPCAT_SETTINGS } from '../plugins/napcat/settings';
 import { EMPTY_DIRECTORY } from '../plugins/napcat/directory';
 import { MemoryPluginStorage } from '../src/app/modules/plugin/core/storage';
-import { ConversationScheduler } from '../src/app/modules/plugin/hosts/ai/ConversationScheduler';
+import { ConversationScheduler, type PluginConversationExecutor } from '../src/app/modules/plugin/hosts/ai/ConversationScheduler';
 import { createDefaultConversationExecutor } from '../src/app/modules/plugin/hosts/ai/createConversationExecutor';
 import { LogService } from '../src/app/shared/logging/LogService';
 import { BackendLogService } from '../electron/modules/logging/BackendLogService';
 import type { SpanRecord } from '../shared/logging/spanContext.js';
 import type { ConfigService } from '../src/app/shared/config/ConfigService';
-import type { ConversationRequest } from '../plugins/napcat/types';
+import type { ConversationChannel, ConversationRequest } from '../plugins/napcat/types';
 import { requestStage2LLM } from '../src/app/modules/ai/modules/llm/infrastructure/llmClient';
 
 vi.mock('../src/app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
@@ -68,7 +68,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });
-async function setup(storage = new MemoryPluginStorage()) {
+async function setup(storage = new MemoryPluginStorage(), execute?: PluginConversationExecutor) {
   vi.stubGlobal('WebSocket', Socket);
   vi.stubGlobal('window', {
     CliAPI: {
@@ -92,7 +92,8 @@ async function setup(storage = new MemoryPluginStorage()) {
     activeModelPath: '/fixture',
     globalModelConfig: { apiKey: 'fixture', llmModels: [{ id: 'test-model', efforts: [], probedAt: 1 }] },
   } as unknown as ConfigService;
-  const scheduler = new ConversationScheduler(createDefaultConversationExecutor(config, log));
+  const scheduler = new ConversationScheduler(execute ?? createDefaultConversationExecutor(config, log));
+  let channel!: ConversationChannel;
   const submissions: ConversationRequest[] = [];
   const confirm = vi.fn();
   const client = new NapCatClient({
@@ -101,7 +102,7 @@ async function setup(storage = new MemoryPluginStorage()) {
     directory: EMPTY_DIRECTORY,
     ai: {
       openChannel: (options) => {
-        const channel = scheduler.openChannel(options);
+        channel = scheduler.openChannel(options);
         const send = channel.sendText.bind(channel);
         vi.spyOn(channel, 'sendText').mockImplementation((r) => {
           submissions.push(r);
@@ -124,7 +125,7 @@ async function setup(storage = new MemoryPluginStorage()) {
   });
   await client.start();
   Socket.current.open();
-  return { client, storage, spans, submissions, confirm, socket: Socket.current };
+  return { client, channel, storage, spans, submissions, confirm, socket: Socket.current };
 }
 function modelTools() {
   for (const [name, args] of [
@@ -183,6 +184,54 @@ it('exports a single admitted QQ turn and sibling command and receipt spans', as
     client.dispose();
   }
 });
+it.each(['rejected', 'error', 'cancelled', 'empty', 'outbox write failure'] as const)(
+  'admits a redelivered message after %s and deduplicates its queued reply',
+  async (failure) => {
+    let first = true;
+    const { client, channel, socket, storage } = await setup(undefined, async (_options, _request, turn) => {
+      if (first && (failure === 'error' || failure === 'cancelled')) {
+        turn.emit({ status: failure, text: '' });
+      } else {
+        turn.emit({ status: 'done', text: first && failure === 'empty' ? ' ' : '收到' });
+      }
+    });
+    const event = group('ai hi');
+    const seen = 'onebot.seen.10001.qq.group.30003.20';
+    try {
+      if (failure === 'rejected') {
+        vi.mocked(channel.sendText).mockReturnValueOnce({
+          requestId: '10001:qq:group:30003:20', accepted: false, reason: 'queue-full',
+        });
+      }
+      if (failure === 'outbox write failure') {
+        const set = storage.set.bind(storage);
+        vi.spyOn(storage, 'set').mockImplementation(async (key, value) => {
+          if (first && key === 'onebot.outbox') throw new Error('disk full');
+          await set(key, value);
+        });
+      }
+      socket.receive(event);
+      await tick();
+      expect(channel.sendText).toHaveBeenCalledTimes(1);
+      expect(await storage.get(seen)).toBeUndefined();
+      expect(await storage.get('onebot.outbox', [])).toEqual([]);
+      expect(socket.sent).toHaveLength(0);
+
+      first = false;
+      socket.receive(event);
+      await vi.waitFor(() => expect(socket.sent).toHaveLength(1));
+      expect(socket.sent[0].action).toBe('send_group_msg');
+      socket.receive(event);
+      await tick();
+      expect(channel.sendText).toHaveBeenCalledTimes(2);
+      socket.ack(0, 'ok');
+      await vi.waitFor(async () => expect(await storage.get(seen)).toBe(true));
+      expect(await storage.get('onebot.outbox')).toEqual([]);
+    } finally {
+      await client.dispose();
+    }
+  },
+);
 it('persists failed and disconnected sends, resumes once, and confirms reminders on an independent trace', async () => {
   modelTools();
   const first = await setup();
@@ -276,7 +325,7 @@ it('restores a previously submitted reminder through the actual host and leaves 
     reminderStorageKey,
     JSON.stringify([
       legacy,
-      { ...legacy, id: 'other-reminder', channel: { ...legacy.channel, source: 'plugin:other' } },
+      { ...legacy, id: 'other-reminder', channel: { ...legacy.channel, source: 'plugin:live2d.astrbot-bridge' } },
     ]),
   );
   const reminders = new ReminderRuntime({ desktopDeliver: async () => {} });

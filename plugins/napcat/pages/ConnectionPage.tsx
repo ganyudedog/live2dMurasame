@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Cable, Check, Eye, EyeOff, Workflow } from 'lucide-react';
-import type { AstrBotUiContext } from '../types';
-import { AstrBotStatusLine } from '../AstrBotStatusLine';
+import type { NapCatUiContext } from '../types';
+import { NapCatStatusLine } from '../NapCatStatusLine';
 import { HINT, INPUT, TEXTAREA } from '../styles';
-import { normalizeWakeWords, type AstrBotBridgeSettings } from '../settings';
+import { normalizeWakeWords, type NapCatSettings } from '../settings';
 import { Field, LoadingCard, SaveFeedback, Section } from '../ui/layout';
 import { useBridgeSettings, type BridgeSettingsStore } from '../ui/useBridgeSettings';
 
 const MODES: ReadonlyArray<{
-  value: AstrBotBridgeSettings['interactionMode'];
+  value: NapCatSettings['interactionMode'];
   label: string;
   description: string;
 }> = [
@@ -17,15 +17,15 @@ const MODES: ReadonlyArray<{
   { value: 'interrupt', label: '打断', description: '同一会话的新消息打断正在生成的回复，其他会话不受影响' },
 ];
 
-/** 连接与触发：桥接地址、令牌，以及哪些消息会被回复、多个会话怎么排队。 */
-export function AstrBotConnectionPage(context: AstrBotUiContext) {
+/** 连接与触发：正向 WebSocket 地址、令牌，以及哪些消息会被回复、多个会话怎么排队。 */
+export function NapCatConnectionPage(context: NapCatUiContext) {
   const store = useBridgeSettings(context);
   if (!store.loaded) return <LoadingCard>正在读取插件配置…</LoadingCard>;
   return <ConnectionForm store={store} context={context} />;
 }
 
 /** 配置读完才挂载，输入草稿直接用已读到的值初始化。 */
-function ConnectionForm({ store, context }: { store: BridgeSettingsStore; context: AstrBotUiContext }) {
+function ConnectionForm({ store, context }: { store: BridgeSettingsStore; context: NapCatUiContext }) {
   const { settings, update } = store;
   const [revealToken, setRevealToken] = useState(false);
   const [connectionDraft, setConnectionDraft] = useState({ bridgeUrl: settings.bridgeUrl, token: settings.token });
@@ -43,12 +43,12 @@ function ConnectionForm({ store, context }: { store: BridgeSettingsStore; contex
   };
 
   return <div className="space-y-4">
-    <Section icon={<Cable />} title="桥接连接" description="地址和令牌按回车或离开输入框后生效。">
-      <AstrBotStatusLine storage={context.storage} />
+    <Section icon={<Cable />} title="NapCat 连接" description="地址和令牌按回车或离开输入框后生效。">
+      <NapCatStatusLine storage={context.storage} />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="桥接地址">
+        <Field label="正向 WebSocket 地址">
           <input className={`${INPUT} w-full font-mono`} value={connectionDraft.bridgeUrl}
-            spellCheck={false} placeholder="ws://127.0.0.1:6198/ws"
+            spellCheck={false} placeholder="ws://127.0.0.1:3001"
             onChange={(event) => setConnectionDraft((current) => ({ ...current, bridgeUrl: event.target.value }))}
             onBlur={commitConnection}
             onKeyDown={(event) => { if (event.key === 'Enter') commitConnection(); }} />

@@ -275,6 +275,7 @@ export class PluginRuntime {
       this.log?.[level](`plugin.${pluginId}`, message, detail);
     };
     return {
+      beginDelivery: (action, parent) => this.log?.beginPluginDelivery?.(pluginId, action, parent) ?? (() => {}),
       info: (message, data) => write('info', message, data),
       warn: (message, data) => write('warn', message, data),
       error: (message, data) => write('error', message, data),
@@ -309,6 +310,7 @@ export class PluginRuntime {
             if (typeof member !== 'function') throw new Error(`Host method unavailable: ${id}.${property}`);
             const scopedArgs = id === 'ai' && property === 'openChannel'
               ? [{ ...(args[0] as object), source: `plugin:${pluginId}` }]
+              : id === 'reminders' && property === 'pendingChannels' ? [`plugin:${pluginId}`]
               : id === 'reminders' && property === 'confirmDelivery' ? [args[0], args[1], `plugin:${pluginId}`] : args;
             const result = Reflect.apply(member, value, scopedArgs) as unknown;
             const effect = policies[property as keyof typeof policies];

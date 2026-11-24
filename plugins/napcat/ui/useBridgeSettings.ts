@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AstrBotUiContext } from '../types';
-import { DEFAULT_ASTRBOT_SETTINGS, normalizeSettings, type AstrBotBridgeSettings } from '../settings';
+import type { NapCatUiContext } from '../types';
+import { DEFAULT_NAPCAT_SETTINGS, normalizeSettings, type NapCatSettings } from '../settings';
 
 const toMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -8,14 +8,14 @@ const toMessage = (error: unknown): string => (error instanceof Error ? error.me
  * 各设置页共用的桥接配置：读取一次、每次改动立即落盘，并给出保存反馈。
  * 页面各自持有输入草稿，只在提交时调用 update。
  */
-export function useBridgeSettings(context: AstrBotUiContext) {
-  const [settings, setSettings] = useState<AstrBotBridgeSettings>(DEFAULT_ASTRBOT_SETTINGS);
+export function useBridgeSettings(context: NapCatUiContext) {
+  const [settings, setSettings] = useState<NapCatSettings>(DEFAULT_NAPCAT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saved, setSaved] = useState(false);
   const savedTimer = useRef<number | null>(null);
   // 订阅回调里需要最新的配置（effect 闭包会过期），用 ref 跟踪而不是在渲染期回写 state。
-  const settingsRef = useRef<AstrBotBridgeSettings>(DEFAULT_ASTRBOT_SETTINGS);
+  const settingsRef = useRef<NapCatSettings>(DEFAULT_NAPCAT_SETTINGS);
 
   const flashSaved = useCallback(() => {
     setSaved(true);
@@ -29,10 +29,10 @@ export function useBridgeSettings(context: AstrBotUiContext) {
 
   useEffect(() => {
     let active = true;
-    void context.storage.get<AstrBotBridgeSettings>('settings', DEFAULT_ASTRBOT_SETTINGS)
+    void context.storage.get<NapCatSettings>('settings', DEFAULT_NAPCAT_SETTINGS)
       .then((value) => {
         if (!active) return;
-        const next = normalizeSettings(value, DEFAULT_ASTRBOT_SETTINGS);
+        const next = normalizeSettings(value, DEFAULT_NAPCAT_SETTINGS);
         settingsRef.current = next;
         setSettings(next);
         setLoaded(true);
@@ -47,7 +47,7 @@ export function useBridgeSettings(context: AstrBotUiContext) {
   }, [context.storage, context.logger]);
 
   /** 每次改动立即落盘；值没变就不写，避免无意义的重连与日志。 */
-  const update = (patch: Partial<AstrBotBridgeSettings>) => {
+  const update = (patch: Partial<NapCatSettings>) => {
     const current = settingsRef.current;
     const next = normalizeSettings({ ...current, ...patch });
     if (JSON.stringify(next) === JSON.stringify(current)) return;

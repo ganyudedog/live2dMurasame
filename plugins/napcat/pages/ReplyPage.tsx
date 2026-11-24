@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BotMessageSquare, RotateCcw, ScrollText } from 'lucide-react';
-import type { AstrBotUiContext } from '../types';
+import type { NapCatUiContext } from '../types';
 import { StickerSection } from '../stickers/StickerSection';
 import { GHOST_BUTTON_XS, SELECT, TEXTAREA } from '../styles';
-import { DEFAULT_ASTRBOT_SETTINGS, type AstrBotBridgeSettings } from '../settings';
+import { DEFAULT_NAPCAT_SETTINGS, type NapCatSettings } from '../settings';
 import { Field, LoadingCard, SaveFeedback, Section } from '../ui/layout';
 import { useBridgeSettings, type BridgeSettingsStore } from '../ui/useBridgeSettings';
 
@@ -25,13 +25,13 @@ const SPEAK_LANGS = [
 ] as const;
 
 /** 回复方式：什么语言、在 QQ 场景里怎么说话，以及可以发的收藏表情。 */
-export function AstrBotReplyPage(context: AstrBotUiContext) {
+export function NapCatReplyPage(context: NapCatUiContext) {
   const store = useBridgeSettings(context);
   if (!store.loaded) return <LoadingCard>正在读取插件配置…</LoadingCard>;
   return <ReplyForm store={store} context={context} />;
 }
 
-function ReplyForm({ store, context }: { store: BridgeSettingsStore; context: AstrBotUiContext }) {
+function ReplyForm({ store, context }: { store: BridgeSettingsStore; context: NapCatUiContext }) {
   const { settings, update } = store;
   const ai = context.hostApi.ai;
   const readChat = useCallback(() => ai?.getModels().find(model => model.chatEffort !== undefined), [ai]);
@@ -59,14 +59,14 @@ function ReplyForm({ store, context }: { store: BridgeSettingsStore; context: As
         </Field>
         <Field label="展示语言">
           <select className={`${SELECT} w-full`} value={settings.displayLang}
-            onChange={(event) => update({ displayLang: event.target.value as AstrBotBridgeSettings['displayLang'] })}>
+            onChange={(event) => update({ displayLang: event.target.value as NapCatSettings['displayLang'] })}>
             {DISPLAY_LANGS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
         </Field>
 
         <Field label="朗读文本" hint={settings.speakLang ? undefined : '仅文字：不生成朗读文本'}>
           <select className={`${SELECT} w-full`} value={settings.speakLang}
-            onChange={(event) => update({ speakLang: event.target.value as AstrBotBridgeSettings['speakLang'] })}>
+            onChange={(event) => update({ speakLang: event.target.value as NapCatSettings['speakLang'] })}>
             {SPEAK_LANGS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
         </Field>
@@ -81,7 +81,7 @@ function ReplyForm({ store, context }: { store: BridgeSettingsStore; context: As
         </span>
         {promptDirty && (
           <button type="button" className={GHOST_BUTTON_XS}
-            onClick={() => { setPromptDraft(DEFAULT_ASTRBOT_SETTINGS.systemPrompt); update({ systemPrompt: DEFAULT_ASTRBOT_SETTINGS.systemPrompt }); }}>
+            onClick={() => { setPromptDraft(DEFAULT_NAPCAT_SETTINGS.systemPrompt); update({ systemPrompt: DEFAULT_NAPCAT_SETTINGS.systemPrompt }); }}>
             <RotateCcw aria-hidden="true" />
             恢复默认
           </button>

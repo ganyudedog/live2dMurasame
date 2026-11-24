@@ -5,9 +5,9 @@ import { expect, it } from 'vitest';
 const root = process.cwd();
 const read = (path: string): string => readFileSync(join(root, path), 'utf8');
 
-it('keeps AstrBot off host internals and window APIs', () => {
-  const files = readdirSync(join(root, 'plugins/astrbot')).filter((name) => /\.tsx?$/.test(name) && !name.includes('.test.'));
-  const source = files.map((name) => read(join('plugins/astrbot', name))).join('\n');
+it('keeps NapCat off host internals and window APIs', () => {
+  const files = readdirSync(join(root, 'plugins/napcat')).filter((name) => /\.tsx?$/.test(name) && !name.includes('.test.'));
+  const source = files.map((name) => read(join('plugins/napcat', name))).join('\n');
   expect(source).not.toMatch(/core\/plugin\/hosts/);
   expect(source).not.toMatch(/from '@app\//);
   expect(source).not.toMatch(/MemoryAPI|CliAPI|getActiveCharacter|readRelationship|subscribeCharacter/);
@@ -34,7 +34,7 @@ it('keeps model selection owned by the host rather than plugin channels', () => 
   const channel = api.match(/export interface ConversationChannelOptions \{([\s\S]*?)\n\}/)?.[1];
   expect(channel).toBeDefined();
   expect(channel).not.toMatch(/model|reasoningEffort/);
-  expect(read('plugins/astrbot/settings.ts')).not.toMatch(/readonly model\b/);
+  expect(read('plugins/napcat/settings.ts')).not.toMatch(/readonly model\b/);
   const request = api.match(/export interface ConversationRequest \{([\s\S]*?)\n\}/)?.[1];
   expect(request).toContain('readonly reasoningEffort?: string');
   expect(request).not.toMatch(/readonly model\b/);

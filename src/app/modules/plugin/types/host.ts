@@ -39,5 +39,5 @@ export const hostMethodEffects = {
   controlPanel: { getActiveTab: 'none', openTab: 'none' },
   desktopNotifications: { showNotification: 'none' },
   desktopWindow: { getWindowGeometry: 'none' },
-  reminders: { add: 'none', registerChannel: 'disposable', retryDue: 'none', confirmDelivery: 'none' },
+  reminders: { add: 'none', registerChannel: 'disposable', retryDue: 'none', confirmDelivery: 'none', pendingChannels: 'none' },
 } as const satisfies HostMethodPolicies;

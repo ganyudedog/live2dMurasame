@@ -16,7 +16,7 @@ To archive a conversation, pass `memoryArchive: { platform, scope, id }` with `s
 
 配置 `memoryArchive` 的对话会从对应归档读取最近 10 轮完整交互，按时间顺序作为 user/assistant 消息发送；保留期为七天，历史消息总预算为 24,000 字符，超限裁减较早的完整轮次。排队请求在实际执行时读取历史，并发请求只看到已经落盘的回复。
 
-`ConversationRequest.sender` 可携带 `{ id: string, displayName?: string }`。AstrBot 桥接支持 `sender.id` 或 `sender.user_id`，名称读取 `displayName`、`nickname` 或 `name`。QQ 号支持字符串或安全整数，宿主统一转换为字符串；旧消息未携带身份时不会推测群成员身份。`conversationId` 与发送者一并存入 episode 元数据，归档隔离仍由 `memoryArchive` 决定。
+`ConversationRequest.sender` 可携带 `{ id: string, displayName?: string }`。NapCat 插件从 OneBot 事件读取 `user_id`，将 QQ 号规范为字符串，显示名称使用群名片或昵称。`conversationId` 与发送者一并存入 episode 元数据，归档隔离仍由 `memoryArchive` 决定。
 
 群聊保留同群不同发送者的上下文；私聊使用独立归档。插件对话默认不参与桌面核心记忆整理，也不注入动作表。
 
@@ -39,7 +39,7 @@ The control panel reads and updates host policy through `config.get` and `config
   "settings": {
     "shellReadRoots": [],
     "pluginCliWhitelist": [
-      { "pluginId": "live2d.astrbot-bridge", "cliEnabled": true }
+      { "pluginId": "live2d.napcat-bridge", "cliEnabled": true }
     ]
   }
 }

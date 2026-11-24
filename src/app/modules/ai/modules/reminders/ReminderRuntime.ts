@@ -68,6 +68,11 @@ export class ReminderRuntime {
     void this.pump();
   }
 
+  pendingChannels(source: string) {
+    return this.records.flatMap(({ channel, id, sentence, submittedAt }) => channel.kind === 'channel' && channel.source === source
+      ? [{ channelId: channel.channelId, conversationId: channel.conversationId, id, sentence, submittedAt }] : []);
+  }
+
   retryDue(): void {
     if (this.disposed) return;
     void this.pump();

@@ -148,6 +148,19 @@ export class LogService {
     context.dispose();
   }
 
+  beginPluginDelivery(pluginId: string, action: string, parent?: SpanContext): (accepted: boolean) => void {
+    const detail = { pluginId, action };
+    const context = this.contextRegistry.register(`plugin.${pluginId}`, {
+      relation: 'plugin.runtime', params: detail, behavior: '等待外部渠道确认发送',
+    });
+    const span = context.beginTrace(action, detail, 'plugin.runtime', parent);
+    return accepted => {
+      if (accepted) span.end(detail);
+      else span.fail('delivery.failed', detail);
+      context.dispose();
+    };
+  }
+
   /** 插件运行异常。一次调用一个短 span，不把插件生命周期留在追踪上。 */
   recordPluginRuntime(pluginId: string, level: 'warn' | 'error', event: string, data?: Record<string, unknown>): void {
     const context = this.contextRegistry.register(`plugin.${pluginId}`, {

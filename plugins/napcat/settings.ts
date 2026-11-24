@@ -1,4 +1,4 @@
-export interface AstrBotBridgeSettings {
+export interface NapCatSettings {
   readonly bridgeUrl: string;
   readonly token: string;
   readonly reasoningEffort: string;
@@ -13,27 +13,28 @@ export interface AstrBotBridgeSettings {
   readonly wakeWords: readonly string[];
 }
 
-export const DEFAULT_ASTRBOT_SETTINGS: AstrBotBridgeSettings = {
-  bridgeUrl: 'ws://127.0.0.1:6198/ws', token: '', reasoningEffort: '',
+export const DEFAULT_NAPCAT_SETTINGS: NapCatSettings = {
+  bridgeUrl: 'ws://127.0.0.1:3001', token: '', reasoningEffort: '',
   systemPrompt: '你是 QQ 群聊助手。结合收到的消息和对话上下文，自然、简洁地回复。',
   interactionMode: 'queue', maxConcurrent: 1, maxQueued: 16, displayLang: 'zh', speakLang: '',
   wakeWords: [],
 };
 
-export const normalizeInteractionSettings = (settings: AstrBotBridgeSettings) => {
+export const normalizeInteractionSettings = (settings: NapCatSettings) => {
   if (settings.interactionMode === 'interrupt') return { mode: 'interrupt' as const, maxConcurrent: clamp(settings.maxConcurrent, 1, 8), maxQueued: clamp(settings.maxQueued, 0, 100) };
   if (settings.interactionMode === 'concurrent') return { mode: 'concurrent' as const, maxConcurrent: clamp(settings.maxConcurrent, 1, 8), maxQueued: clamp(settings.maxQueued, 0, 100) };
   return { mode: 'queue' as const, maxConcurrent: 1 as const, maxQueued: clamp(settings.maxQueued, 0, 100) };
 };
 
-export const normalizeSettings = (value: unknown, defaults = DEFAULT_ASTRBOT_SETTINGS): AstrBotBridgeSettings => {
-  const raw = value && typeof value === 'object' ? value as Partial<AstrBotBridgeSettings> : {};
+export const normalizeSettings = (value: unknown, defaults = DEFAULT_NAPCAT_SETTINGS): NapCatSettings => {
+  const raw = value && typeof value === 'object' ? value as Partial<NapCatSettings> : {};
+  const oldEndpoint = raw.bridgeUrl === 'ws://127.0.0.1:6198/ws';
   const modes = ['interrupt', 'queue', 'concurrent'] as const;
   const displayLangs = ['zh', 'en', 'ja', 'ko'] as const;
   const speakLangs = ['', 'all_zh', 'all_en', 'all_ja', 'all_ko', 'all_yue', 'auto'] as const;
   return {
-    bridgeUrl: typeof raw.bridgeUrl === 'string' ? raw.bridgeUrl.trim() : defaults.bridgeUrl,
-    token: typeof raw.token === 'string' ? raw.token : defaults.token,
+    bridgeUrl: !oldEndpoint && typeof raw.bridgeUrl === 'string' ? raw.bridgeUrl.trim() : defaults.bridgeUrl,
+    token: !oldEndpoint && typeof raw.token === 'string' ? raw.token : defaults.token,
     reasoningEffort: typeof raw.reasoningEffort === 'string' ? raw.reasoningEffort.trim() : defaults.reasoningEffort,
     systemPrompt: typeof raw.systemPrompt === 'string' ? raw.systemPrompt : defaults.systemPrompt,
     interactionMode: modes.includes(raw.interactionMode as typeof modes[number]) ? raw.interactionMode as typeof modes[number] : defaults.interactionMode,

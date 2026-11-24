@@ -9,7 +9,7 @@ import { LoadingCard } from './ui/layout';
 import { PeopleEditor } from './ui/PeopleEditor';
 export { PeopleEditor } from './ui/PeopleEditor';
 
-export function AstrBotPeopleSection({ storage, logger }: { storage: PluginStorage; logger: PluginLogger }) {
+export function NapCatPeopleSection({ storage, logger }: { storage: PluginStorage; logger: PluginLogger }) {
   const [directory, setDirectory] = useState<BridgeDirectory>(EMPTY_DIRECTORY);
   const revision = useRef(0);
   const queue = useRef(Promise.resolve());

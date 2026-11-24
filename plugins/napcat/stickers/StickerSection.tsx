@@ -36,7 +36,7 @@ export function StickerSection({ storage }: { storage: PluginStorage }) {
     {!Object.keys(catalog).length && <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed
       border-border px-4 py-8 text-center">
       <ImageOff aria-hidden="true" className="size-5 text-muted-foreground/60" />
-      <p className={HINT}>尚未同步收藏，请等待 QQ 桥接连接。</p>
+      <p className={HINT}>尚未同步收藏，请等待 NapCat 连接。</p>
     </div>}
     {Object.entries(catalog).map(([account, items]) => <div key={account} className="space-y-2.5">
       <h3 className="flex items-center gap-2 text-xs font-medium text-foreground/80">

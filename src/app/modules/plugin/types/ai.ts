@@ -56,6 +56,7 @@ export interface ConversationRequest {
 export type ConversationResponseStatus = 'streaming' | 'done' | 'error' | 'cancelled';
 
 export interface ConversationResponse {
+  readonly trace?: { readonly traceId: string; readonly spanId: string };
   readonly channelId: string;
   readonly requestId: string;
   readonly conversationId: string;

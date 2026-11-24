@@ -201,7 +201,9 @@ export const createDefaultConversationExecutor = (
       }
       context.signal.throwIfAborted();
       ensureModelPath();
-      context.emit({ text: displayText, ...(speakText ? { speakText } : {}), status: 'done' });
+      context.emit({ text: displayText, ...(speakText ? { speakText } : {}), status: 'done',
+        ...(trace.spanId ? { trace: { traceId: trace.traceId, spanId: trace.spanId } } : {}),
+      });
       if (!displayText.trim()) trace.record('reply.empty', { source: options.source, requestId: context.requestId });
       trace.end({ status: 'done', model, responseLength: displayText.length, speechEnabled });
     } catch (error) {

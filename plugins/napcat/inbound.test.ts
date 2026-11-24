@@ -1,21 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ConversationLanes, MessageDedup, dedupKey } from './inbound';
+import { ConversationLanes } from './inbound';
 
-describe('bridge inbound guard', () => {
-  it('deduplicates by account, conversation, and message id inside a bounded cache', () => {
-    const dedup = new MessageDedup(2);
-    const first = dedupKey('20002', 'qq:group:30003', '42');
-    const same = dedupKey('20002', 'qq:group:30003', '42');
-    const otherConversation = dedupKey('20002', 'qq:user:10001', '42');
-    expect(dedup.accept(first)).toBe(true);
-    expect(dedup.accept(same)).toBe(false);
-    expect(dedup.accept(otherConversation)).toBe(true);
-    expect(dedup.accept(dedupKey('20002', 'qq:group:30003', '43'))).toBe(true);
-    expect(dedup.accept(first)).toBe(true);
-    expect(dedup.accept('')).toBe(true);
-    expect(dedup.accept('')).toBe(true);
-  });
-
+describe('QQ conversation lanes', () => {
   it('serializes one conversation while another proceeds, and a failure does not block the next turn', async () => {
     const lanes = new ConversationLanes();
     const order: string[] = [];

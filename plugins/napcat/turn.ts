@@ -1,6 +1,6 @@
 import { recallProfiles } from './profiles/recall';
 import { resolveAddress, type BridgeDirectory, type RelationshipStageName } from './directory';
-import type { AstrBotQuote } from './protocol';
+import type { NapCatQuote } from './protocol';
 
 export interface QqTurnInput {
   readonly scenePrompt: string;
@@ -11,7 +11,7 @@ export interface QqTurnInput {
   readonly text: string;
   readonly sender?: { readonly id: string; readonly displayName?: string };
   readonly mentions?: readonly { readonly id: string; readonly name?: string }[];
-  readonly quote?: AstrBotQuote;
+  readonly quote?: NapCatQuote;
 }
 
 /** Authored profiles accompany the scene prompt; message/quote content stays in the user text. */
@@ -57,14 +57,14 @@ export const composeSystemPrompt = (
 
 export const composeUserText = (input: {
   text: string;
-  quote?: AstrBotQuote;
+  quote?: NapCatQuote;
 }): string => {
   const blocks = [input.text.trim()];
   if (input.quote) blocks.push(formatQuote(input.quote));
   return blocks.join('\n\n');
 };
 
-const formatQuote = (quote: AstrBotQuote): string => {
+const formatQuote = (quote: NapCatQuote): string => {
   const speaker = quote.speaker
     ? JSON.stringify({
       id: quote.speaker.id,

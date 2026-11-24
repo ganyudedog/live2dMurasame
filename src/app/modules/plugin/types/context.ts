@@ -11,6 +11,7 @@ export interface PluginStorage {
 }
 
 export interface PluginLogger {
+  beginDelivery?(action: string, parent?: { traceId: string; spanId: string }): (accepted: boolean) => void;
   info(message: string, data?: unknown): void;
   warn(message: string, data?: unknown): void;
   error(message: string, data?: unknown): void;

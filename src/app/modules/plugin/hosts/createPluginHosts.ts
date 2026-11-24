@@ -89,6 +89,7 @@ export const createPluginHosts = (deps: PluginHostDependencies): InstalledPlugin
   const reminders = reminderRuntime ? {
     add: (dueAt: number, sentence: string, channel?: { readonly kind: 'desktop' } | { readonly kind: 'channel'; readonly channelId: string; readonly source: string; readonly conversationId: string }) => reminderRuntime.add(dueAt, sentence, channel ?? { kind: 'desktop' }),
     registerChannel: (channelId: string, deliver: ReminderChannelDelivery) => reminderRuntime.registerChannel(channelId, deliver),
+    pendingChannels: (source = '') => reminderRuntime.pendingChannels(source),
     confirmDelivery: (reminderId: string, delivered: boolean, source = '') => reminderRuntime.confirmDelivery(reminderId, delivered, source),
     retryDue: () => reminderRuntime.retryDue(),
   } : undefined;

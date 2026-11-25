@@ -1,3 +1,4 @@
+import { checkImageCount, imageFromBase64, imageStats, MAX_IMAGE_BYTES } from '../../shared/ai/turnImages.js';
 import { OneBotConnection } from './OneBotConnection';
 import { Outbox } from './Outbox';
 import { readMessage, readQuote, type Segment } from './protocol';
@@ -162,9 +163,50 @@ export class NapCatClient {
     if (!this.stopped && this.connectionGeneration === generation)
       await syncStickerCatalog(this.options.storage, account, items);
   }
+  private async readImage(segment: Record<string, unknown>) {
+    if (Number(segment.file_size) > MAX_IMAGE_BYTES) throw new Error('单张图片不能超过 5 MB');
+    const file = String(segment.file ?? '');
+    if (file.startsWith('data:image/')) { imageStats([file]); return file; }
+    if (file.startsWith('base64://')) return imageFromBase64(file.slice(9));
+    let url = segment.url;
+    if (!url || segment.file_id) {
+      const response = await this.socket.request('get_image', { file: segment.file_id ?? file }, 15000);
+      const data = response.data as { base64?: string; url?: string } | undefined;
+      if (response.ok && data?.base64) return imageFromBase64(data.base64);
+      url ||= data?.url;
+      if (!url) throw new Error('无法读取 QQ 消息图片');
+    }
+    const address = new URL(String(url));
+    if (!['http:', 'https:'].includes(address.protocol) || !/(^|\.)(qq\.com(?:\.cn)?|qpic\.cn)$/i.test(address.hostname)) {
+      throw new Error('无效的 QQ 图片地址');
+    }
+    address.protocol = 'https:';
+    const response = await fetch(address, { redirect: 'error', credentials: 'omit', signal: AbortSignal.timeout(15000) });
+    if (!response.ok || !response.body) throw new Error('无法下载 QQ 消息图片');
+    const reader = response.body.getReader();
+    const parts: string[] = [];
+    let size = 0;
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      size += chunk.value.length;
+      if (size > MAX_IMAGE_BYTES) { await reader.cancel(); throw new Error('单张图片不能超过 5 MB'); }
+      for (let i = 0; i < chunk.value.length; i += 8192) parts.push(String.fromCharCode(...chunk.value.subarray(i, i + 8192)));
+    }
+    return imageFromBase64(btoa(parts.join('')), response.headers.get('Content-Type')?.split(';')[0]);
+  }
   private async submit(admission: Admission) {
     const { message } = admission;
     if (this.stopped || (await this.outbox.hasReply(message.requestId))) return;
+    let images: string[];
+    try {
+      checkImageCount(message.images.length);
+      images = await Promise.all(message.images.map(segment => this.readImage(segment)));
+    } catch {
+      if (!this.stopped) await this.outbox.enqueue({ id: message.requestId, conversationId: message.conversationId,
+        message: [{ type: 'text', data: { text: '图片读取失败。本轮最多 4 张，每张不超过 5 MB，请重新发送。' } }] });
+      return;
+    }
     const labels = await loadStickerLabels(this.options.storage);
     admission.stickers = Object.entries(labels[message.self] ?? {})
       .map(([id, item]) => ({ id, ...item }))
@@ -200,6 +242,7 @@ export class NapCatClient {
     const owner = message.sender.id === this.directory.ownerUserId;
     const result = this.channel!.sendText({
       ...turn,
+      ...(images.length ? { images } : {}),
       requestId: message.requestId,
       conversationId: message.conversationId,
       interactionKey: message.conversationId,

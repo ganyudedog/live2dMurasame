@@ -17,6 +17,8 @@ describe('provider prompt cache and streaming usage', () => {
     network.create.mockResolvedValue(response);
     await requestStage2LLM(config, { userText: '提醒我吃饭', toolContext: '{"results":[]}', systemPrompt: '角色', speechEnabled });
     const body = network.create.mock.lastCall![0];
+    expect(body.response_format).toEqual({ type: 'json_object' });
+    expect(body).not.toHaveProperty('max_tokens');
     expect(body.tools).toBeUndefined();
     expect(body.messages.at(-1).content.includes('先写非空 speak_text')).toBe(speechEnabled);
   });
@@ -39,10 +41,10 @@ describe('provider prompt cache and streaming usage', () => {
     expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe('system');
     const systemPrompt = messages[0].content;
-    expect(systemPrompt).toContain('每行必须同时包含非空字符串 speak_text 和 display_text');
+    expect(systemPrompt).toContain('每项必须同时包含非空字符串 speak_text 和 display_text');
     expect(systemPrompt).toContain('不得因为历史只有 display_text 而省略本轮 speak_text');
     expect(systemPrompt).toContain('历史未保存动作字段不代表本轮禁止使用动作');
-    expect(systemPrompt.indexOf('每行必须同时包含')).toBeLessThan(systemPrompt.indexOf('日常场景：'));
+    expect(systemPrompt.indexOf('每项必须同时包含')).toBeLessThan(systemPrompt.indexOf('日常场景：'));
     expect(messages[1]).toMatchObject({ role: 'user', content: expect.stringContaining(JSON.stringify(historyMessages)) });
     expect(messages[1].content).toContain('用户输入：可是我想听嘛');
     expect(messages[1].content).toMatch(/先写非空 speak_text（日语）.*display_text（中文）。$/);
@@ -53,7 +55,7 @@ describe('provider prompt cache and streaming usage', () => {
     await requestStage2LLM(config, { userText: '你好', speechEnabled: false });
     const [system, user] = network.create.mock.lastCall![0].messages;
     expect(system.content).not.toContain('"speak_text":');
-    expect(user.content).toMatch(/每行写非空 display_text（中文），不输出 speak_text。$/);
+    expect(user.content).toMatch(/每项写非空 display_text（中文），不输出 speak_text。$/);
   });
 
   it.each([
@@ -102,6 +104,16 @@ describe('provider prompt cache and streaming usage', () => {
     expect(third.messages[0].content).toContain('侧头倾听（head），修正后的描述');
     const catalogStart = first.messages[0].content.indexOf('动作标签 @action:');
     expect(third.messages[0].content.slice(0, catalogStart)).toBe(first.messages[0].content.slice(0, catalogStart));
+  });
+
+  it.each([true, false])('retries only the blank stage two response (stream=%s)', async stream => {
+    const rawText = '{"sentences":[{"display_text":"hello"}]}';
+    for (const content of ['  ', rawText]) {
+      network.create.mockResolvedValueOnce(stream ? [{ choices: [{ delta: { content } }] }] : { choices: [{ message: { content } }] });
+    }
+    await expect(requestStage2LLM(config, { userText: 'hello', stream })).resolves.toMatchObject({ rawText });
+    expect(network.create).toHaveBeenCalledTimes(2);
+    expect(network.create.mock.calls[0]).toEqual(network.create.mock.calls[1]);
   });
 
   it('streams text immediately and collects usage-only final frames', async () => {
@@ -164,17 +176,32 @@ describe('provider prompt cache and streaming usage', () => {
     expect(systemPrompt.indexOf('[本轮输出协议]')).toBeLessThan(systemPrompt.indexOf('用户：看得到吗'));
     expect(systemPrompt).toContain('不得直接输出纯文本、角色名加冒号的对白');
     expect(systemPrompt).toContain('首次回复也必须遵守此协议');
-    expect(systemPrompt).toContain('本轮输出仍须遵守上述 JSON Lines 契约');
+    expect(systemPrompt).toContain('本轮输出仍须遵守上述 json 契约');
     const example = systemPrompt.split('\n').find((line: string) => line.startsWith('{"'))!;
-    expect(JSON.parse(example)).toMatchObject({ display_text: expect.any(String) });
+    expect(JSON.parse(example).sentences[0]).toMatchObject({ display_text: expect.any(String) });
     if (speechEnabled) {
-      expect(JSON.parse(example)).toHaveProperty('speak_text');
+      expect(JSON.parse(example).sentences[0]).toHaveProperty('speak_text');
       expect(systemPrompt).toContain('speak_text 必须使用日语');
     } else {
-      expect(Object.keys(JSON.parse(example))).toEqual(['display_text']);
+      expect(Object.keys(JSON.parse(example).sentences[0])).toEqual(['display_text']);
       expect(systemPrompt).toContain('不要输出 speak_text 或 action_intent');
       expect(systemPrompt).not.toContain('朗读文本');
     }
+  });
+
+  it('omits multimodal benchmark capture and strips an image echoed across stream frames', async () => {
+    vi.stubEnv('VITE_CAPTURE_MODEL_BENCHMARK', '1');
+    const image = 'data:image/png;base64,AQID';
+    const captureBenchmark = vi.fn(), onStreamDelta = vi.fn();
+    network.create.mockImplementationOnce(async function* () {
+      for (const content of ['{"display_text":"data:im', 'age/png;base64,AQ', 'ID"}']) yield { choices: [{ delta: { content } }] };
+    });
+    try {
+      const result = await requestStage2LLM(config, { userText: '看图', images: [image], stream: true, captureBenchmark, onStreamDelta });
+      expect(JSON.parse(result.rawText)).toEqual({ display_text: '[图片]' });
+      expect(JSON.stringify(onStreamDelta.mock.calls)).not.toContain('base64');
+      expect(captureBenchmark).not.toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('streams explicit reasoning requests and keeps raw reasoning out of summaries', async () => {

@@ -30,6 +30,8 @@ export interface ConversationMemoryArchive {
 }
 
 export interface ConversationRequest {
+  /** Current-message image data URLs. Up to four images, each at most 5 MiB decoded. */
+  readonly images?: readonly string[];
   readonly isOwner?: boolean;
   /** Source plugin commands this turn may offer to a non-owner. */
   readonly memberCommands?: readonly string[];

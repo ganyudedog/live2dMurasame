@@ -44,6 +44,22 @@ const setup = (ownsConversationRuntime = true) => {
 describe('voice interruption orchestration', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('passes desktop attachments to the model once and publishes only text on failure and cancellation', async () => {
+    const { service, llm, stateBus, trace } = setup();
+    const images = ['data:image/png;base64,AQID'];
+    try {
+      await expect(service.processChatRequest({ ...request('oversize'), images: Array(5).fill(images[0]) })).rejects.toThrow();
+      expect(stateBus.publishChatRequest).not.toHaveBeenCalled();
+      expect(llm.ask).not.toHaveBeenCalled();
+      llm.ask.mockResolvedValueOnce({ ok: false, error: 'offline' });
+      await service.processChatRequest({ ...request('failed'), source: 'text', images });
+      expect(llm.ask).toHaveBeenCalledWith('failed', expect.objectContaining({ images }));
+      expect(trace.record).toHaveBeenCalledWith('conversation.images', { imageCount: 1, imageBytes: 3 });
+      llm.ask.mockImplementationOnce(async () => { service.cancel(); return { ok: false }; });
+      await service.processChatRequest({ ...request('cancel'), images });
+      expect(JSON.stringify(stateBus.publishChatRequest.mock.calls)).not.toContain('base64');
+    } finally { await service.dispose(); }
+  });
   it('completes an ordinary turn without subscribing to kernel tasks', async () => {
     const { service, llm, stateBus } = setup();
     llm.ask.mockResolvedValueOnce({ ok: true, reply: { display_text: 'Hello' } });
@@ -203,7 +219,7 @@ describe('voice interruption orchestration', () => {
     expect(consumers.get('chat')?.submit).toHaveBeenCalledWith('Japanese', '', 0);
     expect(events).toHaveBeenCalledWith({ type: 'started', conversationId: 'chat' });
     options.onSentenceDisplayReady?.({ sentenceIndex: 0, displayText: 'Chinese' });
-    expect(events).toHaveBeenCalledWith({ type: 'sentence', conversationId: 'chat', requestId: 'chat_s0', text: 'Chinese' });
+    expect(events.mock.calls.filter(([event]) => event.type === 'sentence')).toHaveLength(0);
     options.onSentenceStreaming?.({ sentenceIndex: 0, displayText: 'Chinese', speakText: 'Japanese' });
     expect(consumers.get('chat')?.submit).toHaveBeenCalledOnce();
     expect(events.mock.calls.filter(([event]) => event.type === 'sentence')).toHaveLength(1);
@@ -211,7 +227,7 @@ describe('voice interruption orchestration', () => {
     options.onSentenceDisplayReady?.({ sentenceIndex: 1, displayText: 'more Chinese' });
     options.onSentenceStreaming?.({ sentenceIndex: 1, displayText: 'more Chinese', speakText: 'more Japanese' });
     expect(consumers.get('chat')?.submit).toHaveBeenLastCalledWith('more Japanese', '', 1);
-    expect(events).toHaveBeenCalledWith({ type: 'sentence', conversationId: 'chat', requestId: 'chat_s1', text: 'more Chinese' });
+    expect(events).toHaveBeenCalledWith({ type: 'sentence', conversationId: 'chat', requestId: 'chat_s1', text: 'more Chinese', hasSpeech: true });
     expect(consumers.get('chat')?.submit).toHaveBeenCalledTimes(2);
     finish();
     await task;

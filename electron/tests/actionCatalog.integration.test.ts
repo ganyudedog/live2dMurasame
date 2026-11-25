@@ -45,7 +45,7 @@ let modelPath!: string;
 const disposers: Array<() => void> = [];
 beforeEach(() => {
     network.create.mockReset().mockImplementation(async function* () {
-        yield { choices: [{ delta: { content: '{"display_text":"你好","speak_text":"你好"}' } }] };
+        yield { choices: [{ delta: { content: '{"sentences":[{"display_text":"你好","speak_text":"你好"}]}' } }] };
     });
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'live2d-action-integration-'));
     host.userData = path.join(root, 'userData');

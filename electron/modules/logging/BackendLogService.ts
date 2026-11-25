@@ -54,11 +54,17 @@ export class BackendLogService {
   mirrorRenderer(event: { sender?: { id?: number } } | null | undefined, payload: Record<string, unknown> = {}): void {
     if (!isRecord(payload) || payload.kind === 'policy.patch') return;
     if (payload.kind === 'boundary' && typeof payload.traceId === 'string' && isBoundaryName(payload.boundary) && Array.isArray(payload.events)) {
-      const events: Array<{ event: string; at: number }> = [];
+      const events: Array<{ event: string; at: number; attributes?: Record<string, number> }> = [];
       for (const item of payload.events) {
         if (!isRecord(item) || typeof item.event !== 'string') continue;
         this.lineage(payload.traceId, payload.boundary, item.event, 'renderer');
-        if (typeof item.at === 'number' && Number.isFinite(item.at)) events.push({ event: item.event, at: item.at });
+        if (typeof item.at === 'number' && Number.isFinite(item.at)) {
+          const data = item.attributes;
+          const attributes = item.event === 'conversation.images' && isRecord(data)
+            && typeof data.imageCount === 'number' && typeof data.imageBytes === 'number'
+            ? { imageCount: data.imageCount, imageBytes: data.imageBytes } : undefined;
+          events.push({ event: item.event, at: item.at, ...(attributes ? { attributes } : {}) });
+        }
       }
       const { startedAt, endedAt, spanId } = payload;
       if (typeof startedAt === 'number' && Number.isFinite(startedAt) && typeof endedAt === 'number' && Number.isFinite(endedAt) && endedAt >= startedAt) {
@@ -73,7 +79,7 @@ export class BackendLogService {
             ...(typeof payload.parentSpanId === 'string' ? { parentSpanId: payload.parentSpanId } : {}),
             status: payload.failed === true ? 'error' : 'ok',
             ...(Object.keys(attributes).length ? { attributes } : {}),
-            events: events.map((item) => ({ name: item.event, at: item.at })),
+            events: events.map(({ event: name, ...timing }) => ({ name, ...timing })),
           });
         } else {
           exportBoundaryCall({ traceId: payload.traceId, boundary: payload.boundary, startedAt, endedAt, events, failed: payload.failed === true });

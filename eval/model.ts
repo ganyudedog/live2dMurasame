@@ -34,7 +34,7 @@ export async function requestStage2LLM(_config: unknown, request: { userText: st
   if (scenario.entry !== 'channel.turn') throw Error('Unexpected channel model call');
   observed.questions.push(request.userText);
   observed.toolContexts.push(request.toolContext);
-  return { rawText: JSON.stringify({ display_text: scenario.doubles.reply }) };
+  return { rawText: JSON.stringify({ sentences: [{ display_text: scenario.doubles.reply }] }) };
 }
 export function requestStructuredLLM(): never {
   throw Error('Unexpected structured model call');

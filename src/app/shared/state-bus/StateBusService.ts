@@ -1,3 +1,4 @@
+import { imageStats } from '../../../../shared/ai/turnImages.js';
 import { makeObservable, observable, observableRef, runInAction, reaction } from 'mobx';
 import type { BootstrapContext } from '@app/core/bootstrapContext';
 import { SharedStoreClient } from './sharedStoreClient';
@@ -122,6 +123,7 @@ export class StateBusService {
   }
 
   publishChatRequest(request: ChatRequest): void {
+    imageStats(request.images);
     const modelPath = request.modelPath ?? this.config.activeModelPath ?? this.config.live2denvConfig?.currentModelPath ?? '';
     this.dispatch([{ path: 'chat.request', value: { ...request, modelPath } }], 'chat.request');
   }

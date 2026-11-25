@@ -1,3 +1,4 @@
+import { imageStats, redactImageData } from '../../shared/ai/turnImages.js';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
@@ -6,7 +7,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const bounded = (value, limit = 1024) => String(value ?? '').slice(0, limit);
+const bounded = (value, limit = 1024) => redactImageData(String(value ?? '')).slice(0, limit);
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((ok, no) => { resolve = ok; reject = no; });
@@ -81,6 +82,7 @@ export function openServer(cwd, onMessage, onClose) {
 
 const instructions = '每次用 cwd 指定绝对工作目录。Codex 插件自行保存受信目录，与 shell.run 的 shellReadRoots 无关。收到 CODEX_CWD_NOT_TRUSTED 时，向用户确认是否信任该目录，不要查询或修改 shellReadRoots。只有用户明确要求时才 trust 或 newTask。收到 needs_approval 时结束工具循环，向用户说明操作，等待下一轮明确答复，再传 approvalId 和 decision。不得自行批准。';
 const parameters = { type: 'object', additionalProperties: false, required: ['cwd'], properties: {
+  images: { type: 'array', items: { type: 'string' }, maxItems: 4 },
   cwd: { type: 'string', description: '本次调用的绝对工作目录；trust 只登记这个目录。' }, task: { type: 'string' }, newTask: { type: 'boolean' },
   action: { type: 'string', enum: ['run', 'trust', 'untrust', 'answer'] }, approvalId: { type: 'string' }, decision: { type: 'string', enum: ['accept', 'decline'] },
 } };
@@ -129,7 +131,7 @@ export function createService(connect = openServer, sleep = delay) {
           job.currentOperation = bounded(item.command || item.changes?.map(c => c.path).join(', '));
           if (method === 'item/completed' && job.actions.size < 16) job.actions.add(bounded(job.currentOperation, 200));
           for (const c of [...(item.changes ?? []), ...(item.commandActions ?? [])]) if (c.path && job.paths.size < 24) job.paths.add(bounded(c.path, 260));
-        } else if (item.type === 'agentMessage' && method === 'item/completed') job.final = bounded(item.text, 3000);
+        } else if (item.type === 'agentMessage' && method === 'item/completed') job.final = bounded(redactImageData(String(item.text ?? ''), job.images), 3000);
       } else if (method === 'turn/completed') {
         const turn = params.turn;
         if (turn?.status === 'completed') finish(facts(job, 'completed', job.final));
@@ -146,7 +148,8 @@ export function createService(connect = openServer, sleep = delay) {
       if (finished) return;
       job.storage.set(job.scope, result.thread.id);
       job.newTask = false;
-      await server.request('turn/start', { threadId: result.thread.id, input: [{ type: 'text', text: job.task }] });
+      const input = [{ type: 'text', text: job.task }, ...job.images.map(url => ({ type: 'image', url }))];
+      await server.request('turn/start', { threadId: result.thread.id, input });
     })().catch(error => finish(null, error));
     return end.promise.finally(() => { server.close(); job.server = null; });
   }
@@ -164,6 +167,7 @@ export function createService(connect = openServer, sleep = delay) {
   }
   function execute(args, context, invocationId, { storage }) {
     if (stopped) throw new Error('Plugin stopped');
+    imageStats(args.images);
     const cwd = directory(args.cwd), action = args.action ?? 'run';
     const dirs = storage.get('directories') ?? [];
     if (action === 'trust' || action === 'untrust') {
@@ -189,7 +193,7 @@ export function createService(connect = openServer, sleep = delay) {
       if (active.get(scope)?.approval) throw new Error('Answer the pending approval first');
       const start = (attempt) => {
         const reply = deferred();
-        queue.push({ reply, scope, storage, requestId, cwd, task: args.task, newTask: args.newTask, actions: new Set(), paths: new Set(), final: '', span: attempt });
+        queue.push({ reply, scope, storage, requestId, cwd, task: args.task, images: args.images ?? [], newTask: args.newTask, actions: new Set(), paths: new Set(), final: '', span: attempt });
         pump();
         return reply.promise;
       };
@@ -209,4 +213,5 @@ let service;
 export function activate() { service ??= createService(); process.once('exit', dispose); }
 export function dispose() { process.off('exit', dispose); service?.dispose(); service = undefined; }
 export const commands = [{ name: 'codex.task', skill: 'codex', description: 'Run or resume a local Codex task; return facts to the calling turn.', instructions, parameters,
+  journalExcludedArgs: ['images'], turnImageArgument: 'images',
   execute: (...args) => { if (!service) throw new Error('Plugin not active'); return service.execute(...args); } }];

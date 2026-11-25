@@ -17,6 +17,8 @@ export class PluginStorageService {
     this.directory = directory;
   }
 
+  // Transient values use the same plugin scope without serializing turn attachments to disk.
+  private readonly transient = new Map<string, unknown>();
   private readonly listeners = new Set<(pluginId: string, key: string) => void>();
 
   subscribe(listener: (pluginId: string, key: string) => void): () => void {
@@ -31,8 +33,8 @@ export class PluginStorageService {
   }
 
   get(pluginId: string, key: string): unknown {
-    const values = this.#read(pluginId);
     this.#validateKey(key);
+    const values = this.#read(pluginId);
     return Object.prototype.hasOwnProperty.call(values, key) ? values[key] : undefined;
   }
 
@@ -58,6 +60,28 @@ export class PluginStorageService {
     this.#write(pluginId, values);
     for (const listener of this.listeners) listener(pluginId, key);
     return true;
+  }
+
+  getTransient(pluginId: string, key: string): unknown {
+    this.#validateKey(key);
+    return this.transient.get(this.#transientKey(pluginId, key));
+  }
+
+  setTransient(pluginId: string, key: string, value: unknown): void {
+    this.#validateKey(key);
+    this.transient.set(this.#transientKey(pluginId, key), value);
+    for (const listener of this.listeners) listener(pluginId, key);
+  }
+
+  deleteTransient(pluginId: string, key: string): boolean {
+    this.#validateKey(key);
+    const deleted = this.transient.delete(this.#transientKey(pluginId, key));
+    if (deleted) for (const listener of this.listeners) listener(pluginId, key);
+    return deleted;
+  }
+
+  #transientKey(pluginId: string, key: string): string {
+    return this.#file(pluginId) + '\0' + key;
   }
 
   #file(pluginId: string): string {

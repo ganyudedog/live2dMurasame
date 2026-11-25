@@ -78,7 +78,7 @@ export type BoundaryForward = (payload: {
   startedAt: number;
   endedAt: number;
   failed: boolean;
-  events: Array<{ event: string; at: number }>;
+  events: Array<{ event: string; at: number; attributes?: Record<string, number> }>;
   attributes?: Record<string, string | number | boolean>;
 }) => void;
 
@@ -320,7 +320,10 @@ export class LogService {
       startedAt: origin + trace.startedAt,
       endedAt: origin + endedAt,
       failed: trace.status === 'failed',
-      events: trace.events.map(({ event, timestamp }) => ({ event, at: origin + Math.min(timestamp, endedAt) })),
+      events: trace.events.map(({ event, timestamp, data }) => ({ event, at: origin + Math.min(timestamp, endedAt),
+        ...(event === 'conversation.images' && typeof data?.imageCount === 'number' && typeof data.imageBytes === 'number'
+          ? { attributes: { imageCount: data.imageCount, imageBytes: data.imageBytes } } : {}),
+      })),
       ...(trace.modelBenchmark ? { modelBenchmark: trace.modelBenchmark } : {}),
       ...boundaryAttributes(trace),
     });

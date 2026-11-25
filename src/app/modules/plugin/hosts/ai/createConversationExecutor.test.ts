@@ -8,7 +8,7 @@ import { runSkillLoop } from '@app/modules/ai/modules/llm/application/skillLoop'
 vi.mock('@app/modules/ai/modules/llm/application/skillLoop', () => ({ runSkillLoop: vi.fn() }));
 
 vi.mock('@app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
-  requestStage2LLM: vi.fn(async () => ({ rawText: '{"display_text":"你好"}' })),
+  requestStage2LLM: vi.fn(async () => ({ rawText: '{"sentences":[{"display_text":"你好"}]}' })),
   requestStructuredLLM: vi.fn(),
 }));
 
@@ -60,10 +60,10 @@ describe('plugin conversation persona injection', () => {
     expect(vi.mocked(requestStage2LLM).mock.lastCall![1].systemPrompt).toContain('上次讨论了杭州旅游');
     expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ archive, userText: '杭州旅游', assistantText: '你好' }));
     controller.abort();
-    await execute(options, { text: '取消的请求', memoryArchive: archive }, context);
+    await execute(options, { text: '取消的请求', images: ['data:image/png;base64,AQID'], memoryArchive: archive }, context);
     expect(appendConversation).toHaveBeenCalledTimes(1);
     vi.mocked(requestStage2LLM).mockRejectedValueOnce(new Error('offline'));
-    await execute(options, { text: '失败的请求', memoryArchive: archive }, { ...context, signal: new AbortController().signal });
+    await execute(options, { text: '失败的请求', images: ['data:image/png;base64,AQID'], memoryArchive: archive }, { ...context, signal: new AbortController().signal });
     expect(appendConversation).toHaveBeenCalledTimes(1);
   });
   it.each([true, false])('uses the ordinary personal-memory flow only when requested (archive=%s)', async (withArchive) => {
@@ -177,7 +177,7 @@ describe('plugin conversation persona injection', () => {
     const execute = createDefaultConversationExecutor(config as unknown as ConfigService, log as unknown as LogService);
     let finish: () => void = () => {};
     vi.mocked(requestStage2LLM).mockImplementationOnce(() => new Promise((resolve) => {
-      finish = () => resolve({ rawText: '{"display_text":"迟到"}', usedModel: 'test' });
+      finish = () => resolve({ rawText: '{"sentences":[{"display_text":"迟到"}]}', usedModel: 'test' });
     }));
     const emit = vi.fn();
     const pending = execute(
@@ -220,7 +220,7 @@ describe('plugin conversation persona injection', () => {
     const emit = vi.fn();
     let finish: () => void = () => {};
     vi.mocked(requestStage2LLM).mockImplementationOnce(() => new Promise((resolve) => {
-      finish = () => resolve({ rawText: '{"display_text":"迟到"}', usedModel: 'test' });
+      finish = () => resolve({ rawText: '{"sentences":[{"display_text":"迟到"}]}', usedModel: 'test' });
     }));
     const pending = execute(options, { text: '迟到', memoryArchive: archive }, {
       channelId: 'c', requestId: 'r', conversationId: 'g', signal: new AbortController().signal, emit,
@@ -234,7 +234,7 @@ describe('plugin conversation persona injection', () => {
     expect(appendConversation).not.toHaveBeenCalled();
     expect(emit).toHaveBeenCalledWith(expect.objectContaining({ status: 'error', text: '', error: 'model_switched' }));
 
-    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"新的"}', usedModel: 'test' });
+    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"sentences":[{"display_text":"新的"}]}', usedModel: 'test' });
     await execute(options, { text: '现在', memoryArchive: archive }, {
       channelId: 'c', requestId: 'r2', conversationId: 'g', signal: new AbortController().signal, emit: vi.fn(),
     });

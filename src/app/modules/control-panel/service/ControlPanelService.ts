@@ -1,3 +1,4 @@
+import { imageStats } from '../../../../../shared/ai/turnImages.js';
 import { toChatConfig, buildPersonaConfig, createId, createMessage } from '../domain/configuration';
 import { actionBound, computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import { DEFAULT_GLOBAL_UI_SETTINGS, DEFAULT_MODEL_CONFIG } from '../domain/defaults';
@@ -425,13 +426,15 @@ export class ControlPanelService {
     }
   }
 
-  submitChat(): void {
-    const text = this.chatDraft.trim();
+  submitChat(images?: readonly string[]): void {
+    const text = this.chatDraft.trim() || (images?.length ? `[附有 ${images.length} 张图片]` : '');
     if (!text || this.chatSending) return;
+    imageStats(images);
     const requestId = createId();
     const now = Date.now();
     const request: ChatRequest = {
       id: requestId,
+      ...(images?.length ? { images } : {}),
       text,
       source: 'text',
       status: 'pending',

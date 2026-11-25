@@ -1,3 +1,4 @@
+import { imageStats } from '../../../../../shared/ai/turnImages.js';
 import { computed, makeObservable, observable, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import type { LlmService } from '../modules/llm/service/LlmService';
 import type { TtsService } from '../modules/tts/service/TtsService';
@@ -85,7 +86,7 @@ export class AiService {
       reaction(
         () => this.stateBus.chatRequest,
         (request) => {
-          if (!request || request.source !== 'text' || request.status !== 'pending' || !request.text.trim()) return;
+          if (!request || request.source !== 'text' || request.status !== 'pending' || (!request.text.trim() && !request.images?.length)) return;
           void this.processChatRequest(request);
         },
       ),
@@ -154,8 +155,11 @@ export class AiService {
     return () => this.actionListeners.delete(listener);
   }
 
-  async processChatRequest(request: ChatRequest): Promise<void> {
-    if (this.disposed || !this.ownsConversationRuntime || request.id === this.lastConversationId) return;
+  async processChatRequest(input: ChatRequest): Promise<void> {
+    if (this.disposed || !this.ownsConversationRuntime || input.id === this.lastConversationId) return;
+    const { images, ...request } = input;
+    const stats = imageStats(images);
+    if (images?.length && !request.text.trim()) request.text = `[附有 ${images.length} 张图片]`;
     if (request.source !== 'presence') this.llm.notePresenceInteraction();
     if (this.processing) {
       this.cancel('superseded-by-new-request');
@@ -188,6 +192,7 @@ export class AiService {
       reasoningEffort,
     }, 'conversation.turn');
 
+    if (stats.imageCount) trace.record('conversation.images', stats);
     let accumulatedDisplay = '';
     if (request.source === 'asr') trace.record('asr.final', { source: request.source });
     const consumer = this.tts.createDispatcher(request.id);
@@ -199,22 +204,12 @@ export class AiService {
     const displayedSentences = new Set<number>();
     const submitSpeech = (sentenceIndex: number, speakText: string, displayText = '') => {
       if (!isCurrent() || !speakText || submittedSpeech.has(sentenceIndex)) return;
-      if (submittedSpeech.size === 0) trace.record('tts.dispatch', { requestId: request.id });
+      trace.record('tts.dispatch', { requestId: request.id, sentenceIndex });
       submittedSpeech.add(sentenceIndex);
       consumer.submit(speakText, displayText, sentenceIndex);
     };
     const prepareDisplay = (sentenceIndex: number, text: string, hasSpeech?: boolean) => {
-      if (!isCurrent() || !text) return;
-      if (displayedSentences.has(sentenceIndex)) {
-        // The display field may arrive before the complete sentence. Emit a
-        // second metadata update when completion proves that no speech exists,
-        // so the bubble can switch to reading pace instead of waiting forever.
-        if (hasSpeech === false) {
-          this.emitDialogue({ type: 'sentence', conversationId: request.id,
-            requestId: `${request.id}_s${sentenceIndex}`, text, hasSpeech: false });
-        }
-        return;
-      }
+      if (!isCurrent() || !text || displayedSentences.has(sentenceIndex)) return;
       displayedSentences.add(sentenceIndex);
       this.emitDialogue({ type: 'sentence', conversationId: request.id, requestId: `${request.id}_s${sentenceIndex}`, text, hasSpeech });
     };
@@ -225,6 +220,7 @@ export class AiService {
       const result = await this.llm.ask(request.text.trim(), {
         requestId: request.id,
         trace,
+        images,
         cue: presence,
         signal: controller.signal,
         reminderChannel: { kind: 'desktop', onReminder: (dueAt, sentence, speakText) => {
@@ -237,7 +233,6 @@ export class AiService {
         // 每轮对话的思考深度由用户当前选择的模型决定；空值不发送推理参数。
         ...(reasoningEffort ? { reasoningEffort } : {}),
         onSentenceSpeechReady: ({ sentenceIndex, speakText }) => submitSpeech(sentenceIndex, speakText),
-        onSentenceDisplayReady: ({ sentenceIndex, displayText }) => prepareDisplay(sentenceIndex, displayText),
         onSentenceStreaming: (sentence) => {
           if (!isCurrent()) return;
           completeSentences++;
@@ -317,8 +312,6 @@ export class AiService {
         trace.end({ requestId: request.id, status: 'cancelled' });
         return;
       }
-      consumer.stop();
-      this.tts.cancelActive('chat-failed');
       const message = toErrorMessage(error);
       runInAction(() => {
         this.lastError = message;
@@ -333,6 +326,7 @@ export class AiService {
       });
       this.emitTextResponse({ requestId: request.id, text: message, status: 'error', error: message });
       this.emitDialogue({ type: 'cancelled', conversationId: request.id });
+      await consumer.wait();
       trace.fail('AI 对话请求失败', { requestId: request.id, err: message }, error);
     } finally {
       consumer.stop();

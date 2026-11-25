@@ -5,8 +5,11 @@ import type { PluginManifest, PluginWindowKind } from './manifest';
 
 export interface PluginStorage {
   get<T>(key: string, fallback?: T): Promise<T | undefined>;
+  getTransient<T>(key: string, fallback?: T): Promise<T | undefined>;
   set<T>(key: string, value: T): Promise<void>;
+  setTransient<T>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<void>;
+  deleteTransient(key: string): Promise<void>;
   subscribe(listener: (key: string) => void): Disposable;
 }
 

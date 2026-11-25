@@ -467,8 +467,11 @@ declare global {
 
   interface PetPluginStorageAPI {
     get?: (pluginId: string, key: string) => Promise<unknown>;
+    getTransient?: (pluginId: string, key: string) => Promise<unknown>;
     set?: (pluginId: string, key: string, value: unknown) => Promise<void>;
+    setTransient?: (pluginId: string, key: string, value: unknown) => Promise<void>;
     delete?: (pluginId: string, key: string) => Promise<boolean>;
+    deleteTransient?: (pluginId: string, key: string) => Promise<boolean>;
     onChanged?: (pluginId: string, callback: (key: string) => void) => () => void;
   }
 

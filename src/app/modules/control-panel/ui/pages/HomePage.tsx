@@ -1,3 +1,4 @@
+import { useChatImages } from '@app/shared/images/useChatImages';
 import { ArrowLeftRight, Boxes, Camera, CameraOff, Eraser, Heart, Scaling } from 'lucide-react';
 import ChatPanel from '../components/common/ChatPanel';
 import { Page } from '../components/common/Page';
@@ -64,12 +65,13 @@ export default function HomePage({
   asrError: string | null;
   asrSwitchLoading: boolean;
   onChatDraftChange: (value: string) => void;
-  onChatSubmit: () => void;
+  onChatSubmit: (images?: readonly string[]) => void;
   onClearChat: () => void;
   onToggleAsr: (nextEnabled: boolean) => void | Promise<void>;
   onChatReasoningEffortChange: (effort: PetReasoningEffort | '') => void;
   onChatModelChange: (modelId: string) => void;
 }) {
+  const attachments = useChatImages();
   const scaleControl = useScaleControl({ scale, onPreview: onScalePreview, onPersist: onScalePersist });
   const relationship = useModelRelationship(model.path || null);
   // 思考深度只在当前模型确实有档位时出现；空集不是“默认值”，而是接口不接受该参数。
@@ -122,10 +124,11 @@ export default function HomePage({
         title="对话"
         messages={chatMessages}
         draft={chatDraft}
-        busy={chatSending}
+        busy={chatSending || attachments.reading}
+        hasAttachments={attachments.count > 0}
         error={chatError}
         onDraftChange={onChatDraftChange}
-        onSubmit={onChatSubmit}
+        onSubmit={() => { void attachments.submit(onChatSubmit); }}
         inputLabel="对话输入"
         placeholder="在这里与 AI 对话，Shift+Enter 换行，Enter 发送"
         emptyMessage="还没有对话。直接输入文字即可开始，语音识别结果会汇入同一条链路。"
@@ -143,6 +146,8 @@ export default function HomePage({
           disabled: chatSending,
           onChange: (value) => onChatReasoningEffortChange(value as PetReasoningEffort),
         } : undefined}
+        attachmentPreview={attachments.preview}
+        inputProps={{ onPaste: attachments.onPaste }}
         toolbar={
           <Button variant="danger" size="xs" className="ml-auto"
             disabled={chatSending || chatMessages.length === 0} onClick={onClearChat}>
@@ -150,7 +155,8 @@ export default function HomePage({
             清空对话
           </Button>
         }
-        inputActions={
+        inputActions={<>
+          {attachments.picker}
           <button type="button" aria-label="摄像头" aria-pressed={presenceEnabled}
             onClick={() => onTogglePresence(!presenceEnabled)}
             className={`flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[11px] transition-colors
@@ -161,7 +167,7 @@ export default function HomePage({
               : <CameraOff aria-hidden="true" className="size-3.5" />}
             <span className="truncate">{presenceEnabled ? '关闭摄像头' : '开启摄像头'}</span>
           </button>
-        }
+        </>}
         voiceInput={{
           enabled: asrEnabled,
           statusLabel: MIC_STATE_LABEL[asrState] ?? '语音输入',

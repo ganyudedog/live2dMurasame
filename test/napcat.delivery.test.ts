@@ -13,7 +13,7 @@ import type { ConversationChannel, ConversationRequest } from '../plugins/napcat
 import { requestStage2LLM } from '../src/app/modules/ai/modules/llm/infrastructure/llmClient';
 
 vi.mock('../src/app/modules/ai/modules/llm/infrastructure/llmClient', () => ({
-  requestStage2LLM: vi.fn(async () => ({ rawText: '{"display_text":"收到"}' })),
+  requestStage2LLM: vi.fn(async () => ({ rawText: '{"sentences":[{"display_text":"收到"}]}' })),
   requestStructuredLLM: vi.fn(),
 }));
 const { complete } = vi.hoisted(() => ({ complete: vi.fn() }));
@@ -275,6 +275,27 @@ it('persists failed and disconnected sends, resumes once, and confirms reminders
     next.client.dispose();
   }
 });
+it('resolves only image segments of the admitted QQ message and rejects an oversized album as a whole', async () => {
+  const { client, socket, submissions } = await setup(undefined, async (_options, _request, turn) => {
+    turn.emit({ status: 'done', text: '收到' });
+  });
+  const image = { type: 'image', data: { file: 'image-id' } };
+  const event = group('ai 看图');
+  try {
+    socket.receive({ ...event, message: [...event.message, image] });
+    await vi.waitFor(() => expect(socket.sent[0]?.action).toBe('get_image'));
+    const bytes = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+    socket.receive({ echo: socket.sent[0].echo, status: 'ok', data: { base64: bytes } });
+    await vi.waitFor(() => expect(socket.sent[1]?.action).toBe('send_group_msg'));
+    expect(submissions[0].images).toEqual([`data:image/png;base64,${bytes}`]);
+    expect(submissions[0].text).not.toContain('base64');
+    socket.ack(1, 'ok');
+    socket.receive({ ...event, message_id: 21, message: [...event.message, ...Array(5).fill(image)] });
+    await vi.waitFor(() => expect(socket.sent[2]?.action).toBe('send_group_msg'));
+    expect(submissions).toHaveLength(1);
+    socket.ack(2, 'ok');
+  } finally { await client.dispose(); }
+});
 it('retains a reply generated while the socket is disconnected', async () => {
   modelTools();
   const { client, socket, storage } = await setup();
@@ -283,7 +304,7 @@ it('retains a reply generated while the socket is disconnected', async () => {
     await new Promise<void>((r) => {
       finish = r;
     });
-    return { rawText: '{"display_text":"later"}', usedModel: 'test' };
+    return { rawText: '{"sentences":[{"display_text":"later"}]}', usedModel: 'test' };
   });
   try {
     socket.receive(group('ai hi'));
@@ -393,9 +414,15 @@ it('admits an allowlisted private sender, resolves a quote and sends labelled me
     await storage.set('stickerLabel', {
       '10001': { '0123456789abcdef': { description: '挥手', url: 'https://example.test/wave.png' } },
     });
-    vi.mocked(requestStage2LLM).mockResolvedValueOnce({
-      rawText: '{"display_text":"你好[挥手]"}',
-      usedModel: 'test',
+    const { requestStage2LLM: runStage2 } = await vi.importActual<typeof import('../src/app/modules/ai/modules/llm/infrastructure/llmClient')>(
+      '../src/app/modules/ai/modules/llm/infrastructure/llmClient');
+    vi.mocked(requestStage2LLM).mockImplementationOnce((cfg, req) => {
+      complete.mockImplementationOnce(async function* () {
+        yield { choices: [{ delta: { content: '{"sentences":[{"display_text":"你好"}' } }] };
+        expect(socket.sent.map(frame => frame.action)).toEqual(['get_msg']);
+        yield { choices: [{ delta: { content: ',{"display_text":"再见[挥手]"}]}' } }] };
+      });
+      return runStage2(cfg, req);
     });
     socket.receive(event);
     await vi.waitFor(() => expect(socket.sent[0]?.action).toBe('get_msg'));
@@ -418,13 +445,13 @@ it('admits an allowlisted private sender, resolves a quote and sends labelled me
       params: {
         user_id: '20002',
         message: [
-          { type: 'text', data: { text: '你好' } },
+          { type: 'text', data: { text: '你好\n再见' } },
           { type: 'image', data: { file: 'https://example.test/wave.png' } },
         ],
       },
     });
     socket.ack(1, 'ok');
-    await tick();
+    await vi.waitFor(() => expect(spans).toContainEqual(expect.objectContaining({ name: 'plugin.runtime', status: 'ok' })));
   } finally {
     await client.dispose();
   }

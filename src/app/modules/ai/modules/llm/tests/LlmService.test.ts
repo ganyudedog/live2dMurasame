@@ -20,13 +20,15 @@ describe('LLM and RAG orchestration', () => {
     vi.mocked(runSkillLoop).mockResolvedValueOnce({ handled: true, context: 'task-123 queued' });
     const snapshot = { activeModelPath: '/character', globalModelConfig: { llmModels: testModels(), apiKey: 'key' }, modelConfig: { tts: { textLang: 'all_ja' }, actions: [] } } as unknown as PetConfigSnapshot;
     const service = new LlmService({ getConfigSnapshot: () => snapshot, openCommands: async () => commands });
-    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"任务已接收","speak_text":"受け付けました"}', usedModel: 'model' });
-    const response = await service.ask('修复项目', { model: 'model', requestId: 'user-request', trace: { record: vi.fn() } as unknown as TraceScope });
+    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"sentences":[{"display_text":"任务已接收","speak_text":"受け付けました"}]}', usedModel: 'model' });
+    const images = ['data:image/png;base64,AQID'];
+    const response = await service.ask('修复项目', { images, model: 'model', requestId: 'user-request', trace: { record: vi.fn() } as unknown as TraceScope });
     expect(response.ok).toBe(true);
-    expect(runSkillLoop).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'user-request', text: '修复项目' }));
-    expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ toolContext: 'task-123 queued', memoryContext: expect.stringContaining('主人喜欢这个项目') }));
+    expect(runSkillLoop).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'user-request', text: '修复项目', images }));
+    expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ images, toolContext: 'task-123 queued', memoryContext: expect.stringContaining('主人喜欢这个项目') }));
     expect(get).toHaveBeenCalled();
     expect(appendConversation).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'user-request', userText: '修复项目', assistantText: '任务已接收', toolContext: 'task-123 queued' }));
+    expect(JSON.stringify(appendConversation.mock.calls)).not.toContain('base64');
     expect(commands.reply).toHaveBeenCalledWith('user-request', '任务已接收');
     expect(commands.close).toHaveBeenCalledOnce();
   });
@@ -43,7 +45,7 @@ describe('LLM and RAG orchestration', () => {
     const service = new LlmService({ getConfigSnapshot: () => ({ activeModelPath: 'model-a', globalModelConfig: { llmModels: testModels(),
       apiKey: 'key', model: 'chat-model', memoryModel, memoryReasoningEffort: depth,
     }, modelConfig: { actions: [] } }) as unknown as PetConfigSnapshot });
-    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"你好"}', usedModel: 'chat-model' });
+    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"sentences":[{"display_text":"你好"}]}', usedModel: 'chat-model' });
     // 对话模型由控制面板按前端选择下发；后端不再有单值 model 兜底。
     service.setConfig({ model: 'chat-model' });
     vi.mocked(requestStructuredLLM).mockResolvedValue({ rawText: '{"coreText":"# 核心记忆","processedThroughCount":1}', usedModel: 'memory-model' });
@@ -86,7 +88,7 @@ describe('LLM and RAG orchestration', () => {
     snapshot = { globalModelConfig: { llmModels: testModels(), apiKey: 'next-key', baseURL: 'http://next', displayLang: 'en' },
       modelConfig: { actions: [shyAction], tts: { textLang: 'all_en' } } } as unknown as PetConfigSnapshot;
     service.setConfig({ model: 'next-model' });
-    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"hello","speak_text":"hello"}', usedModel: 'next-model' });
+    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"sentences":[{"display_text":"hello","speak_text":"hello"}]}', usedModel: 'next-model' });
     expect(await service.ask('hello', { trace: { record: vi.fn() } as unknown as TraceScope })).toMatchObject({ ok: true });
     expect(requestStage2LLM).toHaveBeenCalledWith(expect.objectContaining({ apiKey: 'next-key', model: 'next-model', baseURL: 'http://next' }),
       expect.objectContaining({ displayLang: 'en', speakLang: 'all_en', actionCapability: {
@@ -114,7 +116,7 @@ describe('LLM and RAG orchestration', () => {
     await service.requestStructured('refine', 'curves');
     expect(vi.mocked(requestStructuredLLM).mock.lastCall![1]).not.toHaveProperty('reasoningEffort');
     // 对话请求带自己的深度，不会借用动作表的。
-    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"hello"}', usedModel: 'user-alias' });
+    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"sentences":[{"display_text":"hello"}]}', usedModel: 'user-alias' });
     await service.ask('hello', { trace: { record: vi.fn() } as unknown as TraceScope });
     expect(vi.mocked(requestStage2LLM).mock.lastCall![1]).not.toHaveProperty('reasoningEffort');
     service.dispose();
@@ -164,7 +166,7 @@ describe('LLM and RAG orchestration', () => {
     const { service, trace } = setup(false);
     const speech = vi.fn();
     const sentence = vi.fn();
-    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"speak_text":"voice","display_text":"字幕"}', usedModel: 'model' });
+    vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"sentences":[{"speak_text":"voice","display_text":"字幕"}]}', usedModel: 'model' });
     const result = await service.ask('你好', { trace: trace as unknown as TraceScope, onSentenceSpeechReady: speech, onSentenceStreaming: sentence });
     expect(requestStage2LLM).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ speechEnabled: false }));
     expect(speech).not.toHaveBeenCalled();
@@ -176,7 +178,7 @@ describe('LLM and RAG orchestration', () => {
   it('records actual usage on dialogue and structured-request traces', async () => {
     const { service, trace } = setup();
     const usage = { promptTokens: 2000, cachedTokens: 1500, uncachedTokens: 500, cacheStatus: 'hit' as const };
-    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"display_text":"hello"}', usedModel: 'model', usage });
+    vi.mocked(requestStage2LLM).mockResolvedValue({ rawText: '{"sentences":[{"display_text":"hello"}]}', usedModel: 'model', usage });
     await service.ask('hello', { trace: trace as unknown as TraceScope });
     expect(trace.record).toHaveBeenCalledWith('ask.usage', usage);
     service.dispose();
@@ -198,7 +200,7 @@ describe('LLM and RAG orchestration', () => {
 
   it('preserves sentence streaming, optional action IDs and conversation persistence', async () => {
     const { service, trace, memory } = setup();
-    const rawText = '{"display_text":"hello","speak_text":"speech","action_intent":{"action_id":"turn-head"}}\n';
+    const rawText = '{"sentences":[{"display_text":"hello","speak_text":"speech","action_intent":{"action_id":"turn-head"}}]}\n';
     vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
       request.onStreamDelta?.({ deltaText: rawText, aggregateText: rawText });
       return { rawText, usedModel: 'model' };
@@ -218,14 +220,14 @@ describe('LLM and RAG orchestration', () => {
     const { service, trace, memory } = setup();
     memory.appendConversation.mockRejectedValue(new Error('storage unavailable'));
     vi.mocked(requestStage2LLM).mockResolvedValue({
-      rawText: '{"display_text":"hello","speak_text":"speech","action_intent":{"action_id":"turn-head"}}', usedModel: 'model',
+      rawText: '{"sentences":[{"display_text":"hello","speak_text":"speech","action_intent":{"action_id":"turn-head"}}]}', usedModel: 'model',
     });
     expect(await service.ask('question', { trace: trace as unknown as TraceScope })).toMatchObject({ ok: true });
     expect(trace.record).toHaveBeenCalledWith('memory.persist.failed', expect.objectContaining({ modelPath: 'pet' }));
     service.dispose();
   });
 
-  it('finalizes a multi-sentence JSON Lines stream and persists the full reply', async () => {
+  it('finalizes a multi-sentence json stream and persists the full reply', async () => {
     const { service, trace, memory } = setup();
     const speech = vi.fn();
     const sentence = vi.fn();
@@ -233,10 +235,11 @@ describe('LLM and RAG orchestration', () => {
       JSON.stringify({ speak_text: 'first voice', display_text: '第一句', action_intent: { action_id: ['wink_left'] } }),
       JSON.stringify({ speak_text: 'second voice', display_text: '第二句' }),
     ];
-    const rawText = lines.join('\n');
+    const firstChunk = '{"sentences":[' + lines[0];
+    const rawText = `${firstChunk},${lines[1]}]}`;
     vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
-      request.onStreamDelta?.({ deltaText: lines[0], aggregateText: lines[0] });
-      request.onStreamDelta?.({ deltaText: `\n${lines[1]}`, aggregateText: rawText });
+      request.onStreamDelta?.({ deltaText: firstChunk, aggregateText: firstChunk });
+      request.onStreamDelta?.({ deltaText: `,${lines[1]}]}`, aggregateText: rawText });
       return { rawText, usedModel: 'model' };
     });
     const result = await service.ask('question', { trace: trace as unknown as TraceScope,
@@ -246,7 +249,6 @@ describe('LLM and RAG orchestration', () => {
     expect(sentence.mock.calls.map(([value]) => value.sentenceIndex)).toEqual([0, 1]);
     expect(memory.appendConversation).toHaveBeenCalledWith(expect.objectContaining({ userText: 'question', assistantText: '第一句\n第二句' }));
     expect(trace.record.mock.calls.map(([event]) => event)).not.toContain('ask.failed');
-    expect(trace.record).toHaveBeenCalledWith('reply.parse', { state: 'json-lines', recordCount: 2, skippedLineCount: 0 });
     service.dispose();
   });
 
@@ -262,7 +264,7 @@ describe('LLM and RAG orchestration', () => {
       saved.label = '已修改';
       setSnapshot({ ...snapshot, modelConfig: { ...snapshot.modelConfig, actions: [] } });
       expect(request.actionCapability?.actions[0].label).toBe('脸红');
-      const rawText = '{"speak_text":"voice","action_intent":{"action_id":"cheek"}}';
+      const rawText = '{"sentences":[{"speak_text":"voice","display_text":"字幕","action_intent":{"action_id":"cheek"}}]}';
       request.onStreamDelta?.({ deltaText: rawText, aggregateText: rawText });
       return { rawText, usedModel: 'model' };
     });
@@ -283,7 +285,7 @@ describe('LLM and RAG orchestration', () => {
     const sentence = vi.fn();
     vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
       snapshot[field] = 'next-model';
-      const rawText = '{"speak_text":"old voice","display_text":"old text","action_intent":{"action_id":"shy"}}';
+      const rawText = '{"sentences":[{"speak_text":"old voice","display_text":"old text","action_intent":{"action_id":"shy"}}]}';
       request.onStreamDelta?.({ deltaText: rawText, aggregateText: rawText });
       return { rawText, usedModel: 'model' };
     });
@@ -303,7 +305,7 @@ describe('LLM and RAG orchestration', () => {
     if (stage === 'persistence') memory.appendConversation.mockImplementationOnce(async () => { switchModel(); });
     vi.mocked(requestStage2LLM).mockImplementation(async () => {
       if (stage === 'response') switchModel();
-      return { rawText: '{"display_text":"old text"}', usedModel: 'model' };
+      return { rawText: '{"sentences":[{"display_text":"old text"}]}', usedModel: 'model' };
     });
     expect(await service.ask('question', { trace: trace as unknown as TraceScope }))
       .toMatchObject({ ok: false, error: '模型已切换，已丢弃旧回复' });
@@ -319,8 +321,8 @@ describe('LLM and RAG orchestration', () => {
     const sentence = vi.fn();
     const first = '{"speak_text":"Japanese","display_text":"Chinese"}';
     const second = '{"speak_text":"more Japanese","display_text":"more Chinese"}';
-    const prefix = '```json\n\n';
-    const rawText = `${prefix}${first}\n\n${second}\n` + '```';
+    const prefix = '{"sentences":[';
+    const rawText = `${prefix}${first},${second}]}`;
     vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
       request.onStreamDelta?.({ deltaText: '', aggregateText: `${prefix}{"speak_text":"Japanese",` });
       expect(speech).toHaveBeenCalledWith({ sentenceIndex: 0, speakText: 'Japanese' });
@@ -348,7 +350,7 @@ describe('LLM and RAG orchestration', () => {
     const speech = vi.fn();
     const display = vi.fn();
     const sentence = vi.fn();
-    const rawText = ' \n{"speak_text":"speech","display_text":"display"}\n ';
+    const rawText = ' \n{"sentences":[{"speak_text":"speech","display_text":"display"}]}\n ';
     vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
       let aggregateText = '';
       for (const deltaText of rawText) {
@@ -369,7 +371,7 @@ describe('LLM and RAG orchestration', () => {
     const { service, trace, memory } = setup();
     const controller = new AbortController();
     const onSentenceStreaming = vi.fn();
-    const rawText = '{"display_text":"late","speak_text":"late","action_intent":{"action_id":"turn-head"}}\n';
+    const rawText = '{"sentences":[{"display_text":"late","speak_text":"late","action_intent":{"action_id":"turn-head"}}]}\n';
     vi.mocked(requestStage2LLM).mockImplementation(async (_config, request) => {
       expect(request.signal).toBe(controller.signal);
       controller.abort();
@@ -386,7 +388,7 @@ describe('LLM and RAG orchestration', () => {
 it.each([undefined, [{ id: 'new-model', efforts: ['low'], effortsSource: 'probe', probedAt: 1 }]])('keeps the caller model without substituting a registry default (%s)', async (models) => {
   const snapshot = { globalModelConfig: { apiKey: 'new-key', baseURL: 'new-url', llmModels: models }, modelConfig: { actions: [] } } as unknown as PetConfigSnapshot;
   const service = new LlmService({ getConfigSnapshot: () => snapshot });
-  vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"display_text":"你好"}', usedModel: 'new-model' });
+  vi.mocked(requestStage2LLM).mockResolvedValueOnce({ rawText: '{"sentences":[{"display_text":"你好"}]}', usedModel: 'new-model' });
   await service.ask('在吗', { model: 'removed-model', reasoningEffort: 'ultra', trace: { record: vi.fn() } as unknown as TraceScope });
   expect(requestStage2LLM).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'removed-model', apiKey: 'new-key' }), models ? expect.not.objectContaining({ reasoningEffort: 'ultra' }) : expect.objectContaining({ reasoningEffort: 'ultra' }));
   service.dispose();

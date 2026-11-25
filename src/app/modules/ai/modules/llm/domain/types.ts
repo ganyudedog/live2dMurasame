@@ -21,6 +21,7 @@ export interface Stage2LLMConfig {
 }
 
 export interface Stage2LLMRequest {
+  readonly images?: readonly string[];
   captureBenchmark?: (payload: string) => void;
   signal?: AbortSignal;
   userText: string;

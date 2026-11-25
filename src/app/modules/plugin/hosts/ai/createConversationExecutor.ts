@@ -1,3 +1,4 @@
+import { imageStats, redactImageData } from '../../../../../../shared/ai/turnImages.js';
 import { loadLlmSelection } from '@app/shared/state-bus/llmSelectionCache';
 import { MemoryService } from '@app/modules/ai/modules/llm/service/MemoryService';
 import { buildRecentConversation, distinctRecallText, speakerText } from '@app/modules/ai/modules/llm/domain/memory/recentConversation';
@@ -71,6 +72,8 @@ export const createDefaultConversationExecutor = (
     }, 'plugin.conversation');
 
     try {
+      const stats = imageStats(request.images);
+      if (stats.imageCount) trace.record('conversation.images', stats);
       context.signal.throwIfAborted();
       ensureModelPath();
       if (!global || !model) throw new Error('请先在 AI 设置中检测并启用对话模型');
@@ -103,7 +106,7 @@ export const createDefaultConversationExecutor = (
         try {
           const tools = await runSkillLoop({ config: { apiKey: global.apiKey, baseURL: global.baseURL, model, reasoningEffort },
             allowedCommands: request.isOwner === true ? undefined : ['config.get', 'config.update', 'shell.run', ...(request.memberCommands ?? [])],
-            text: request.text, requestId: context.requestId, signal: context.signal, session: commands, log,
+            text: request.text, images: request.images, requestId: context.requestId, signal: context.signal, session: commands, log,
             ...(trace.spanId ? { parent: { traceId: trace.traceId, spanId: trace.spanId } } : {}),
             historyMessages: buildRecentConversation(recent.turns.filter((turn) =>
               turn.sender?.id === request.sender?.id && turn.conversationId === context.conversationId)).historyMessages,
@@ -128,6 +131,7 @@ export const createDefaultConversationExecutor = (
         model,
       }, {
         captureBenchmark: payload => trace.captureModelBenchmark(payload),
+        images: request.images,
         userText: speakerText(request.text, request.sender),
         cue: false,
         historyMessages: recent.historyMessages,
@@ -146,7 +150,7 @@ export const createDefaultConversationExecutor = (
           for (const event of parser.push(deltaText)) {
             if (event.type !== 'sentence-complete') continue;
             displayText = appendText(displayText, event.sentence.displayText);
-            if (speechEnabled) speakText = appendText(speakText, event.sentence.speakText);
+            if (speechEnabled) speakText += event.sentence.speakText;
             context.emit({ text: displayText, ...(speakText ? { speakText } : {}), status: 'streaming' });
           }
         },
@@ -156,14 +160,7 @@ export const createDefaultConversationExecutor = (
       parser.finish();
       let reply;
       try {
-        reply = parseStage2Reply(response.rawText, (diagnostic) => {
-          if (diagnostic.state !== 'dropped') return;
-          trace.record('reply.parse.dropped', {
-            requestId: context.requestId,
-            lineNumber: diagnostic.lineNumber,
-            reason: diagnostic.reason,
-          });
-        });
+        reply = parseStage2Reply(response.rawText);
       } catch (error) {
         trace.record('reply.parse.failed', {
           requestId: context.requestId, conversationId: context.conversationId,
@@ -172,10 +169,11 @@ export const createDefaultConversationExecutor = (
         });
         throw error;
       }
-      displayText ||= reply.display_text?.trim() ?? '';
-      if (speechEnabled) speakText ||= reply.speak_text?.trim() ?? '';
+      displayText = reply.display_text?.trim() ?? '';
+      if (speechEnabled) speakText = reply.speak_text?.trim() ?? '';
       ensureModelPath();
       await commands?.reply(context.requestId, displayText).catch((error) => trace.record('tool.reply.persist.failed', { error: sanitizeLogDetail(error) }));
+      context.signal.throwIfAborted();
       if (archive && modelPath && displayText.trim()) {
         try {
           const saved = await memory.appendConversation({
@@ -214,7 +212,7 @@ export const createDefaultConversationExecutor = (
       } else {
         const code = classifyConversationError(error);
         const diagnosticId = createDiagnosticId();
-        const detail = sanitizeLogDetail(error);
+        const detail = sanitizeLogDetail(redactImageData(error instanceof Error ? error.message : String(error), request.images));
         trace.record('conversation.error', { code, diagnosticId, detail });
         context.emit({ text: '', status: 'error', error: code, diagnosticId });
         trace.fail('插件对话请求失败', { model, code, diagnosticId, detail });

@@ -6,6 +6,16 @@ import { PassThrough, Writable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { createDefaultConversationExecutor } from '../../src/app/modules/plugin/hosts/ai/createConversationExecutor';
+import { ConversationScheduler } from '../../src/app/modules/plugin/hosts/ai/ConversationScheduler';
+import { appendModelMemoryConversation, loadRecentModelMemoryTurns } from '../../electron/dao/modelMemoryDao';
+import { ToolConversationService } from '../../electron/modules/cli/service/ToolConversationService';
+
+const userData = vi.hoisted(() => ({ path: '' }));
+vi.mock('electron', () => ({ app: { isReady: () => true, getPath: () => userData.path } }));
+const model = vi.hoisted(() => vi.fn());
+vi.mock('openai', () => ({ default: class { chat = { completions: { create: model } }; } }));
+const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
 import { LogService } from '../../src/app/shared/logging/LogService';
 import { runSkillLoop } from '../../src/app/modules/ai/modules/llm/application/skillLoop';
 import { CallStore } from '../../electron/modules/cli/infrastructure/CallStore';
@@ -39,6 +49,7 @@ vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal
       if (message.id !== undefined) push({ id: message.id, result: message.method === 'thread/start' ? { thread: { id: 'fixture-thread' } } : {} });
       if (message.method === 'turn/start') {
         fake.turns++;
+        fake.input = message.params.input;
         if (fake.hold) push({ id: 7, method: 'item/commandExecution/requestApproval', params: { command: 'test', reason: 'confirm' } });
         else {
           push({ method: 'item/completed', params: { item: { type: 'agentMessage', text: 'integration-result' } } });
@@ -56,6 +67,77 @@ vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal
 const tool = (name, args) => ({ content: null, tool_calls: [{ type: 'function', id: name, function: { name, arguments: JSON.stringify(args) } }] });
 
 describe('scanned Codex plugin', () => {
+  it.each([true, false])('carries admitted turn images to both network transports (images=%s)', async withImage => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-images-'));
+    const log = new LogService({ windowKind: 'pet', startedAt: 0, configSnapshot: null });
+    const backend = new BackendLogService();
+    const spans = [];
+    backend.onSpan = span => spans.push(span);
+    log.forwardBoundary = payload => backend.mirrorRenderer(null, payload);
+    const journal = { revision: 0, summary: '', facts: [], turns: [] };
+    const ctx = { local: true, owner: 'local', source: 'plugin:bridge', conversationId: 'room', senderId: 'person' };
+    const cli = new CliService(new CallStore(path.join(cwd, 'calls.json')), undefined,
+      new ToolConversationService({ read: () => journal, write: () => {} }), backend);
+    const release = await registerRuntimeCli(cli, fileURLToPath(new URL('../', import.meta.url)), backend, new PluginStorageService({ directory: cwd }));
+    userData.path = cwd;
+    const archive = vi.fn(async payload => appendModelMemoryConversation(cwd, payload));
+    vi.stubGlobal('window', { MemoryAPI: { appendConversation: archive }, CliAPI: {
+      open: () => 'session', close: async () => {}, invoke: (_, request) => cli.invoke(request, ctx),
+      claim: (_, id, text) => cli.claim(ctx, id, text), finish: (_, id, result) => cli.finish(ctx, id, result),
+      reply: async (_, id, text) => cli.reply(ctx, id, text),
+    } });
+    const config = { activeModelPath: '/character', globalModelConfig: { apiKey: 'fixture', llmModels: [{ id: 'fixture', efforts: [], probedAt: 1 }] } };
+    const scheduler = new ConversationScheduler(createDefaultConversationExecutor(config, log));
+    try {
+      await cli.invoke({ command: 'codex.task', args: { cwd, action: 'trust' }, issuedAt: Date.now(), invocationId: 'trust' }, ctx);
+      model.mockReset();
+      const task = tool('codex_task', { cwd, task: 'inspect' });
+      for (const answer of [tool('loadSkill', { name: 'codex' }), task, { content: 'done' }]) {
+        model.mockResolvedValueOnce({ choices: [{ message: answer }] });
+      }
+      model.mockResolvedValueOnce((async function* () {
+        yield { choices: [{ delta: { content: '{"sentences":[{"display_text":"完成"}]}' } }] };
+      })());
+      const channel = scheduler.openChannel({ source: ctx.source, conversationId: 'room', interaction: { mode: 'queue' } });
+      const respond = vi.fn();
+      channel.onResponse(respond);
+      const request = { text: 'inspect', sender: { id: 'person' }, memoryArchive: { platform: 'test', scope: 'group', id: 'room' }, isOwner: true };
+      const before = fake.turns;
+      for (const images of [Array(5).fill(png), ['data:image/png;base64,' + Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64')]]) {
+        expect(channel.sendText({ ...request, images })).toMatchObject({ accepted: false, reason: 'invalid' });
+      }
+      expect(model).not.toHaveBeenCalled();
+      expect(fake.turns).toBe(before);
+      expect(archive).not.toHaveBeenCalled();
+      expect(journal.turns).toHaveLength(0);
+      expect(channel.sendText({ ...request, ...(withImage ? { images: [png] } : {}) }).accepted).toBe(true);
+      await vi.waitFor(() => expect(respond).toHaveBeenCalledWith(expect.objectContaining({ status: 'done', text: '完成' })));
+      const requests = model.mock.calls.map(([body]) => body);
+      expect(requests).toHaveLength(4);
+      expect(JSON.stringify(requests.slice(0, 3))).not.toContain('base64');
+      expect(requests[1].tools.find(t => t.function.name === 'codex_task').function.parameters.properties).not.toHaveProperty('images');
+      const user = requests[3].messages.at(-1).content;
+      if (withImage) {
+        expect(user).toEqual([{ type: 'text', text: expect.stringContaining('inspect') }, { type: 'image_url', image_url: { url: png } }]);
+        expect(spans.find(s => s.name === 'plugin.conversation').events).toContainEqual(expect.objectContaining({
+          name: 'conversation.images', attributes: { imageCount: 1, imageBytes: Buffer.from(png.split(',')[1], 'base64').length },
+        }));
+      } else expect(typeof user).toBe('string');
+      expect(fake.input).toEqual([{ type: 'text', text: 'inspect' }, ...(withImage ? [{ type: 'image', url: png }] : [])]);
+      expect(fake.turns - before).toBe(1);
+      expect(archive).toHaveBeenCalledWith(expect.objectContaining({ userText: 'inspect', assistantText: '完成', toolContext: expect.stringContaining('integration-result') }));
+      expect(journal.turns[0].operations[0].args).toBe(JSON.stringify({ cwd, task: 'inspect' }));
+      const turns = loadRecentModelMemoryTurns(cwd, { archive: request.memoryArchive }).turns;
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({ userText: 'inspect', assistantText: '完成', toolContext: expect.stringContaining('integration-result') });
+      const saved = JSON.stringify([spans, turns, journal]);
+      expect(saved).not.toContain('base64');
+      expect(saved).not.toContain(png.split(',')[1]);
+    } finally {
+      scheduler.dispose(); release(); vi.unstubAllGlobals(); rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it('keeps a cwd rejection separate from a later shell settings lookup in the reply context', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-trust-'));
     const cli = new CliService(new CallStore(path.join(cwd, 'calls.json')));

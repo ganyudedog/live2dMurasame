@@ -1,3 +1,4 @@
+import { imageStats } from '../../../../../../../shared/ai/turnImages.js';
 import OpenAI from 'openai';
 import { mapSpeakLangName } from '../domain/prompt';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions/completions';
@@ -15,6 +16,21 @@ const skillLabel = (name: string): string => {
   if (name === 'development') return 'development=本机开发任务';
   return name;
 };
+// Executor-owned turn inputs are declared by the command. Only model-authored arguments enter tool history.
+function turnImageArgument(definition: CommandDefinition): string | undefined {
+  const argument = definition.turnImageArgument?.trim();
+  if (!argument) return undefined;
+  const properties = definition.parameters.properties;
+  return properties && typeof properties === 'object' && Object.hasOwn(properties, argument) ? argument : undefined;
+}
+function modelParameters(definition: CommandDefinition) {
+  const schema = definition.parameters;
+  const argument = turnImageArgument(definition);
+  const properties = schema.properties as Record<string, unknown> | undefined;
+  if (!properties || !argument) return schema;
+  const { [argument]: _turnInput, ...visible } = properties;
+  return { ...schema, properties: visible };
+}
 const skillText = (name: string, commands: CommandDefinition[]): string => {
   const extras = commands.filter((definition) => definition.skill === name)
     .map((definition) => definition.instructions?.trim()).filter((line): line is string => Boolean(line));
@@ -56,6 +72,7 @@ export interface ReminderToolRequest {
 }
 
 export interface SkillLoopOptions {
+  readonly images?: readonly string[];
   allowedCommands?: readonly string[];
   config: Stage2LLMConfig;
   text: string;
@@ -78,6 +95,7 @@ export interface SkillLoopOptions {
 
 /** Load → model call → execute complete tool calls → feed results → repeat. */
 export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoopResult> => {
+  imageStats(options.images);
   const { config, session } = options;
   const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000);
   const issuedAt = Date.now();
@@ -140,7 +158,7 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
         type: 'object', properties: { dueAt: { type: 'number' }, sentence: { type: 'string', description: '到点显示的提醒文本' },
           ...(options.reminderSpeakLang ? { speak_text: { type: 'string', description: `同一条提醒的朗读文本，使用${mapSpeakLangName(options.reminderSpeakLang)}。` } } : {}) },
         required: ['dueAt', 'sentence', ...(options.reminderSpeakLang ? ['speak_text'] : [])], additionalProperties: false,
-      } } }, ...exposed.map((definition): ChatCompletionTool => ({ type: 'function', function: { name: definition.name.replaceAll('.', '_'), description: definition.description, parameters: definition.parameters } }))];
+      } } }, ...exposed.map((definition): ChatCompletionTool => ({ type: 'function', function: { name: definition.name.replaceAll('.', '_'), description: definition.description, parameters: modelParameters(definition) } }))];
       const reply = options.complete ? await options.complete(messages, tools, signal) : (await client!.chat.completions.create({
         model: config.model!, messages, tools, parallel_tool_calls: false, stream: false,
         ...(config.reasoningEffort ? { reasoning_effort: config.reasoningEffort as 'low' } : {}),
@@ -182,7 +200,11 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
             });
             const trace = registration?.beginTrace(definition.name, { command: definition.name }, 'cli.invoke', options.parent);
             try {
-              result = await session.invoke({ command: definition.name, args: args as Record<string, unknown>,
+              const input = args as Record<string, unknown>;
+              const imageArgument = turnImageArgument(definition);
+              if (imageArgument && imageArgument in input) throw new Error('图片由当前对话提供');
+              const withImages = imageArgument && options.images?.length && (!input.action || input.action === 'run');
+              result = await session.invoke({ command: definition.name, args: withImages ? { ...input, [imageArgument]: options.images } : input,
                 invocationId: `${options.requestId}:${round}:${index}`, requestId: options.requestId, issuedAt,
                 ...(trace?.spanId ? { traceId: trace.traceId, spanId: trace.spanId, boundary: 'cli.invoke' as const } : {}) });
               trace?.end({ command: definition.name });

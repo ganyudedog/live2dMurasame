@@ -11,6 +11,7 @@ export interface Sample {
     temperature?: number;
     reasoning_effort?: string;
     prompt_cache_key?: string;
+    response_format?: Record<string, unknown>;
   };
 }
 export interface Replay extends Pick<Sample, 'source' | 'question' | 'toolContext' | 'reference'> {

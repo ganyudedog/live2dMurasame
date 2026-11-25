@@ -89,7 +89,7 @@ export interface ChatVoiceInput {
 }
 
 type ComposerInputProps = Pick<TextareaHTMLAttributes<HTMLTextAreaElement>,
-  'onChange' | 'onSelect' | 'onKeyDown' | 'aria-controls' | 'aria-activedescendant'>;
+  'onChange' | 'onSelect' | 'onKeyDown' | 'onPaste' | 'aria-controls' | 'aria-activedescendant'>;
 
 /** 输入区右下角的下拉槽位：业务只给当前值、选项与回调，组件不含任何业务词汇。 */
 export interface ComposerSelect {
@@ -101,6 +101,7 @@ export interface ComposerSelect {
 }
 
 interface ChatComposerProps {
+  hasAttachments?: boolean;
   draft: string;
   busy: boolean;
   inputLabel: string;
@@ -118,15 +119,16 @@ interface ChatComposerProps {
   /** 输入框上方的业务操作（例如查看动作表、清空对话）。 */
   toolbar?: ReactNode;
   suggestions?: ReactNode;
+  attachmentPreview?: ReactNode;
   voiceInput?: ChatVoiceInput;
   /** Additional input controls, placed immediately after the microphone. */
   inputActions?: ReactNode;
 }
 
 /** 公共输入行为：中文输入法、Shift+Enter、空输入与发送中状态统一处理。 */
-export function ChatComposer({ draft, busy, inputLabel, placeholder, onDraftChange, onSubmit,
-  inputRef, inputProps, model, effort, mentions, toolbar, suggestions, voiceInput, inputActions }: ChatComposerProps) {
-  const submit = () => { if (!busy && draft.trim()) void onSubmit(); };
+export function ChatComposer({ draft, busy, hasAttachments, inputLabel, placeholder, onDraftChange, onSubmit,
+  inputRef, inputProps, model, effort, mentions, toolbar, suggestions, attachmentPreview, voiceInput, inputActions }: ChatComposerProps) {
+  const submit = () => { if (!busy && (draft.trim() || hasAttachments)) void onSubmit(); };
   // 原生聚焦描边取消，聚焦由外层输入框的描边颜色表示。
   const noOutline = 'outline-none focus:outline-none focus-visible:outline-none';
   const chips = Boolean(mentions?.length);
@@ -149,7 +151,7 @@ export function ChatComposer({ draft, busy, inputLabel, placeholder, onDraftChan
     requestAnimationFrame(() => input.setSelectionRange(hit.start, hit.start));
     return true;
   };
-  const canSend = !busy && Boolean(draft.trim());
+  const canSend = !busy && Boolean(draft.trim() || hasAttachments);
   return <div className="space-y-2 p-3">
     {toolbar && <div className="flex flex-wrap items-center gap-2 px-0.5">{toolbar}</div>}
     {voiceInput?.partialText && (
@@ -164,6 +166,7 @@ export function ChatComposer({ draft, busy, inputLabel, placeholder, onDraftChan
     <div className="relative rounded-xl border border-input bg-background/60 transition-colors
       focus-within:border-primary/50 focus-within:bg-card hover:border-foreground/25">
       {suggestions}
+      {attachmentPreview}
       <div className="relative">
         {chips && (
           <div data-mention-overlay aria-hidden="true"

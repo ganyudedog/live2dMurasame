@@ -7,6 +7,7 @@
 
 /** LLM/TTS 对话请求（由 ASR 或手动输入触发） */
 export interface ChatRequest {
+  readonly images?: readonly string[];
   id: string;
   /** 用户输入文本（ASR 识别结果或手动输入） */
   text: string;

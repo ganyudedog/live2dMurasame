@@ -19,10 +19,10 @@ export class FloatingComposerService {
   setFocused(focused: boolean) { this.focused = focused; }
   setDraft(text: string) { this.stateBus.publishComposerDraft(text); }
   dismiss() { this.focused = false; this.dismissed = true; }
-  submit() {
-    const text = this.draft.trim();
+  submit(images?: readonly string[]) {
+    const text = this.draft.trim() || (images?.length ? `[附有 ${images.length} 张图片]` : '');
     if (!text) return;
-    this.stateBus.publishChatRequest({ id: `text_${crypto.randomUUID()}`, text, source: 'text', status: 'pending', createdAt: Date.now() });
+    this.stateBus.publishChatRequest({ id: `text_${crypto.randomUUID()}`, text, ...(images?.length ? { images } : {}), source: 'text', status: 'pending', createdAt: Date.now() });
     this.setDraft(''); this.dismiss();
   }
 }

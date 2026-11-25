@@ -13,6 +13,9 @@ interface RuntimeCliHost {
     set: (key: string, value: unknown) => void;
     subscribe: (listener: (key: string) => void) => () => void;
     delete: (key: string) => boolean;
+    getTransient: (key: string) => unknown;
+    setTransient: (key: string, value: unknown) => void;
+    deleteTransient: (key: string) => boolean;
   };
   invoke: (request: { invocationId: string; issuedAt: number; command: string; args: Record<string, unknown> }) => Promise<unknown>;
   report: (event: string, data?: Record<string, unknown>, failed?: boolean) => void;
@@ -26,6 +29,8 @@ interface RuntimeCliCommand {
   skill: string;
   description: string;
   instructions?: string;
+  journalExcludedArgs?: readonly string[];
+  turnImageArgument?: string;
   parameters: Record<string, unknown>;
   localOnly?: boolean;
   execute: (args: Record<string, unknown>, context: unknown, invocationId: string, host: RuntimeCliHost) => unknown;
@@ -68,6 +73,8 @@ const readCommands = (module: unknown): RuntimeCliCommand[] => {
       skill: item.skill,
       description: item.description,
       ...(typeof item.instructions === 'string' ? { instructions: item.instructions } : {}),
+      ...(Array.isArray(item.journalExcludedArgs) && item.journalExcludedArgs.every((key): key is string => typeof key === 'string') ? { journalExcludedArgs: item.journalExcludedArgs } : {}),
+      ...(typeof item.turnImageArgument === 'string' ? { turnImageArgument: item.turnImageArgument } : {}),
       parameters,
       ...(item.localOnly === true ? { localOnly: true } : {}),
       execute: item.execute as RuntimeCliCommand['execute'],
@@ -92,6 +99,9 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
           set: (key, value) => storage.set(entry.id, key, value),
           subscribe: (listener) => storage.subscribe((id, key) => { if (id === entry.id) listener(key); }),
           delete: (key) => storage.delete(entry.id, key),
+          getTransient: (key) => storage.getTransient(entry.id, key),
+          setTransient: (key, value) => storage.setTransient(entry.id, key, value),
+          deleteTransient: (key) => storage.deleteTransient(entry.id, key),
         },
         invoke: (request) => cli.invoke(request, hostContext),
         report: (event, data, failed = false) => reportPluginRuntime(log, entry.id, event, data, failed),
@@ -106,6 +116,8 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
           skill: command.skill,
           description: command.description,
           ...(command.instructions ? { instructions: command.instructions } : {}),
+          ...(command.journalExcludedArgs?.length ? { journalExcludedArgs: command.journalExcludedArgs } : {}),
+          ...(command.turnImageArgument ? { turnImageArgument: command.turnImageArgument } : {}),
           ...(command.localOnly ? { localOnly: true } : {}),
           parameters: command.parameters,
           schema: { parse: (value: unknown) => parseJsonSchemaArgs(command.parameters, value) },

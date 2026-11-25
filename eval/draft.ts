@@ -43,6 +43,7 @@ const capture = z
         temperature: z.number().optional(),
         reasoning_effort: z.string().optional(),
         prompt_cache_key: z.string().optional(),
+        response_format: z.record(z.string(), z.unknown()).optional(),
       })
       .strict(),
   })

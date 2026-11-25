@@ -179,8 +179,11 @@ const TtsDiagnosticsAPI = {
 
 const PluginStorageAPI = {
   get: (pluginId: unknown, key: unknown) => ipcRenderer.invoke('ddd:plugin:storage:get', { pluginId, key }),
+  getTransient: (pluginId: unknown, key: unknown) => ipcRenderer.invoke('ddd:plugin:storage:get-transient', { pluginId, key }),
   set: (pluginId: unknown, key: unknown, value: unknown) => ipcRenderer.invoke('ddd:plugin:storage:set', { pluginId, key, value }),
+  setTransient: (pluginId: unknown, key: unknown, value: unknown) => ipcRenderer.invoke('ddd:plugin:storage:set-transient', { pluginId, key, value }),
   delete: (pluginId: unknown, key: unknown) => ipcRenderer.invoke('ddd:plugin:storage:delete', { pluginId, key }),
+  deleteTransient: (pluginId: unknown, key: unknown) => ipcRenderer.invoke('ddd:plugin:storage:delete-transient', { pluginId, key }),
   onChanged: (pluginId: unknown, callback: (key: string) => void) => {
     const listener = (_event: unknown, payload: unknown) => {
       const body = isRecord(payload) ? payload : {};

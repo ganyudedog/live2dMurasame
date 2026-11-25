@@ -1,6 +1,7 @@
+import { imageStats, redactImageData } from '../../../../../../../shared/ai/turnImages.js';
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions/completions';
-import { buildStage2SystemPrompt, buildStage2UserPrompt } from '../domain/prompt';
+import { buildOutputContract, buildStage2SystemPrompt, buildStage2UserPrompt } from '../domain/prompt';
 import { TOOL_RESULT_RULES } from '../domain/toolContext';
 import type { ReasoningEffort, ReasoningSummaryEvent, Stage2LLMConfig, Stage2LLMRequest } from '../domain/types';
 import { promptCacheOptions, readPromptUsage, type PromptUsage } from './promptCache';
@@ -68,17 +69,24 @@ export const requestStage2LLM = async (
     apiKey: cfg.apiKey,
     baseURL: cfg.baseURL || undefined,
     dangerouslyAllowBrowser: true,
+    maxRetries: 0,
   });
 
+  imageStats(req.images);
+  const prompt = buildStage2UserPrompt({
+    historyMessages: req.historyMessages, speechEnabled: req.speechEnabled, displayLang: req.displayLang, speakLang: req.speakLang ?? undefined,
+    userText: req.userText, memoryContext: req.memoryContext, toolContext: req.toolContext, presenceLine: req.presenceLine, cue: req.cue,
+  });
   const requestBody = {
     ...promptCacheOptions(cfg.baseURL, 'dialogue'),
+    response_format: { type: 'json_object' as const },
     model: usedModel,
     temperature: typeof req.temperature === 'number' ? req.temperature : (cfg.temperature ?? 0.7),
     messages: [
       {
         role: 'system' as const,
         content: (req.systemPrompt?.trim()
-          ? `${buildOutputContract(req)}\n\n${req.systemPrompt.trim()}\n\n本轮输出仍须遵守上述 JSON Lines 契约；角色卡、示例对话和历史消息只影响内容与语气，不改变输出格式。`
+          ? `${buildOutputContract(req)}\n\n${req.systemPrompt.trim()}\n\n本轮输出仍须遵守上述 json 契约；角色卡、示例对话和历史消息只影响内容与语气，不改变输出格式。`
           : buildStage2SystemPrompt({
             speechEnabled: req.speechEnabled,
             displayLang: req.displayLang,
@@ -89,16 +97,16 @@ export const requestStage2LLM = async (
           })) + `\n\n${TOOL_RESULT_RULES}` + (req.toolsAvailable
           ? '\n当前已授权工具协调器处理桌宠设置和本机 plugin 任务。可以自然说明这些能力；本轮没有执行结果时，不得声称已执行或承诺后台正在处理。' : ''),
       },
-      { role: 'user' as const, content: buildStage2UserPrompt({
-        historyMessages: req.historyMessages, speechEnabled: req.speechEnabled, displayLang: req.displayLang, speakLang: req.speakLang ?? undefined,
-        userText: req.userText, memoryContext: req.memoryContext, toolContext: req.toolContext, presenceLine: req.presenceLine, cue: req.cue,
-      }) },
+      { role: 'user' as const, content: req.images?.length ? [
+        { type: 'text' as const, text: prompt },
+        ...req.images.map(url => ({ type: 'image_url' as const, image_url: { url } })),
+      ] : prompt },
     ],
     ...reasoningOptions(req.reasoningEffort),
   };
 
   const capture = (reference: string) => {
-    if (import.meta.env.VITE_CAPTURE_MODEL_BENCHMARK === '1' && req.captureBenchmark) {
+    if (!req.images?.length && import.meta.env.VITE_CAPTURE_MODEL_BENCHMARK === '1' && req.captureBenchmark) {
       req.captureBenchmark(JSON.stringify({ request: requestBody, question: req.userText, toolContext: req.toolContext ?? '', reference }));
     }
   };
@@ -108,110 +116,92 @@ export const requestStage2LLM = async (
     : req.signal ?? timeoutSignal;
   signal?.throwIfAborted();
 
-  if (req.stream) {
-    // 流式模式：增量拼接 JSON 文本，尽早把可见文本回推给 UI。
-    const stream = await client.chat.completions.create(
-      {
-        ...requestBody,
-        stream: true,
-        stream_options: { include_usage: true },
-      },
+  for (let attempt = 0; attempt < 2; attempt++) {
+    signal?.throwIfAborted();
+    if (req.stream) {
+      // 流式模式：增量拼接 JSON 文本，尽早把可见文本回推给 UI。
+      const stream = await client.chat.completions.create(
+        {
+          ...requestBody,
+          stream: true,
+          stream_options: { include_usage: true },
+        },
+        {
+          signal,
+        },
+      );
+
+      let rawText = '', pendingText = '', reasoning = '';
+      let usage = readPromptUsage(null);
+      let reasoningIndex = 0;
+      const publish = (text: string) => {
+        if (!text) return;
+        const deltaText = req.images?.length ? redactImageData(text, req.images) : text;
+        rawText += deltaText;
+        req.onStreamDelta?.({ deltaText, aggregateText: rawText });
+      };
+      for await (const chunk of stream) {
+        signal?.throwIfAborted();
+        // 最后的 usage 帧可以没有 choices，必须在过滤文本之前读取。
+        if (chunk.usage) usage = readPromptUsage(chunk.usage);
+        const chunkDelta = chunk.choices?.[0]?.delta as { content?: string; reasoning_summary?: string } | undefined;
+        const reasoningDelta = chunkDelta?.reasoning_summary ?? '';
+        if (reasoningDelta) {
+          if (req.images?.length) reasoning += reasoningDelta;
+          else emitReasoning(reasoningDelta, req.onReasoningSummary, reasoningIndex++);
+        }
+        const delta = chunkDelta?.content ?? '';
+        if (delta && req.images?.length) {
+          // Image data cannot cross a JSON quote. Flush through the last quote or structural delimiter outside the payload.
+          const end = Math.max(delta.lastIndexOf('"'), delta.lastIndexOf('}'), delta.lastIndexOf(']')) + 1;
+          if (end) {
+            publish(pendingText + delta.slice(0, end));
+            pendingText = delta.slice(end);
+          } else pendingText += delta;
+        } else publish(delta);
+        if (chunk.choices?.[0]?.finish_reason === 'length') throw new Error('LLM 回复被截断');
+      }
+      signal?.throwIfAborted();
+      publish(pendingText);
+      if (reasoning) emitReasoning(redactImageData(reasoning, req.images), req.onReasoningSummary, reasoningIndex);
+
+      const finalText = rawText.trim();
+      if (!finalText) continue;
+
+      capture(rawText);
+      return {
+        rawText: finalText,
+        usedModel,
+        usage,
+      };
+    }
+
+    const response = await client.chat.completions.create(
+      requestBody,
       {
         signal,
       },
     );
 
-    let rawText = '';
-    let usage = readPromptUsage(null);
-    let reasoningIndex = 0;
-    for await (const chunk of stream) {
-      signal?.throwIfAborted();
-      // 最后的 usage 帧可以没有 choices，必须在过滤文本之前读取。
-      if (chunk.usage) usage = readPromptUsage(chunk.usage);
-      const chunkDelta = chunk.choices?.[0]?.delta as { content?: string; reasoning_summary?: string } | undefined;
-      const reasoningDelta = chunkDelta?.reasoning_summary ?? '';
-      if (reasoningDelta) {
-        emitReasoning(reasoningDelta, req.onReasoningSummary, reasoningIndex++);
-      }
-      const delta = chunkDelta?.content ?? '';
-      if (!delta) continue;
-      rawText += delta;
-      req.onStreamDelta?.({
-        deltaText: delta,
-        aggregateText: rawText,
-      });
-    }
+    signal?.throwIfAborted();
+    if (response.choices?.[0]?.finish_reason === 'length') throw new Error('LLM 回复被截断');
+    const message = response.choices?.[0]?.message as { content?: string; reasoning_summary?: string } | undefined;
+    const clean = (text: string) => req.images?.length ? redactImageData(text, req.images) : text;
+    emitReasoning(clean(message?.reasoning_summary ?? ''), req.onReasoningSummary, 0);
+    const rawText = clean(message?.content?.trim() ?? '');
+    if (!rawText) continue;
 
-    const finalText = rawText.trim();
-    if (!finalText) {
-      throw new Error('LLM 返回为空');
-    }
-
-    capture(rawText);
+    capture(message?.content ?? rawText);
     return {
-      rawText: finalText,
+      rawText,
       usedModel,
-      usage,
+      usage: readPromptUsage(response.usage),
     };
   }
-
-  const response = await client.chat.completions.create(
-    requestBody,
-    {
-      signal,
-    },
-  );
-
-  const message = response.choices?.[0]?.message as { content?: string; reasoning_summary?: string } | undefined;
-  emitReasoning(message?.reasoning_summary,
-    req.onReasoningSummary, 0);
-  const rawText = message?.content?.trim() ?? '';
-  if (!rawText) {
-    throw new Error('LLM 返回为空');
-  }
-
-  capture(message?.content ?? rawText);
-  return {
-    rawText,
-    usedModel,
-    usage: readPromptUsage(response.usage),
-  };
+  throw new Error('LLM 返回为空');
 };
 
-const buildOutputContract = (request: Stage2LLMRequest): string => {
-  const rules = [
-    '[本轮输出协议]',
-    '输出必须是 JSON Lines，每行一个独立 JSON 对象，一行即可完成回复。不得使用 Markdown 代码围栏。',
-    '所有对话内容必须写入 JSON 字符串字段，不得直接输出纯文本、角色名加冒号的对白或内心独白。',
-    '人设中的“用户：… / 角色：…”示例只示范语气，不是输出格式；即使没有历史对话，首次回复也必须遵守此协议。',
-    '对象之间使用真正的换行，不要添加逗号或使用数组包裹；字符串中的引号和换行必须按 JSON 规则转义。',
-  ];
-  const displayLang = request.displayLang === 'en' ? '英语'
-    : request.displayLang === 'ja' ? '日语'
-      : request.displayLang === 'ko' ? '韩语' : '中文';
-  if (request.speechEnabled === false) return [
-    ...rules,
-    '{ "display_text": "回复文本" }',
-    `每行必须包含非空字符串 display_text，使用${displayLang}。不要输出 speak_text 或 action_intent。`,
-    '格式示例（仅演示结构，实际内容、称呼和语言以本轮配置为准）：',
-    '{"display_text":"看得到，我在这里。"}',
-  ].join('\n');
-  const speakLang = request.speakLang === 'all_zh' ? '中文'
-    : request.speakLang === 'all_en' ? '英语'
-      : request.speakLang === 'all_ko' ? '韩语'
-        : request.speakLang === 'all_yue' ? '粤语'
-          : request.speakLang === 'auto' ? '自动选择的语音语言' : '日语';
-  return [
-    ...rules,
-    '{ "speak_text": "朗读文本", "display_text": "回复文本" }',
-    '每行必须同时包含非空字符串 speak_text 和 display_text，先写 speak_text；两者表达同一意思。历史归档省略语音字段，不代表本轮可以省略。',
-    `display_text 必须使用${displayLang}；speak_text 必须使用${speakLang}。`,
-    '格式示例（仅演示结构，实际内容、称呼和语言以本轮配置为准）：',
-    '{"speak_text":"ここにいるよ。","display_text":"我在这里。"}',
-  ].join('\n');
-};
-
-/** 供配置型子域复用同一 OpenAI-compatible 通道，不复用日常对话的 JSON Lines 契约。 */
+/** 供配置型子域复用同一 OpenAI-compatible 通道，不复用日常对话的 sentences 契约。 */
 export const requestStructuredLLM = async (
   cfg: Stage2LLMConfig,
   req: StructuredLLMRequest,
@@ -251,8 +241,7 @@ export const requestStructuredLLM = async (
   const response = await client.chat.completions.create({ ...body, stream: false }, { signal: req.signal });
   req.signal?.throwIfAborted();
   const message = response.choices?.[0]?.message as { content?: string; reasoning_summary?: string } | undefined;
-  emitReasoning(message?.reasoning_summary,
-    req.onReasoningSummary, 0);
+  emitReasoning(message?.reasoning_summary, req.onReasoningSummary, 0);
   const rawText = message?.content?.trim() ?? '';
   if (!rawText) throw new Error('LLM 返回为空');
   return { rawText, usedModel, usage: readPromptUsage(response.usage) };

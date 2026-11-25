@@ -7,9 +7,15 @@ export class MemoryPluginStorage implements PluginStorage {
   async get<T>(key: string, fallback?: T): Promise<T | undefined> {
     return (this.values.has(key) ? this.values.get(key) : fallback) as T | undefined;
   }
+  async getTransient<T>(key: string, fallback?: T): Promise<T | undefined> {
+    return this.get(key, fallback);
+  }
 
   async set<T>(key: string, value: T): Promise<void> { this.values.set(key, value); this.emit(key); }
+  async setTransient<T>(key: string, value: T): Promise<void> { this.values.set(key, value); this.emit(key); }
   async delete(key: string): Promise<void> { this.values.delete(key); this.emit(key); }
+  async deleteTransient(key: string): Promise<void> { this.values.delete(key); this.emit(key); }
+
   subscribe(listener: (key: string) => void): Disposable { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private emit(key: string): void {
     this.listeners.forEach((listener) => {
@@ -34,16 +40,35 @@ export class ElectronPluginStorage implements PluginStorage {
     return (value === undefined ? fallback : value) as T | undefined;
   }
 
+  async getTransient<T>(key: string, fallback?: T): Promise<T | undefined> {
+    const storage = typeof window === 'undefined' ? undefined : window.PluginStorageAPI;
+    if (!storage?.getTransient) return this.fallback.getTransient(key, fallback);
+    const value = await storage.getTransient(this.pluginId, key);
+    return (value === undefined ? fallback : value) as T | undefined;
+  }
+
   async set<T>(key: string, value: T): Promise<void> {
     const storage = typeof window === 'undefined' ? undefined : window.PluginStorageAPI;
     if (!storage?.set) return this.fallback.set(key, value);
     await storage.set(this.pluginId, key, value);
   }
 
+  async setTransient<T>(key: string, value: T): Promise<void> {
+    const storage = typeof window === 'undefined' ? undefined : window.PluginStorageAPI;
+    if (!storage?.setTransient) return this.fallback.setTransient(key, value);
+    await storage.setTransient(this.pluginId, key, value);
+  }
+
   async delete(key: string): Promise<void> {
     const storage = typeof window === 'undefined' ? undefined : window.PluginStorageAPI;
     if (!storage?.delete) return this.fallback.delete(key);
     await storage.delete(this.pluginId, key);
+  }
+
+  async deleteTransient(key: string): Promise<void> {
+    const storage = typeof window === 'undefined' ? undefined : window.PluginStorageAPI;
+    if (!storage?.deleteTransient) return this.fallback.deleteTransient(key);
+    await storage.deleteTransient(this.pluginId, key);
   }
 
   subscribe(listener: (key: string) => void): Disposable {

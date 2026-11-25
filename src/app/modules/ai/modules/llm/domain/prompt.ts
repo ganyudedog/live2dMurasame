@@ -9,42 +9,24 @@ export interface BuildPromptInput {
   memoryContext?: string;
   toolContext?: string;
   presenceLine?: string;
-  /** 主动开口的提示，不冠以「用户输入」。 */
   cue?: boolean;
   displayLang?: 'zh' | 'en' | 'ja' | 'ko';
   speakLang?: 'all_zh' | 'all_en' | 'all_ja' | 'all_ko' | 'all_yue' | 'auto';
 }
 
-/**
- * JSON Lines 输出契约：每行一个独立 JSON 对象，行间用 \n 分隔。
- * speak_text 必须排在 display_text 前面，便于流式场景下优先发送 TTS。
- * action_intent 可选，附在语义对应的句子内，不单独输出动作行。
- * 最终行后面不能有逗号或数组包裹。
- */
-const OUTPUT_CONTRACT = [
-  '回复使用 JSON Lines：每个完整的语义段输出为一行独立的 JSON 对象。一行就可以完成整次回复，不要求多句。',
-  '需要展开时，按自然的句末标点或语义停顿分行。对象之间输出真正的换行，不要输出字面字符 \\n，不要用数组 [] 包裹。',
-  '每行的 JSON 结构如下：',
-  '',
-  '{ "speak_text": "一句 TTS 文本", "display_text": "对应的显示文本" }',
-  '',
-  '每行必须同时包含非空字符串 speak_text 和 display_text；不得只输出 display_text，也不得用 null 或空字符串代替 speak_text。',
-  'speak_text 必须在前、display_text 在后，以便语音先开始合成。两者表达相同意思和语气，分别使用配置指定的语言。',
-  '历史 assistant 消息是归档的显示文本，保存时省略了语音和动作字段；它们只用于理解上下文，不是本轮输出格式示例。不得因为历史只有 display_text 而省略本轮 speak_text。',
-  '首段优先简短且有实际内容，让用户尽早听到回应；后续按内容自然展开，较长内容在语义完整处拆段。',
-  '每段适合自然朗读，不机械卡字数，不在半句话处截断，也不要为了首段短而单独输出没有信息的语气词。',
-  '',
-  '以下是不同场景的独立示例，使用日语语音和中文显示来演示格式；实际输出必须遵守当前语言配置，不照搬内容或句数。',
-  '场景一：用户说“晚上好”。一行即可：',
-  '{"speak_text":"こんばんは、今日はどうだった？","display_text":"晚上好，今天过得怎么样？"}',
-  '场景二：用户说“今天好累”。一行即可：',
-  '{"speak_text":"じゃあ、少し休もう。","display_text":"那先歇一会儿吧。"}',
-  '场景三：用户说“那个 bug 终于修好了”。可以用两行展开：',
-  '{"speak_text":"やっと直ったんだ！","display_text":"终于修好了！"}',
-  '{"speak_text":"これでひと息つけそう？","display_text":"这下能松口气了吧？"}',
-  '',
-  '每行对象之间不要添加逗号，不要输出代码围栏、场景标题或解释。',
-  'action_intent 可选，需要时放在语义对应的同一行 JSON 内，顺序为 speak_text、display_text、action_intent。不要另起一行只输出动作，不必每次添加。历史未保存动作字段不代表本轮禁止使用动作。',
+export const buildOutputContract = (input?: Pick<BuildPromptInput, 'speechEnabled' | 'displayLang'> & { speakLang?: string | null }): string => [
+  '[本轮输出协议]',
+  '输出一份 json 对象，sentences 数组按回复顺序包含一个或多个句子。不得直接输出纯文本、角色名加冒号的对白或代码围栏。首次回复也必须遵守此协议。',
+  `display_text 必须使用${mapDisplayLangName(input?.displayLang)}。`,
+  ...(input?.speechEnabled === false ? [
+    '每项只写非空 display_text，不要输出 speak_text 或 action_intent。',
+    '{"sentences":[{"display_text":"我在这里。"}]}',
+  ] : [
+    '每项必须同时包含非空字符串 speak_text 和 display_text，先写 speak_text。首句简短且语义完整，两个字段表达同一意思。',
+    `speak_text 必须使用${mapSpeakLangName(input?.speakLang)}。`,
+    '不得因为历史只有 display_text 而省略本轮 speak_text。action_intent 可选，放在对应句子的末尾。历史未保存动作字段不代表本轮禁止使用动作。',
+    '{"sentences":[{"speak_text":"ここにいるよ。","display_text":"我在这里。"},{"speak_text":"今日はどうだった？","display_text":"今天过得怎么样？"}]}',
+  ]),
 ].join('\n');
 
 const CONVERSATION_STYLE = [
@@ -87,11 +69,7 @@ export const buildStage2SystemPrompt = (input?: {
   const speakLangName = mapSpeakLangName(input?.speakLang);
   return [
     '你是 Live2D 桌宠的角色对话助手。',
-    '你的输出必须是严格的 JSON Lines，不要包裹在 markdown 代码块（```）中，不要添加额外的注释或说明文字。',
-    '输出格式（JSON Lines）：',
-    input?.speechEnabled === false
-      ? '每行一个独立 JSON 对象，包含非空 display_text，不输出 speak_text。示例：{"display_text":"我在这里。"}'
-      : OUTPUT_CONTRACT,
+    buildOutputContract(input),
     CONVERSATION_STYLE,
     input?.personaPrompt?.trim() ?? '',
     buildRelationshipPrompt(input?.relationshipStage?.trim() || STAGE_LINES[DEFAULT_RELATIONSHIP_STAGE]),
@@ -121,7 +99,7 @@ export const buildStage2UserPrompt = (input: BuildPromptInput): string => {
   parts.push(input.cue ? input.userText : `用户输入：${input.userText}`);
   const display = `display_text（${mapDisplayLangName(input.displayLang)}）`;
   parts.push(input.speechEnabled === false
-    ? `本轮输出格式：JSON Lines，每行写非空 ${display}，不输出 speak_text。`
-    : `本轮输出格式：JSON Lines，每行先写非空 speak_text（${mapSpeakLangName(input.speakLang)}），再写对应的 ${display}。`);
+    ? `本轮输出格式：json 对象的 sentences 数组，每项写非空 ${display}，不输出 speak_text。`
+    : `本轮输出格式：json 对象的 sentences 数组，每项先写非空 speak_text（${mapSpeakLangName(input.speakLang)}），再写对应的 ${display}。`);
   return parts.join('\n\n');
 };

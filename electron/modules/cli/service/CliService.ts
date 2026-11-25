@@ -26,6 +26,8 @@ interface StoredCommand {
   description: string;
   skill: CommandSkill;
   instructions?: string;
+  journalExcludedArgs?: readonly string[];
+  turnImageArgument?: string;
   localOnly: boolean;
   toJsonSchema: () => Record<string, unknown>;
   execute: (args: unknown, context: CommandContext, invocationId: string) => unknown | Promise<unknown>;
@@ -77,6 +79,8 @@ export class CliService {
       description: definition.description,
       skill: definition.skill,
       ...(instructions ? { instructions } : {}),
+      ...(definition.journalExcludedArgs?.length ? { journalExcludedArgs: [...definition.journalExcludedArgs] } : {}),
+      ...(definition.turnImageArgument ? { turnImageArgument: definition.turnImageArgument } : {}),
       localOnly: definition.localOnly ?? false,
       toJsonSchema: () => definition.parameters ?? jsonSchemaOf(definition.schema),
       execute: (args, context, invocationId) => definition.execute(definition.schema.parse(args), context, invocationId),
@@ -166,6 +170,8 @@ export class CliService {
       skill: definition.skill,
       parameters: definition.toJsonSchema(),
       ...(definition.instructions ? { instructions: definition.instructions } : {}),
+      ...(definition.journalExcludedArgs?.length ? { journalExcludedArgs: definition.journalExcludedArgs } : {}),
+      ...(definition.turnImageArgument ? { turnImageArgument: definition.turnImageArgument } : {}),
     }));
   }
 
@@ -196,7 +202,10 @@ export class CliService {
     }
     this.store.data.calls[key] = { hash, state: 'reserved', issuedAt: request.issuedAt };
     this.store.save();
-    const operation = { invocationId: request.invocationId, command: request.command, args: operationText(args) };
+    const excluded = new Set(definition.journalExcludedArgs ?? []);
+    const journalArgs = isRecord(args) && excluded.size
+      ? Object.fromEntries(Object.entries(args).filter(([key]) => !excluded.has(key))) : args;
+    const operation = { invocationId: request.invocationId, command: request.command, args: operationText(journalArgs) };
     const carriedSpan = { traceId: request.traceId, spanId: request.spanId };
     const parent = isSpanContext(carriedSpan) ? carriedSpan : undefined;
     const pluginId = parent ? this.owners.get(request.command) : undefined;
@@ -220,7 +229,7 @@ export class CliService {
       this.store.data.calls[key] = { hash, state: 'done', issuedAt: request.issuedAt, result };
       this.store.save();
       if (request.requestId) this.conversations?.operation(context, request.requestId,
-        { ...operation, status: 'succeeded', result: operationText(result) }, [args, result]);
+        { ...operation, status: 'succeeded', result: operationText(result) }, [journalArgs, result]);
       finishSpan('ok');
       return structuredClone(result);
     }, (error: unknown) => {

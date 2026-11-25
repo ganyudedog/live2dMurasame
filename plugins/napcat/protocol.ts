@@ -28,6 +28,7 @@ function readSegments(value: unknown, self: string) {
     body = false,
     atSelf = false,
     replyId = '';
+  const images: Record<string, unknown>[] = [];
   const mentions = new Map<string, { id: string; name?: string }>();
   for (const segment of value) {
     if (!record(segment) || !record(segment.data)) continue;
@@ -47,11 +48,12 @@ function readSegments(value: unknown, self: string) {
     }
     if (segment.type === 'reply' && !replyId) replyId = id(d.id);
     if (segment.type === 'face' || segment.type === 'image') {
+      if (segment.type === 'image') images.push(d);
       body = true;
       text += segment.type === 'face' ? `[表情 ${id(d.id)}]` : '[图片]';
     }
   }
-  return { text: text.trim(), body, mentions: [...mentions.values()], atSelf, replyId };
+  return { text: text.trim(), images, body, mentions: [...mentions.values()], atSelf, replyId };
 }
 export function readQuote(value: unknown, self: string): NapCatQuote {
   const message = record(value) ? readSegments(value.message, self) : undefined;
@@ -111,6 +113,7 @@ export function readMessage(value: unknown, wakeWords: readonly string[], privat
     requestId: `${self}:${conversationId}:${messageId}`,
     text,
     sender: { id: user, displayName: cleanName(sender.card || sender.nickname) },
+    images: parsed.images,
     mentions: parsed.mentions,
     replyId: parsed.replyId,
     archive: { platform: 'qq', scope: group ? ('group' as const) : ('private' as const), id: target },

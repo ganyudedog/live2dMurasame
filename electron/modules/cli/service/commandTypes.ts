@@ -40,6 +40,10 @@ export interface CommandCatalogEntry {
   parameters: Record<string, unknown>;
   /** 该技能的操作说明。agent loop 加载技能时读这里。 */
   instructions?: string;
+  /** 不写入工具会话操作记录的参数名。参数仍会传给命令执行函数。 */
+  journalExcludedArgs?: readonly string[];
+  /** 当前对话图片注入到该参数，模型工具调用不需要自行提供它。 */
+  turnImageArgument?: string;
 }
 
 export interface CliCommand<TArgs> {
@@ -48,6 +52,10 @@ export interface CliCommand<TArgs> {
   skill: CommandSkill;
   /** 随技能一起交给 agent loop。同一技能的多条说明会合并。 */
   instructions?: string;
+  /** 不写入工具会话操作记录的参数名。参数仍会传给命令执行函数。 */
+  journalExcludedArgs?: readonly string[];
+  /** 当前对话图片注入到该参数，模型工具调用不需要自行提供它。 */
+  turnImageArgument?: string;
   /** 目录里直接使用的 JSON Schema。运行时插件跨进程登记时无法传递 Zod。 */
   parameters?: Record<string, unknown>;
   localOnly?: boolean;

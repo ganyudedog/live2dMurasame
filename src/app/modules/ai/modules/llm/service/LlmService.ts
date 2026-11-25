@@ -1,3 +1,4 @@
+import { redactImageData } from '../../../../../../../shared/ai/turnImages.js';
 import { findLlmModel, resolveChatEffort } from '../../../../../../../shared/ai/llmModels.js';
 import { ActionCatalogService } from './ActionCatalogService';
 import { MemoryService } from './MemoryService';
@@ -13,6 +14,7 @@ import { createPresenceRuntime, type PresenceRuntimeOptions } from '../infrastru
 import type { CommandSession } from '../../../../../../../shared/cli/contracts';
 
 interface Stage2AskOptions {
+  readonly images?: readonly string[];
   requestId?: string;
   signal?: AbortSignal;
   trace: TraceScope;
@@ -222,7 +224,7 @@ export class LlmService {
       if (commandSession) {
         try {
           const tools = await runSkillLoop({ config: { ...resolved, reasoningEffort: options.reasoningEffort },
-            text: cleanText, requestId, signal: options.signal, session: commandSession, log: this.log,
+            text: cleanText, images: options.images, requestId, signal: options.signal, session: commandSession, log: this.log,
             ...(options.trace.spanId ? { parent: { traceId: options.trace.traceId, spanId: options.trace.spanId } } : {}),
             historyMessages: memoryRuntime.historyMessages,
             reminderSpeakLang: snapshot?.modelConfig?.tts?.enabled ? this.resolveLanguageProfile(snapshot).speakLang : null,
@@ -277,7 +279,7 @@ export class LlmService {
         },
         {
           captureBenchmark: payload => options.trace.captureModelBenchmark(payload),
-          userText: cleanText,
+          userText: cleanText, images: options.images,
           model: resolved.model,
           temperature: resolved.temperature,
           memoryContext: memoryRuntime.contextText,
@@ -323,7 +325,7 @@ export class LlmService {
       parser.finish();
 
       // 解析回复
-      const reply = parseStage2Reply(llmResult.rawText, (diagnostic) => options.trace.record('reply.parse', diagnostic));
+      const reply = parseStage2Reply(llmResult.rawText);
       if (!reply.meta) reply.meta = {};
       reply.meta.model = reply.meta.model ?? llmResult.usedModel;
       reply.meta.latency_ms = Math.round(performance.now() - start);
@@ -339,6 +341,7 @@ export class LlmService {
       reply.speak_text = speakText;
       assertCurrentModel();
       await commandSession?.reply(requestId, displayText).catch((error) => options.trace.record('tool.reply.persist.failed', { error: String(error) }));
+      assertCurrentModel();
       await this.memory.persistConversation(memoryRuntime, cleanText, displayText, options.trace, { requestId, toolContext });
       assertCurrentModel();
       // 整理在回复已经交付后后台运行，不增加当前 TTS/动作链路的首包延迟。
@@ -374,7 +377,7 @@ export class LlmService {
         rawText: llmResult.rawText,
       };
     } catch (e) {
-      const message = String(e instanceof Error ? e.message : e);
+      const message = redactImageData(String(e instanceof Error ? e.message : e), options.images);
       options.trace.record('ask.failed', { err: message });
       return {
         ok: false,

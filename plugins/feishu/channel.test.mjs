@@ -17,8 +17,11 @@ describe('Feishu channel', () => {
     const values = new Map();
     const storage = {
       get: key => values.get(key),
+      getTransient: key => values.get(`transient:${key}`),
+      setTransient(key, value) { values.set(`transient:${key}`, value); listeners.forEach(fn => fn(key)); },
       set(key, value) { values.set(key, value); listeners.forEach(fn => fn(key)); },
       delete(key) { values.delete(key); listeners.forEach(fn => fn(key)); },
+      deleteTransient(key) { const deleted = values.delete(`transient:${key}`); if (deleted) listeners.forEach(fn => fn(key)); return deleted; },
       subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     };
     const report = vi.fn();

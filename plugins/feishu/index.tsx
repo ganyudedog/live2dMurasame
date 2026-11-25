@@ -16,18 +16,27 @@ export const feishuPlugin: PluginDefinition = {
     if (context.windowKind !== 'pet' || !context.host.ai) return;
     const { storage } = context;
     const channel = context.host.ai.openChannel({ source: 'feishu', conversationId: 'feishu', interaction: { mode: 'concurrent', maxConcurrent: 4, maxQueued: 8 }, speakLang: 'auto' });
-    type Message = { messageId: string; conversationId: string; conversationType: 'private' | 'group'; senderId: string; senderName?: string; text: string; isOwner?: boolean; isDeveloper?: boolean; userText?: string };
+    type Message = { messageId: string; conversationId: string; conversationType: 'private' | 'group'; senderId: string; senderName?: string; text: string; isOwner?: boolean; isDeveloper?: boolean; userText?: string; imageCount?: number; imageError?: string };
     let active = true;
     const consume = async (key: string) => {
       const message = await storage.get<Message | true | { replyMessageId: string } | { rejected: string }>(key);
       if (!active || !message || message === true || !('messageId' in message)) return;
+      const imageKey = `images.${message.messageId}`;
+      const images = message.imageCount ? await storage.getTransient<string[]>(imageKey) : undefined;
+      if (!active) return;
+      if (message.imageError || (message.imageCount && images?.length !== message.imageCount)) {
+        await storage.set(`reply.${message.messageId}`, { messageId: message.messageId, conversationId: message.conversationId,
+          text: message.imageError ?? '本轮图片已失效，请重新发送。' });
+        return;
+      }
       const relationship = message.isOwner ? await context.host.ai?.getRelationship?.().catch(() => null) : null;
       if (!active) return;
-      const result = channel.sendText({ isOwner: message.isOwner === true,
+      const result = channel.sendText({ ...(images ? { images } : {}), isOwner: message.isOwner === true,
         memberCommands: message.isDeveloper ? ['feishu.docx.read', 'feishu.docx.update', 'feishu.app.create'] : ['feishu.docx.read', 'feishu.docx.update'], text: message.text, requestId: `feishu:${message.messageId}`, conversationId: message.conversationId,
         ...(message.isOwner && message.userText ? { personalMemory: { userText: message.userText } } : {}),
         ...(relationship?.line ? { systemPrompt: relationship.line } : {}),
         sender: { id: message.senderId, displayName: message.senderName }, memoryArchive: { platform: 'feishu', scope: message.conversationType, id: message.conversationId } });
+      if (images) await storage.deleteTransient(imageKey);
       if (!result.accepted && result.reason !== 'duplicate') {
         context.logger?.error('message.rejected', { reason: result.reason ?? 'unavailable', conversationId: message.conversationId });
         await storage.set(`reply.${message.messageId}`, { messageId: message.messageId, conversationId: message.conversationId, text: '当前无法接收这轮对话，请稍后重试。' });

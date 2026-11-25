@@ -26,10 +26,21 @@ const registerPluginIpcImpl = ({ pluginStorageService }: { pluginStorageService:
   };
   const asText = (value: unknown): string => value as string;
   ipcMain.handle('ddd:plugin:storage:get', invoke(({ pluginId, key }) => pluginStorageService.get(asText(pluginId), asText(key))));
+  ipcMain.handle('ddd:plugin:storage:get-transient', invoke(({ pluginId, key }) => pluginStorageService.getTransient(asText(pluginId), asText(key))));
+  ipcMain.handle('ddd:plugin:storage:set-transient', invoke(({ pluginId, key, value }) => {
+    const id = asText(pluginId);
+    const storageKey = asText(key);
+    pluginStorageService.setTransient(id, storageKey, value);
+  }));
   ipcMain.handle('ddd:plugin:storage:set', invoke(({ pluginId, key, value }) => {
     const id = asText(pluginId);
     const storageKey = asText(key);
     pluginStorageService.set(id, storageKey, value);
+  }));
+  ipcMain.handle('ddd:plugin:storage:delete-transient', invoke(({ pluginId, key }) => {
+    const id = asText(pluginId);
+    const storageKey = asText(key);
+    return pluginStorageService.deleteTransient(id, storageKey);
   }));
   ipcMain.handle('ddd:plugin:storage:delete', invoke(({ pluginId, key }) => {
     const id = asText(pluginId);

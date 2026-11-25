@@ -1,5 +1,25 @@
+import { checkImageCount, imageFromBase64, MAX_IMAGE_BYTES } from '../../shared/ai/turnImages.js';
 import { createHash } from 'node:crypto';
 import { LarkChannel } from '@larksuiteoapi/node-sdk';
+
+async function messageImages(channel, messageId, resources) {
+  checkImageCount(resources.length);
+  const images = [];
+  for (const resource of resources) {
+    const response = await channel.rawClient.im.messageResource.get({
+      path: { message_id: messageId, file_key: resource.fileKey }, params: { type: 'image' },
+    });
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.getReadableStream()) {
+      size += chunk.length;
+      if (size > MAX_IMAGE_BYTES) throw new Error('单张图片不能超过 5 MB');
+      chunks.push(chunk);
+    }
+    images.push(imageFromBase64(Buffer.concat(chunks).toString('base64'), response.headers?.['content-type']?.split(';')[0]));
+  }
+  return images;
+}
 
 const createTransport = (emit, report) => {
   let channel;
@@ -21,7 +41,7 @@ const createTransport = (emit, report) => {
       if (!appId || !appSecret) throw new Error('飞书 App ID 和 App Secret 不能为空');
       const next = new LarkChannel({
         appId, appSecret, transport: 'websocket', loggerLevel: 2,
-        safety: { batch: { text: { maxMessages: 1 } } },
+        safety: { batch: { text: { maxMessages: 1 }, media: { maxItems: 1 } } },
       });
       const previous = channel;
       channel = next;
@@ -29,7 +49,8 @@ const createTransport = (emit, report) => {
       if (previous) await previous.disconnect();
       if (channel !== next) return;
       next.on('message', async message => {
-        const text = message.content?.trim();
+        const resources = (message.resources ?? []).filter(item => item.type === 'image');
+        const text = message.content?.trim() || (resources.length ? `[附有 ${resources.length} 张图片]` : '');
         if (channel !== next || !text || !message.chatId || !message.messageId || !message.senderId) return;
         if (message.chatType !== 'p2p' && !message.mentionedBot) return;
         let role;
@@ -42,9 +63,15 @@ const createTransport = (emit, report) => {
           } catch { /* Unverified roles use ordinary member permissions. */ }
         }
         if (channel !== next) return;
+        let images, imageError;
+        if (resources.length) {
+          try { images = await messageImages(next, message.messageId, resources); }
+          catch { imageError = '图片读取失败。本轮最多 4 张，每张不超过 5 MB，请重新发送。'; }
+        }
+        if (channel !== next) return;
         const isOwner = role === 'owner';
         emit('message', {
-          isOwner, isDeveloper: role === 'developer',
+          images, imageError, isOwner, isDeveloper: role === 'developer',
           ...(isOwner && message.rawContentType === 'text' ? { userText: text } : {}),
           messageId: message.messageId,
           conversationId: message.chatId,
@@ -93,6 +120,11 @@ const createTransport = (emit, report) => {
 export function startService(storage, report = () => {}) {
   const sending = new Set();
   const attempts = new Map();
+  const transientImages = new Set();
+  function clearImages() {
+    for (const key of transientImages) storage.deleteTransient(key);
+    transientImages.clear();
+  }
   let disposed = false;
   let connectionGeneration = 0;
   let retryTimer;
@@ -116,7 +148,14 @@ export function startService(storage, report = () => {}) {
       if (payload.conversationType === 'group' && !payload.mentionsBot) return;
       const key = `message.${payload.messageId}`;
       if (storage.get(key) !== undefined || (storage.get('seenMessages') ?? []).includes(payload.messageId)) return;
-      storage.set(key, payload);
+      const { images, ...message } = payload;
+      if (images?.length) {
+        const imageKey = `images.${message.messageId}`;
+        transientImages.add(imageKey);
+        storage.setTransient(imageKey, images);
+        message.imageCount = images.length;
+      }
+      storage.set(key, message);
     } else {
       resetRetry();
       storage.set('connection', payload.state);
@@ -178,6 +217,7 @@ export function startService(storage, report = () => {}) {
   }
   storage.set('petActive', false);
   const unsubscribe = storage.subscribe(key => {
+    if (key === 'petActive' && !storage.get(key)) clearImages();
     if (key === 'settings' || key === 'petActive') configure();
     if (key.startsWith('reply.')) {
       const reply = storage.get(key);
@@ -188,5 +228,5 @@ export function startService(storage, report = () => {}) {
       flush();
     }
   });
-  return () => { disposed = true; resetRetry(); unsubscribe(); void transport.stop(); };
+  return () => { disposed = true; resetRetry(); unsubscribe(); clearImages(); void transport.stop(); };
 }

@@ -1,12 +1,9 @@
 import { z } from 'zod';
-import { actionIntentInputSchema } from '../../../../live2d/modules/actions/domain/schema';
 
-export const stage2LlmReplySchema = z.object({
-  request_id: z.string().trim().min(1).max(120).optional(),
-  display_text: z.string().trim().min(1).optional(),
+export const sentenceSchema = z.object({
+  display_text: z.string().trim().min(1),
   speak_text: z.string().trim().min(1).optional(),
-  action_intent: actionIntentInputSchema.optional(),
-  meta: z.record(z.string(), z.unknown()).optional(),
+  action_intent: z.unknown().optional(),
 });
 
-export type Stage2LlmReplySchema = z.infer<typeof stage2LlmReplySchema>;
+export const stage2LlmReplySchema = z.strictObject({ sentences: z.array(sentenceSchema).min(1) });

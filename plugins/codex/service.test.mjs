@@ -28,6 +28,8 @@ describe('Codex command', () => {
     invoke('a', { action: 'trust' });
     expect(() => invoke('a', { task: ' ' })).toThrow(/non-empty/);
     expect(() => invoke('a', { cwd: 'not-absolute' })).toThrow(/absolute/);
+    expect(() => invoke('a', { images: Array(5).fill('data:image/png;base64,AQID') })).toThrow(/4/);
+    expect(() => invoke('a', { images: ['data:image/png;base64,' + Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64')] })).toThrow(/5 MB/);
     expect(servers).toHaveLength(0);
   });
 

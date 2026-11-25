@@ -334,8 +334,11 @@ export class PluginRuntime {
 
 const deniedStorage: PluginStorage = {
   async get() { throw new Error('Plugin did not request settings.storage permission'); },
+  async getTransient() { throw new Error('Plugin did not request settings.storage permission'); },
   async set() { throw new Error('Plugin did not request settings.storage permission'); },
+  async setTransient() { throw new Error('Plugin did not request settings.storage permission'); },
   async delete() { throw new Error('Plugin did not request settings.storage permission'); },
+  async deleteTransient() { throw new Error('Plugin did not request settings.storage permission'); },
   subscribe() { throw new Error('Plugin did not request settings.storage permission'); },
 };
 

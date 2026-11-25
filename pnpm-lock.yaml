@@ -142,6 +142,9 @@ importers:
       husky:
         specifier: ^9.1.7
         version: 9.1.7
+      jsdom:
+        specifier: 26.1.0
+        version: 26.1.0
       knip:
         specifier: ^6.45.1
         version: 6.45.1

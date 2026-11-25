@@ -1,3 +1,4 @@
+import { imageStats } from '../../../../../../shared/ai/turnImages.js';
 import type {
   ConversationChannel,
   ConversationChannelOptions,
@@ -158,7 +159,8 @@ class PluginConversationChannel implements ConversationChannel {
 
   private enqueue(request: ConversationRequest): ConversationRequestResult {
     const requestId = request.requestId?.trim() || makeId('request');
-    const text = request.text.trim();
+    try { imageStats(request.images); } catch { return { requestId, accepted: false, reason: 'invalid' }; }
+    const text = request.text.trim() || (request.images?.length ? `[附有 ${request.images.length} 张图片]` : '');
     if (!text) return { requestId, accepted: false, reason: 'invalid' };
     if (this.disposed || this.closing || this.scheduler.isDisposed()) {
       return { requestId, accepted: false, reason: 'disposed' };
@@ -182,7 +184,7 @@ class PluginConversationChannel implements ConversationChannel {
     this.jobs.push({
       id: requestId,
       controller,
-      run: () => this.run(requestId, { ...request, requestId, text }, controller),
+      run: () => this.run(requestId, { ...request, requestId, text, ...(request.images ? { images: [...request.images] } : {}) }, controller),
     });
     this.pump();
     return {

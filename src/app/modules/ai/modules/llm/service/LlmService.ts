@@ -233,7 +233,9 @@ export class LlmService {
             summarize: snapshot?.globalModelConfig?.memoryModel?.trim()
               ? (system, user, signal) => this.requestMemoryStructured(system, user, signal) : undefined });
           toolsHandled = tools.handled;
-          if (toolsHandled) toolContext = tools.context;
+          if (toolsHandled) {
+            toolContext = tools.context;
+          }
         } catch (error) {
           options.trace.record('tool.loop.unavailable', { error: String(error) });
           toolContext = JSON.stringify({ error: String(error), note: '工具协调失败，执行状态需查询确认，不得声称成功。' });

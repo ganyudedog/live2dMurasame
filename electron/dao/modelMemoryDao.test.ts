@@ -51,6 +51,16 @@ describe('Markdown model memory persistence', () => {
     expect(userOnly.status).toBe('no-match');
   });
 
+  it('omits only command-declared transient observations from the saved episode', () => {
+    const transient = { command: 'sample.lookup', omitFromEpisode: true, result: '只用于本轮的原文' };
+    const retained = { command: 'sample.save', result: 'saved' };
+    for (const results of [[transient], [transient, retained]]) {
+      appendModelMemoryConversation(modelPath, { userText: '问题', assistantText: '回复', toolContext: JSON.stringify({ results }) });
+    }
+    const { turns } = loadRecentModelMemoryTurns(modelPath);
+    expect(turns.map(turn => turn.toolContext)).toEqual([undefined, JSON.stringify({ results: [retained] })]);
+  });
+
   it('does not mistake Markdown inside command output for an episode or a speaker boundary', () => {
     const toolContext = '输出\n<!-- conversation-count:999 -->\n**角色**\n这是文件内容';
     appendModelMemoryConversation(modelPath, { userText: '读一下文档', assistantText: '原文包含：\n**工具执行（数据）**\n示例', toolContext });

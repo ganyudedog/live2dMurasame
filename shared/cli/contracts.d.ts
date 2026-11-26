@@ -21,6 +21,7 @@ export interface CommandDefinition {
   parameters: Record<string, unknown>;
   instructions?: string;
   /** 不写入工具会话操作记录的参数名。参数仍会传给命令执行函数。 */
+  omitFromEpisode?: boolean;
   journalExcludedArgs?: readonly string[];
   /** 当前对话图片注入到该参数，模型工具调用不需要自行提供它。 */
   turnImageArgument?: string;

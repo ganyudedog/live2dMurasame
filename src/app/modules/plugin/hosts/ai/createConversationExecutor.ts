@@ -119,7 +119,9 @@ export const createDefaultConversationExecutor = (
               });
               return result.rawText;
             } : undefined });
-          if (tools.handled) toolContext = tools.context;
+          if (tools.handled) {
+            toolContext = tools.context;
+          }
         } catch (error) {
           trace.record('tool.loop.unavailable', { error: sanitizeLogDetail(error) });
           toolContext = JSON.stringify({ error: sanitizeLogDetail(error), note: '工具协调失败，执行状态需查询确认，不得声称成功。' });

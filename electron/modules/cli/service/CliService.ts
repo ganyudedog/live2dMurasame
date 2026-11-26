@@ -26,6 +26,7 @@ interface StoredCommand {
   description: string;
   skill: CommandSkill;
   instructions?: string;
+  omitFromEpisode?: boolean;
   journalExcludedArgs?: readonly string[];
   turnImageArgument?: string;
   localOnly: boolean;
@@ -79,6 +80,7 @@ export class CliService {
       description: definition.description,
       skill: definition.skill,
       ...(instructions ? { instructions } : {}),
+      ...(definition.omitFromEpisode === true ? { omitFromEpisode: true } : {}),
       ...(definition.journalExcludedArgs?.length ? { journalExcludedArgs: [...definition.journalExcludedArgs] } : {}),
       ...(definition.turnImageArgument ? { turnImageArgument: definition.turnImageArgument } : {}),
       localOnly: definition.localOnly ?? false,
@@ -170,6 +172,7 @@ export class CliService {
       skill: definition.skill,
       parameters: definition.toJsonSchema(),
       ...(definition.instructions ? { instructions: definition.instructions } : {}),
+      ...(definition.omitFromEpisode === true ? { omitFromEpisode: true } : {}),
       ...(definition.journalExcludedArgs?.length ? { journalExcludedArgs: definition.journalExcludedArgs } : {}),
       ...(definition.turnImageArgument ? { turnImageArgument: definition.turnImageArgument } : {}),
     }));

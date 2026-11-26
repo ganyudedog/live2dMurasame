@@ -589,6 +589,18 @@ export const recallModelMemoryEpisodes = (modelPath: string, query: unknown = {}
   };
 };
 
+/** Commands can mark an observation as transient while the active turn still receives its full result. */
+const episodeToolContext = (value: unknown): unknown => {
+  if (typeof value !== 'string') return value;
+  let context: unknown;
+  try { context = JSON.parse(value); } catch { return value; }
+  if (!isRecord(context) || !Array.isArray(context.results)) return value;
+  const results = context.results.filter(item => !isRecord(item) || item.omitFromEpisode !== true);
+  if (results.length === context.results.length) return value;
+  if (!results.length && !context.error && !context.note) return '';
+  return JSON.stringify({ ...context, results });
+};
+
 export const appendModelMemoryConversation = (modelPath: string, conversation: unknown) => withMemoryLock(modelPath, () => {
   const source = asObject(conversation);
   const paths = ensureEpisodeArchive(modelPath, source.archive);
@@ -604,7 +616,8 @@ export const appendModelMemoryConversation = (modelPath: string, conversation: u
   }
   state.conversationCount += 1;
   state.lastConversationAt = finiteNumber(source.at) ? Math.floor(source.at) : Date.now();
-  const { date, block } = toEpisodeBlock({ ...source, conversationCount: state.conversationCount });
+  const toolContext = episodeToolContext(source.toolContext);
+  const { date, block } = toEpisodeBlock({ ...source, toolContext, conversationCount: state.conversationCount });
   const episodePath = path.join(paths.episodesDir, `${date}.md`);
   const content = readText(episodePath, `# 对话片段 ${date}\n`);
   if (Buffer.byteLength(content + block, 'utf8') > MAX_EPISODE_BYTES) throw new Error('当天记忆归档超过 512 KB，已停止追加');
@@ -616,7 +629,7 @@ export const appendModelMemoryConversation = (modelPath: string, conversation: u
     const at = finiteNumber(source.at) ? Math.floor(source.at) : now;
     let relationship = normalizeStoredRelationship(state.relationship)
       ?? migrateRelationship(readText(desktop.corePath, DEFAULT_CORE), now);
-    if (!source.toolContext && isMeaningfulDesktopExchange(source.userText, source.assistantText)) {
+    if (!toolContext && isMeaningfulDesktopExchange(source.userText, source.assistantText)) {
       relationship = evaluateRelationshipGrowth(
         recordInteractionDay(relationship, at), now, undefined, state.conversationCount,
       );

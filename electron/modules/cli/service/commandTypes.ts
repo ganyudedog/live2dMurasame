@@ -41,6 +41,7 @@ export interface CommandCatalogEntry {
   /** 该技能的操作说明。agent loop 加载技能时读这里。 */
   instructions?: string;
   /** 不写入工具会话操作记录的参数名。参数仍会传给命令执行函数。 */
+  omitFromEpisode?: boolean;
   journalExcludedArgs?: readonly string[];
   /** 当前对话图片注入到该参数，模型工具调用不需要自行提供它。 */
   turnImageArgument?: string;
@@ -53,6 +54,7 @@ export interface CliCommand<TArgs> {
   /** 随技能一起交给 agent loop。同一技能的多条说明会合并。 */
   instructions?: string;
   /** 不写入工具会话操作记录的参数名。参数仍会传给命令执行函数。 */
+  omitFromEpisode?: boolean;
   journalExcludedArgs?: readonly string[];
   /** 当前对话图片注入到该参数，模型工具调用不需要自行提供它。 */
   turnImageArgument?: string;

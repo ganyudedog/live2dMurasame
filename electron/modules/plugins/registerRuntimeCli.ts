@@ -29,6 +29,7 @@ interface RuntimeCliCommand {
   skill: string;
   description: string;
   instructions?: string;
+  omitFromEpisode?: boolean;
   journalExcludedArgs?: readonly string[];
   turnImageArgument?: string;
   parameters: Record<string, unknown>;
@@ -73,6 +74,7 @@ const readCommands = (module: unknown): RuntimeCliCommand[] => {
       skill: item.skill,
       description: item.description,
       ...(typeof item.instructions === 'string' ? { instructions: item.instructions } : {}),
+      ...(item.omitFromEpisode === true ? { omitFromEpisode: true } : {}),
       ...(Array.isArray(item.journalExcludedArgs) && item.journalExcludedArgs.every((key): key is string => typeof key === 'string') ? { journalExcludedArgs: item.journalExcludedArgs } : {}),
       ...(typeof item.turnImageArgument === 'string' ? { turnImageArgument: item.turnImageArgument } : {}),
       parameters,
@@ -116,6 +118,7 @@ export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log
           skill: command.skill,
           description: command.description,
           ...(command.instructions ? { instructions: command.instructions } : {}),
+          ...(command.omitFromEpisode === true ? { omitFromEpisode: true } : {}),
           ...(command.journalExcludedArgs?.length ? { journalExcludedArgs: command.journalExcludedArgs } : {}),
           ...(command.turnImageArgument ? { turnImageArgument: command.turnImageArgument } : {}),
           ...(command.localOnly ? { localOnly: true } : {}),

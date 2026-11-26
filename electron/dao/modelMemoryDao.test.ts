@@ -59,6 +59,17 @@ describe('Markdown model memory persistence', () => {
     expect(turns[0].assistantText).toBe('原文包含：\n**工具执行（数据）**\n示例');
     expect(turns[0].toolContext).toBe(toolContext);
   });
+  it('counts date headers and blank lines inside the pending text budget', () => {
+    const first = appendModelMemoryConversation(modelPath, { userText: '第一段', assistantText: '回复' });
+    const second = appendModelMemoryConversation(modelPath, { userText: '第二段', assistantText: '字'.repeat(25000) });
+    expect(second.pendingEpisodeText).toHaveLength(24000);
+    expect(second.pendingEpisodeText.startsWith(first.pendingEpisodeText + '\n\n【')).toBe(true);
+    expect(second.pendingThroughCount).toBe(2);
+    const third = appendModelMemoryConversation(modelPath, { userText: '第三段', assistantText: '回复' });
+    expect(third.pendingEpisodeText).toBe(second.pendingEpisodeText);
+    expect(third.pendingThroughCount).toBe(2);
+  });
+
   it('appends daily episodes and exposes a bounded consolidation cursor', () => {
     const originalNow = Date.now;
     Date.now = () => new Date(2026, 9, 20, 18).getTime();
@@ -74,6 +85,8 @@ describe('Markdown model memory persistence', () => {
     if (!memory) throw new Error('missing memory');
     expect(memory.state.conversationCount).toBe(9);
     expect(memory.pendingThroughCount).toBe(8);
+    expect(memory.pendingEpisodeText).toContain('【2026-10-20，Asia/Shanghai】');
+    expect(memory.pendingEpisodeText).toContain('### 12:01');
     expect(memory.pendingEpisodeText).toContain('用户消息 1');
     expect(memory.pendingEpisodeText).not.toContain('用户消息 9');
     expect(memory.episodes).toHaveLength(0);

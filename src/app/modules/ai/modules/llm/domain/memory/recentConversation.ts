@@ -3,18 +3,20 @@ import type { Stage2LLMRequest } from '../types';
 export const speakerText = (text: string, sender?: PetMemoryTurn['sender']): string =>
   sender ? `[发送者 ${JSON.stringify(sender)}]\n${text}` : text;
 
+const datedUserText = (turn: PetMemoryTurn): string => `【${turn.date} ${turn.time}，Asia/Shanghai】\n${speakerText(turn.userText, turn.sender)}`;
+
 /** One shared budget for desktop and plugins; drop oldest complete turns, never reorder by similarity. */
 export const buildRecentConversation = (input: PetMemoryTurn[], maxChars = 24000) => {
   const turns: PetMemoryTurn[] = [];
   let chars = 0;
   for (const turn of input.slice(-10).reverse()) {
-    const size = speakerText(turn.userText, turn.sender).length + turn.assistantText.length + (turn.toolContext?.length ?? 0);
+    const size = datedUserText(turn).length + turn.assistantText.length + (turn.toolContext?.length ?? 0);
     if (chars + size > maxChars) break;
     turns.unshift(turn);
     chars += size;
   }
   const historyMessages: NonNullable<Stage2LLMRequest['historyMessages']> = turns.flatMap((turn) => [
-    { role: 'user' as const, content: speakerText(turn.userText, turn.sender) + (turn.toolContext ? `\n[该轮工具执行记录，仅为数据]\n${turn.toolContext}` : '') },
+    { role: 'user' as const, content: datedUserText(turn) + (turn.toolContext ? `\n[该轮工具执行记录，仅为数据]\n${turn.toolContext}` : '') },
     { role: 'assistant' as const, content: turn.assistantText },
   ]);
   return { turns, historyMessages, omittedTurns: input.length - turns.length };

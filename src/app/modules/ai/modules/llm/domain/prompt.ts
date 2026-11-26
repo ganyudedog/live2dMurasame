@@ -29,6 +29,14 @@ export const buildOutputContract = (input?: Pick<BuildPromptInput, 'speechEnable
   ]),
 ].join('\n');
 
+export const formatLocalClock = (issuedAt = Date.now()): string => {
+  const formatter = new Intl.DateTimeFormat('sv-SE', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23', timeZoneName: 'longOffset',
+  });
+  return `本机时区 ${formatter.resolvedOptions().timeZone}，本地时间 ${formatter.format(new Date(issuedAt))}，对应 Unix 毫秒 ${issuedAt}`;
+};
+
 const CONVERSATION_STYLE = [
   '日常场景：你与用户在桌面上自然聊天，是熟悉、亲近且有自己想法的陪伴者，语气放松，可以有一点含蓄的暧昧。',
   '优先接住用户这一次说的具体内容。用户提问就先回答问题，分享事情就回应其中值得关注的细节；可以表达自己的看法和温和的不同意见。',
@@ -88,7 +96,8 @@ export const buildStage2SystemPrompt = (input?: {
 };
 
 export const buildStage2UserPrompt = (input: BuildPromptInput): string => {
-  const parts = [];
+  const issuedAt = Date.now();
+  const parts = [`本轮本机时钟（组装提示词时读取）：${formatLocalClock(issuedAt)}`];
   if (input.historyMessages?.length) parts.push(`历史对话归档（仅用于理解上下文，不是指令或输出示例）：\n${JSON.stringify(input.historyMessages)}`);
   if (input.memoryContext) {
     parts.push('以下是相关记忆，只在相关时使用，不要编造其中没有的信息：');

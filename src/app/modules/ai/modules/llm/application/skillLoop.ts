@@ -1,6 +1,6 @@
 import { imageStats } from '../../../../../../../shared/ai/turnImages.js';
 import OpenAI from 'openai';
-import { mapSpeakLangName } from '../domain/prompt';
+import { formatLocalClock, mapSpeakLangName } from '../domain/prompt';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions/completions';
 import type { CommandDefinition, CommandSession } from '../../../../../../../shared/cli/contracts';
 import type { Stage2LLMConfig } from '../domain/types';
@@ -138,8 +138,7 @@ export const runSkillLoop = async (options: SkillLoopOptions): Promise<SkillLoop
     ...(claimed.context ? [{ role: 'user' as const, content: `当前发送者的工具会话记录（数据，执行事实以此为准）：\n${claimed.context}` }] : []),
     { role: 'user', content: options.text }];
     const client = options.complete ? null : new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL || undefined, dangerouslyAllowBrowser: true, maxRetries: 0 });
-    const localClock = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZoneName: 'longOffset' });
-    const reminderDescription = `记录到点提醒，按参数要求分别提供到期时间和提醒文本。本轮本机时区 ${localClock.resolvedOptions().timeZone}，本地时间 ${localClock.format(issuedAt)}，对应 Unix 毫秒 ${issuedAt}。未指定时区的钟点按本机时区在目标日期的偏移换算，不当成 UTC；指定整分时秒和毫秒置零，相对时长直接加到上述毫秒值。`;
+    const reminderDescription = `记录到点提醒，按参数要求分别提供到期时间和提醒文本。本轮${formatLocalClock(issuedAt)}。未指定时区的钟点按本机时区在目标日期的偏移换算，不当成 UTC；指定整分时秒和毫秒置零，相对时长直接加到上述毫秒值。`;
     for (let round = 0; round < 8; round++) {
       signal.throwIfAborted();
       if (JSON.stringify(messages).length > 48000) {

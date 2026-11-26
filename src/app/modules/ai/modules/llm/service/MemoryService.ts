@@ -4,6 +4,7 @@ import { isString } from '../domain/config';
 import { LlmMemoryRepository } from '../infrastructure/LlmMemoryRepository';
 import { buildMemoryContext, buildPersonaPrompt, extractRelationship, relationshipPromptBody, normalizePersona } from '../domain/memory/memoryContext';
 import { resolveEpisodeQuery } from '../domain/memory/episodeQuery';
+import { formatLocalClock } from '../domain/prompt';
 import type { TraceScope } from '@app/shared/logging/LogService';
 
 export interface ResolvedMemoryRuntime {
@@ -113,9 +114,9 @@ export class MemoryService {
    */
   async consolidateIfNeeded(runtime: ResolvedMemoryRuntime, trace?: TraceScope, signal?: AbortSignal): Promise<void> {
     const state = runtime.memoryState?.state;
-    const pendingText = runtime.memoryState?.pendingEpisodeText?.trim() ?? '';
+    const pendingText = runtime.memoryState?.pendingEpisodeText ?? '';
     const pendingThroughCount = runtime.memoryState?.pendingThroughCount ?? 0;
-    if (!this.requestStructured || !state || !pendingText || pendingThroughCount <= (state.lastConsolidatedCount ?? 0)) return;
+    if (!this.requestStructured || !state || !pendingText.trim() || pendingThroughCount <= (state.lastConsolidatedCount ?? 0)) return;
     const modelPath = runtime.modelPath;
     if (!isString(modelPath)) return;
     // 记忆整理模型由后端持久化；没配就是没配，不借用对话模型兜底。
@@ -159,7 +160,7 @@ export class MemoryService {
       const user = [
         `当前核心记忆：\n${runtime.memoryState?.coreText ?? '# 核心记忆'}`,
         `当前关系分支：\n${branchText}`,
-        `待整理对话（游标截止 ${pendingThroughCount}）：\n${pendingText.slice(-24000)}`,
+        `整理时钟：${formatLocalClock()}。待整理片段中的日期和 ### 钟点均为 Asia/Shanghai，必须原样理解和保留。\n待整理对话（游标截止 ${pendingThroughCount}）：\n${pendingText}`,
       ].join('\n\n');
       const raw = await this.requestStructured(system, user, signal);
       const parsed = this.parseConsolidation(raw);

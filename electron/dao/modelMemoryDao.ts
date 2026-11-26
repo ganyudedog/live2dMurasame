@@ -386,21 +386,18 @@ const pendingEpisodes = (paths: { episodesDir: string }, state: MemoryState) => 
     });
   }
   pending.sort((a, b) => a.count - b.count);
-  const pendingBatch: Array<{ count: number; text: string; date?: string }> = [];
-  let pendingChars = 0;
+  let text = '';
+  let throughCount = state.lastConsolidatedCount ?? 0;
+  let sinceDate = '';
   for (const item of pending.slice(0, MAX_PENDING_CONVERSATIONS)) {
-    const remaining = MAX_PENDING_TEXT_CHARS - pendingChars;
-    if (remaining <= 0) break;
-    const text = item.text.length > remaining ? item.text.slice(0, remaining) : item.text;
-    pendingChars += text.length;
-    pendingBatch.push({ count: item.count, text });
-    if (text.length < item.text.length) break;
+    const header = `${text ? '\n\n' : ''}【${item.date}，Asia/Shanghai】\n`;
+    const available = MAX_PENDING_TEXT_CHARS - text.length - header.length;
+    if (available <= 0) break;
+    text += header + item.text.slice(0, available);
+    throughCount = item.count;
+    sinceDate ||= item.date;
   }
-  return {
-    text: pendingBatch.map((item) => item.text).join('\n\n'),
-    throughCount: pendingBatch.at(-1)?.count ?? (state.lastConsolidatedCount ?? 0),
-    sinceDate: pendingBatch[0]?.date ?? '',
-  };
+  return { text, throughCount, sinceDate };
 };
 
 const desktopPaths = (paths: MemoryPaths | ArchivePaths): MemoryPaths => {

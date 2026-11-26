@@ -1,3 +1,4 @@
+import { parseStage2Reply } from '../domain/replyParser';
 import { imageStats, redactImageData } from '../../../../../../../shared/ai/turnImages.js';
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions/completions';
@@ -118,6 +119,8 @@ export const requestStage2LLM = async (
 
   for (let attempt = 0; attempt < 2; attempt++) {
     signal?.throwIfAborted();
+    let reference: string;
+    let usage = readPromptUsage(null);
     if (req.stream) {
       // 流式模式：增量拼接 JSON 文本，尽早把可见文本回推给 UI。
       const stream = await client.chat.completions.create(
@@ -132,7 +135,6 @@ export const requestStage2LLM = async (
       );
 
       let rawText = '', pendingText = '', reasoning = '';
-      let usage = readPromptUsage(null);
       let reasoningIndex = 0;
       const publish = (text: string) => {
         if (!text) return;
@@ -165,38 +167,31 @@ export const requestStage2LLM = async (
       publish(pendingText);
       if (reasoning) emitReasoning(redactImageData(reasoning, req.images), req.onReasoningSummary, reasoningIndex);
 
-      const finalText = rawText.trim();
-      if (!finalText) continue;
-
-      capture(rawText);
-      return {
-        rawText: finalText,
-        usedModel,
-        usage,
-      };
+      reference = rawText;
+    } else {
+      const response = await client.chat.completions.create(requestBody, { signal });
+      signal?.throwIfAborted();
+      const choice = response.choices?.[0];
+      if (choice?.finish_reason === 'length') throw new Error('LLM 回复被截断');
+      const message = choice?.message as { content?: string; reasoning_summary?: string } | undefined;
+      const clean = (text: string) => req.images?.length ? redactImageData(text, req.images) : text;
+      emitReasoning(clean(message?.reasoning_summary ?? ''), req.onReasoningSummary, 0);
+      reference = clean(message?.content ?? '');
+      usage = readPromptUsage(response.usage);
     }
 
-    const response = await client.chat.completions.create(
-      requestBody,
-      {
-        signal,
-      },
-    );
-
     signal?.throwIfAborted();
-    if (response.choices?.[0]?.finish_reason === 'length') throw new Error('LLM 回复被截断');
-    const message = response.choices?.[0]?.message as { content?: string; reasoning_summary?: string } | undefined;
-    const clean = (text: string) => req.images?.length ? redactImageData(text, req.images) : text;
-    emitReasoning(clean(message?.reasoning_summary ?? ''), req.onReasoningSummary, 0);
-    const rawText = clean(message?.content?.trim() ?? '');
-    if (!rawText) continue;
-
-    capture(message?.content ?? rawText);
-    return {
-      rawText,
-      usedModel,
-      usage: readPromptUsage(response.usage),
-    };
+    const rawText = reference.trim();
+    try {
+      if (!rawText) throw new Error('LLM 返回为空');
+      parseStage2Reply(rawText);
+    } catch (error) {
+      if (attempt > 0 || req.hasPublishedSentence?.()) throw error;
+      req.onAttemptDiscarded?.();
+      continue;
+    }
+    capture(reference);
+    return { rawText, usedModel, usage };
   }
   throw new Error('LLM 返回为空');
 };

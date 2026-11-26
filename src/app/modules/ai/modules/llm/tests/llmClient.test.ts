@@ -10,7 +10,8 @@ const actions: Pick<ActionCapability, 'actions'> = { actions: [
   { id: 'shy', label: '脸红', category: 'emotion' },
   { id: 'head', label: '转头', category: 'head', description: '倾听时使用' },
 ] };
-const response = { choices: [{ message: { content: '{"display_text":"hello"}' } }] };
+const validText = '{"sentences":[{"display_text":"hello"}]}';
+const response = { choices: [{ message: { content: validText } }] };
 
 describe('provider prompt cache and streaming usage', () => {
   it.each([true, false])('keeps the current speech mode after tool execution (%s)', async (speechEnabled) => {
@@ -116,19 +117,40 @@ describe('provider prompt cache and streaming usage', () => {
     expect(network.create.mock.calls[0]).toEqual(network.create.mock.calls[1]);
   });
 
+  it.each([
+    ['  ', 'LLM 返回为空'],
+    ['  [得意]', 'LLM 输出不是合法 JSON'],
+    ['{"sentences":[{"display_text":" "}]}', 'LLM 输出不是合法 JSON'],
+  ])('reports the second invalid response (%s)', async (content, message) => {
+    network.create.mockResolvedValue([{ choices: [{ delta: { content } }] }]);
+    const discarded = vi.fn();
+    await expect(requestStage2LLM(config, { userText: 'hello', stream: true, onAttemptDiscarded: discarded }))
+      .rejects.toThrow(message);
+    expect(discarded).toHaveBeenCalledOnce();
+    expect(network.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops before retrying a cancelled turn', async () => {
+    const controller = new AbortController();
+    network.create.mockResolvedValue([{ choices: [{ delta: { content: ' [得意]' } }] }]);
+    await expect(requestStage2LLM(config, { userText: 'hello', stream: true, signal: controller.signal,
+      onAttemptDiscarded: () => controller.abort() })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(network.create).toHaveBeenCalledOnce();
+  });
+
   it('streams text immediately and collects usage-only final frames', async () => {
     const delta = vi.fn();
     network.create.mockImplementation(async function* () {
       yield { choices: [{ delta: { reasoning_content: 'private reasoning' } }] };
       expect(delta).not.toHaveBeenCalled();
-      yield { choices: [{ delta: { content: 'hello' } }], usage: null };
-      expect(delta).toHaveBeenCalledWith({ deltaText: 'hello', aggregateText: 'hello' });
+      yield { choices: [{ delta: { content: validText } }], usage: null };
+      expect(delta).toHaveBeenCalledWith({ deltaText: validText, aggregateText: validText });
       yield { choices: [], usage: { prompt_tokens: 2000, completion_tokens: 10,
         prompt_tokens_details: { cached_tokens: 1600 } } };
     });
     const result = await requestStage2LLM(config, { userText: 'hello', stream: true, onStreamDelta: delta });
     expect(network.create.mock.lastCall![0]).toMatchObject({ stream_options: { include_usage: true } });
-    expect(result).toMatchObject({ rawText: 'hello', usage: { promptTokens: 2000, cachedTokens: 1600,
+    expect(result).toMatchObject({ rawText: validText, usage: { promptTokens: 2000, cachedTokens: 1600,
       uncachedTokens: 400, completionTokens: 10, cacheStatus: 'hit' } });
     expect(delta).toHaveBeenCalledOnce();
   });
@@ -194,11 +216,11 @@ describe('provider prompt cache and streaming usage', () => {
     const image = 'data:image/png;base64,AQID';
     const captureBenchmark = vi.fn(), onStreamDelta = vi.fn();
     network.create.mockImplementationOnce(async function* () {
-      for (const content of ['{"display_text":"data:im', 'age/png;base64,AQ', 'ID"}']) yield { choices: [{ delta: { content } }] };
+      for (const content of ['{"sentences":[{"display_text":"data:im', 'age/png;base64,AQ', 'ID"}]}']) yield { choices: [{ delta: { content } }] };
     });
     try {
       const result = await requestStage2LLM(config, { userText: '看图', images: [image], stream: true, captureBenchmark, onStreamDelta });
-      expect(JSON.parse(result.rawText)).toEqual({ display_text: '[图片]' });
+      expect(JSON.parse(result.rawText)).toEqual({ sentences: [{ display_text: '[图片]' }] });
       expect(JSON.stringify(onStreamDelta.mock.calls)).not.toContain('base64');
       expect(captureBenchmark).not.toHaveBeenCalled();
     } finally { vi.unstubAllEnvs(); }

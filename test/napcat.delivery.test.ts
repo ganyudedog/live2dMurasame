@@ -395,7 +395,9 @@ it('restores a previously submitted reminder through the actual host and leaves 
 });
 it('admits an allowlisted private sender, resolves a quote and sends labelled media in the same QQ message', async () => {
   modelTools();
-  const { client, socket, storage, submissions, spans } = await setup();
+  const { client, channel, socket, storage, submissions, spans } = await setup();
+  const responses = vi.fn();
+  channel.onResponse(responses);
   try {
     const event = {
       ...group(''),
@@ -417,6 +419,7 @@ it('admits an allowlisted private sender, resolves a quote and sends labelled me
     const { requestStage2LLM: runStage2 } = await vi.importActual<typeof import('../src/app/modules/ai/modules/llm/infrastructure/llmClient')>(
       '../src/app/modules/ai/modules/llm/infrastructure/llmClient');
     vi.mocked(requestStage2LLM).mockImplementationOnce((cfg, req) => {
+      complete.mockResolvedValueOnce([{ choices: [{ delta: { content: '{"sentences":[{"display_text":"第一版"},{"display_text":' } }] }]);
       complete.mockImplementationOnce(async function* () {
         yield { choices: [{ delta: { content: '{"sentences":[{"display_text":"你好"}' } }] };
         expect(socket.sent.map(frame => frame.action)).toEqual(['get_msg']);
@@ -432,6 +435,9 @@ it('admits an allowlisted private sender, resolves a quote and sends labelled me
       data: { sender: { user_id: 40004 }, message: [{ type: 'text', data: { text: '原文' } }] },
     });
     await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
+    expect(responses.mock.calls.map(([r]) => [r.status, r.text])).toEqual([
+      ['streaming', '第一版'], ['streaming', '你好'], ['streaming', '你好\n再见[挥手]'], ['done', '你好\n再见[挥手]'],
+    ]);
     expect(submissions[0]).toMatchObject({
       sender: { id: '20002' },
       isOwner: false,

@@ -29,6 +29,7 @@ describe('conversation.turn', () => {
     const submit = vi.fn(), bubble = vi.fn(), action = vi.fn();
     const chunks = ['{"sentences":[{"speak_text":"hello"', ',"display_text":"你好","action_intent":{"action_id":["turn-head"]}}',
       ',{"speak_text":"again","display_text":"又见面了"}]}'];
+    create.mockResolvedValueOnce([{ choices: [{ delta: { content: '   [得意]' } }] }]);
     create.mockImplementationOnce(async function* () {
       yield { choices: [{ delta: { content: chunks[0] } }] };
       expect(submit).toHaveBeenCalledExactlyOnceWith('hello', '', 0);

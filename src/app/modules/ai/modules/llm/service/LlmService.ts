@@ -26,6 +26,7 @@ interface Stage2AskOptions {
   reasoningEffort?: ReasoningEffort | '';
   // 同一解析器分别报告字段就绪和整句完成，共享连续的业务句子编号。
   onSentenceStreaming?: (sentence: ParsedSentence) => void;
+  hasSubmittedSpeech?: () => boolean;
   onSentenceSpeechReady?: (sentence: { sentenceIndex: number; speakText: string }) => void;
   onSentenceDisplayReady?: (sentence: { sentenceIndex: number; displayText: string }) => void;
   onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
@@ -245,9 +246,24 @@ export class LlmService {
       const start = performance.now();
       let firstDeltaLatencyMs = -1;
       let streamedRawText = '';
-      const parser = new SentenceStreamParser((diagnostic) => options.trace.record('action.stream', {
+      const createParser = () => new SentenceStreamParser((diagnostic) => options.trace.record('action.stream', {
         ...diagnostic, modelKey, modelPath,
       }));
+      let parser = createParser();
+      let speechPublished = false;
+      // 首次提交语音前仍可重新生成；暂存字幕和动作，避免放弃的正文出现在气泡里。
+      const pendingEvents: ReturnType<SentenceStreamParser['push']> = [];
+      const flushEvents = () => {
+        for (const event of pendingEvents.splice(0)) {
+          if (options.signal?.aborted) return;
+          assertCurrentModel();
+          if (event.type === 'display-ready') {
+            options.onSentenceDisplayReady?.({ sentenceIndex: event.sentenceIndex, displayText: event.displayText });
+          } else if (event.type === 'sentence-complete') {
+            options.onSentenceStreaming?.(speechEnabled ? event.sentence : { ...event.sentence, speakText: '' });
+          }
+        }
+      };
       const publishSentences = (rawText: string) => {
         if (options.signal?.aborted) return;
         assertCurrentModel();
@@ -260,12 +276,12 @@ export class LlmService {
           if (options.signal?.aborted) return;
           assertCurrentModel();
           if (event.type === 'speech-ready') {
-            if (speechEnabled) options.onSentenceSpeechReady?.({ sentenceIndex: event.sentenceIndex, speakText: event.speakText });
-          } else if (event.type === 'display-ready') {
-            options.onSentenceDisplayReady?.({ sentenceIndex: event.sentenceIndex, displayText: event.displayText });
-          } else {
-            options.onSentenceStreaming?.(speechEnabled ? event.sentence : { ...event.sentence, speakText: '' });
-          }
+            if (speechEnabled && options.onSentenceSpeechReady) {
+              options.onSentenceSpeechReady({ sentenceIndex: event.sentenceIndex, speakText: event.speakText });
+              speechPublished = options.hasSubmittedSpeech?.() ?? true;
+            }
+          } else pendingEvents.push(event);
+          if (speechPublished) flushEvents();
         }
       };
 
@@ -303,6 +319,13 @@ export class LlmService {
             assertCurrentModel();
             options.onReasoningSummary?.(event);
           },
+          hasPublishedSentence: () => speechPublished,
+          onAttemptDiscarded: () => {
+            parser = createParser();
+            streamedRawText = '';
+            pendingEvents.length = 0;
+            firstDeltaLatencyMs = -1;
+          },
           onStreamDelta: ({ deltaText, aggregateText }) => {
             if (options.signal?.aborted) return;
             assertCurrentModel();
@@ -326,6 +349,7 @@ export class LlmService {
 
       // 解析回复
       const reply = parseStage2Reply(llmResult.rawText);
+      flushEvents();
       if (!reply.meta) reply.meta = {};
       reply.meta.model = reply.meta.model ?? llmResult.usedModel;
       reply.meta.latency_ms = Math.round(performance.now() - start);

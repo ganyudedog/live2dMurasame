@@ -61,7 +61,7 @@ export const createDefaultConversationExecutor = (
     let speakText = '';
     let commands: CommandSession | null = null;
     let toolContext = '';
-    const parser = new SentenceStreamParser();
+    let parser = new SentenceStreamParser();
     const traceContext = log.contextRegistry.register('PluginConversation', {
       relation: 'conversation.request',
       params: { channelId: context.channelId, requestId: context.requestId, source: options.source, model, textLength: request.text.length },
@@ -145,6 +145,12 @@ export const createDefaultConversationExecutor = (
         ...(reasoningEffort ? { reasoningEffort } : {}),
         stream: true,
         signal: context.signal,
+        // Streaming responses are previews. Delivery starts with done, after this request returns.
+        onAttemptDiscarded: () => {
+          parser = new SentenceStreamParser();
+          displayText = '';
+          speakText = '';
+        },
         onStreamDelta: ({ deltaText }) => {
           ensureModelPath();
           for (const event of parser.push(deltaText)) {

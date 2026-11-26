@@ -232,6 +232,7 @@ export class AiService {
         baseURL: aiConfig.baseURL,
         // 每轮对话的思考深度由用户当前选择的模型决定；空值不发送推理参数。
         ...(reasoningEffort ? { reasoningEffort } : {}),
+        hasSubmittedSpeech: () => submittedSpeech.size > 0,
         onSentenceSpeechReady: ({ sentenceIndex, speakText }) => submitSpeech(sentenceIndex, speakText),
         onSentenceStreaming: (sentence) => {
           if (!isCurrent()) return;

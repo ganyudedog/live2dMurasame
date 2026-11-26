@@ -47,6 +47,8 @@ export interface Stage2LLMRequest {
   reasoningEffort?: ReasoningEffort | '';
   onReasoningSummary?: (event: ReasoningSummaryEvent) => void;
   // 流式增量回调：每次收到模型增量文本时触发
+  hasPublishedSentence?: () => boolean;
+  onAttemptDiscarded?: () => void;
   onStreamDelta?: (event: {
     deltaText: string;
     aggregateText: string;

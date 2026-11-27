@@ -275,6 +275,24 @@ it('persists failed and disconnected sends, resumes once, and confirms reminders
     next.client.dispose();
   }
 });
+it('downloads QQ CDN images without the renderer referrer', async () => {
+  const { client, socket, submissions } = await setup(undefined, async (_options, _request, turn) => {
+    turn.emit({ status: 'done', text: '收到' });
+  });
+  const url = 'https://multimedia.nt.qq.com.cn/download?fileid=test&rkey=fixture';
+  const download = vi.fn(async (_url: URL, init: RequestInit) => init.referrerPolicy === 'no-referrer'
+    ? new Response(Uint8Array.of(137, 80, 78, 71), { headers: { 'Content-Type': 'image/png' } })
+    : Response.json({ retmsg: 'invalid url' }, { status: 400 }));
+  vi.stubGlobal('fetch', download);
+  try {
+    const event = group('ai 看图');
+    socket.receive({ ...event, message: [...event.message, { type: 'image', data: { url } }] });
+    await vi.waitFor(() => expect(submissions[0]?.images).toEqual(['data:image/png;base64,iVBORw==']));
+    expect(download).toHaveBeenCalledWith(new URL(url), expect.objectContaining({ credentials: 'omit' }));
+    await vi.waitFor(() => expect(socket.sent[0]?.action).toBe('send_group_msg'));
+    socket.ack(0, 'ok');
+  } finally { await client.dispose(); }
+});
 it('resolves only image segments of the admitted QQ message and rejects an oversized album as a whole', async () => {
   const { client, socket, submissions } = await setup(undefined, async (_options, _request, turn) => {
     turn.emit({ status: 'done', text: '收到' });
@@ -422,7 +440,7 @@ it('admits an allowlisted private sender, resolves a quote and sends labelled me
       complete.mockResolvedValueOnce([{ choices: [{ delta: { content: '{"sentences":[{"display_text":"第一版"},{"display_text":' } }] }]);
       complete.mockImplementationOnce(async function* () {
         yield { choices: [{ delta: { content: '{"sentences":[{"display_text":"你好"}' } }] };
-        expect(socket.sent.map(frame => frame.action)).toEqual(['get_msg']);
+        expect(socket.sent.map(frame => frame.action)).toEqual(['get_msg', 'get_image']);
         yield { choices: [{ delta: { content: ',{"display_text":"再见[挥手]"}]}' } }] };
       });
       return runStage2(cfg, req);
@@ -432,9 +450,15 @@ it('admits an allowlisted private sender, resolves a quote and sends labelled me
     socket.receive({
       echo: socket.sent[0].echo,
       status: 'ok',
-      data: { sender: { user_id: 40004 }, message: [{ type: 'text', data: { text: '原文' } }] },
+      data: { sender: { user_id: 40004 }, message: [{ type: 'text', data: { text: '原文' } }, { type: 'image', data: { file: 'quoted-image' } }] },
     });
-    await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
+    await vi.waitFor(() => expect(socket.sent[1]).toMatchObject({ action: 'get_image', params: { file: 'quoted-image' } }));
+    const bytes = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+    socket.receive({ echo: socket.sent[1].echo, status: 'ok', data: { base64: bytes } });
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(3));
+    expect(complete.mock.lastCall?.[0].messages.at(-1).content).toContainEqual({
+      type: 'image_url', image_url: { url: `data:image/png;base64,${bytes}` },
+    });
     expect(responses.mock.calls.map(([r]) => [r.status, r.text])).toEqual([
       ['streaming', '第一版'], ['streaming', '你好'], ['streaming', '你好\n再见[挥手]'], ['done', '你好\n再见[挥手]'],
     ]);
@@ -446,7 +470,7 @@ it('admits an allowlisted private sender, resolves a quote and sends labelled me
     expect(submissions[0].text).toContain('请看[表情 123]');
     expect(submissions[0].text).toContain('原文');
     expect(submissions[0].systemPrompt).toContain('挥手');
-    expect(socket.sent[1]).toMatchObject({
+    expect(socket.sent[2]).toMatchObject({
       action: 'send_private_msg',
       params: {
         user_id: '20002',
@@ -456,7 +480,7 @@ it('admits an allowlisted private sender, resolves a quote and sends labelled me
         ],
       },
     });
-    socket.ack(1, 'ok');
+    socket.ack(2, 'ok');
     await vi.waitFor(() => expect(spans).toContainEqual(expect.objectContaining({ name: 'plugin.runtime', status: 'ok' })));
   } finally {
     await client.dispose();

@@ -181,7 +181,7 @@ export class NapCatClient {
       throw new Error('无效的 QQ 图片地址');
     }
     address.protocol = 'https:';
-    const response = await fetch(address, { redirect: 'error', credentials: 'omit', signal: AbortSignal.timeout(15000) });
+    const response = await fetch(address, { referrerPolicy: 'no-referrer', redirect: 'error', credentials: 'omit', signal: AbortSignal.timeout(15000) });
     if (!response.ok || !response.body) throw new Error('无法下载 QQ 消息图片');
     const reader = response.body.getReader();
     const parts: string[] = [];
@@ -198,15 +198,6 @@ export class NapCatClient {
   private async submit(admission: Admission) {
     const { message } = admission;
     if (this.stopped || (await this.outbox.hasReply(message.requestId))) return;
-    let images: string[];
-    try {
-      checkImageCount(message.images.length);
-      images = await Promise.all(message.images.map(segment => this.readImage(segment)));
-    } catch {
-      if (!this.stopped) await this.outbox.enqueue({ id: message.requestId, conversationId: message.conversationId,
-        message: [{ type: 'text', data: { text: '图片读取失败。本轮最多 4 张，每张不超过 5 MB，请重新发送。' } }] });
-      return;
-    }
     const labels = await loadStickerLabels(this.options.storage);
     admission.stickers = Object.entries(labels[message.self] ?? {})
       .map(([id, item]) => ({ id, ...item }))
@@ -226,6 +217,18 @@ export class NapCatClient {
         !privateUserAllowlist(this.directory).includes(message.sender.id))
     )
       return;
+    const quote = quoted ? readQuote(quoted.ok ? quoted.data : undefined, message.self) : undefined;
+    let images: string[];
+    try {
+      const segments = [...message.images, ...(quote?.images ?? [])];
+      checkImageCount(segments.length);
+      images = await Promise.all(segments.map(segment => this.readImage(segment)));
+    } catch {
+      if (!this.stopped) await this.outbox.enqueue({ id: message.requestId, conversationId: message.conversationId,
+        message: [{ type: 'text', data: { text: '图片读取失败。本轮最多 4 张，每张不超过 5 MB，请重新发送。' } }] });
+      return;
+    }
+    if (this.stopped || (message.archive.scope === 'private' && !privateUserAllowlist(this.directory).includes(message.sender.id))) return;
     const turn = composeQqTurn({
       ...message,
       directory: this.directory,
@@ -234,7 +237,7 @@ export class NapCatClient {
       scenePrompt: [this.settings.systemPrompt, stickerPrompt(admission.stickers)]
         .filter(Boolean)
         .join('\n\n'),
-      quote: quoted ? readQuote(quoted.ok ? quoted.data : undefined, message.self) : undefined,
+      quote,
     });
     const done = new Promise<void>((resolve) => {
       admission.release = resolve;

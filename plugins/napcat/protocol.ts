@@ -1,6 +1,7 @@
 import { isQqUserId } from './directory';
 
 export interface NapCatQuote {
+  images?: Record<string, unknown>[];
   speaker?: { id: string; displayName?: string };
   text: string;
   available: boolean;
@@ -63,6 +64,7 @@ export function readQuote(value: unknown, self: string): NapCatQuote {
   return {
     available: true,
     text: message.text,
+    ...(message.images.length ? { images: message.images } : {}),
     ...(isQqUserId(qq)
       ? { speaker: { id: qq, displayName: cleanName(sender.card || sender.nickname) } }
       : {}),

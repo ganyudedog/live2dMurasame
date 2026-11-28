@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { rcedit } from 'rcedit';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const output = path.join(root, 'release', 'client');
@@ -43,7 +44,9 @@ try {
   const electronDist = path.join(root, 'node_modules', 'electron', 'dist');
   if (!fs.existsSync(path.join(electronDist, 'electron.exe'))) throw new Error('Electron 运行时尚未安装');
   fs.cpSync(electronDist, unpacked, { recursive: true });
-  fs.renameSync(path.join(unpacked, 'electron.exe'), path.join(unpacked, 'Murasame.exe'));
+  const executable = path.join(unpacked, 'Murasame.exe');
+  fs.renameSync(path.join(unpacked, 'electron.exe'), executable);
+  await rcedit(executable, { icon: path.join(root, 'public', 'logo', 'icon.ico') });
   const appDir = path.join(unpacked, 'resources', 'app');
   fs.mkdirSync(appDir, { recursive: true });
   for (const name of ['dist', 'dist-electron', 'shared', 'node_modules', 'package.json']) {

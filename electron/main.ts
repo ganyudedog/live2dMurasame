@@ -28,6 +28,8 @@ import { resolveRuntimePluginFile, scanRuntimePluginManifests } from './modules/
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const appIcon = path.join(__dirname, app.isPackaged ? '../dist/logo/icon.ico' : '../public/logo/icon.ico');
+const windowIcon = fs.existsSync(appIcon) ? appIcon : undefined;
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
@@ -57,6 +59,7 @@ protocol.registerSchemesAsPrivileged([
 // 在 Windows 上透明窗口 + DevTools 容易触发 GPU 崩溃，默认禁用 GPU 作为兜底。
 const enableGpu = process.env.VITE_ENABLE_GPU === '1';
 app.commandLine.appendSwitch('disable-breakpad');
+if (process.platform === 'win32') app.setAppUserModelId('live2d-murasame');
 if (!enableGpu) {
     app.disableHardwareAcceleration();
     app.commandLine.appendSwitch('disable-gpu');
@@ -194,6 +197,7 @@ const ensureControlPanelWindow = () => {
         transparent: false,
         title: 'Live2D 控制面板',
         autoHideMenuBar: true,
+        ...(windowIcon ? { icon: windowIcon } : {}),
         webPreferences: {
             devTools: true,
             nodeIntegration: false,
@@ -336,6 +340,7 @@ const createMainWindow = (): BrowserWindow => {
         resizable: true,
         frame: false,
         alwaysOnTop: true,
+        ...(windowIcon ? { icon: windowIcon } : {}),
         webPreferences: {
             devTools: true,
             offscreen: false,

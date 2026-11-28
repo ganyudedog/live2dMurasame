@@ -1,7 +1,9 @@
 {
-  "name": "package.json",
+  "name": "live2d-murasame",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "丛雨 Live2D 桌宠",
+  "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
     "eval": "node eval/run.mjs",
@@ -15,6 +17,7 @@
     "electron:typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.electron.tests.json --pretty false",
     "dev": "vite",
     "build": "pnpm build:plugins && tsc -b && vite build && pnpm electron:compile",
+    "package:client": "node scripts/package-client.mjs",
     "test": "pnpm electron:compile && tsc -p test/tsconfig.json --noEmit --pretty false && vitest run",
     "electron:dev": "pnpm build:plugins && pnpm electron:compile && set VITE_DEV_SERVER_URL=http://localhost:5180&& node --env-file=.env.development --env-file=infra/jaeger/dev.env node_modules/electron/cli.js ./dist-electron/main.js",
     "lint": "eslint .",
@@ -42,7 +45,6 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-hot-toast": "^2.6.0",
-    "sherpa-onnx-node": "^1.13.0",
     "tailwind-merge": "^3.7.0",
     "zod": "^4.3.6"
   },

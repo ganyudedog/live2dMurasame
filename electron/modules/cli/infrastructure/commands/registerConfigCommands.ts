@@ -7,12 +7,9 @@ import type { CliService } from '../../service/CliService.js';
 const text = z.string().max(2000);
 const lang = z.enum(['zh', 'en', 'ja', 'ko']);
 const asr = z.object({
-  mode: z.enum(['local', 'remote']).optional(),
   endpoint: text.optional(),
-  modelDir: text.optional(),
-  vadThreshold: z.number().min(0).max(1).optional(),
-  numThreads: z.number().int().min(1).max(32).optional(),
-  sampleRate: z.number().int().min(8000).max(48000).optional(),
+  vadThreshold: z.number().min(0.05).max(0.95).nullable().optional(),
+  vadMinSpeechDuration: z.number().min(0.15).max(0.3).nullable().optional(),
 }).strict();
 const subtitle = z.object({
   enabled: z.boolean().optional(),

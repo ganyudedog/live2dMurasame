@@ -158,11 +158,9 @@ describe('ASR service lifecycle', () => {
 });
 
 describe('ASR endpoint configuration', () => {
-  it('keeps the two silence values and reads the old rule names once', () => {
-    expect(normalizeAsrConfig({ rule1MinTrailingSilence: 1.4, rule2MinTrailingSilence: 0.8 } as PetAsrConfig))
-      .toMatchObject({ silenceAfterText: 0.8, silenceWithoutText: 1.4 });
-    expect(normalizeAsrConfig({ silenceAfterText: 1.6, silenceWithoutText: 0.5 })).toMatchObject({
-      silenceAfterText: 1.6, silenceWithoutText: 0.5,
+  it('keeps the remote address and optional voice detection', () => {
+    expect(normalizeAsrConfig({ endpoint: ' ws://127.0.0.1:6006 ', vadThreshold: 0.6 })).toEqual({
+      endpoint: 'ws://127.0.0.1:6006', vadThreshold: 0.6, vadMinSpeechDuration: null,
     });
   });
 });

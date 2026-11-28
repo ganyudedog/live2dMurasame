@@ -21,22 +21,9 @@ const optionalAsrRange = (value: unknown, min: number, max: number): number | nu
 };
 
 export interface AsrConfig {
-  vadModelPath: string;
+  endpoint: string;
   vadThreshold: number | null;
   vadMinSpeechDuration: number | null;
-  mode: 'local' | 'remote';
-  engine: string;
-  modelDir: string;
-  endpoint: string;
-  sampleRate: number;
-  featureDim: number;
-  numThreads: number;
-  provider: string;
-  debug: number;
-  /** 已识别出文字后，静音多久提交。对应 Sherpa rule2。 */
-  silenceAfterText: number;
-  /** 还没有识别出文字时，静音多久结束。对应 Sherpa rule1，也用作 Silero 的最短静音。 */
-  silenceWithoutText: number;
 }
 
 export type DisplayLang = 'zh' | 'en' | 'ja' | 'ko';
@@ -155,20 +142,9 @@ export const DEFAULT_GLOBAL_MODEL_CONFIG: GlobalModelConfig = {
   memoryModel: '',
   memoryReasoningEffort: '',
   asr: {
-    vadModelPath: '',
-    vadThreshold: 0.5,
-    vadMinSpeechDuration: 0.2,
-    mode: 'local',
-    engine: 'sherpa-onnx',
-    modelDir: '',
     endpoint: '',
-    sampleRate: 16000,
-    featureDim: 80,
-    numThreads: 2,
-    provider: 'cpu',
-    debug: 0,
-    silenceAfterText: 1.2,
-    silenceWithoutText: 0.7,
+    vadThreshold: null,
+    vadMinSpeechDuration: null,
   },
   shellReadRoots: [],
 };
@@ -368,28 +344,10 @@ export const normalizeGlobalModelConfig = (settings: unknown = {}): GlobalModelC
     next.displayLang = source.displayLang;
   }
   const asr = isRecord(source.asr) ? source.asr : {};
-  const silenceAfter = finiteNumber(asr.silenceAfterText) ? asr.silenceAfterText
-    : finiteNumber(asr.rule2MinTrailingSilence) ? asr.rule2MinTrailingSilence : DEFAULT_GLOBAL_MODEL_CONFIG.asr.silenceAfterText;
-  const silenceWithout = finiteNumber(asr.silenceWithoutText) ? asr.silenceWithoutText
-    : finiteNumber(asr.rule1MinTrailingSilence) ? asr.rule1MinTrailingSilence : DEFAULT_GLOBAL_MODEL_CONFIG.asr.silenceWithoutText;
-  const positiveInt = (value: unknown, fallback: number): number =>
-    finiteNumber(value) && value > 0 ? Math.floor(value) : fallback;
   next.asr = {
-    ...DEFAULT_GLOBAL_MODEL_CONFIG.asr,
-    vadModelPath: typeof asr.vadModelPath === 'string' ? asr.vadModelPath.trim() : '',
+    endpoint: typeof asr.endpoint === 'string' ? asr.endpoint.trim() : '',
     vadThreshold: optionalAsrRange(asr.vadThreshold, 0.05, 0.95),
     vadMinSpeechDuration: optionalAsrRange(asr.vadMinSpeechDuration, 0.15, 0.3),
-    mode: asr.mode === 'remote' ? 'remote' : 'local',
-    engine: typeof asr.engine === 'string' && asr.engine.trim() ? asr.engine.trim() : DEFAULT_GLOBAL_MODEL_CONFIG.asr.engine,
-    modelDir: typeof asr.modelDir === 'string' ? asr.modelDir.trim() : '',
-    endpoint: typeof asr.endpoint === 'string' ? asr.endpoint.trim() : '',
-    sampleRate: positiveInt(asr.sampleRate, DEFAULT_GLOBAL_MODEL_CONFIG.asr.sampleRate),
-    featureDim: positiveInt(asr.featureDim, DEFAULT_GLOBAL_MODEL_CONFIG.asr.featureDim),
-    numThreads: positiveInt(asr.numThreads, DEFAULT_GLOBAL_MODEL_CONFIG.asr.numThreads),
-    provider: typeof asr.provider === 'string' && asr.provider.trim() ? asr.provider.trim() : DEFAULT_GLOBAL_MODEL_CONFIG.asr.provider,
-    debug: finiteNumber(asr.debug) ? Math.max(0, Math.floor(asr.debug)) : DEFAULT_GLOBAL_MODEL_CONFIG.asr.debug,
-    silenceAfterText: Math.max(0.5, silenceAfter),
-    silenceWithoutText: Math.max(0.2, silenceWithout),
   };
   next.shellReadRoots = normalizeShellReadRoots(source.shellReadRoots);
   return next;

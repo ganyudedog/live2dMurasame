@@ -50,11 +50,19 @@ describe('ASR worker lifecycle', () => {
     await runtime.stop();
   });
 
-  it('reads the old silence rule names into the endpoint settings', () => {
-    const legacy = { rule1MinTrailingSilence: 1.4, rule2MinTrailingSilence: 0.8 };
-    expect(normalizeLive2denvConfig({ settings: { asr: legacy } }).settings.asr).toMatchObject({ silenceAfterText: 0.8, silenceWithoutText: 1.4 });
-    const custom = { silenceAfterText: 1.6, silenceWithoutText: 0.5 };
-    expect(normalizeLive2denvConfig({ settings: { asr: custom } }).settings.asr).toMatchObject(custom);
+  it('keeps the remote address and drops local recognition fields', () => {
+    expect(normalizeLive2denvConfig({ settings: { asr: {
+      endpoint: ' ws://127.0.0.1:6006 ',
+      vadThreshold: 0.6,
+      mode: 'local',
+      modelDir: '/models',
+      rule1MinTrailingSilence: 1.4,
+      silenceAfterText: 1.6,
+    } } }).settings.asr).toEqual({
+      endpoint: 'ws://127.0.0.1:6006',
+      vadThreshold: 0.6,
+      vadMinSpeechDuration: null,
+    });
   });
 
   it('awaits worker readiness and propagates model load failure', async () => {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { AudioWaveform, Gauge, Mic } from 'lucide-react';
+import { AudioWaveform, Mic } from 'lucide-react';
 import { Field, SettingsCard } from '../components/common/SettingsSection';
-import { Input, Select } from '../components/common/FormControls';
+import { Input } from '../components/common/FormControls';
 import type { AsrConfig } from '../../domain/types';
 
 export default function AsrSettingsPage({
@@ -22,42 +22,18 @@ export default function AsrSettingsPage({
     setDraft(next);
     void onChange(next);
   };
-
-  const remote = draft.mode === 'remote';
   const optionalNumber = (value: string): number | null => value === '' || Number.isNaN(Number(value)) ? null : Number(value);
 
   return <>
-    <SettingsCard title="语音识别" icon={<Mic />} description={remote
-      ? '连接已经配好人声检测和识别的服务。'
-      : '使用本机模型目录里的识别模型和 VAD 文件。'}>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Field label="运行方式">
-          <Select value={draft.mode}
-            onChange={(event) => update({ mode: event.target.value as AsrConfig['mode'] })}>
-            <option value="local">本地</option>
-            <option value="remote">远程</option>
-          </Select>
-        </Field>
-        {remote ? null : <Field label="识别引擎">
-          <Input className="font-mono" value={draft.engine}
-            onChange={(event) => update({ engine: event.target.value })} />
-        </Field>}
-      </div>
-
-      <Field label={remote ? '远程服务地址' : '模型目录'}
-        hint={remote
-          ? '服务内已包含人声检测和识别。地址可以写 ws:// 或 http://。'
-          : '目录内需包含 encoder.onnx、decoder.onnx、joiner.onnx、tokens.txt'}>
-        <Input className="font-mono"
-          placeholder={remote ? 'ws://127.0.0.1:6006' : 'models/sense-voice'}
-          value={remote ? draft.endpoint : draft.modelDir}
-          onChange={(event) => update(remote
-            ? { endpoint: event.target.value }
-            : { modelDir: event.target.value })} />
+    <SettingsCard title="语音识别" icon={<Mic />} description="连接已经配好人声检测和识别的服务。">
+      <Field label="远程服务地址" hint="服务内已包含人声检测和识别。地址可以写 ws:// 或 http://。">
+        <Input className="font-mono" placeholder="ws://127.0.0.1:6006"
+          value={draft.endpoint}
+          onChange={(event) => update({ endpoint: event.target.value })} />
       </Field>
     </SettingsCard>
 
-    {remote ? <SettingsCard title="语音检测" icon={<AudioWaveform />} description="留空则使用服务已经配好的人声检测。填写后会在连接时发给服务。">
+    <SettingsCard title="语音检测" icon={<AudioWaveform />} description="留空则使用服务已经配好的人声检测。填写后会在连接时发给服务。">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field label="人声确认时长（秒）" hint="留空表示不覆盖服务">
           <Input type="number" min="0.15" max="0.3" step="0.01"
@@ -70,51 +46,6 @@ export default function AsrSettingsPage({
             onChange={(event) => update({ vadThreshold: optionalNumber(event.target.value) })} />
         </Field>
       </div>
-    </SettingsCard> : null}
-
-    {remote ? null : <SettingsCard title="语音检测" icon={<AudioWaveform />} description="Silero VAD 决定什么时候算「开始说话」和「说完了」。">
-      <Field label="Silero VAD 模型路径" hint="留空则使用模型目录中的 silero_vad.onnx">
-        <Input className="font-mono" placeholder="silero_vad.onnx" value={draft.vadModelPath}
-          onChange={(event) => update({ vadModelPath: event.target.value })} />
-      </Field>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Field label="人声确认时长（秒）" hint="短于此长度的声音会被忽略">
-          <Input type="number" min="0.15" max="0.3" step="0.01"
-            value={draft.vadMinSpeechDuration ?? 0.2}
-            onChange={(event) => update({ vadMinSpeechDuration: Number(event.target.value) })} />
-        </Field>
-        <Field label="人声概率阈值" hint="越高越不容易被环境噪音触发">
-          <Input type="number" min="0.05" max="0.95" step="0.05"
-            value={draft.vadThreshold ?? 0.5}
-            onChange={(event) => update({ vadThreshold: Number(event.target.value) })} />
-        </Field>
-        <Field label="采样率">
-          <Select value={draft.sampleRate}
-            onChange={() => update({ sampleRate: 16000 })}>
-            {draft.sampleRate !== 16000 && <option value={draft.sampleRate}>{draft.sampleRate}</option>}
-            <option value={16000}>16000 Hz</option>
-          </Select>
-        </Field>
-      </div>
-    </SettingsCard>}
-
-    {remote ? null : <SettingsCard title="断句与性能" icon={<Gauge />} description="静音多久算一句话结束，以及识别占用的线程数。">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Field label="已识别出文字后的停顿（秒）" hint="已经有识别结果时，静音多久就提交">
-          <Input type="number" min="0.5" max="5" step="0.1"
-            value={draft.silenceAfterText}
-            onChange={(event) => update({ silenceAfterText: Number(event.target.value) })} />
-        </Field>
-        <Field label="还没有文字时的停顿（秒）" hint="一直没识别出文字时，静音多久结束录音">
-          <Input type="number" min="0.2" max="3" step="0.1"
-            value={draft.silenceWithoutText}
-            onChange={(event) => update({ silenceWithoutText: Number(event.target.value) })} />
-        </Field>
-        <Field label="线程数" hint="越大识别越快，但更占 CPU">
-          <Input type="number" value={draft.numThreads}
-            onChange={(event) => update({ numThreads: Number(event.target.value) })} />
-        </Field>
-      </div>
-    </SettingsCard>}
+    </SettingsCard>
   </>;
 }

@@ -1,6 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { createAsrAdapter } from './asrAdapter.js';
-import { createAsrSession } from '../application/AsrSession.js';
 import type { AsrAdapterOptions } from '../application/asrTypes.js';
 
 const port = parentPort;
@@ -13,32 +12,6 @@ const fail = (error: unknown): void => {
 };
 
 const config = (workerData as { config?: AsrAdapterOptions } | undefined)?.config ?? {};
-
-const runLocal = (adapter: ReturnType<typeof createAsrAdapter>): void => {
-  if (adapter.mode !== 'local') return;
-  const vad = adapter.createVad();
-  const session = createAsrSession({
-    vad,
-    recognizer: adapter.createRecognizer(),
-    emit: (event) => port.postMessage({ type: 'event', event }),
-  });
-  port.on('message', (message: { samples?: Float32Array; type?: string; id?: number }) => {
-    try {
-      if (message?.type === 'finish') {
-        session.finish();
-        port.postMessage({ type: 'finished', id: message.id });
-        return;
-      }
-      if (!message?.samples) throw new Error('ASR 音频帧缺失');
-      session.accept(message.samples);
-      port.postMessage({ type: 'consumed', samples: message.samples.length });
-    } catch (error: unknown) {
-      session.dispose();
-      fail(error);
-    }
-  });
-  port.postMessage({ type: 'ready' });
-};
 
 const runRemote = async (adapter: ReturnType<typeof createAsrAdapter>): Promise<void> => {
   if (adapter.mode !== 'remote') return;
@@ -77,9 +50,7 @@ const runRemote = async (adapter: ReturnType<typeof createAsrAdapter>): Promise<
 };
 
 const run = async (): Promise<void> => {
-  const adapter = createAsrAdapter(config);
-  if (adapter.mode === 'remote') await runRemote(adapter);
-  else runLocal(adapter);
+  await runRemote(createAsrAdapter(config));
 };
 
 void run().catch(fail);

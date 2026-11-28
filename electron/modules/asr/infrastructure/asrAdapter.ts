@@ -1,48 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createRequire } from 'node:module';
-import type { AsrAdapterOptions, AsrSessionEvent, Recognizer, RemoteAsrLink, SocketConstructor, Vad } from '../application/asrTypes.js';
-
-const require = createRequire(import.meta.url);
-
-interface SherpaModule {
-  OnlineRecognizer: new (config: {
-    featConfig: { sampleRate: number; featureDim: number };
-    modelConfig: {
-      transducer: { encoder: string; decoder: string; joiner: string };
-      tokens: string;
-      numThreads: number;
-      provider: string;
-      debug: number;
-    };
-    decodingMethod: 'greedy_search';
-    maxActivePaths: number;
-    enableEndpoint: boolean;
-    rule1MinTrailingSilence: number;
-    rule2MinTrailingSilence: number;
-    rule3MinUtteranceLength: number;
-  }) => Recognizer;
-  Vad: new (config: {
-    sileroVad: {
-      model: string;
-      threshold: number;
-      minSpeechDuration: number;
-      minSilenceDuration: number;
-      windowSize: number;
-      maxSpeechDuration: number;
-    };
-    sampleRate: number;
-    numThreads: number;
-    provider: 'cpu';
-    debug: number;
-  }, bufferSeconds: number) => Vad;
-}
-
-const loadSherpa = (): SherpaModule => require('sherpa-onnx-node') as SherpaModule;
-
-const finiteOr = (value: number | null | undefined, fallback: number): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+import type { AsrAdapterOptions, AsrSessionEvent, RemoteAsrLink, SocketConstructor } from '../application/asrTypes.js';
 
 const finiteOrOmit = (value: number | null | undefined): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -80,15 +37,6 @@ export interface RemoteAsrAdapter {
     onFailure?: (message: string) => void;
     WebSocket?: SocketConstructor;
   }): RemoteAsrLink;
-}
-
-const ENDPOINT_MIN_UTTERANCE_LENGTH = 20;
-
-export interface LocalAsrAdapter {
-  mode: 'local';
-  engine: string;
-  createRecognizer(): Recognizer;
-  createVad(): Vad;
 }
 
 const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter => {
@@ -194,70 +142,5 @@ const createRemoteAsrAdapter = (options: AsrAdapterOptions): RemoteAsrAdapter =>
   };
 };
 
-const createLocalAsrAdapter = (options: AsrAdapterOptions, engine: string): LocalAsrAdapter => {
-  const modelDirInput = typeof options.modelDir === 'string' ? options.modelDir.trim() : '';
-  if (!modelDirInput) throw new Error('ASR 本地模型目录未配置');
-  const modelDir = path.normalize(modelDirInput);
-  const model = {
-    encoder: path.join(modelDir, 'encoder.onnx'),
-    decoder: path.join(modelDir, 'decoder.onnx'),
-    joiner: path.join(modelDir, 'joiner.onnx'),
-    tokens: path.join(modelDir, 'tokens.txt'),
-  };
-  const missing = Object.values(model).filter((file) => !fs.existsSync(file));
-  if (missing.length) throw new Error(`ASR 模型文件缺失: ${missing.join(', ')}`);
-  const sherpa = loadSherpa();
-  return {
-    mode: 'local',
-    engine,
-    createRecognizer() {
-      return new sherpa.OnlineRecognizer({
-        featConfig: {
-          sampleRate: finiteOr(options.sampleRate, 16000),
-          featureDim: finiteOr(options.featureDim, 80),
-        },
-        modelConfig: {
-          transducer: model,
-          tokens: model.tokens,
-          numThreads: finiteOr(options.numThreads, 2),
-          provider: typeof options.provider === 'string' ? options.provider : 'cpu',
-          debug: finiteOr(options.debug, 0),
-        },
-        decodingMethod: 'greedy_search',
-        maxActivePaths: 4,
-        enableEndpoint: true,
-        rule1MinTrailingSilence: finiteOr(options.silenceWithoutText, 0.7),
-        rule2MinTrailingSilence: finiteOr(options.silenceAfterText, 1.2),
-        rule3MinUtteranceLength: ENDPOINT_MIN_UTTERANCE_LENGTH,
-      });
-    },
-    createVad() {
-      const vadModel = options.vadModelPath?.trim() || path.join(modelDir, 'silero_vad.onnx');
-      if (!fs.existsSync(vadModel)) throw new Error(`Silero VAD 模型文件缺失，请配置 vadModelPath: ${vadModel}`);
-      if ((options.sampleRate ?? 16000) !== 16000) throw new Error('Silero VAD 音频采样率必须为 16000 Hz');
-      return new sherpa.Vad({
-        sileroVad: {
-          model: vadModel,
-          threshold: options.vadThreshold ?? 0.5,
-          minSpeechDuration: Math.min(0.3, Math.max(0.15, options.vadMinSpeechDuration ?? 0.2)),
-          windowSize: 512,
-          minSilenceDuration: options.silenceWithoutText ?? 0.7,
-          maxSpeechDuration: 60,
-        },
-        sampleRate: 16000,
-        numThreads: 1,
-        provider: 'cpu',
-        debug: 0,
-      }, 90);
-    },
-  };
-};
-
-export function createAsrAdapter(options: AsrAdapterOptions & { mode: 'remote' }): RemoteAsrAdapter;
-export function createAsrAdapter(options?: AsrAdapterOptions): RemoteAsrAdapter | LocalAsrAdapter;
-export function createAsrAdapter(options: AsrAdapterOptions = {}): RemoteAsrAdapter | LocalAsrAdapter {
-  if (options.mode === 'remote') return createRemoteAsrAdapter(options);
-  const engine = typeof options.engine === 'string' && options.engine.trim() ? options.engine.trim() : 'sherpa-onnx';
-  if (engine !== 'sherpa-onnx') throw new Error(`暂不支持 ASR 引擎: ${engine}`);
-  return createLocalAsrAdapter(options, engine);
-};
+export const createAsrAdapter = (options: AsrAdapterOptions = {}): RemoteAsrAdapter =>
+  createRemoteAsrAdapter(options);

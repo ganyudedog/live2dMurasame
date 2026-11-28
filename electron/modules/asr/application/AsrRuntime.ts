@@ -207,8 +207,7 @@ export const createAsrRuntime = ({
   const asrReady = (settings: AsrOwnedSettings | undefined): boolean => {
     const asr = settings?.asr;
     if (!asr) return false;
-    if (asr.mode === 'remote') return typeof asr.endpoint === 'string' && Boolean(asr.endpoint.trim());
-    return typeof asr.modelDir === 'string' && Boolean(asr.modelDir);
+    return typeof asr.endpoint === 'string' && Boolean(asr.endpoint.trim());
   };
   const prewarmIfNeeded = (settings: AsrOwnedSettings | undefined): void => {
     if (settings?.pushToTalk?.enabled && asrReady(settings) && !getStatus().lastError) void start({ prewarm: true });

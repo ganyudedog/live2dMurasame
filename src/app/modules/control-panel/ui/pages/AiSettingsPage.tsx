@@ -89,7 +89,7 @@ export default function AiSettingsPage({
 
   const status: Record<Capability, string> = {
     text: llmModels.length ? `${llmModels.length} 个模型` : '未启用模型',
-    asr: asrConfig.mode === 'local' ? '本地引擎' : '远程引擎',
+    asr: asrConfig.endpoint.trim() ? '远程引擎' : '未配置地址',
     tts: modelConfig.tts.enabled ? '已启用' : '未启用',
   };
 

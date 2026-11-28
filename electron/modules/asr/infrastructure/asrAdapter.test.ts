@@ -55,24 +55,22 @@ const openRemote = (options: Parameters<typeof createAsrAdapter>[0]) => {
 describe('remote ASR adapter', () => {
   it('stores the service address separately and leaves voice detection to the service when unset', async () => {
     sockets.length = 0;
-    const adapter = openRemote({
-      mode: 'remote', endpoint: 'http://127.0.0.1:6006/asr', engine: 'sherpa-onnx', provider: 'cuda', modelDir: '/models',
-    });
+    const adapter = openRemote({ endpoint: 'http://127.0.0.1:6006/asr' });
     const link = adapter.connect({ emit: () => {}, WebSocket: FakeSocket });
     await link.ready;
     expect(socketAt(0).url).toBe('ws://127.0.0.1:6006/asr');
     expect(texts(socketAt(0))).toEqual([{ type: 'start', sampleRate: 16000 }]);
-    expect(normalizeAsrConfig({ mode: 'remote', endpoint: 'ws://127.0.0.1:6006/asr' })).toMatchObject({
-      endpoint: 'ws://127.0.0.1:6006/asr', modelDir: '', vadThreshold: null, vadMinSpeechDuration: null,
+    expect(normalizeAsrConfig({ endpoint: 'ws://127.0.0.1:6006/asr' })).toEqual({
+      endpoint: 'ws://127.0.0.1:6006/asr', vadThreshold: null, vadMinSpeechDuration: null,
     });
-    expect(normalizeLive2denvConfig({ settings: { asr: { mode: 'remote', endpoint: 'ws://127.0.0.1:6006/asr' } } }).settings.asr).toMatchObject({
-      endpoint: 'ws://127.0.0.1:6006/asr', modelDir: '', vadThreshold: null,
+    expect(normalizeLive2denvConfig({ settings: { asr: { endpoint: 'ws://127.0.0.1:6006/asr', mode: 'local', modelDir: '/models' } } }).settings.asr).toEqual({
+      endpoint: 'ws://127.0.0.1:6006/asr', vadThreshold: null, vadMinSpeechDuration: null,
     });
   });
 
   it('sends only the voice-detection values the user filled in', async () => {
     sockets.length = 0;
-    const adapter = openRemote({ mode: 'remote', endpoint: 'ws://127.0.0.1:6006', vadThreshold: 0.6, vadMinSpeechDuration: null });
+    const adapter = openRemote({ endpoint: 'ws://127.0.0.1:6006', vadThreshold: 0.6, vadMinSpeechDuration: null });
     const link = adapter.connect({ emit: () => {}, WebSocket: FakeSocket });
     await link.ready;
     expect((texts(socketAt(0))[0] as { vad: unknown }).vad).toEqual({ threshold: 0.6 });
@@ -81,7 +79,7 @@ describe('remote ASR adapter', () => {
   it('turns service events into the existing speech events and waits for finish', async () => {
     sockets.length = 0;
     const events: AsrSessionEvent[] = [];
-    const adapter = openRemote({ mode: 'remote', endpoint: 'ws://127.0.0.1:6006' });
+    const adapter = openRemote({ endpoint: 'ws://127.0.0.1:6006' });
     const link = adapter.connect({ emit: (event) => events.push(event), WebSocket: FakeSocket });
     await link.ready;
     const socket = socketAt(0);
@@ -103,7 +101,7 @@ describe('remote ASR adapter', () => {
     autoReady = false;
     try {
       const failure = vi.fn();
-      const link = openRemote({ mode: 'remote', endpoint: 'ws://localhost:10095/asr' })
+      const link = openRemote({ endpoint: 'ws://localhost:10095/asr' })
         .connect({ WebSocket: FakeSocket, onFailure: failure });
       const settled = vi.fn();
       const outcome = link.ready.then(settled, (error: Error) => error.message);
@@ -120,7 +118,7 @@ describe('remote ASR adapter', () => {
   it('waits for ready and supports repeated finishes on the same link', async () => {
     autoReady = false;
     try {
-      const link = openRemote({ mode: 'remote', endpoint: 'ws://localhost:10095/asr' })
+      const link = openRemote({ endpoint: 'ws://localhost:10095/asr' })
         .connect({ WebSocket: FakeSocket });
       await Promise.resolve();
       const socket = sockets.at(-1)!;
@@ -136,12 +134,8 @@ describe('remote ASR adapter', () => {
     } finally { autoReady = true; }
   });
 
-  it('rejects a missing address and still requires local model files', () => {
-    expect(() => createAsrAdapter({ mode: 'remote', endpoint: '' })).toThrow('远程服务地址');
-    const remote = createAsrAdapter({ mode: 'remote', endpoint: 'ws://127.0.0.1:6006', engine: 'whisper', provider: 'cuda' });
-    expect(remote).toMatchObject({ mode: 'remote' });
-    expect(remote).not.toHaveProperty('engine');
-    expect(() => createAsrAdapter({ mode: 'local', modelDir: '' })).toThrow('本地模型目录');
-    expect(() => createAsrAdapter({ mode: 'local', engine: 'whisper' })).toThrow('暂不支持');
+  it('rejects a missing address', () => {
+    expect(() => createAsrAdapter({ endpoint: '' })).toThrow('远程服务地址');
+    expect(createAsrAdapter({ endpoint: 'ws://127.0.0.1:6006' })).toMatchObject({ mode: 'remote' });
   });
 });

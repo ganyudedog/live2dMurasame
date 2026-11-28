@@ -30,8 +30,8 @@ const updatePolicy = async (cli: CliService, patch: Record<string, unknown>, cal
 const setup = async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live2d-cli-'));
   cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const settings: { displayLang: string; scale: number; apiKey: string; asr: { mode: string; numThreads: number }; shellReadRoots: string[] } = {
-    displayLang: 'zh', scale: 1, apiKey: 'SECRET', asr: { mode: 'local', numThreads: 2 }, shellReadRoots: [],
+  const settings: { displayLang: string; scale: number; apiKey: string; asr: { endpoint: string }; shellReadRoots: string[] } = {
+    displayLang: 'zh', scale: 1, apiKey: 'SECRET', asr: { endpoint: '' }, shellReadRoots: [],
   };
   const publishSnapshot = vi.fn();
   const live = {

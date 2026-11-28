@@ -5,7 +5,6 @@
     ".": {
       "entry": [
         "index.html",
-        "electron/main.ts",
         "electron/preload.mts",
         "electron/tests/preloadSmoke.mjs",
         "scripts/**/*.mjs"
@@ -20,6 +19,7 @@
     "src/app/modules/ai/modules/tts/index.ts",
     "src/app/modules/live2d/modules/interaction/domain/dragHandle/dragHandleEngine.ts"
   ],
+  "ignoreBinaries": ["tar.exe"],
   "ignoreDependencies": [
     "electron-store",
     "electron-updater"

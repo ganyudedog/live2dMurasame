@@ -12,6 +12,8 @@ dist
 dist-electron
 dist-ssr
 release/cli/
+release/app/
+release/client/
 *.local
 
 # Editor directories and files

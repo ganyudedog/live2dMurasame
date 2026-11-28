@@ -44,23 +44,10 @@ declare global {
   }
 
   interface PetAsrConfig {
-    vadModelPath?: string;
-    /** 远程模式下 null 表示不覆盖服务自己的人声检测。 */
+    endpoint?: string;
+    /** null 表示不覆盖服务自己的人声检测。 */
     vadThreshold?: number | null;
     vadMinSpeechDuration?: number | null;
-    mode?: 'local' | 'remote';
-    engine?: string;
-    modelDir?: string;
-    endpoint?: string;
-    sampleRate?: number;
-    featureDim?: number;
-    numThreads?: number;
-    provider?: string;
-    debug?: number;
-    /** 已识别出文字后，静音多久提交。 */
-    silenceAfterText?: number;
-    /** 还没有识别出文字时，静音多久结束。 */
-    silenceWithoutText?: number;
   }
 
   type PetGlobalModelConfig = PetGlobalModelConfigPayload;

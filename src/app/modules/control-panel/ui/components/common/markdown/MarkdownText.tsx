@@ -1,7 +1,7 @@
 import { useMemo, type MouseEvent, type ReactNode } from 'react';
 import type { Nodes, RootContent } from 'mdast';
 import { parseMarkdown } from '@app/shared/markdown/markdown';
-import { cn } from './cn';
+import { cn } from '../basic/cn';
 
 const isWebUrl = (url: string) => /^https?:\/\//i.test(url);
 

@@ -4,12 +4,12 @@ import { TOKENS } from '@app/core/serviceTokens';
 import { useEffect, useState } from 'react';
 import { commandRequest } from '@app/shared/electron/commandSession';
 import { Check, FolderOpen, FolderPlus, Plus, SquareTerminal, X } from 'lucide-react';
-import { Field, SettingsCard } from '../common/SettingsSection';
-import { Button } from '../common/Button';
-import { Input } from '../common/FormControls';
-import { Notice } from '../common/Feedback';
-import { StatusDot } from '../common/Badge';
-import { cn } from '../common/cn';
+import { Field, SettingsCard } from '../common/basic/SettingsSection';
+import { Button } from '../common/basic/Button';
+import { Input } from '../common/basic/FormControls';
+import { Notice } from '../common/basic/Feedback';
+import { StatusDot } from '../common/basic/Badge';
+import { cn } from '../common/basic/cn';
 
 interface HostPolicy { shellReadRoots?: string[]; pluginCliWhitelist?: { pluginId: string; cliEnabled: boolean }[] }
 interface PolicySnapshot { value: HostPolicy; revision: string }

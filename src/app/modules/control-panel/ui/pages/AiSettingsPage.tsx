@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { AudioLines, Eye, EyeOff, Languages, Link, MessageSquare, Mic } from 'lucide-react';
-import { Page } from '../components/common/Page';
-import { SegmentedTabs } from '../components/common/SegmentedTabs';
-import { Input, Select } from '../components/common/FormControls';
+import { Page } from '../components/common/basic/Page';
+import { SegmentedTabs } from '../components/common/basic/SegmentedTabs';
+import { Input, Select } from '../components/common/basic/FormControls';
 import TTSSettingsPage from './TTSSettingsPage';
 import AsrSettingsPage from './AsrSettingsPage';
 import { SubtitleSettings } from '../components/subtitle/SubtitleSettingsCard';
-import { Field, SettingsCard } from '../components/common/SettingsSection';
+import { Field, SettingsCard } from '../components/common/basic/SettingsSection';
 import { ModelRegistryCard } from '../components/ai/ModelRegistryCard';
 import { detectModels } from '@app/modules/ai/modules/llm/infrastructure/detectModels';
 import { MemoryModelCard } from '../components/ai/MemoryModelCard';

@@ -1,7 +1,7 @@
 import { Brain } from 'lucide-react';
-import { Field, SettingsCard } from '../common/SettingsSection';
-import { Select } from '../common/FormControls';
-import { Notice } from '../common/Feedback';
+import { Field, SettingsCard } from '../common/basic/SettingsSection';
+import { Select } from '../common/basic/FormControls';
+import { Notice } from '../common/basic/Feedback';
 import { effortOptionList } from './effortOptions';
 
 /**

@@ -14,7 +14,7 @@ import MotionSettingsPage from './pages/MotionSettingsPage';
 import PersonaSettingsPage from './pages/PersonaSettingsPage';
 import PluginsPage from './pages/PluginsPage';
 import { PluginPanelHost } from '@app/modules/plugin/hosts/control-panel/PluginPanelHost';
-import { Page } from './components/common/Page';
+import { Page } from './components/common/basic/Page';
 
 const ControlPanel: React.FC = observer(() => {
   const service = useService(TOKENS.controlPanel);

@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Cpu, RefreshCw, Search } from 'lucide-react';
-import { SettingsCard } from '../common/SettingsSection';
-import { Button } from '../common/Button';
-import { Badge } from '../common/Badge';
-import { Checkbox } from '../common/Checkbox';
-import { Input } from '../common/FormControls';
-import { Notice } from '../common/Feedback';
-import { cn } from '../common/cn';
+import { SettingsCard } from '../common/basic/SettingsSection';
+import { Button } from '../common/basic/Button';
+import { Badge } from '../common/basic/Badge';
+import { Checkbox } from '../common/basic/Checkbox';
+import { Input } from '../common/basic/FormControls';
+import { Notice } from '../common/basic/Feedback';
+import { cn } from '../common/basic/cn';
 import { describeEfforts } from './describeEfforts';
 import type { RemoteModel } from '@app/modules/ai/modules/llm/infrastructure/modelCatalog';
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AudioWaveform, Mic } from 'lucide-react';
-import { Field, SettingsCard } from '../components/common/SettingsSection';
-import { Input } from '../components/common/FormControls';
+import { Field, SettingsCard } from '../components/common/basic/SettingsSection';
+import { Input } from '../components/common/basic/FormControls';
 import type { AsrConfig } from '../../domain/types';
 
 export default function AsrSettingsPage({

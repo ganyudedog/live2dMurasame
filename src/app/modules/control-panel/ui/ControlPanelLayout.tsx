@@ -4,7 +4,7 @@ import {
   SlidersHorizontal, Sun, UserRound,
 } from 'lucide-react';
 import type { ControlPanelTabKey, ThemeMode } from '../domain/types';
-import { cn } from './components/common/cn';
+import { cn } from './components/common/basic/cn';
 
 type MenuItem = {
   key: string;

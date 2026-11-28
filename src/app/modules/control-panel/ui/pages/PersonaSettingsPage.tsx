@@ -6,13 +6,13 @@ import { useModelRelationship, type RelationshipView } from '../hooks/useModelRe
 import {
   ChevronRight, GitBranch, Heart, IdCard, MessageCircleHeart, MessagesSquare, NotebookPen, RefreshCw, ScrollText, ShieldCheck,
 } from 'lucide-react';
-import { Field, SettingsCard } from '../components/common/SettingsSection';
-import { Page } from '../components/common/Page';
-import { Button } from '../components/common/Button';
-import { Badge, StatusDot } from '../components/common/Badge';
-import { Input, Select, Textarea } from '../components/common/FormControls';
-import { Notice } from '../components/common/Feedback';
-import { cn } from '../components/common/cn';
+import { Field, SettingsCard } from '../components/common/basic/SettingsSection';
+import { Page } from '../components/common/basic/Page';
+import { Button } from '../components/common/basic/Button';
+import { Badge, StatusDot } from '../components/common/basic/Badge';
+import { Input, Select, Textarea } from '../components/common/basic/FormControls';
+import { Notice } from '../components/common/basic/Feedback';
+import { cn } from '../components/common/basic/cn';
 
 type PersonaKey = keyof ModelConfig['persona'];
 

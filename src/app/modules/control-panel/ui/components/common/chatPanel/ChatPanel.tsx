@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DOMAttributes, KeyboardEvent, ReactNode, Ref, TextareaHTMLAttributes } from 'react';
 import { ArrowUp, AudioLines, Check, ChevronUp, LoaderCircle, MessageSquare, Mic, MicOff, Sparkles } from 'lucide-react';
-import type { ActionCategory } from '../../../../../../../shared/live2d/actionCatalog.js';
-import { cn } from './cn';
-import { MarkdownText } from './MarkdownText';
+import type { ActionCategory } from '../../../../../../../../shared/live2d/actionCatalog.js';
+import { cn } from '../basic/cn.js';
+import { MarkdownText } from '../markdown/MarkdownText.js';
 import { ImageDropOverlay } from '@app/shared/images/ChatImageControls';
 import { MessageImages } from './ChatImages';
 import { isImagePlaceholderText, type ChatImageSource } from './chatImageSource';

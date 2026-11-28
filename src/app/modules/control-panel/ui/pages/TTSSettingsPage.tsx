@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileMusic, FolderOpen, Server, SlidersHorizontal } from 'lucide-react';
 import type { ModelConfig } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
-import { Field, SettingsCard } from '../components/common/SettingsSection';
-import { Input, Range, Select, Textarea } from '../components/common/FormControls';
-import { Button } from '../components/common/Button';
-import { Switch } from '../components/common/Switch';
+import { Field, SettingsCard } from '../components/common/basic/SettingsSection';
+import { Input, Range, Select, Textarea } from '../components/common/basic/FormControls';
+import { Button } from '../components/common/basic/Button';
+import { Switch } from '../components/common/basic/Switch';
 
 type TtsUiDraft = ModelConfig['tts'];
 

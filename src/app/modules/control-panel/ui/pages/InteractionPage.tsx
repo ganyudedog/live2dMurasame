@@ -1,15 +1,15 @@
 import { observer } from 'mobx-react-lite';
 import { useMemo, useState } from 'react';
 import { Eraser, MousePointerClick, Play, Plus, Search, Shuffle, X } from 'lucide-react';
-import Modal from '../components/common/Modal';
-import { Page } from '../components/common/Page';
-import { Button } from '../components/common/Button';
-import { Input, Range } from '../components/common/FormControls';
-import { Switch } from '../components/common/Switch';
-import { StatusDot } from '../components/common/Badge';
-import { EmptyState } from '../components/common/Feedback';
-import { SegmentedTabs } from '../components/common/SegmentedTabs';
-import { cn } from '../components/common/cn';
+import Modal from '../components/common/basic/Modal';
+import { Page } from '../components/common/basic/Page';
+import { Button } from '../components/common/basic/Button';
+import { Input, Range } from '../components/common/basic/FormControls';
+import { Switch } from '../components/common/basic/Switch';
+import { StatusDot } from '../components/common/basic/Badge';
+import { EmptyState } from '../components/common/basic/Feedback';
+import { SegmentedTabs } from '../components/common/basic/SegmentedTabs';
+import { cn } from '../components/common/basic/cn';
 import { motionFile, motionKey, motionLabel, tierOf, WEIGHT_MAX, WEIGHT_TIERS } from '../../modules/interaction/domain/interaction';
 import type { InteractionSettingsService } from '../../modules/interaction/service/InteractionSettingsService';
 

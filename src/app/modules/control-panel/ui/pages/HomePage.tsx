@@ -1,11 +1,11 @@
 import { AttachImageButton, ImageAttachmentTray } from '@app/shared/images/ChatImageControls';
 import { useChatImages } from '@app/shared/images/useChatImages.ts';
 import { ArrowLeftRight, Boxes, Camera, CameraOff, Eraser, Heart, Scaling } from 'lucide-react';
-import ChatPanel from '../components/common/ChatPanel';
-import { Page } from '../components/common/Page';
-import { Button } from '../components/common/Button';
-import { Badge } from '../components/common/Badge';
-import { Range } from '../components/common/FormControls';
+import ChatPanel from '../components/common/chatPanel/ChatPanel';
+import { Page } from '../components/common/basic/Page';
+import { Button } from '../components/common/basic/Button';
+import { Badge } from '../components/common/basic/Badge';
+import { Range } from '../components/common/basic/FormControls';
 import { useScaleControl } from '../hooks/useScaleControl';
 import { useModelRelationship } from '../hooks/useModelRelationship';
 import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';

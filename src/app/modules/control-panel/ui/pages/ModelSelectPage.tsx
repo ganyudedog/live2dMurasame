@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import { Box, Boxes, Check, Plus, Trash } from 'lucide-react';
-import { Page } from '../components/common/Page';
-import { Button } from '../components/common/Button';
-import { Badge } from '../components/common/Badge';
-import { EmptyState } from '../components/common/Feedback';
-import { cn } from '../components/common/cn';
+import { Page } from '../components/common/basic/Page';
+import { Button } from '../components/common/basic/Button';
+import { Badge } from '../components/common/basic/Badge';
+import { EmptyState } from '../components/common/basic/Feedback';
+import { cn } from '../components/common/basic/cn';
 
 const normalizeNameFromPath = (input: string) => {
   const safe = String(input || '').replace(/\\/g, '/');

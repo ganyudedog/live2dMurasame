@@ -6,7 +6,7 @@ export const definePlugin = (definition: PluginDefinition): PluginDefinition => 
 
 export * from '../ui-kit/layout';
 export * from '../ui-kit/styles';
-export { Button } from '../../src/app/modules/control-panel/ui/components/common/Button';
-export { Switch } from '../../src/app/modules/control-panel/ui/components/common/Switch';
-export { default as Modal } from '../../src/app/modules/control-panel/ui/components/common/Modal';
+export { Button } from '../../src/app/modules/control-panel/ui/components/common/basic/Button';
+export { Switch } from '../../src/app/modules/control-panel/ui/components/common/basic/Switch';
+export { default as Modal } from '../../src/app/modules/control-panel/ui/components/common/basic/Modal';
 export { Search, Eye, EyeOff, Info } from 'lucide-react';

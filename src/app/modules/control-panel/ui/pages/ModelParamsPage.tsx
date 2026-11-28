@@ -1,8 +1,8 @@
 import type { GlobalUiSettings } from '../../domain/types';
 import { useDebouncedRemoteDraft } from '../hooks/useDebouncedRemoteDraft';
 import { Monitor, MousePointer2 } from 'lucide-react';
-import { Page } from '../components/common/Page';
-import { SettingsCard, SwitchRow } from '../components/common/SettingsSection';
+import { Page } from '../components/common/basic/Page';
+import { SettingsCard, SwitchRow } from '../components/common/basic/SettingsSection';
 
 export default function ModelParamsPage({
   globalSettings,

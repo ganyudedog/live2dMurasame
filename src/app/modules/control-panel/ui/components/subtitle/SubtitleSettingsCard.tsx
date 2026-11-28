@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import { Captions, Keyboard, Move, RotateCcw, Square } from 'lucide-react';
-import { Field, SettingsCard, SwitchRow } from '../common/SettingsSection.js';
-import { Button } from '../common/Button';
-import { Input, Range, Select } from '../common/FormControls';
-import { Switch } from '../common/Switch';
+import { Field, SettingsCard, SwitchRow } from '../common/basic/SettingsSection.js';
+import { Button } from '../common/basic/Button.js';
+import { Input, Range, Select } from '../common/basic/FormControls.js';
+import { Switch } from '../common/basic/Switch.js';
 import { normalizeSubtitleSettings, normalizePushToTalk, type SubtitleSettings as Settings, type PushToTalkSettings } from '../../../../../../../shared/subtitle/subtitleSettings.js';
 
 const SWATCH = 'color-swatch shrink-0';

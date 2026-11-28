@@ -3,12 +3,12 @@ import { ChevronRight, Puzzle } from 'lucide-react';
 import { PluginPanelHost } from '@app/modules/plugin/hosts/control-panel/PluginPanelHost';
 import type { PluginRecord } from '@app/modules/plugin/core/PluginRuntime';
 import type { ControlPanelPage } from '@app/modules/plugin/types';
-import { Page } from '../components/common/Page';
-import { Field } from '../components/common/SettingsSection';
-import { Input } from '../components/common/FormControls';
-import { Button } from '../components/common/Button';
-import { StatusDot } from '../components/common/Badge';
-import { EmptyState, Notice } from '../components/common/Feedback';
+import { Page } from '../components/common/basic/Page';
+import { Field } from '../components/common/basic/SettingsSection';
+import { Input } from '../components/common/basic/FormControls';
+import { Button } from '../components/common/basic/Button';
+import { StatusDot } from '../components/common/basic/Badge';
+import { EmptyState, Notice } from '../components/common/basic/Feedback';
 
 export default function PluginsPage({
   pluginDir: savedPluginDir,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import ChatPanel from '../components/common/ChatPanel.js';
-import Modal from '../components/common/Modal.js';
+import ChatPanel from '../components/common/chatPanel/ChatPanel.js';
+import Modal from '../components/common/basic/Modal.js';
 import type { ActionSettingsView, ActionSettingsCallbacks } from '../../modules/action-settings/domain/view';
 import { actionMention, activeMention } from '../../modules/action-settings/domain/session';
 import { effortOptionList, findModelEfforts, modelOptionList } from '../components/ai/effortOptions';
@@ -8,12 +8,12 @@ import type { ActionCategory } from '../../../../../../shared/live2d/actionCatal
 import {
   AtSign, Check, Clock, Eraser, ListChecks, LoaderCircle, Pencil, PersonStanding, Play, Square, WandSparkles, X,
 } from 'lucide-react';
-import { Page } from '../components/common/Page';
-import { Button } from '../components/common/Button';
-import { Badge } from '../components/common/Badge';
-import { Input, Textarea } from '../components/common/FormControls';
-import { EmptyState, Notice } from '../components/common/Feedback';
-import { cn } from '../components/common/cn';
+import { Page } from '../components/common/basic/Page.js';
+import { Button } from '../components/common/basic/Button.js';
+import { Badge } from '../components/common/basic/Badge.js';
+import { Input, Textarea } from '../components/common/basic/FormControls.js';
+import { EmptyState, Notice } from '../components/common/basic/Feedback.js';
+import { cn } from '../components/common/basic/cn.js';
 
 const CATEGORY_META: Record<ActionCategory, { label: string; badge: string; stamp: string; dot: string }> = {
   head: { label: '头部', badge: 'bg-primary/12 text-primary', stamp: 'bg-primary/12 text-primary', dot: 'bg-primary' },

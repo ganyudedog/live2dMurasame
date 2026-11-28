@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog } from 'radix-ui';
 import { ChevronLeft, ChevronRight, ImageOff, X } from 'lucide-react';
-import { cn } from './cn';
+import { cn } from '../basic/cn';
 import type { ChatImageSource } from './chatImageSource';
 
 /** 消息上方的图片：单张按比例展示，多张排成两列方块；点开看大图。 */

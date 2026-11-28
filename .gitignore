@@ -29,3 +29,11 @@ infra/
 
 # Local trace captures await review before promotion
 /eval/benchmark/drafts/
+
+# Generated bundled plugin UI entries
+/plugins/napcat/index.js
+/plugins/feishu/index.js
+/plugins/web-search/index.js
+
+/plugins/sdk/index.js
+/plugins/sdk/types/

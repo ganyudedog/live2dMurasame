@@ -1,5 +1,9 @@
 packages:
   - 'plugins/*'
 
+# 依赖只链接到声明它的包。插件依赖留在 plugins/*/node_modules，不会进根目录。
+hoistPattern: []
+publicHoistPattern: []
+
 ignoredBuiltDependencies:
   - electron

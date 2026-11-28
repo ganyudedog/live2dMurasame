@@ -1,0 +1,18 @@
+import { useState } from 'react';
+import { Button, Modal, Search, definePlugin } from '@live2d/plugin-sdk';
+
+function Page() {
+  const [open, setOpen] = useState(false);
+  return <>
+    <Button onClick={() => setOpen(true)}><Search />Open SDK modal</Button>
+    <Modal open={open} title="SDK dialog" onClose={() => setOpen(false)}>Shared content</Modal>
+  </>;
+}
+export default definePlugin({
+  manifest: { id: 'test.consumer', name: 'SDK test', apiVersion: '1.0.0', version: '1', permissions: ['control-panel.navigation'] },
+  activate(context) {
+    if (context.windowKind === 'control-panel') context.ui.register({
+      id: 'test', slot: 'control-panel', placement: 'page', title: 'SDK acceptance', render: Page,
+    });
+  },
+});

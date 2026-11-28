@@ -3,7 +3,20 @@
   "name": "DeepSeek 搜索",
   "version": "1.0.0",
   "apiVersion": "1.0.0",
-  "hosts": ["cli"],
-  "permissions": ["commands.register", "settings.storage"],
-  "entry": { "service": "./cli.mjs" }
+  "hosts": [
+    "cli",
+    "desktop"
+  ],
+  "permissions": [
+    "commands.register",
+    "settings.storage",
+    "control-panel.navigation"
+  ],
+  "entry": {
+    "service": "./cli.mjs",
+    "ui": "index.js"
+  },
+  "activationEvents": [
+    "onRendererReady"
+  ]
 }

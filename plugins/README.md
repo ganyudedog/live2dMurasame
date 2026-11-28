@@ -1,6 +1,8 @@
 # Renderer plugins
 
-Plugins are bundled renderer extensions registered from this directory. Business plugins live in their own folders and import contracts only from `src/app/core/plugin`; they must not import internal services or other application implementations.
+独立开发插件可使用同目录的 [插件 SDK](sdk/README.md)，其中包含 TypeScript 接口、共享界面组件和构建命令。
+
+Electron scans the plugin directory selected in the control panel (pluginDir). Place each built plugin in its own subdirectory there, with manifest.json, its declared entries and any required backend dependencies. The directory can be anywhere on disk. An empty setting loads no filesystem plugins. Run pnpm build:plugins to compile the repository UI entries before copying them. Business plugins live in their own folders and import contracts only from `src/app/core/plugin`; they must not import internal services or other application implementations.
 
 Each plugin exports a default definition from `index.ts`. The host validates its manifest, activates it for the current renderer window, grants only requested host capabilities, tracks disposable subscriptions, and removes UI/command contributions when it stops. UI contributions can be cards in an existing slot or dedicated control-panel pages. Slot contributions are wrapped in a titled host card; dedicated pages are rendered without a wrapper, so the plugin lays out its own sections. A page may set `icon` (a component such as a lucide-react icon) and `description` (shown under the page title). All plugin pages are nested under the host's 插件列表 entry. Pages of one plugin that share the same `group` text become one collapsible branch there, ordered by `order`; pages without a group are listed directly under 插件列表. Shared page building blocks (`Section`, `Field`, `SwitchRow`, `StatusBanner`, style constants) live in `ui-kit/`, which only uses the host's Tailwind theme tokens. Plugin data is namespaced in Electron storage and synchronized between renderer windows.
 

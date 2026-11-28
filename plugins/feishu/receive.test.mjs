@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 import { it, expect, vi } from 'vitest';
 import { LarkChannel } from '@larksuiteoapi/node-sdk';
 import { startService } from './main.mjs';
-import { feishuPlugin } from './index';
+import { feishuPlugin } from './index.tsx';
 
 it('dispatches two adjacent raw private messages as distinct turns', async () => {
   let dispatcher;

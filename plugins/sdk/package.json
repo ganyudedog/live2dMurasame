@@ -1,0 +1,30 @@
+{
+  "name": "@live2d/plugin-sdk",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./types/plugins/sdk/public.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "bin": {
+    "live2d-build-ui": "./build-ui.mjs"
+  },
+  "files": [
+    "index.js",
+    "types",
+    "manifest.json",
+    "build-ui.mjs",
+    "README.md"
+  ],
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "lucide-react": "^1.70.0",
+    "class-variance-authority": "^0.7.1"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "@types/react": "^19.0.0"
+  }
+}

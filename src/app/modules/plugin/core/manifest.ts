@@ -15,7 +15,7 @@ const pluginManifestSchema = z.object({
 
 export const parsePluginManifest = (value: unknown): PluginManifest => pluginManifestSchema.parse(value);
 
-/** Narrow a Vite glob default export into a plugin. This is a shape check, not a privilege boundary. */
+/** Narrow a runtime module export into a plugin. This is a shape check, not a privilege boundary. */
 export const parsePluginDefinition = (value: unknown): PluginDefinition => {
   if (!value || typeof value !== 'object') throw new Error('Plugin must be an object');
   const candidate = value as Record<string, unknown>;

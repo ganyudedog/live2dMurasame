@@ -411,7 +411,7 @@ app.whenReady().then(async () => {
             if (!filePath) return new Response('Not Found', { status: 404 });
             return new Response(fs.readFileSync(filePath), {
                 status: 200,
-                headers: { 'content-type': 'text/javascript; charset=utf-8' },
+                headers: { 'content-type': 'text/javascript; charset=utf-8', 'access-control-allow-origin': '*', 'cross-origin-resource-policy': 'cross-origin' },
             });
         } catch {
             return new Response('Not Found', { status: 404 });
@@ -479,9 +479,7 @@ app.whenReady().then(async () => {
             live2dEnvironmentService, modelEnvironmentService,
             sendAll: applicationIpc.sendAll, publishSnapshot: applicationIpc.publishSnapshot,
         });
-        const releaseBundled = await registerRuntimeCli(cliRuntime.cli, path.join(app.getAppPath(), 'plugins'), backendLog, pluginStorageService);
-        const releaseConfigured = await registerRuntimeCli(cliRuntime.cli, live2dEnvironmentService.root.pluginDir, backendLog, pluginStorageService);
-        releaseRuntimeCli = () => { releaseConfigured(); releaseBundled(); };
+        releaseRuntimeCli = await registerRuntimeCli(cliRuntime.cli, live2dEnvironmentService.root.pluginDir, backendLog, pluginStorageService);
         stopCliIpc = registerCliIpc({ ipcMain, cli: cliRuntime.cli });
         commandServer = startCommandServer({ cli: cliRuntime.cli, directory: path.join(app.getPath('userData'), 'cli') });
         await commandServer;

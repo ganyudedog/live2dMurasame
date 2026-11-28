@@ -1,11 +1,13 @@
+import React from 'react';
+import * as ReactDOM from 'react-dom';
+import * as jsxRuntime from 'react/jsx-runtime';
 import type { PluginManifest } from './types/manifest';
 
 /** Read runtime plugin manifests from Electron without importing their UI entry. */
-export const loadRuntimePluginManifests = async (): Promise<ReadonlyArray<PluginManifest>> => window.PluginAPI?.list?.() ?? [];
+export const loadRuntimePluginManifests = async (): Promise<ReadonlyArray<PluginManifest>> => window.SystemAPI?.listPlugins?.() ?? [];
 
-/** Runtime UI plugins are loaded separately from compile-time plugins. */
-export const loadRuntimePlugins = async (): Promise<unknown[]> => {
-  const list = await window.PluginAPI?.list?.() ?? [];
+export const loadRuntimePlugins = async (list: readonly PluginManifest[]): Promise<unknown[]> => {
+  Object.assign(globalThis, { live2dPluginReact: { React, ReactDOM, jsxRuntime } });
   const plugins: unknown[] = [];
   for (const entry of list) {
     if (!entry.entry?.ui) continue;

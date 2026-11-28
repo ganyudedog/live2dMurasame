@@ -74,14 +74,18 @@ export default function AiSettingsPage({
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  const detection = useRef<AbortController | null>(null);
-  useEffect(() => {
+  // 换了接口凭据，上一套凭据的检测进度和报错就不再成立；catalog 已按凭据比对，不用清。
+  const credentials = `${apiBaseUrl}\n${apiKey}`;
+  const [detectedFor, setDetectedFor] = useState(credentials);
+  if (detectedFor !== credentials) {
+    setDetectedFor(credentials);
     setFetching(false);
     setBusyLabel(null);
-    setCatalog(null);
     setFetchError(null);
-    return () => { detection.current?.abort(); detection.current = null; };
-  }, [apiBaseUrl, apiKey]);
+  }
+
+  const detection = useRef<AbortController | null>(null);
+  useEffect(() => () => { detection.current?.abort(); detection.current = null; }, [apiBaseUrl, apiKey]);
 
   const status: Record<Capability, string> = {
     text: llmModels.length ? `${llmModels.length} 个模型` : '未启用模型',
@@ -227,11 +231,12 @@ export default function AiSettingsPage({
                   value={apiKey} placeholder="sk-..." autoComplete="off" spellCheck={false}
                   onChange={(event) => onChange({ apiBaseUrl, apiKey: event.target.value, displayLang })} />
                 <button type="button" title={revealKey ? '隐藏' : '显示'}
-                  aria-label={revealKey ? '隐藏 API Key' : '显示 API Key'}
+                  aria-label={revealKey ? '隐藏 API Key' : '显示 API Key'} aria-pressed={revealKey}
                   onClick={() => setRevealKey((value) => !value)}
-                  className="absolute inset-y-0 right-0 flex w-9 cursor-pointer items-center justify-center rounded-r-lg
-                    text-muted-foreground/70 transition-colors hover:text-foreground">
-                  {revealKey ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}
+                  className="absolute top-1/2 right-1 grid size-6 -translate-y-1/2 cursor-pointer place-items-center rounded-md
+                    text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2
+                    focus-visible:ring-primary/35 [&_svg]:size-3.5">
+                  {revealKey ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
                 </button>
               </div>
             </Field>

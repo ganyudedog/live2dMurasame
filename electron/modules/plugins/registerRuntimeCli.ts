@@ -85,7 +85,7 @@ const readCommands = (module: unknown): RuntimeCliCommand[] => {
 };
 
 /** 扫描插件目录并在主进程登记 CLI。执行函数来自插件自己的后端入口，不经过渲染进程。 */
-export const registerRuntimeCli = async (cli: CliService, pluginDir: string, log: Pick<BackendLogService, 'error' | 'open'> & Partial<Pick<BackendLogService, 'recordSpan' | 'flush'>>, storage: PluginStorageService, hostContext: CommandContext = { owner: 'local', local: true, source: 'local', conversationId: 'desktop' }): Promise<() => void> => {
+export const registerRuntimeCli = async (cli: CliService, pluginDir: string | readonly string[], log: Pick<BackendLogService, 'error' | 'open'> & Partial<Pick<BackendLogService, 'recordSpan' | 'flush'>>, storage: PluginStorageService, hostContext: CommandContext = { owner: 'local', local: true, source: 'local', conversationId: 'desktop' }): Promise<() => void> => {
   const trace = log.open('plugins', 'plugin.cli.register');
   const parentSpanId = createSpanId();
   const startedAt = Date.now();

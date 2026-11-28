@@ -42,59 +42,46 @@ export const resolveRuntimeCliFile = (folder: string, manifest: Record<string, u
   return filePath;
 };
 
-/** 每个子目录一份界面插件：manifest.json 的 id，加上同目录的 index.js。 */
-export const scanRuntimePluginManifests = (pluginDir: string): Record<string, unknown>[] => {
-  const root = pluginDir.trim();
-  if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [];
-  const found: Record<string, unknown>[] = [];
-  for (const name of fs.readdirSync(root)) {
-    const folder = path.join(root, name);
-    if (!fs.statSync(folder).isDirectory()) continue;
-    const manifest = readManifest(folder);
-    const id = manifest && typeof manifest.id === 'string' ? manifest.id.trim() : '';
-    if (id && manifest) found.push(manifest);
+type PluginDirectories = string | readonly string[];
+
+function* discover(directories: PluginDirectories) {
+  const seen = new Set<string>();
+  for (const directory of typeof directories === 'string' ? [directories] : directories) {
+    const root = directory.trim();
+    if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) continue;
+    for (const name of fs.readdirSync(root)) {
+      const folder = path.resolve(root, name);
+      const manifest = readManifest(folder);
+      const id = typeof manifest?.id === 'string' ? manifest.id.trim() : '';
+      if (!manifest || !id || seen.has(id)) continue;
+      seen.add(id);
+      yield { id, folder, manifest };
+    }
   }
-  return found;
-};
-export const scanRuntimePlugins = (pluginDir: string): RuntimePluginRecord[] => {
-  const root = pluginDir.trim();
-  if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [];
-  const found: RuntimePluginRecord[] = [];
-  for (const name of fs.readdirSync(root)) {
-    const folder = path.join(root, name);
-    if (!fs.statSync(folder).isDirectory()) continue;
-    const manifest = readManifest(folder);
+}
+
+const resolveCommandEntry = (folder: string, manifest: Record<string, unknown>) =>
+  Array.isArray(manifest.permissions) && manifest.permissions.includes('commands.register')
+    ? resolveRuntimeCliFile(folder, manifest) : null;
+
+export const scanRuntimePluginManifests = (directories: PluginDirectories) =>
+  [...discover(directories)].filter(({ folder, manifest }) => {
+    const ui = isRecord(manifest.entry) && manifest.entry.ui;
+    return (typeof ui === 'string' && ui.trim().length > 0) || resolveCommandEntry(folder, manifest) !== null;
+  }).map(plugin => plugin.manifest);
+
+export const scanRuntimePlugins = (directories: PluginDirectories): RuntimePluginRecord[] =>
+  [...discover(directories)].flatMap(({ id, folder, manifest }) => {
     const filePath = path.join(folder, 'index.js');
-    const id = manifest && typeof manifest.id === 'string' ? manifest.id.trim() : '';
-    if (!id || !manifest || !fs.existsSync(filePath)) continue;
-    found.push({ id, filePath, url: `plugin://runtime/${encodeURIComponent(id)}/index.js`, manifest });
-  }
-  return found;
-};
+    if (!fs.statSync(filePath, { throwIfNoEntry: false })?.isFile()) return [];
+    return [{ id, filePath, url: `plugin://runtime/${encodeURIComponent(id)}/index.js`, manifest }];
+  });
 
-/** 主进程要加载的 CLI 入口。没有 commands.register 权限的插件不进入命令目录。 */
-export const listRuntimeCliEntries = (pluginDir: string): RuntimeCliEntry[] => {
-  const root = pluginDir.trim();
-  if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [];
-  const found: RuntimeCliEntry[] = [];
-  for (const name of fs.readdirSync(root)) {
-    const folder = path.join(root, name);
-    if (!fs.statSync(folder).isDirectory()) continue;
-    const manifest = readManifest(folder);
-    const id = manifest && typeof manifest.id === 'string' ? manifest.id.trim() : '';
-    const permissions = manifest && Array.isArray(manifest.permissions) ? manifest.permissions : [];
-    if (!manifest || !id || !permissions.includes('commands.register')) continue;
-    const servicePath = resolveRuntimeCliFile(folder, manifest);
-    if (servicePath) found.push({ id, servicePath, manifest });
-  }
-  return found;
-};
+export const listRuntimeCliEntries = (directories: PluginDirectories): RuntimeCliEntry[] =>
+  [...discover(directories)].flatMap(({ id, folder, manifest }) => {
+    const servicePath = resolveCommandEntry(folder, manifest);
+    return servicePath ? [{ id, servicePath, manifest }] : [];
+  });
 
-export const resolveRuntimePluginFile = (pluginDir: string, id: string): string | null => {
-  const match = scanRuntimePlugins(pluginDir).find((plugin) => plugin.id === id);
-  if (!match) return null;
-  const root = path.resolve(pluginDir.trim());
-  const filePath = path.resolve(match.filePath);
-  if (filePath !== path.join(root, path.relative(root, filePath))) return null;
-  return filePath.startsWith(root + path.sep) ? filePath : null;
-};
+export const resolveRuntimePluginFile = (directories: PluginDirectories, id: string): string | null =>
+  scanRuntimePlugins(directories).find(plugin => plugin.id === id)?.filePath ?? null;

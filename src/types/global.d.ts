@@ -567,10 +567,6 @@ declare global {
     contributes?: Record<string, unknown>;
   }
 
-  interface PluginAPI {
-    list?: () => Promise<RuntimePluginEntry[]>;
-  }
-
   interface Window {
     CliAPI?: CliBridgeApi;
     WindowAPI?: PetWindowAPI;
@@ -585,7 +581,6 @@ declare global {
     SystemAPI?: PetSystemAPI;
     TtsDiagnosticsAPI?: PetTtsDiagnosticsAPI;
     PluginStorageAPI?: PetPluginStorageAPI;
-    PluginAPI?: PluginAPI;
     __PET_CONFIG__?: PetConfigSnapshot;
   }
 }

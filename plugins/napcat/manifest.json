@@ -1,0 +1,20 @@
+{
+  "id": "live2d.napcat-bridge",
+  "name": "NapCat QQ",
+  "version": "0.3.0",
+  "apiVersion": "1.0.0",
+  "hosts": [
+    "desktop"
+  ],
+  "permissions": [
+    "ai",
+    "control-panel.navigation",
+    "settings.storage"
+  ],
+  "entry": {
+    "ui": "index.js"
+  },
+  "activationEvents": [
+    "onRendererReady"
+  ]
+}

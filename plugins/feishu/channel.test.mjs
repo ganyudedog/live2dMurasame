@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { startService } from './main.mjs';
-import { feishuPlugin } from './index';
+import { feishuPlugin } from './index.tsx';
 
 
 const sdk = vi.hoisted(() => ({ handlers: new Map(), reply: vi.fn() }));

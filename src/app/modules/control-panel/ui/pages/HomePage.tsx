@@ -1,4 +1,5 @@
-import { useChatImages } from '@app/shared/images/useChatImages';
+import { AttachImageButton, ImageAttachmentTray } from '@app/shared/images/ChatImageControls';
+import { useChatImages } from '@app/shared/images/useChatImages.ts';
 import { ArrowLeftRight, Boxes, Camera, CameraOff, Eraser, Heart, Scaling } from 'lucide-react';
 import ChatPanel from '../components/common/ChatPanel';
 import { Page } from '../components/common/Page';
@@ -146,8 +147,9 @@ export default function HomePage({
           disabled: chatSending,
           onChange: (value) => onChatReasoningEffortChange(value as PetReasoningEffort),
         } : undefined}
-        attachmentPreview={attachments.preview}
+        attachmentPreview={<ImageAttachmentTray images={attachments} className="px-3.5 pt-3" />}
         inputProps={{ onPaste: attachments.onPaste }}
+        dropZone={{ active: attachments.dragging, handlers: attachments.dropProps }}
         toolbar={
           <Button variant="danger" size="xs" className="ml-auto"
             disabled={chatSending || chatMessages.length === 0} onClick={onClearChat}>
@@ -156,7 +158,7 @@ export default function HomePage({
           </Button>
         }
         inputActions={<>
-          {attachments.picker}
+          <AttachImageButton images={attachments} />
           <button type="button" aria-label="摄像头" aria-pressed={presenceEnabled}
             onClick={() => onTogglePresence(!presenceEnabled)}
             className={`flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[11px] transition-colors

@@ -11,7 +11,7 @@ it('disables crashpad before readiness independently of GPU settings', () => {
   expect(statement!.end).toBeLessThan(source.text.indexOf('app.whenReady()'));
 });
 
-it('starts CLI and its transports only inside app readiness, after environment initialization', () => {
+it('starts CLI and its IPC handlers only inside app readiness, after environment initialization', () => {
   const source = ts.createSourceFile('main.ts', fs.readFileSync(path.join(process.cwd(), 'electron/main.ts'), 'utf8'),
     ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const calls: ts.CallExpression[] = [];
@@ -31,7 +31,7 @@ it('starts CLI and its transports only inside app readiness, after environment i
     return ancestor as ts.TryStatement | undefined;
   };
   const initializeTry = enclosingTry(initialize!);
-  for (const name of ['createCliModule', 'registerCliIpc', 'startCommandServer']) {
+  for (const name of ['createCliModule', 'registerCliIpc']) {
     const sites = calls.filter((call) => call.expression.getText(source) === name);
     expect(sites).toHaveLength(1);
     const site = sites[0];

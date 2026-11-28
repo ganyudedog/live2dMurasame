@@ -49,3 +49,39 @@ it('selects files in the pet composer and rejects an invalid selection before pu
     host.remove();
   }
 });
+
+it('stays open while the file dialog is up and sends from the send button', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const bus = { composerDraft: '', publishChatRequest: vi.fn(), publishComposerDraft: vi.fn() };
+  const service = new FloatingComposerService(bus as unknown as StateBusService);
+  service.setFocused(true);
+  const heights: number[] = [];
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(() => root.render(<FloatingComposer service={service} style={{ left: 0, top: 0, width: 300 }}
+      onInteractivityChange={() => {}} onHeightChange={(height) => heights.push(height)} />));
+    expect(heights.length).toBeGreaterThan(0);
+    const sendButton = host.querySelector('button[aria-label="发送"]') as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(true);
+
+    await act(() => { (host.querySelector('input[type=file]') as HTMLInputElement).click(); service.setFocused(false); });
+    expect(service.visible).toBe(true);
+    const input = host.querySelector('input[type=file]')!;
+    const photo = new File([Uint8Array.from(atob(png), c => c.charCodeAt(0))], 'test.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { configurable: true, value: [photo] });
+    await act(() => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)); });
+    expect(service.picking).toBe(false);
+    service.setFocused(true);
+    await act(async () => { await Promise.resolve(); });
+
+    await act(() => { (host.querySelector('button[aria-label="发送"]') as HTMLButtonElement).click(); });
+    await act(async () => { await vi.waitFor(() => expect(bus.publishChatRequest).toHaveBeenCalledOnce()); });
+    expect(bus.publishChatRequest.mock.calls[0][0]).toMatchObject({ text: '[附有 1 张图片]', images: [`data:image/png;base64,${png}`] });
+  } finally {
+    await act(() => root.unmount());
+    host.remove();
+  }
+});

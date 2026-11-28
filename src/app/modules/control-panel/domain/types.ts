@@ -28,6 +28,12 @@ export type ChatMessage = {
   createdAt: number;
   requestId?: string;
   error?: string;
+  /** 本轮附带的图片张数；缩略图被预算裁掉后仍用它显示占位。 */
+  imageCount?: number;
+  /** 原图 data URL，只在当前会话的内存里，不写缓存。 */
+  images?: readonly string[];
+  /** 可持久化的小缩略图。 */
+  thumbnails?: readonly string[];
 };
 
 export type ChatSessionCache = {

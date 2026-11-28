@@ -10,9 +10,6 @@ import type { Observability } from '../../../../shared/logging/spanContext.js';
  *   dev origin. The payload values themselves are whatever that renderer supplied.
  *   `local` is true when `source` is `local`. `owner` is derived (`local`, or a stable encoding
  *   of source + conversation + sender) and is the authorization scope.
- * - Loopback CLI: `startCommandServer` assigns a fixed context (`source: local-cli`,
- *   `conversationId: desktop`, `local: true`, `owner: local`) and checks the bearer token.
- *   The HTTP body cannot set the caller.
  * - IPC session id: random id returned by `cli:open`. It binds that payload to one WebContents.
  * - invocationId: client idempotency key for one command call. Retries reuse it with the same args.
  * - requestId: tool-workflow id for claim/finish. It is not an invocation and not a task.

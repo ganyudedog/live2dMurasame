@@ -200,6 +200,7 @@ const PetCanvas: React.FC = observer(() => {
   });
 
   const [composerStyle, setComposerStyle] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [composerHeight, setComposerHeight] = useState(84);
   useLayoutEffect(() => {
     inputFocusedRef.current = composer.focused && composerVisible;
     if (!composerVisible) pointerInsideInputRef.current = false;
@@ -309,8 +310,8 @@ const PetCanvas: React.FC = observer(() => {
     const screen = app.renderer.screen;
     if (!screen.width || !screen.height) return;
     const canvasRect = { left: 0, top: 0, right: screen.width, bottom: screen.height };
-    const width = Math.min(280, Math.max(1, screen.width - 32));
-    const height = 64;
+    const width = Math.min(300, Math.max(1, screen.width - 32));
+    const height = Math.min(composerHeight, screen.height);
     const style = {
       left: Math.max(0, Math.min(screen.width - width, bounds.x + (bounds.width - width) / 2)),
       top: Math.max(0, Math.min(screen.height - height, bounds.y + (bounds.height - height) / 2)),
@@ -357,7 +358,8 @@ const PetCanvas: React.FC = observer(() => {
     composer.setHovered(interactivity.pointerInsideModel || interactivity.pointerInsideInput);
     updateInteractiveZones(interactivity);
   }, [
-    composer, composerVisible, bubblePosition, getModelMiddleRect, activeBubbleMeasurement, bubbleText, updateInteractiveZones,
+    composer, composerVisible, composerHeight, bubblePosition, getModelMiddleRect, activeBubbleMeasurement, bubbleText,
+    updateInteractiveZones,
   ]);
 
   useLayoutEffect(() => { updateDragHandlePosition(true); }, [updateDragHandlePosition]);
@@ -558,11 +560,12 @@ const PetCanvas: React.FC = observer(() => {
           </div>
         )}
 
-        {composerStyle && <FloatingComposer service={composer} style={composerStyle} onInteractivityChange={() => {
-          inputFocusedRef.current = composer.focused && composer.visible;
-          if (!composer.visible) pointerInsideInputRef.current = false;
-          recomputeWindowPassthroughRef.current();
-        }} />}
+        {composerStyle && <FloatingComposer service={composer} style={composerStyle} onHeightChange={setComposerHeight}
+          onInteractivityChange={() => {
+            inputFocusedRef.current = composer.focused && composer.visible;
+            if (!composer.visible) pointerInsideInputRef.current = false;
+            recomputeWindowPassthroughRef.current();
+          }} />}
       </div>
     </>
   );

@@ -49,6 +49,8 @@ try {
   for (const name of ['dist', 'dist-electron', 'shared', 'node_modules', 'package.json']) {
     copyRuntime(path.join(stage, name), path.join(appDir, name));
   }
+  // Electron can abort before main.js when the build directory inherits a Low integrity label.
+  execFileSync('icacls.exe', [unpacked, '/setintegritylevel', '(OI)(CI)M', '/T', '/Q'], { stdio: 'pipe' });
   execFileSync('tar.exe', ['-a', '-cf', archive, '-C', unpacked, '.'], { stdio: 'inherit' });
   console.log(`Client written to ${unpacked}`);
   console.log(`Archive written to ${archive}`);

@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { createCliModule } from '../module.js';
-import { startCommandServer } from '../infrastructure/commandServer.js';
 import { CallStore } from '../infrastructure/CallStore.js';
 import { registerCliIpc } from '../../../interface/ipc/registerCliIpc.js';
 import type { IpcMain } from 'electron';
@@ -252,21 +251,5 @@ describe('CLI dispatch, persistence and host policy', () => {
     execute?.({ saved: true });
     await pending;
     await expect(runtime.cli.invoke({ ...request('test.write'), issuedAt: 1 }, context)).rejects.toThrow('expired');
-  });
-
-  it('serves authenticated commands but no task HTTP endpoints', async () => {
-    const { runtime, dir } = await setup();
-    const server = await startCommandServer({ cli: runtime.cli, directory: dir });
-    cleanup.push(() => server.close());
-    expect((await fetch(`${server.connection.url}/tasks`)).status).toBe(401);
-    expect((await fetch(`${server.connection.url}/tasks`, { headers: { Authorization: `Bearer ${'é'.repeat(64)}` } })).status).toBe(401);
-    const headers = { Authorization: `Bearer ${server.connection.token}`, 'Content-Type': 'application/json' };
-    const body = JSON.stringify(request('jobs.run', { workspaceId: 'project', prompt: 'http' }));
-    const first = await (await fetch(`${server.connection.url}/commands`, { method: 'POST', headers, body })).json() as { id: string };
-    const retry = await (await fetch(`${server.connection.url}/commands`, { method: 'POST', headers, body })).json() as { id: string };
-    expect(first.id).toBe(retry.id);
-    for (const endpoint of ['/tasks', '/tasks/example', '/events']) {
-      expect((await fetch(server.connection.url + endpoint, { headers })).status).toBe(404);
-    }
   });
 });

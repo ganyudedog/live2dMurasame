@@ -1,7 +1,11 @@
+import { isCacheableThumbnail } from '@app/shared/images/createImageThumbnail';
+import { MAX_IMAGES } from '../../../../../../../shared/ai/turnImages.js';
 import type { ChatMessage, ChatSessionCache } from '../../../domain/types';
 
 const STORAGE_KEY = 'pet:control-panel:chat-cache';
 const MAX_CACHE_MESSAGES = 40;
+/** 每个模型的对话缓存里缩略图的总字符预算。 */
+const MAX_THUMBNAIL_BUDGET = 1024 * 1024;
 
 type ChatCacheRecord = Record<string, ChatSessionCache>;
 
@@ -19,6 +23,10 @@ const normalizeMessage = (value: unknown): ChatMessage | null => {
   const source = value.source === 'asr' || value.source === 'assistant' || value.source === 'system'
     ? value.source
     : 'text';
+  const thumbnails = Array.isArray(value.thumbnails) ? value.thumbnails.filter(isCacheableThumbnail).slice(0, MAX_IMAGES) : [];
+  const count = typeof value.imageCount === 'number' && Number.isInteger(value.imageCount) && value.imageCount > 0
+    ? Math.min(value.imageCount, MAX_IMAGES) : 0;
+  const imageCount = Math.max(count, thumbnails.length);
   return {
     id,
     text,
@@ -28,8 +36,34 @@ const normalizeMessage = (value: unknown): ChatMessage | null => {
     createdAt: typeof value.createdAt === 'number' && Number.isFinite(value.createdAt) ? value.createdAt : Date.now(),
     requestId: typeof value.requestId === 'string' ? value.requestId : undefined,
     error: typeof value.error === 'string' ? value.error : undefined,
+    ...(imageCount ? { imageCount } : {}),
+    ...(thumbnails.length ? { thumbnails } : {}),
   };
 };
+
+/** 写入缓存的消息：去掉内存里的原图，缩略图从最新消息往前按总预算保留，超出的只留张数。 */
+const toCachedMessages = (messages: readonly ChatMessage[]): ChatMessage[] => {
+  let budget = MAX_THUMBNAIL_BUDGET;
+  return messages.slice(-MAX_CACHE_MESSAGES).reverse().map((message) => {
+    const rest = withoutImages(message);
+    const kept = (message.thumbnails ?? []).filter(isCacheableThumbnail);
+    const size = kept.reduce((sum, item) => sum + item.length, 0);
+    if (!kept.length || size > budget) return rest;
+    budget -= size;
+    return { ...rest, thumbnails: kept };
+  }).reverse();
+};
+
+const withoutImages = (message: ChatMessage): ChatMessage => {
+  const next = { ...message };
+  delete next.images;
+  delete next.thumbnails;
+  return next;
+};
+
+const stripThumbnails = (map: ChatCacheRecord): ChatCacheRecord => Object.fromEntries(Object.entries(map).map(
+  ([scope, session]) => [scope, { ...session, messages: session.messages.map(withoutImages) }],
+));
 
 /** 对话区的草稿与消息按 Live2D 模型分仓；模型与思考深度属于全局选择，见 selectionCache。 */
 const normalizeSession = (value: unknown): ChatSessionCache | null => {
@@ -65,7 +99,12 @@ const readCacheMap = (): ChatCacheRecord => {
 
 const writeCacheMap = (value: ChatCacheRecord): void => {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // 配额满时先舍弃所有缩略图，文字记录比图片重要。
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stripThumbnails(value))); } catch { /* 仍然写不下就放弃这次缓存 */ }
+  }
 };
 
 export const getChatCacheScope = (modelPath?: string | null): string => {
@@ -83,7 +122,7 @@ export const writeChatSessionCache = (scope: string, session: ChatSessionCache):
   map[scope] = {
     draftText: session.draftText,
     updatedAt: session.updatedAt,
-    messages: session.messages.slice(-MAX_CACHE_MESSAGES),
+    messages: toCachedMessages(session.messages),
   };
   writeCacheMap(map);
 };

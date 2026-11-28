@@ -6,19 +6,23 @@ export class FloatingComposerService {
   hovered = false;
   focused = false;
   dismissed = false;
+  /** 系统选图对话框打开期间窗口会失焦，输入栏不能因此收起。 */
+  picking = false;
   private readonly stateBus: StateBusService;
   constructor(stateBus: StateBusService) {
     this.stateBus = stateBus;
     makeObservable(this, { enabled: observable, hovered: observable, focused: observable, dismissed: observable,
-      visible: computed, configure: actionBound, setHovered: actionBound, setFocused: actionBound, dismiss: actionBound, submit: actionBound });
+      picking: observable, visible: computed, configure: actionBound, setHovered: actionBound, setFocused: actionBound,
+      setPicking: actionBound, dismiss: actionBound, submit: actionBound });
   }
-  get visible() { return this.enabled && !this.dismissed && (this.hovered || this.focused); }
+  get visible() { return this.enabled && !this.dismissed && (this.hovered || this.focused || this.picking); }
+  setPicking(picking: boolean) { this.picking = picking; }
   get draft() { return this.stateBus.composerDraft; }
   configure(enabled: boolean) { this.enabled = enabled; this.dismissed = false; if (!enabled) this.focused = false; }
   setHovered(hovered: boolean) { this.hovered = hovered; if (!hovered && !this.focused) this.dismissed = false; }
   setFocused(focused: boolean) { this.focused = focused; }
   setDraft(text: string) { this.stateBus.publishComposerDraft(text); }
-  dismiss() { this.focused = false; this.dismissed = true; }
+  dismiss() { this.focused = false; this.picking = false; this.dismissed = true; }
   submit(images?: readonly string[]) {
     const text = this.draft.trim() || (images?.length ? `[附有 ${images.length} 张图片]` : '');
     if (!text) return;

@@ -1,16 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DragEventHandler, KeyboardEvent, ReactNode, Ref, TextareaHTMLAttributes } from 'react';
+import type { DOMAttributes, KeyboardEvent, ReactNode, Ref, TextareaHTMLAttributes } from 'react';
 import { ArrowUp, AudioLines, Check, ChevronUp, LoaderCircle, MessageSquare, Mic, MicOff, Sparkles } from 'lucide-react';
 import type { ActionCategory } from '../../../../../../../shared/live2d/actionCatalog.js';
 import { cn } from './cn';
 import { MarkdownText } from './MarkdownText';
+import { ImageDropOverlay } from '@app/shared/images/ChatImageControls';
+import { MessageImages } from './ChatImages';
+import { isImagePlaceholderText, type ChatImageSource } from './chatImageSource';
 
-interface ChatMessageView {
+interface ChatMessageView extends ChatImageSource {
   id: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
   status: 'done' | 'sending' | 'error';
   error?: string;
+}
+
+/** 拖放投放区：处理函数挂在整个对话区，active 时在卡片上盖提示层。 */
+export interface ChatDropZone {
+  active: boolean;
+  handlers: Pick<DOMAttributes<HTMLElement>, 'onDragEnter' | 'onDragOver' | 'onDragLeave' | 'onDrop'>;
 }
 
 /** 输入框里整体成块的引用标签：文本就是 @显示名，发送前才还原成稳定 ID。 */
@@ -350,14 +359,13 @@ interface ChatPanelProps<T extends ChatMessageView> extends ChatComposerProps {
   footer?: ReactNode;
   renderMessageDetails?: (message: T) => ReactNode;
   renderMessageError?: (message: T) => ReactNode;
-  onDragOver?: DragEventHandler<HTMLElement>;
-  onDrop?: DragEventHandler<HTMLElement>;
+  dropZone?: ChatDropZone;
 }
 
 /** 只接收展示数据和回调；任务状态、语音、动作引用与缓存由各自业务拥有。 */
 export default function ChatPanel<T extends ChatMessageView>({ title, description, messages, emptyMessage,
   onClear, error, fill = false, showHeader = true, heightClassName = 'h-[55vh] min-h-96', beforeHeader, footer,
-  renderMessageDetails, renderMessageError, onDragOver, onDrop, ...composer }: ChatPanelProps<T>) {
+  renderMessageDetails, renderMessageError, dropZone, ...composer }: ChatPanelProps<T>) {
   const listRef = useRef<HTMLDivElement>(null);
   const followBottom = useRef(true);
   const lastText = messages.at(-1)?.text;
@@ -366,8 +374,7 @@ export default function ChatPanel<T extends ChatMessageView>({ title, descriptio
     if (list && followBottom.current) list.scrollTop = list.scrollHeight;
   }, [messages.length, lastText, composer.busy]);
 
-  return <section className={`flex min-h-0 flex-col gap-3 ${fill ? 'flex-1' : ''}`}
-    onDragOver={onDragOver} onDrop={onDrop}>
+  return <section className={`flex min-h-0 flex-col gap-3 ${fill ? 'flex-1' : ''}`} {...dropZone?.handlers}>
     {beforeHeader}
     {showHeader && (
       <header className="flex items-center justify-between gap-3">
@@ -383,8 +390,9 @@ export default function ChatPanel<T extends ChatMessageView>({ title, descriptio
       </header>
     )}
     {/* 消息区与输入区共用同一张卡片，与页面底色区分。 */}
-    <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-xl bg-card shadow-card',
+    <div className={cn('relative flex min-h-0 flex-col overflow-hidden rounded-xl bg-card shadow-card',
       fill ? 'flex-1' : heightClassName)}>
+      <ImageDropOverlay active={Boolean(dropZone?.active)} />
       <div ref={listRef} role="log" aria-label={title} aria-live="polite"
         onScroll={(event) => {
           const list = event.currentTarget;
@@ -400,6 +408,7 @@ export default function ChatPanel<T extends ChatMessageView>({ title, descriptio
         {messages.map((message) => {
           const mine = message.role === 'user';
           const system = message.role === 'system';
+          const imageOnly = isImagePlaceholderText(message.text, message) && message.status === 'done';
           return <div key={message.id} className={cn('flex items-end gap-2.5', mine && 'flex-row-reverse')}>
             {!mine && <span aria-hidden="true" className={cn(`grid size-7 shrink-0 place-items-center rounded-full
               text-[11px] font-semibold`, system ? 'bg-warning/15 text-warning' : 'bg-primary/12 text-primary')}>
@@ -407,7 +416,8 @@ export default function ChatPanel<T extends ChatMessageView>({ title, descriptio
             </span>}
             <div className={cn('flex min-w-0 max-w-[78%] flex-col gap-1', mine ? 'items-end' : 'items-start')}>
               <div className="px-1 text-[11px] text-muted-foreground/80">{ROLE_LABEL[message.role]}</div>
-              <div className={cn('min-w-0 max-w-full rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
+              <MessageImages source={message} align={mine ? 'end' : 'start'} />
+              {!imageOnly && <div className={cn('min-w-0 max-w-full rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
                 mine ? 'rounded-br-md bg-primary text-primary-foreground'
                   : system ? 'rounded-bl-md bg-warning/12 text-foreground ring-1 ring-inset ring-warning/25'
                     : 'rounded-bl-md bg-muted text-foreground',
@@ -420,7 +430,7 @@ export default function ChatPanel<T extends ChatMessageView>({ title, descriptio
                 {message.status === 'error' && <div className="mt-1 text-[11px] opacity-75">
                   {renderMessageError ? renderMessageError(message) : message.error}
                 </div>}
-              </div>
+              </div>}
             </div>
           </div>;
         })}

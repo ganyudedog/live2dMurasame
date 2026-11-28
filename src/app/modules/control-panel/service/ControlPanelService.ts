@@ -3,6 +3,7 @@ import { toChatConfig, buildPersonaConfig, createId, createMessage } from '../do
 import { actionBound, computed, makeObservable, observable, observableRef, reaction, runInAction, type IReactionDisposer } from 'mobx';
 import { DEFAULT_GLOBAL_UI_SETTINGS, DEFAULT_MODEL_CONFIG } from '../domain/defaults';
 import { getChatCacheScope, readChatSessionCache, writeChatSessionCache } from '../modules/chat/infrastructure/chatSessionCache';
+import { createImageThumbnail } from '@app/shared/images/createImageThumbnail';
 import { loadLlmSelection, saveLlmSelection, resetLlmSelections } from '@app/shared/state-bus/llmSelectionCache';
 import { InteractionSettingsService } from '../modules/interaction/service/InteractionSettingsService';
 import type { InteractionCommit } from '../modules/interaction/domain/interaction';
@@ -524,6 +525,17 @@ export class ControlPanelService {
     });
   }
 
+  /** 原图只留在内存；缩略图生成后挂回同一条消息，随对话缓存落盘。 */
+  private async attachThumbnails(messageId: string, images: readonly string[]): Promise<void> {
+    const thumbnails = (await Promise.all(images.map((image) => createImageThumbnail(image))))
+      .filter((item): item is string => Boolean(item));
+    if (!thumbnails.length) return;
+    runInAction(() => {
+      if (!this.chatMessages.some((message) => message.id === messageId)) return;
+      this.chatMessages = this.chatMessages.map((message) => message.id === messageId ? { ...message, thumbnails } : message);
+    });
+  }
+
   private applyChatRequest(request: ChatRequest): void {
     // 动作设置页正在编辑动作表：语音结果先落到输入框，由用户确认后再提交。
     if (request.source === 'asr' && this.activeTab === 'model-motions') {
@@ -535,8 +547,10 @@ export class ControlPanelService {
     runInAction(() => {
       const messages = this.chatMessages.filter((message) => message.requestId === request.id);
       if (request.source !== 'presence' && !messages.some((message) => message.role === 'user')) {
-        this.chatMessages = [...this.chatMessages,
-          createMessage('user', request.text, request.id, request.createdAt, request.source, 'done')];
+        const message = createMessage('user', request.text, request.id, request.createdAt, request.source, 'done');
+        const images = request.images?.length ? request.images : undefined;
+        this.chatMessages = [...this.chatMessages, images ? { ...message, images, imageCount: images.length } : message];
+        if (images) void this.attachThumbnails(message.id, images);
       }
       if (!messages.some((message) => message.role === 'assistant')) {
         const pending = request.status === 'pending' || request.status === 'processing';

@@ -19,7 +19,7 @@
     "src/app/modules/ai/modules/tts/index.ts",
     "src/app/modules/live2d/modules/interaction/domain/dragHandle/dragHandleEngine.ts"
   ],
-  "ignoreBinaries": ["tar.exe"],
+  "ignoreBinaries": ["tar.exe", "icacls.exe"],
   "ignoreDependencies": [
     "electron-store",
     "electron-updater"

@@ -25,7 +25,6 @@ import { createCliModule } from './modules/cli/module.js';
 import { registerCliIpc } from './interface/ipc/registerCliIpc.js';
 import { registerRuntimeCli } from './modules/plugins/registerRuntimeCli.js';
 import { resolveRuntimePluginFile, scanRuntimePluginManifests } from './modules/plugins/scanRuntimePlugins.js';
-import { startCommandServer } from './modules/cli/infrastructure/commandServer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -208,7 +207,6 @@ const ensureControlPanelWindow = () => {
     });
 
     loadControlPanelWindow(controlPanelWindow);
-    controlPanelWindow.webContents.openDevTools();
 
     controlPanelWindow.on('close', (event) => {
         if (!isQuitting) {
@@ -270,7 +268,6 @@ const applicationIpc = registerDomainIpc({
 const asrRuntime = applicationIpc.asrRuntime;
 let cliRuntime: ReturnType<typeof createCliModule> | null = null;
 let stopCliIpc: (() => void) | null = null;
-let commandServer: Promise<Awaited<ReturnType<typeof startCommandServer>> | null> | null = null;
 const unsubscribeSettings = live2dEnvironmentService.onSettingsChanged(({ settings }) => {
     const source = settings && typeof settings === 'object' ? settings as Record<string, unknown> : {};
     subtitleService?.configure(source.subtitle);
@@ -388,7 +385,9 @@ app.on('before-quit', (event) => {
             cliShutdownStarted = true;
             releaseRuntimeCli?.();
             stopCliIpc?.();
-            void Promise.allSettled([cliRuntime?.dispose(), commandServer?.then((server) => server?.close())])
+            void Promise.resolve().then(() => cliRuntime?.dispose()).catch((error: unknown) => {
+                backendLog.error('cli', 'cli.dispose.failed', { message: errorMessage(error) });
+            })
                 .finally(() => { cliShutdownComplete = true; app.quit(); });
         }
         return;
@@ -481,15 +480,12 @@ app.whenReady().then(async () => {
         });
         releaseRuntimeCli = await registerRuntimeCli(cliRuntime.cli, live2dEnvironmentService.root.pluginDir, backendLog, pluginStorageService);
         stopCliIpc = registerCliIpc({ ipcMain, cli: cliRuntime.cli });
-        commandServer = startCommandServer({ cli: cliRuntime.cli, directory: path.join(app.getPath('userData'), 'cli') });
-        await commandServer;
     } catch (error: unknown) {
         stopCliIpc?.();
         stopCliIpc = null;
         releaseRuntimeCli?.();
         cliRuntime?.dispose();
         cliRuntime = null;
-        commandServer = null;
         backendLog.error('cli', 'cli.start.failed', { message: errorMessage(error) });
     }
     backendLog.setDebugPolicy?.(loadedConfig?.debugModeEnabled);
